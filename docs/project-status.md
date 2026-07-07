@@ -30,7 +30,7 @@
 
 ## 当前进度
 
-当前项目已完成 P3 阶段：基础 Agent 能力、项目管理基线、长任务时间预算、todo、ask_user 和 per-tool approval 都已经具备。下一步进入 P4：上下文治理。
+当前项目处于 P4 阶段：基础 Agent 能力、项目管理基线、长任务时间预算、todo、ask_user 和 per-tool approval 都已经具备；已完成最小版本地 context compaction。
 
 已具备的核心能力：
 
@@ -43,7 +43,7 @@
 - `apply_patch` 已支持 `replace`、`insert_before`、`insert_after`，并兼容 Python 3.12。
 - 非交互审批、LLM 非 JSON 响应、session 恢复坏尾部、search_code 绝对路径泄漏等问题已经修复。
 - 已完成 Agent 自举测试：能够通过百炼模型调用工具读取、修改、测试和查看 diff。
-- 测试基线：55 个测试在正常本地环境通过。
+- 测试基线：57 个测试在正常本地环境通过。
 
 当前已具备：
 
@@ -56,8 +56,8 @@
 
 真实缺口：
 
-- 上下文历史仍以全量消息为主，未做 summary / compaction。
-- 未完成 todo 尚未自动注入后续上下文，P4 需要和 compaction 一起处理。
+- 当前 compaction 是本地确定性摘要，不调用 LLM 做语义总结。
+- 还没有基于模型 context window 的 token 级阈值。
 - 中断、异常、输出截断时还需要进一步补齐 synthetic tool result 机制。
 
 ## 阶段路线图
@@ -68,7 +68,7 @@
 | P1 | 基础 Agent Loop | 已完成 | CLI、Provider、Agent Runtime、基础工具、patch、memory、session、测试基线。 |
 | P2 | 项目管理与可见性 | 已完成 | 建立 Excel + Markdown 项目状态，让目标、进度、风险、Todo 一目了然。 |
 | P3 | 长任务运行基础 | 已完成 | 引入 deadline / budget-seconds、提高 max_steps 兜底值、todo、ask_user、per-tool approval。 |
-| P4 | 上下文治理 | 未开始 | 初版 summary / compaction、工具输出折叠、长需求文件工作流。 |
+| P4 | 上下文治理 | 进行中 | 初版 summary / compaction、工具输出折叠、长需求文件工作流。 |
 | P5 | 安全与恢复增强 | 未开始 | synthetic tool result、patch preview、回滚策略、非信任仓库提示。 |
 | P6 | 高级工程能力 | 暂缓 | LSP、DAP、TUI、subagents、reviewer、AST edit 等能力后置评估。 |
 
@@ -100,6 +100,7 @@
 | 用户澄清工具 | 已完成 | `ask_user` 可在交互式终端中向用户提问。 |
 | Per-tool approval | 已完成 | `--auto-approve-tools` / `AGENT_AUTO_APPROVE_TOOLS` 支持 ask 模式工具白名单。 |
 | OMP 核心架构笔记 | 已完成 | `docs/omp-core-architecture-notes.md` 固化 OMP 主循环、deadline、compaction、stepCounter 结论。 |
+| 本地 Context Compaction | 已完成 | 超过 `context_char_budget` 时折叠早期历史，保留最近消息，并注入未完成 todo。 |
 | 测试基线 | 已完成 | 本地正常环境下测试通过。 |
 
 ## 下一步 Todo
@@ -115,7 +116,7 @@
 | T-007 | 增加 ask_user 工具 | 已完成 | P1 | 需求不清时允许 Agent 在交互式终端中暂停并向用户提问。 |
 | T-008 | 增加 per-tool approval policy | 已完成 | P2 | 已支持 ask 模式下按工具名免确认。 |
 | T-009 | 更新 README 安全工作流 | 已完成 | P2 | 已明确 shell 不是沙箱，并补充预算和审批白名单说明。 |
-| T-010 | 初版 context summary / compaction | 未开始 | P3 | 解决长任务中上下文不断膨胀的问题。 |
+| T-010 | 初版 context summary / compaction | 已完成 | P3 | 已实现本地确定性 compaction；超过字符预算时折叠早期历史并注入未完成 todo。 |
 | T-011 | synthetic tool result | 未开始 | P3 | 中断、异常、输出截断时补齐 tool_call 配对。 |
 | T-012 | patch preview / rollback | 暂缓 | P4 | 在 anchored patch 基础上增强可回退体验。 |
 | T-013 | 评估 LSP / TUI / subagents / AST edit | 暂缓 | P5 | 高级能力，不进入第一阶段 MVP。 |
@@ -128,7 +129,7 @@
 | ID | 风险 | 状态 | 影响 | 应对 |
 |---|---|---|---|---|
 | R-001 | 仓库没有初始 commit | 已关闭 | 后续修改缺少稳定回滚基线。 | 已创建初始 commit。 |
-| R-002 | 长任务上下文持续膨胀 | 开放 | 多轮工具调用后 token 成本和失败率上升。 | P4 增加 summary / compaction。 |
+| R-002 | 长任务上下文持续膨胀 | 已缓解 | 多轮工具调用后 token 成本和失败率上升。 | 已增加本地 context compaction；后续再做 token 级阈值和更强摘要。 |
 | R-003 | 没有 todo 工具 | 已关闭 | 长需求中不容易追踪完成项和遗漏项。 | 已增加 session 级 todo 工具。 |
 | R-004 | 没有 ask_user 工具 | 已关闭 | 遇到歧义时模型只能猜。 | 已增加 ask_user 工具。 |
 | R-005 | ask 模式确认次数多 | 已缓解 | 日用体验偏慢。 | 已增加 per-tool approval 白名单；默认仍保持谨慎。 |
@@ -182,6 +183,6 @@
 
 用户确认本文件后，建议按以下顺序继续：
 
-1. 开始设计初版 context summary / compaction。
-2. 增加 synthetic tool result，增强中断恢复。
-3. 评估 patch preview / rollback 的最小实现。
+1. 增加更完整的 synthetic tool result，增强中断恢复。
+2. 评估 patch preview / rollback 的最小实现。
+3. 评估是否需要 LLM summary 或 token 级 compaction 阈值。

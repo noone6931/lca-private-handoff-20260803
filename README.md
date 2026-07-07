@@ -54,6 +54,7 @@ export AI_MODEL="your-model"
 export AGENT_APPROVAL_MODE="ask"   # ask | auto-read | yolo
 export AGENT_BUDGET_SECONDS="300"  # optional wall-clock budget per run
 export AGENT_AUTO_APPROVE_TOOLS="run_tests,git_diff"  # optional ask-mode allowlist
+export AGENT_CONTEXT_CHAR_BUDGET="60000"  # optional local compaction trigger
 ```
 
 ## 本地运行
@@ -100,6 +101,8 @@ local-agent "帮我找一下测试失败原因"
 默认 `--budget-seconds` 是 600 秒。`--budget-seconds 0` 可以关闭时间预算。
 
 `--max-steps` 默认是 0，表示不限步；它只作为显式防失控保险丝。日常限制任务时优先使用 `--budget-seconds`。
+
+长会话默认启用本地上下文压缩：当消息历史超过约 `60000` 字符时，会把早期历史折叠成系统摘要，保留最近消息，并注入未完成 todo。可用 `--context-char-budget 0` 关闭。
 
 如果 `ask` 模式下某些工具你已经确认安全，可以只对白名单工具免确认：
 
@@ -158,6 +161,7 @@ python3 scripts/sync_project_excel.py
 - `todo_add`: 添加当前会话 todo。
 - `todo_update`: 更新当前会话 todo 状态。
 - `ask_user`: 在需求不清时向用户提问。
+- 本地 context compaction: 超过上下文预算时压缩早期历史，并保留未完成 todo。
 
 ## 设计原则
 
@@ -178,6 +182,7 @@ python3 scripts/sync_project_excel.py
 - patch 必须可校验；
 - patch 会尽量保留原文件 BOM 和 CRLF/LF 换行风格；
 - `--budget-seconds` 用墙钟时间限制单次任务，`--max-steps` 默认不限步，只作为显式安全兜底；
+- 长上下文先用本地确定性 compaction，后续再评估 LLM summary；
 - memory 先用 Markdown。
 
 OMP 核心设计判断沉淀在 `docs/omp-core-architecture-notes.md`，后续不再重复翻源码确认主循环、deadline、compaction 和 step counter 的基本结论。

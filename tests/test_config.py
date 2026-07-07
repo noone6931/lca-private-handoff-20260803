@@ -30,6 +30,8 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.model, "qwen-plus")
         self.assertEqual(config.max_steps, 0)
         self.assertEqual(config.budget_seconds, 600)
+        self.assertEqual(config.context_char_budget, 60000)
+        self.assertEqual(config.context_recent_messages, 40)
 
     def test_dashscope_env_auto_selects_bailian(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -226,6 +228,32 @@ class ConfigTests(unittest.TestCase):
                         budget_seconds=None,
                         approval_mode=None,
                     )
+
+    def test_context_compaction_settings_can_come_from_env(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.dict(
+                "os.environ",
+                {
+                    "DASHSCOPE_API_KEY": "token",
+                    "AGENT_CONTEXT_CHAR_BUDGET": "1000",
+                    "AGENT_CONTEXT_RECENT_MESSAGES": "12",
+                },
+                clear=True,
+            ):
+                config = load_config(
+                    config_path=None,
+                    cwd=tmp,
+                    provider="bailian",
+                    api_base_url=None,
+                    api_key=None,
+                    model=None,
+                    max_steps=None,
+                    budget_seconds=None,
+                    approval_mode=None,
+                )
+
+        self.assertEqual(config.context_char_budget, 1000)
+        self.assertEqual(config.context_recent_messages, 12)
 
 
 if __name__ == "__main__":

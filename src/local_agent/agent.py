@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 import sys
 import time
@@ -72,8 +73,9 @@ class AgentRuntime:
                 return self._stop_for_budget()
 
             self._session.append("llm_request", {"step": step})
+            messages_for_model = self._messages_for_model()
             response = self._client.chat(
-                self._messages,
+                messages_for_model,
                 self._registry.schemas(),
                 timeout=self._remaining_timeout(deadline),
             )
@@ -104,6 +106,85 @@ class AgentRuntime:
             step += 1
 
         return f"Stopped after reaching max_steps={self._config.max_steps}."
+
+    def _messages_for_model(self) -> list[dict[str, Any]]:
+        if self._config.context_char_budget <= 0:
+            return self._messages
+        if _estimate_message_chars(self._messages) <= self._config.context_char_budget:
+            return self._messages
+
+        system_messages = [message for message in self._messages if message.get("role") == "system"]
+        non_system = [message for message in self._messages if message.get("role") != "system"]
+        recent_count = min(self._config.context_recent_messages, len(non_system))
+
+        while recent_count > 0:
+            recent = _valid_recent_messages(non_system[-recent_count:])
+            dropped_count = len(non_system) - recent_count
+            dropped = non_system[: max(dropped_count, 0)]
+            compacted = [
+                *system_messages[:1],
+                {"role": "system", "content": self._build_compaction_summary(dropped)},
+                *recent,
+            ]
+            if _estimate_message_chars(compacted) <= self._config.context_char_budget or recent_count <= 6:
+                self._session.append(
+                    "context_compaction",
+                    {
+                        "original_messages": len(self._messages),
+                        "sent_messages": len(compacted),
+                        "dropped_messages": len(dropped),
+                    },
+                )
+                return compacted
+            recent_count = max(6, recent_count // 2)
+        return self._messages
+
+    def _build_compaction_summary(self, dropped: list[dict[str, Any]]) -> str:
+        lines = [
+            "Earlier conversation was compacted locally to stay within the context budget.",
+            "Preserve these facts while continuing the current task.",
+            "",
+            f"- Compacted messages: {len(dropped)}",
+        ]
+        todo_summary = self._open_todo_summary()
+        if todo_summary:
+            lines.extend(["", "Open todos:", *todo_summary])
+        user_items = _snippets_for_role(dropped, "user", limit=6)
+        if user_items:
+            lines.extend(["", "Earlier user requests:", *user_items])
+        assistant_items = _assistant_snippets(dropped, limit=6)
+        if assistant_items:
+            lines.extend(["", "Earlier assistant outputs:", *assistant_items])
+        tool_items = _tool_snippets(dropped, limit=6)
+        if tool_items:
+            lines.extend(["", "Earlier tool results:", *tool_items])
+        return "\n".join(lines)
+
+    def _open_todo_summary(self) -> list[str]:
+        path = self._config.workspace / ".local-agent" / "todos" / f"{self._session.session_id}.json"
+        if not path.exists():
+            return []
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return []
+        if not isinstance(data, list):
+            return []
+        lines: list[str] = []
+        for item in data:
+            if not isinstance(item, dict):
+                continue
+            status = str(item.get("status") or "")
+            if status in {"done", "skipped"}:
+                continue
+            todo_id = str(item.get("id") or "").strip()
+            task = str(item.get("task") or "").strip()
+            note = str(item.get("note") or "").strip()
+            if not todo_id or not task:
+                continue
+            suffix = f" — {note}" if note else ""
+            lines.append(f"- [{status or 'todo'}] {todo_id}: {task}{suffix}")
+        return lines[:20]
 
     def _remaining_timeout(self, deadline: float | None) -> float:
         if deadline is None:
@@ -160,3 +241,102 @@ class AgentRuntime:
             return
         status = "error" if is_error else "ok"
         print(f"[tool:end] {name} {status} ({content_length} chars)", file=sys.stderr)
+
+
+def _estimate_message_chars(messages: list[dict[str, Any]]) -> int:
+    return sum(len(json.dumps(message, ensure_ascii=False, default=str)) for message in messages)
+
+
+def _valid_recent_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    recent = list(messages)
+    while recent and recent[0].get("role") == "tool":
+        recent = recent[1:]
+    return _drop_trailing_unpaired_tool_calls(recent)
+
+
+def _drop_trailing_unpaired_tool_calls(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    trimmed = list(messages)
+    while trimmed:
+        index = _last_assistant_with_tool_calls_index(trimmed)
+        if index is None:
+            return trimmed
+        expected = _assistant_tool_call_ids(trimmed[index])
+        following = {
+            message.get("tool_call_id")
+            for message in trimmed[index + 1 :]
+            if message.get("role") == "tool"
+        }
+        if expected.issubset(following):
+            return trimmed
+        trimmed = trimmed[:index]
+    return trimmed
+
+
+def _last_assistant_with_tool_calls_index(messages: list[dict[str, Any]]) -> int | None:
+    for index in range(len(messages) - 1, -1, -1):
+        message = messages[index]
+        if message.get("role") == "assistant" and _assistant_tool_call_ids(message):
+            return index
+    return None
+
+
+def _assistant_tool_call_ids(message: dict[str, Any]) -> set[str]:
+    tool_calls = message.get("tool_calls") or []
+    if not isinstance(tool_calls, list):
+        return set()
+    ids: set[str] = set()
+    for tool_call in tool_calls:
+        if isinstance(tool_call, dict) and isinstance(tool_call.get("id"), str):
+            ids.add(tool_call["id"])
+    return ids
+
+
+def _snippets_for_role(messages: list[dict[str, Any]], role: str, *, limit: int) -> list[str]:
+    snippets: list[str] = []
+    for message in messages:
+        if message.get("role") != role:
+            continue
+        content = message.get("content")
+        if not isinstance(content, str) or not content.strip():
+            continue
+        snippets.append(f"- {_one_line(content)}")
+    return snippets[-limit:]
+
+
+def _assistant_snippets(messages: list[dict[str, Any]], *, limit: int) -> list[str]:
+    snippets: list[str] = []
+    for message in messages:
+        if message.get("role") != "assistant":
+            continue
+        content = message.get("content")
+        tool_calls = message.get("tool_calls") or []
+        if isinstance(content, str) and content.strip():
+            snippets.append(f"- {_one_line(content)}")
+        elif tool_calls:
+            names = []
+            for tool_call in tool_calls:
+                if isinstance(tool_call, dict):
+                    function = tool_call.get("function") or {}
+                    if isinstance(function, dict) and function.get("name"):
+                        names.append(str(function["name"]))
+            if names:
+                snippets.append(f"- Requested tools: {', '.join(names)}")
+    return snippets[-limit:]
+
+
+def _tool_snippets(messages: list[dict[str, Any]], *, limit: int) -> list[str]:
+    snippets: list[str] = []
+    for message in messages:
+        if message.get("role") != "tool":
+            continue
+        content = message.get("content")
+        if isinstance(content, str) and content.strip():
+            snippets.append(f"- {_one_line(content)}")
+    return snippets[-limit:]
+
+
+def _one_line(content: str, *, max_chars: int = 240) -> str:
+    normalized = " ".join(content.split())
+    if len(normalized) <= max_chars:
+        return normalized
+    return normalized[: max_chars - 14] + "...<truncated>"

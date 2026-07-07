@@ -15,13 +15,14 @@ python3 scripts/sync_project_excel.py
 | 字段 | 当前值 | 说明 |
 |---|---|---|
 | 最终目标 | 个人本地编程助手 Agent | 本地优先、封闭 VM 可用、只访问指定 AI API，能读代码、搜代码、改代码、跑测试、生成 diff、沉淀项目记忆。 |
-| 当前阶段 | P4：上下文治理准备 | P3 长任务运行基础已完成；P4 将处理 context summary/compaction 和中断恢复。 |
+| 当前阶段 | P4：上下文治理进行中 | 最小版本地 context compaction 已完成；下一步增强中断恢复。 |
 | 推荐入口 | `./agent "阅读当前项目"` | 自动设置 `PYTHONPATH=src`，默认当前目录为 workspace。 |
 | Token 配置 | `.env` 或环境变量 | `.env` 可写 `DASHSCOPE_API_KEY=...`，该文件已被 `.gitignore` 忽略。 |
-| 测试数 | 55 | 完整 unittest 通过；compileall 通过。 |
+| 测试数 | 57 | 完整 unittest 通过；compileall 通过。 |
 | 默认 budget_seconds | 600 | 单次任务默认 10 分钟墙钟预算；`--budget-seconds 0` 可关闭。 |
 | 默认 max_steps | 0 | 表示不限步；仅在用户显式设置时作为防失控保险丝。 |
 | 预算执行 | 细粒度 | LLM 请求和 shell/run_tests timeout 会按剩余预算夹紧；deadline 到期会补齐未执行工具结果。 |
+| Context compaction | 本地确定性 | 超过约 60000 字符时折叠早期历史，保留最近消息，并注入未完成 todo。 |
 | OMP 核心判断 | 已固化 | 见 `docs/omp-core-architecture-notes.md`。 |
 
 ## 阶段路线图
@@ -32,7 +33,7 @@ python3 scripts/sync_project_excel.py
 | P1 | 基础 Agent 闭环 | 接 AI API，完成读、搜、改、测、diff、session、memory | 已完成 | 100% | 已创建初始 git commit，基础闭环可回滚。 |
 | P2 | 项目管理与可见性 | 项目状态、路线图、todo、决策记录一目了然 | 已完成 | 100% | Excel + Markdown 项目状态已建立。 |
 | P3 | 长任务运行基础 | budget_seconds、max_steps 不限步、todo、ask_user、per-tool approval、一键启动 | 已完成 | 100% | 已具备真实需求的基础运行体验。 |
-| P4 | 上下文治理 | 简单 summary/compaction，工具输出折叠，支持长需求文件 | 未开始 | 0% | 下一步启动 summary/compaction。 |
+| P4 | 上下文治理 | 简单 summary/compaction，工具输出折叠，支持长需求文件 | 进行中 | 35% | 已完成本地 compaction；下一步补更强中断恢复。 |
 | P5 | 安全与恢复增强 | synthetic tool result、patch preview、rollback | 未开始 | 0% | P4 后补 synthetic tool result 与 patch preview/rollback。 |
 | P6 | 高级工程能力 | LSP、TUI、subagents、reviewer、AST edit、DAP | 暂缓 | 0% | 日用闭环稳定后再评估。 |
 
@@ -63,7 +64,8 @@ python3 scripts/sync_project_excel.py
 | 一键启动 | 已完成 | `./agent` | 自动设置 `PYTHONPATH` 并以当前目录为 workspace | 日常入口 |
 | `.env` 加载 | 已完成 | workspace `.env` | 可放 `DASHSCOPE_API_KEY`，被 gitignore | 避免重复 export |
 | OMP 核心架构笔记 | 已完成 | `docs/omp-core-architecture-notes.md` | 固化主循环、deadline、compaction 结论 | 后续设计依据 |
-| 测试覆盖 | 已完成 | 当前 55 个测试通过 | unittest + compileall 通过 | 继续补 P4 边界 |
+| 本地 Context Compaction | 已完成 | `context_char_budget` / `context_recent_messages` | 折叠早期历史，保留最近消息，注入未完成 todo | 后续评估 LLM summary |
+| 测试覆盖 | 已完成 | 当前 57 个测试通过 | unittest + compileall 通过 | 继续补 P4 边界 |
 
 ## 下一步 Todo
 
@@ -78,7 +80,7 @@ python3 scripts/sync_project_excel.py
 | T-007 | P0 | P3 | 实现 ask_user 工具 | 已完成 | Agent | 需求歧义时不硬猜 | 交互式终端可提问 |
 | T-008 | P0 | P3 | 增加 per-tool approval policy | 已完成 | Agent | 减少重复敲 y | `--auto-approve-tools` 可用 |
 | T-009 | P1 | P2 | 更新 README 安全工作流 | 已完成 | Agent | 说明预算、审批和 shell 边界 | README 已更新 |
-| T-010 | P1 | P4 | 简单上下文 summary | 未开始 | Agent | 长任务会被全量历史拖垮 | 超过阈值时折叠早期消息/工具输出 |
+| T-010 | P1 | P4 | 简单上下文 summary | 已完成 | Agent | 长任务会被全量历史拖垮 | 已实现本地 deterministic compaction，并注入未完成 todo |
 | T-011 | P1 | P5 | 补 synthetic tool result | 未开始 | Agent | 中断/异常时避免 orphan tool_calls | 未执行工具也写入配对 tool result |
 | T-012 | P1 | P5 | Patch preview/rollback 设计 | 暂缓 | Agent | 进一步降低改错风险 | 先做最小设计再实现 |
 | T-013 | P2 | P6 | 评估 LSP/TUI/subagents/AST edit | 暂缓 | User + Agent | 高级能力强但复杂 | P4/P5 稳定后再取舍 |
@@ -90,7 +92,7 @@ python3 scripts/sync_project_excel.py
 
 | 类型 | ID | 严重度/日期 | 事项 | 状态 | 应对/后续 |
 |---|---|---|---|---|---|
-| 风险 | R-001 | 高 | 长任务上下文膨胀 | 开放 | P4 做简单 summary/工具输出折叠 |
+| 风险 | R-001 | 高 | 长任务上下文膨胀 | 已缓解 | 已做本地 compaction；后续评估 token 级阈值和 LLM summary |
 | 风险 | R-002 | 高 | 没有 todo 工具 | 已关闭 | 已增加 session 级 todo 工具 |
 | 风险 | R-003 | 中 | ask 模式确认过多 | 已缓解 | 已增加 per-tool approval 白名单 |
 | 风险 | R-004 | 中 | 中断时 tool_calls 配对仍可增强 | 开放 | P5 补 synthetic tool result |

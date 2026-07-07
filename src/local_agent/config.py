@@ -12,6 +12,8 @@ class ConfigError(RuntimeError):
 
 DEFAULT_MAX_STEPS = 0
 DEFAULT_BUDGET_SECONDS = 600
+DEFAULT_CONTEXT_CHAR_BUDGET = 60000
+DEFAULT_CONTEXT_RECENT_MESSAGES = 40
 
 
 @dataclass(frozen=True)
@@ -26,6 +28,8 @@ class AgentConfig:
     request_timeout: int = 120
     approval_mode: str = "ask"
     auto_approve_tools: tuple[str, ...] = ()
+    context_char_budget: int = DEFAULT_CONTEXT_CHAR_BUDGET
+    context_recent_messages: int = DEFAULT_CONTEXT_RECENT_MESSAGES
 
 
 def load_config(
@@ -40,6 +44,8 @@ def load_config(
     budget_seconds: int | None,
     approval_mode: str | None,
     auto_approve_tools: object | None = None,
+    context_char_budget: int | None = None,
+    context_recent_messages: int | None = None,
 ) -> AgentConfig:
     file_config = _load_json_config(config_path)
     workspace = Path(cwd or file_config.get("workspace") or os.getcwd()).expanduser().resolve()
@@ -95,6 +101,26 @@ def load_config(
         else file_config.get("auto_approve_tools", os.environ.get("AGENT_AUTO_APPROVE_TOOLS"))
     )
     resolved_auto_approve_tools = _tool_name_tuple("auto_approve_tools", raw_auto_approve_tools)
+    raw_context_char_budget = (
+        context_char_budget
+        if context_char_budget is not None
+        else file_config.get("context_char_budget", os.environ.get("AGENT_CONTEXT_CHAR_BUDGET"))
+    )
+    resolved_context_char_budget = _non_negative_int(
+        "context_char_budget",
+        raw_context_char_budget if raw_context_char_budget is not None else DEFAULT_CONTEXT_CHAR_BUDGET,
+    )
+    raw_context_recent_messages = (
+        context_recent_messages
+        if context_recent_messages is not None
+        else file_config.get("context_recent_messages", os.environ.get("AGENT_CONTEXT_RECENT_MESSAGES"))
+    )
+    resolved_context_recent_messages = _positive_int(
+        "context_recent_messages",
+        raw_context_recent_messages
+        if raw_context_recent_messages is not None
+        else DEFAULT_CONTEXT_RECENT_MESSAGES,
+    )
 
     if not resolved_api_base_url:
         raise ConfigError("Missing AI_API_BASE_URL.")
@@ -116,6 +142,8 @@ def load_config(
         request_timeout=resolved_request_timeout,
         approval_mode=resolved_approval_mode,
         auto_approve_tools=resolved_auto_approve_tools,
+        context_char_budget=resolved_context_char_budget,
+        context_recent_messages=resolved_context_recent_messages,
     )
 
 

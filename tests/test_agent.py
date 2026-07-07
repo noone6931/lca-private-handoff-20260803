@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+import json
 
 from local_agent.agent import AgentRuntime
 from local_agent.config import AgentConfig
@@ -33,6 +34,17 @@ class _TimeoutRecordingClient:
 
     def chat(self, messages, tools, *, timeout=None):
         self.timeouts.append(timeout)
+        return type("Response", (), {"message": {"content": "done"}})()
+
+
+class _MessageRecordingClient:
+    messages: list[dict] = []
+
+    def __init__(self, config: AgentConfig):
+        self.config = config
+
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).messages = messages
         return type("Response", (), {"message": {"content": "done"}})()
 
 
@@ -154,6 +166,50 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertEqual(result, "Stopped after reaching budget_seconds=1.")
         self.assertEqual([message["tool_call_id"] for message in tool_messages], ["call_1", "call_2"])
         self.assertIn("Tool call was not executed", tool_messages[1]["content"])
+
+    def test_context_compaction_injects_summary_and_open_todos(self) -> None:
+        _MessageRecordingClient.messages = []
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=workspace,
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+                context_char_budget=1200,
+                context_recent_messages=4,
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _MessageRecordingClient):
+                runtime = AgentRuntime(config, show_tool_logs=False)
+                todo_path = workspace / ".local-agent" / "todos" / f"{runtime._session.session_id}.json"
+                todo_path.parent.mkdir(parents=True)
+                todo_path.write_text(
+                    json.dumps(
+                        [
+                            {"id": "T1", "task": "Finish compaction", "status": "in_progress", "note": "keep this"},
+                            {"id": "T2", "task": "Already done", "status": "done", "note": ""},
+                        ]
+                    ),
+                    encoding="utf-8",
+                )
+                runtime._messages.extend(
+                    [
+                        {"role": "user", "content": "old request " + ("x" * 500)},
+                        {"role": "assistant", "content": "old answer " + ("y" * 500)},
+                        {"role": "user", "content": "recent request"},
+                    ]
+                )
+                result = runtime.run("new request")
+
+        sent = _MessageRecordingClient.messages
+        self.assertEqual(result, "done")
+        self.assertTrue(any("Earlier conversation was compacted" in m.get("content", "") for m in sent))
+        self.assertTrue(any("T1: Finish compaction" in m.get("content", "") for m in sent))
+        self.assertFalse(any("T2: Already done" in m.get("content", "") for m in sent))
 
 
 if __name__ == "__main__":

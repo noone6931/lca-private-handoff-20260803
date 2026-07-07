@@ -33,6 +33,16 @@ def main(argv: list[str] | None = None) -> int:
         "--auto-approve-tools",
         help="Comma-separated tool names to allow without prompting in ask mode.",
     )
+    parser.add_argument(
+        "--context-char-budget",
+        type=int,
+        help="Approximate message character budget before local compaction. 0 disables compaction.",
+    )
+    parser.add_argument(
+        "--context-recent-messages",
+        type=int,
+        help="Recent messages to keep verbatim when local compaction is active.",
+    )
     parser.add_argument("--continue", dest="continue_session", action="store_true", help="Continue the latest session.")
     parser.add_argument("--session", help="Continue a specific session id from .local-agent/sessions.")
     parser.add_argument("--hide-tools", action="store_true", help="Hide tool call logs from stderr.")
@@ -50,6 +60,8 @@ def main(argv: list[str] | None = None) -> int:
             budget_seconds=args.budget_seconds,
             approval_mode=args.approval_mode,
             auto_approve_tools=args.auto_approve_tools,
+            context_char_budget=args.context_char_budget,
+            context_recent_messages=args.context_recent_messages,
         )
         runtime = AgentRuntime(
             config,
