@@ -15,6 +15,7 @@ from local_agent.patch.anchored import (
 
 class AnchoredPatchTests(unittest.TestCase):
     def test_format_tagged_read_includes_hash_and_line_numbers(self) -> None:
+        """Verifies format_tagged_read includes file hash and line numbers."""
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp).resolve()
             target = workspace / "app.py"

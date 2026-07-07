@@ -17,7 +17,7 @@ python3 scripts/sync_project_excel.py
 | 字段 | 当前值 | 说明 |
 |---|---|---|
 | 最终目标 | 个人本地编程助手 Agent | 本地优先、封闭 VM 可用、只访问指定 AI API，能读代码、搜代码、改代码、跑测试、生成 diff、沉淀项目记忆。 |
-| 当前阶段 | P5：安全与恢复增强 MVP 完成，真实百炼小改压测发现并修复工具描述问题 | 百炼只读 compaction 压测已通过；首轮真实小改压测跑通 dry_run、apply_patch、run_tests、git_diff，但暴露 `write_file` schema 描述误导模型，已修正并待复测。 |
+| 当前阶段 | P5：安全与恢复增强 MVP 主链路复测通过，进入收口检查 | 百炼只读 compaction 压测已通过；真实小改复测跑通 todo、dry_run、apply_patch、session allow、rollback、run_tests、git_diff，P5 主链路已具备日用基础。 |
 | 推荐入口 | `./agent "阅读当前项目"` | 自动设置 `PYTHONPATH=src`，默认当前目录为 workspace。 |
 | Token 配置 | `.env` 或环境变量 | `.env` 可写 `DASHSCOPE_API_KEY=...`，该文件已被 `.gitignore` 忽略。 |
 | 测试数 | 90 | 完整 unittest 通过；compileall 通过。 |
@@ -41,7 +41,7 @@ python3 scripts/sync_project_excel.py
 | P2 | 项目管理与可见性 | 项目状态、路线图、todo、决策记录一目了然 | 已完成 | 100% | Excel + Markdown 项目状态已建立。 |
 | P3 | 长任务运行基础 | budget_seconds、max_steps 不限步、todo、ask_user、per-tool approval、一键启动 | 已完成 | 100% | 已具备真实需求的基础运行体验。 |
 | P4 | 上下文治理 | 简单 summary/compaction，工具输出折叠，支持长需求文件 | 已完成 MVP 版 | 100% | 首轮百炼只读 compaction 压测已通过；继续用真实小改任务压测后再评估 token 预算、输出 reserve、recent 保留和可选 LLM summary。 |
-| P5 | 安全与恢复增强 | synthetic tool result、patch preview、rollback、ask_user timeout、per-tool approval | 已完成 MVP 版 | 100% | 已覆盖 deadline、用户中断、length 截断、patch preview、rollback、ask_user timeout、approval mode、session decision、REPL 命令和 approval deadline cancel。 |
+| P5 | 安全与恢复增强 | synthetic tool result、patch preview、rollback、ask_user timeout、per-tool approval | 已完成 MVP 版 | 100% | 真实小改复测已覆盖 dry_run、apply_patch、session allow、rollback、run_tests、git_diff；下一步做 P5 收口检查。 |
 | P6 | 高级工程能力 | LSP、TUI、subagents、reviewer、AST edit、DAP | 暂缓 | 0% | 日用闭环稳定后再评估。 |
 
 ## 已完成功能
@@ -77,7 +77,7 @@ python3 scripts/sync_project_excel.py
 | Patch preview | 已完成 | `apply_patch dry_run=true` | 复用 anchored 校验并返回 diff，不写文件 | 后续评估 rollback |
 | Patch rollback | 已完成 MVP 版 | `rollback_patch` | 校验当前文件 hash 后恢复 patch 前内容 | 继续真实任务验证 |
 | ask_user timeout | 已完成 | `timeout_seconds` / `default_answer` / budget 剩余时间 | 长任务无人响应时可以继续或明确失败；显式 timeout 也受 budget 夹紧 | 继续真实任务验证 |
-| Tool approval policy | 已完成 MVP 版 | `tool_approval` + `session_tool_approval` | config deny/prompt 是硬护栏，session allow/reject 可记住当前会话，REPL 会校验工具名，approval prompt 受 deadline 约束 | 复测真实小改任务 |
+| Tool approval policy | 已完成 MVP 版 | `tool_approval` + `session_tool_approval` | config deny/prompt 是硬护栏，session allow/reject 可记住当前会话，REPL 会校验工具名，approval prompt 受 deadline 约束 | P5 收口检查 |
 | 测试覆盖 | 已完成 | 当前 90 个测试通过 | unittest + compileall 通过 | 继续补真实任务压测 |
 
 ## 下一步 Todo
@@ -113,14 +113,15 @@ python3 scripts/sync_project_excel.py
 | T-027 | P1 | P5 | compaction 保持单 system 消息 | 已完成 | Agent | 降低 OpenAI-compatible provider 对多 system 消息的兼容风险 | 压缩摘要合并进首个 system prompt；测试锁定发送给模型时只有一条 system |
 | T-028 | P1 | P5 | 百炼只读压测后的目标漂移修复 | 已完成 | Agent | 极小上下文预算下，模型会被续读提示和最近代码片段带偏 | compaction 摘要强保留当前用户请求；read_file 截断提示改为“任务需要才继续” |
 | T-029 | P1 | P5 | 复测百炼只读 compaction 压测 | 已完成 | User + Agent | 验证 T-028 是否真正修复目标漂移 | 会话 `20260707T093557800154Z` 严格完成 5 个指定工具调用后输出三句话总结，未继续额外读文件 |
-| T-030 | P1 | P5 | 真实小改任务压测 | 首轮发现问题，待复测 | User + Agent | 验证 compaction、approval、patch preview/rollback、run_tests、git_diff 在真实修改任务中的协同 | 首轮会话 `20260707T093733679947Z` 跑通链路，但因 `write_file` schema 描述错误导致 README 被改成不符合实现的说法 |
+| T-030 | P1 | P5 | 真实小改任务压测 | 已完成 | User + Agent | 验证 compaction、approval、patch preview/rollback、run_tests、git_diff 在真实修改任务中的协同 | 复测会话 `20260707T094246132064Z` 跑通 todo、dry_run、apply_patch、session allow、rollback、run_tests、git_diff；最终仅新增一个测试 docstring |
 | T-031 | P0 | P5 | 修正 `write_file` schema 描述误导 | 已完成 | Agent | 工具描述会进入模型上下文，错误描述会直接导致错误修改 | `write_file` 描述已改为 create-only，并加测试确保不再出现 `fully overwrite` |
+| T-032 | P1 | P5 | P5 收口检查 | 未开始 | Agent | 收口前确认文档、测试、工作树和已知风险一致 | 运行全量测试、检查项目状态、确认未引入新的 P0/P1 阻塞问题 |
 
 ## 风险与决策
 
 | 类型 | ID | 严重度/日期 | 事项 | 状态 | 应对/后续 | OMP 是怎么实现的（建议实现方式） |
 |---|---|---|---|---|---|---|
-| 风险 | R-001 | 高 | 长任务上下文膨胀 | 已进一步缓解，继续增强 | 已做字符阈值 compaction、当前用户请求保留、超大 tool 输出截断和单 system 摘要合并；首轮百炼只读压测通过，继续真实小改复测后再评估 token 预算、输出 reserve、recent 保留和 LLM summary | OMP 按上下文 token 预算触发压缩，给下一轮 prompt/输出预留 reserve，并把早期历史压成 summary；建议我们把字符阈值升级为 token 估算 + reserve + 可选 LLM summary，字符阈值只保留为兜底。 |
+| 风险 | R-001 | 高 | 长任务上下文膨胀 | 已进一步缓解，继续增强 | 已做字符阈值 compaction、当前用户请求保留、超大 tool 输出截断和单 system 摘要合并；百炼只读和真实小改压测均已通过，后续再评估 token 预算、输出 reserve、recent 保留和 LLM summary | OMP 按上下文 token 预算触发压缩，给下一轮 prompt/输出预留 reserve，并把早期历史压成 summary；建议我们把字符阈值升级为 token 估算 + reserve + 可选 LLM summary，字符阈值只保留为兜底。 |
 | 风险 | R-011 | 高 | 工具 schema 描述与实现不一致会误导模型 | 已关闭首例，持续关注 | 首轮真实小改压测发现 `write_file` 描述宣称可覆盖文件，但实现拒绝覆盖，导致模型把 README 改错 | 工具 schema 是模型的操作说明，应与实现和测试保持一致；已修正 `write_file` 描述并新增测试。 |
 | 风险 | R-002 | 高 | 没有 todo 工具 | 已关闭 | 已增加 session 级 todo 工具 | OMP 把 todo 作为会话状态在 UI、session 和 reminder 中同步；我们保留轻量 `todo_read/add/update`，先满足长任务追踪。 |
 | 风险 | R-003 | 中 | ask 模式确认过多 | 已关闭 MVP 版 | 已增加 approvalMode、per-tool allow/prompt/deny、session allow/reject | OMP 用 tool approval tier、approvalMode 和 per-tool policy 控制确认；我们保留旧白名单并补 `tool_approval` 和 session decision，危险 shell 仍可显式 deny。 |
