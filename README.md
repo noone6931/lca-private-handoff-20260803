@@ -127,6 +127,8 @@ local-agent "帮我找一下测试失败原因"
 ./agent --session 20260707T060000000000Z "继续这个会话"
 ```
 
+`apply_patch` 的回滚记录会写入 `.local-agent/patches/<session-id>.jsonl`，用于 `rollback_patch` 校验并恢复本 session 中的补丁。`.local-agent/` 已被 `.gitignore` 忽略。
+
 ## 本地测试
 
 ```bash
@@ -154,6 +156,7 @@ python3 scripts/sync_project_excel.py
 - `git_status`: 查看本地 git 状态。
 - `git_diff`: 查看本地 diff。
 - `apply_patch`: 简化版 anchored patch，校验文件 hash 与旧文本后写入；支持 `replace`、`insert_before`、`insert_after`，也支持 `dry_run=true` 只预览 diff 不写文件。
+- `rollback_patch`: 回滚当前 session 中由 `apply_patch` 写入的补丁；回滚前会校验文件仍然匹配补丁后的 hash。
 - `write_file`: 只创建新文件；修改已有文件必须使用 `apply_patch`。
 - `memory_read`: 读取 Markdown 项目记忆。
 - `memory_write`: 写入 Markdown 项目记忆。

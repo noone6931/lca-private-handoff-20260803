@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import difflib
+import json
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -54,6 +57,23 @@ def file_tools() -> list[Tool]:
                 "additionalProperties": False,
             },
             handler=patch_file,
+        ),
+        Tool(
+            name="rollback_patch",
+            description=(
+                "Roll back a patch previously applied by apply_patch in this session. "
+                "If patch_id is omitted, rolls back the latest unapplied rollback candidate. "
+                "The target file must still match the recorded after tag."
+            ),
+            tier="write",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "patch_id": {"type": "string"},
+                },
+                "additionalProperties": False,
+            },
+            handler=rollback_patch,
         ),
         Tool(
             name="write_file",
@@ -114,6 +134,11 @@ def read_file(args: dict[str, Any], context: ToolContext) -> ToolResult:
 
 
 def patch_file(args: dict[str, Any], context: ToolContext) -> ToolResult:
+    path = resolve_workspace_path(context.workspace, args["path"])
+    if not path.exists():
+        return ToolResult(f"Target file does not exist: {args['path']}", is_error=True)
+    before_text = path.read_bytes().decode("utf-8")
+    before_tag = hash_text(before_text)
     result = apply_anchored_patch(
         workspace=context.workspace,
         path=args["path"],
@@ -129,7 +154,51 @@ def patch_file(args: dict[str, Any], context: ToolContext) -> ToolResult:
         return ToolResult(
             f"Patch preview only. File not changed. New tag after apply would be: {result.new_tag}\n\n{result.diff}"
         )
-    return ToolResult(f"Applied patch. New tag: {result.new_tag}\n\n{result.diff}")
+    patch_id = _record_patch(
+        context=context,
+        path=args["path"],
+        before_text=before_text,
+        before_tag=before_tag,
+        after_tag=result.new_tag,
+        diff=result.diff,
+    )
+    return ToolResult(f"Applied patch. Patch id: {patch_id}. New tag: {result.new_tag}\n\n{result.diff}")
+
+
+def rollback_patch(args: dict[str, Any], context: ToolContext) -> ToolResult:
+    records = _load_patch_records(context)
+    patch_id = args.get("patch_id")
+    record = _find_rollback_record(records, patch_id)
+    if record is None:
+        if patch_id:
+            return ToolResult(f"Patch record not found or already rolled back: {patch_id}", is_error=True)
+        return ToolResult("No unapplied patch record found for this session.", is_error=True)
+
+    path = resolve_workspace_path(context.workspace, str(record["path"]))
+    if not path.exists():
+        return ToolResult(f"Target file does not exist: {record['path']}", is_error=True)
+    current_text = path.read_bytes().decode("utf-8")
+    current_tag = hash_text(current_text)
+    after_tag = str(record["after_tag"])
+    if current_tag != after_tag:
+        return ToolResult(
+            f"Refusing rollback for {record['id']}: expected current tag {after_tag}, got {current_tag}. "
+            "The file changed after the patch; inspect git_diff and roll back manually.",
+            is_error=True,
+        )
+
+    before_text = str(record["before_text"])
+    path.write_bytes(before_text.encode("utf-8"))
+    _record_rollback(context, str(record["id"]))
+    diff = "".join(
+        difflib.unified_diff(
+            current_text.splitlines(keepends=True),
+            before_text.splitlines(keepends=True),
+            fromfile=f"a/{record['path']}",
+            tofile=f"b/{record['path']}",
+        )
+    )
+    return ToolResult(f"Rolled back patch {record['id']}. Restored tag: {record['before_tag']}\n\n{diff}")
 
 
 def write_file(args: dict[str, Any], context: ToolContext) -> ToolResult:
@@ -142,3 +211,93 @@ def write_file(args: dict[str, Any], context: ToolContext) -> ToolResult:
     Path(path.parent).mkdir(parents=True, exist_ok=True)
     path.write_text(args["content"], encoding="utf-8")
     return ToolResult(f"Wrote {args['path']}")
+
+
+def _record_patch(
+    *,
+    context: ToolContext,
+    path: str,
+    before_text: str,
+    before_tag: str,
+    after_tag: str,
+    diff: str,
+) -> str:
+    patch_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    record = {
+        "event": "apply",
+        "id": patch_id,
+        "time": datetime.now(timezone.utc).isoformat(),
+        "path": path,
+        "before_tag": before_tag,
+        "after_tag": after_tag,
+        "before_text": before_text,
+        "diff": diff,
+    }
+    _append_patch_record(context, record)
+    return patch_id
+
+
+def _record_rollback(context: ToolContext, patch_id: str) -> None:
+    _append_patch_record(
+        context,
+        {
+            "event": "rollback",
+            "patch_id": patch_id,
+            "time": datetime.now(timezone.utc).isoformat(),
+        },
+    )
+
+
+def _append_patch_record(context: ToolContext, record: dict[str, Any]) -> None:
+    path = _patch_log_path(context)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
+def _load_patch_records(context: ToolContext) -> list[dict[str, Any]]:
+    path = _patch_log_path(context)
+    if not path.exists():
+        return []
+    records: list[dict[str, Any]] = []
+    with path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            if not line.strip():
+                continue
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(record, dict):
+                records.append(record)
+    return records
+
+
+def _find_rollback_record(records: list[dict[str, Any]], patch_id: str | None) -> dict[str, Any] | None:
+    rolled_back = {
+        str(record.get("patch_id"))
+        for record in records
+        if record.get("event") == "rollback" and record.get("patch_id")
+    }
+    applied = [
+        record
+        for record in records
+        if record.get("event") == "apply"
+        and isinstance(record.get("id"), str)
+        and isinstance(record.get("path"), str)
+        and isinstance(record.get("before_text"), str)
+        and isinstance(record.get("before_tag"), str)
+        and isinstance(record.get("after_tag"), str)
+        and record["id"] not in rolled_back
+    ]
+    if patch_id:
+        for record in reversed(applied):
+            if record["id"] == patch_id:
+                return record
+        return None
+    return applied[-1] if applied else None
+
+
+def _patch_log_path(context: ToolContext) -> Path:
+    session_id = context.session_id or "default"
+    return context.workspace / ".local-agent" / "patches" / f"{session_id}.jsonl"

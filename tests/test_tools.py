@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 from local_agent.patch.anchored import hash_text
 from local_agent.tools.base import Tool, ToolContext, ToolRegistry
-from local_agent.tools.files import patch_file, read_file, write_file
+from local_agent.tools.files import patch_file, read_file, rollback_patch, write_file
 from local_agent.tools.git import git_diff
 from local_agent.tools.interaction import ask_user
 from local_agent.tools.search import list_files
@@ -134,6 +134,66 @@ class ToolTests(unittest.TestCase):
         self.assertIn("Patch preview only", result.content)
         self.assertIn("+new", result.content)
         self.assertEqual(persisted, original)
+
+    def test_rollback_patch_restores_latest_patch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            target = workspace / "README.md"
+            original = "old\n"
+            context = ToolContext(workspace=workspace, approval_mode="yolo", session_id="s1")
+            target.write_text(original, encoding="utf-8")
+
+            patch_result = patch_file(
+                {
+                    "path": "README.md",
+                    "tag": hash_text(original),
+                    "start_line": 1,
+                    "end_line": 1,
+                    "old_text": "old",
+                    "new_text": "new",
+                },
+                context,
+            )
+            rollback_result = rollback_patch({}, context)
+            second_rollback = rollback_patch({}, context)
+            persisted = target.read_text(encoding="utf-8")
+
+        self.assertFalse(patch_result.is_error)
+        self.assertIn("Patch id:", patch_result.content)
+        self.assertFalse(rollback_result.is_error)
+        self.assertIn("Rolled back patch", rollback_result.content)
+        self.assertIn("+old", rollback_result.content)
+        self.assertEqual(persisted, original)
+        self.assertTrue(second_rollback.is_error)
+        self.assertIn("No unapplied patch record", second_rollback.content)
+
+    def test_rollback_patch_refuses_when_file_changed_after_patch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            target = workspace / "README.md"
+            original = "old\n"
+            context = ToolContext(workspace=workspace, approval_mode="yolo", session_id="s1")
+            target.write_text(original, encoding="utf-8")
+
+            patch_result = patch_file(
+                {
+                    "path": "README.md",
+                    "tag": hash_text(original),
+                    "start_line": 1,
+                    "end_line": 1,
+                    "old_text": "old",
+                    "new_text": "new",
+                },
+                context,
+            )
+            target.write_text("manual\n", encoding="utf-8")
+            rollback_result = rollback_patch({}, context)
+            persisted = target.read_text(encoding="utf-8")
+
+        self.assertFalse(patch_result.is_error)
+        self.assertTrue(rollback_result.is_error)
+        self.assertIn("Refusing rollback", rollback_result.content)
+        self.assertEqual(persisted, "manual\n")
 
     def test_run_tests_runs_command(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
