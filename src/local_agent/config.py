@@ -77,8 +77,8 @@ def load_config(
     tools_config = _tools_config(file_config)
     raw_approval_mode = (
         approval_mode
-        or file_config.get("approval_mode")
         or tools_config.get("approvalMode")
+        or file_config.get("approval_mode")
         or os.environ.get("AGENT_APPROVAL_MODE")
         or "always-ask"
     )
@@ -111,7 +111,7 @@ def load_config(
     raw_tool_approval = (
         tool_approval
         if tool_approval is not None
-        else file_config.get("tool_approval", tools_config.get("approval", os.environ.get("AGENT_TOOL_APPROVAL")))
+        else tools_config.get("approval", file_config.get("tool_approval", os.environ.get("AGENT_TOOL_APPROVAL")))
     )
     resolved_tool_approval = _tool_approval_map("tool_approval", raw_tool_approval)
     for tool in resolved_auto_approve_tools:

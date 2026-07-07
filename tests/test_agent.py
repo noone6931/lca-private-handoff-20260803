@@ -1,10 +1,10 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
-import json
 
 from local_agent.agent import AgentRuntime
 from local_agent.config import AgentConfig
@@ -311,6 +311,24 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertTrue(any("Earlier conversation was compacted" in m.get("content", "") for m in sent))
         self.assertTrue(any("T1: Finish compaction" in m.get("content", "") for m in sent))
         self.assertFalse(any("T2: Already done" in m.get("content", "") for m in sent))
+
+    def test_session_tool_policy_rejects_unknown_tool_name(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=Path(tmp).resolve(),
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _FinalClient):
+                runtime = AgentRuntime(config, show_tool_logs=False)
+
+        with self.assertRaisesRegex(ValueError, "unknown tool: run_test"):
+            runtime.set_session_tool_policy("run_test", "allow")
 
 
 if __name__ == "__main__":

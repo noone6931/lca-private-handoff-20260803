@@ -251,6 +251,41 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.approval_mode, "write")
         self.assertEqual(config.tool_approval, {"shell": "prompt", "write_file": "deny"})
 
+    def test_tools_config_wins_over_legacy_top_level_approval_settings(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "agent.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "approval_mode": "yolo",
+                        "tool_approval": {"shell": "allow"},
+                        "tools": {
+                            "approvalMode": "write",
+                            "approval": {
+                                "shell": "prompt",
+                                "write_file": "deny",
+                            },
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with patch.dict("os.environ", {"DASHSCOPE_API_KEY": "token"}, clear=True):
+                config = load_config(
+                    config_path=str(config_path),
+                    cwd=tmp,
+                    provider="bailian",
+                    api_base_url=None,
+                    api_key=None,
+                    model=None,
+                    max_steps=None,
+                    budget_seconds=None,
+                    approval_mode=None,
+                )
+
+        self.assertEqual(config.approval_mode, "write")
+        self.assertEqual(config.tool_approval, {"shell": "prompt", "write_file": "deny"})
+
     def test_legacy_approval_mode_aliases_are_normalized(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             with patch.dict("os.environ", {"DASHSCOPE_API_KEY": "token"}, clear=True):

@@ -146,7 +146,7 @@ class AgentRuntime:
         self._tool_context = replace(self._tool_context, approval_mode=normalize_approval_mode(mode))
 
     def set_session_tool_policy(self, tool: str, policy: str) -> None:
-        tool = _validate_runtime_tool_name(tool)
+        tool = self._validate_known_tool_name(tool)
         normalized = policy.strip().lower()
         if normalized == "allow":
             self._session_tool_approval[tool] = "allow_always"
@@ -158,7 +158,14 @@ class AgentRuntime:
             raise ValueError("approval policy must be one of: allow, prompt, deny.")
 
     def reset_session_tool_policy(self, tool: str) -> None:
-        self._session_tool_approval.pop(_validate_runtime_tool_name(tool), None)
+        self._session_tool_approval.pop(self._validate_known_tool_name(tool), None)
+
+    def _validate_known_tool_name(self, tool: str) -> str:
+        normalized = _validate_runtime_tool_name(tool)
+        if not self._registry.has_tool(normalized):
+            known = ", ".join(self._registry.tool_names())
+            raise ValueError(f"unknown tool: {normalized}. Known tools: {known}")
+        return normalized
 
     def _messages_for_model(self) -> list[dict[str, Any]]:
         if self._config.context_char_budget <= 0:

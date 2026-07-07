@@ -13,8 +13,14 @@
 - `src/local_agent/agent.py` 维护当前进程内存态的 session approval policy。
 - `src/local_agent/tools/base.py` 按 config policy、session policy、approval mode 解析审批。
 - `tests/` 已覆盖 config、tool registry 和 REPL 命令路径。
+- 新配置 `tools.approvalMode` / `tools.approval` 优先于旧顶层 `approval_mode` / `tool_approval`，方便迁移时渐进替换旧字段。
+- 配置级 `prompt` / `deny` 是硬护栏；session allow 不能绕过配置级 `prompt`，但 session reject 可以更保守地拒绝。
+- REPL `/approval allow|prompt|deny|reset TOOL` 会校验工具名，避免输错工具名后“看似成功但实际不生效”。
 
-后续增强可以继续考虑命令级 shell permission intent，但第一阶段先按工具名做 session cache key。
+后续增强优先级：
+
+1. approval prompt 支持 deadline/abort，避免同步 `input()` 等待耗尽 `budget_seconds`。
+2. 命令级 shell permission intent；第一阶段先按工具名做 session cache key。
 
 ## 目标模型
 
@@ -85,15 +91,16 @@ export AGENT_TOOL_APPROVAL="run_tests=allow,shell=prompt,write_file=deny"
 ```text
 1. 读取工具 tier：read / state / interaction / write / exec。
 2. 读取 config policy：allow / prompt / deny。
-3. 读取 session policy：allow_always / reject_always。
+3. 读取 session policy：allow_always / prompt / reject_always。
 4. config deny 直接拒绝。
 5. session reject_always 直接拒绝。
-6. session allow_always 直接允许。
-7. config allow 直接允许。
-8. config prompt 强制询问。
-9. approvalMode=yolo 直接允许所有未被显式拒绝或显式 prompt 的工具。
-10. approvalMode=write 自动允许 read/state/interaction/write，exec 询问。
-11. approvalMode=always-ask 自动允许 read/state/interaction，write/exec 询问。
+6. config prompt 强制询问，且不允许 session allow 绕过。
+7. session prompt 强制询问。
+8. session allow_always 直接允许。
+9. config allow 直接允许。
+10. approvalMode=yolo 直接允许所有未被显式拒绝或显式 prompt 的工具。
+11. approvalMode=write 自动允许 read/state/interaction/write，exec 询问。
+12. approvalMode=always-ask 自动允许 read/state/interaction，write/exec 询问。
 ```
 
 危险 shell 命令继续在 `shell.py` 里硬拒绝。即使 approval 允许，也不能执行明显危险命令。
@@ -164,7 +171,7 @@ Allow exec tool 'run_tests'?
 行为：
 
 - `y` / `yes`：只允许本次。
-- `s` / `session`：写入 `session_tool_approval[tool.name] = "allow_always"`，并允许本次。
+- `s` / `session`：写入 `session_tool_approval[tool.name] = "allow_always"`，并允许本次；如果该工具有配置级 `prompt`，则不提供 session allow，仍需每次确认。
 - `n` / `no` / 空输入：拒绝本次。
 - `d` / `deny`：写入 `session_tool_approval[tool.name] = "reject_always"`，并拒绝本次。
 
@@ -198,6 +205,33 @@ def reset_session_tool_policy(self, tool: str) -> None: ...
 
 注意：这里是当前进程内存态，不写全局 config。
 
+## 后续增强：approval prompt deadline / abort
+
+背景：
+
+- OMP 的 `deadline` 是 wall-clock absolute timestamp，等待 permission response 也在同一时间窗口内。
+- OMP 的 ACP permission gate 会把 `requestPermission` 和 abort signal `Promise.race(...)`，deadline 到期可以取消等待。
+- 我们当前 `_interactive_approval_denial_reason()` 使用同步 `input()`，不能被 deadline 主动打断；用户长时间不确认时，可能出现“确认后工具执行成功，但下一次 deadline 检查立刻停止”。
+
+建议实现：
+
+1. 在 `src/local_agent/tools/base.py` 增加 timed stdin helper，可参考 `src/local_agent/tools/interaction.py` 的 `_read_timed_answer()`。
+2. `_interactive_approval_denial_reason()` 根据 `context.deadline_monotonic` 计算剩余秒数。
+3. 如果剩余时间已经小于等于 0，直接返回 “approval cancelled because budget_seconds is exhausted” 之类的拒绝原因。
+4. 如果有剩余时间，用 `select.select([sys.stdin], [], [], timeout)` 等待输入。
+5. 超时无输入时，按取消/拒绝处理，不执行工具。
+6. 保持现有 `y/s/n/d` 行为不变；`s` 写入 `allow_always`，`d` 写入 `reject_always`。
+7. Agent loop 已会把 tool error 回灌；如果 deadline 已过，后续检查会停止并补齐剩余 tool_call。
+
+建议测试：
+
+- `deadline_monotonic` 已过时，write/exec approval 不调用 `input()`，直接拒绝。
+- `select.select` 超时时，approval 返回 tool error。
+- 有输入 `y` 时仍允许本次执行。
+- 有输入 `s` 时写入 `session_tool_approval[tool] = "allow_always"`。
+- 有输入 `d` 时写入 `session_tool_approval[tool] = "reject_always"`。
+- `approval_mode=write` 自动允许 write 的行为不受影响；exec 仍会走 timed approval。
+
 ## 已补的测试
 
 `tests/test_config.py`：
@@ -206,6 +240,7 @@ def reset_session_tool_policy(self, tool: str) -> None: ...
 - `tools.approval` 能从 config 读取。
 - `approvalMode` 支持 `always-ask` / `write` / `yolo`。
 - 旧 `approval_mode=ask` / `auto-read` 仍可用。
+- 新 `tools.approvalMode` / `tools.approval` 优先于旧顶层字段。
 - 旧 `auto_approve_tools` 映射为 `allow`。
 - 显式 `tool_approval.write_file=deny` 不被 `auto_approve_tools` 覆盖。
 - 非法 policy 报错。
@@ -217,11 +252,13 @@ def reset_session_tool_policy(self, tool: str) -> None: ...
 - `tool_approval={"sample_write": "deny"}` 直接拒绝。
 - `approval_mode="write"` 自动允许 write，仍提示 exec。
 - 输入 `s` 后当前 session 后续同工具不再提示。
+- 配置级 `prompt` 不被 session allow 覆盖。
 - 输入 `d` 后当前 session 后续同工具直接拒绝。
 
 `tests/test_cli.py`：
 
 - REPL `/approval ...` 命令能更新运行时内存态。
+- REPL `/approval ... TOOL` 会拒绝未知工具名。
 
 ## 文档更新
 

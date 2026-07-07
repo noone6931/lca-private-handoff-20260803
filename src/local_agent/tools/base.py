@@ -57,6 +57,12 @@ class ToolRegistry:
     def schemas(self) -> list[dict[str, Any]]:
         return [tool.openai_schema() for tool in self._tools.values()]
 
+    def has_tool(self, name: str) -> bool:
+        return name in self._tools
+
+    def tool_names(self) -> tuple[str, ...]:
+        return tuple(sorted(self._tools))
+
     def execute(self, name: str, raw_arguments: str | dict[str, Any], context: ToolContext) -> ToolResult:
         tool = self._tools.get(name)
         if tool is None:
@@ -81,14 +87,14 @@ def _approval_denial_reason(tool: Tool, context: ToolContext) -> str | None:
         return f"Tool '{tool.name}' is denied by tool_approval policy."
     if session_policy == "reject_always":
         return f"Tool '{tool.name}' is denied by session approval policy."
-    if session_policy == "allow_always":
-        return None
+    if config_policy == "prompt":
+        return _interactive_approval_denial_reason(tool, context, allow_session_cache=False)
     if session_policy == "prompt":
         return _interactive_approval_denial_reason(tool, context)
+    if session_policy == "allow_always":
+        return None
     if config_policy == "allow":
         return None
-    if config_policy == "prompt":
-        return _interactive_approval_denial_reason(tool, context)
     if _approval_mode(context.approval_mode) == "yolo":
         return None
     if config_policy is None and tool.name in context.auto_approve_tools:
@@ -101,7 +107,12 @@ def _approval_denial_reason(tool: Tool, context: ToolContext) -> str | None:
     return _interactive_approval_denial_reason(tool, context)
 
 
-def _interactive_approval_denial_reason(tool: Tool, context: ToolContext) -> str | None:
+def _interactive_approval_denial_reason(
+    tool: Tool,
+    context: ToolContext,
+    *,
+    allow_session_cache: bool = True,
+) -> str | None:
     if not sys.stdin.isatty():
         return (
             f"Tool '{tool.name}' requires approval, but stdin is not interactive. "
@@ -109,19 +120,23 @@ def _interactive_approval_denial_reason(tool: Tool, context: ToolContext) -> str
             "or use --approval-mode yolo only in a trusted workspace."
         )
     try:
-        answer = input(
-            f"Allow {tool.tier} tool '{tool.name}'?\n"
-            "[y] once / [s] always this session / [n] reject / [d] reject this session: "
-        ).strip().lower()
+        if allow_session_cache:
+            prompt = (
+                f"Allow {tool.tier} tool '{tool.name}'?\n"
+                "[y] once / [s] always this session / [n] reject / [d] reject this session: "
+            )
+        else:
+            prompt = f"Allow {tool.tier} tool '{tool.name}'? [y/N] "
+        answer = input(prompt).strip().lower()
     except EOFError:
         return f"Tool '{tool.name}' requires approval, but stdin closed before a decision."
     if answer in {"y", "yes"}:
         return None
-    if answer in {"s", "session", "always"}:
+    if allow_session_cache and answer in {"s", "session", "always"}:
         if context.session_tool_approval is not None:
             context.session_tool_approval[tool.name] = "allow_always"
         return None
-    if answer in {"d", "deny", "reject_always"}:
+    if allow_session_cache and answer in {"d", "deny", "reject_always"}:
         if context.session_tool_approval is not None:
             context.session_tool_approval[tool.name] = "reject_always"
         return f"User denied tool execution for this session: {tool.name}"

@@ -15,10 +15,10 @@ python3 scripts/sync_project_excel.py
 | 字段 | 当前值 | 说明 |
 |---|---|---|
 | 最终目标 | 个人本地编程助手 Agent | 本地优先、封闭 VM 可用、只访问指定 AI API，能读代码、搜代码、改代码、跑测试、生成 diff、沉淀项目记忆。 |
-| 当前阶段 | P5：安全与恢复增强 MVP 完成 | Context compaction、synthetic tool result、patch preview、rollback、ask_user timeout 和 OMP 风格 approval model 已完成；下一步做真实任务压测。 |
+| 当前阶段 | P5：安全与恢复增强 MVP 完成，继续补体验缺口 | Context compaction、synthetic tool result、patch preview、rollback、ask_user timeout 和 OMP 风格 approval model 已完成；下一步优先做 T-024 approval prompt deadline/abort，然后真实任务压测。 |
 | 推荐入口 | `./agent "阅读当前项目"` | 自动设置 `PYTHONPATH=src`，默认当前目录为 workspace。 |
 | Token 配置 | `.env` 或环境变量 | `.env` 可写 `DASHSCOPE_API_KEY=...`，该文件已被 `.gitignore` 忽略。 |
-| 测试数 | 79 | 完整 unittest 通过；compileall 通过。 |
+| 测试数 | 82 | 完整 unittest 通过；compileall 通过。 |
 | 默认 budget_seconds | 600 | 单次任务默认 10 分钟墙钟预算；`--budget-seconds 0` 可关闭。 |
 | 默认 max_steps | 0 | 表示不限步；仅在用户显式设置时作为防失控保险丝。 |
 | 预算执行 | 细粒度 | LLM 请求和 shell/run_tests timeout 会按剩余预算夹紧；deadline 到期会补齐未执行工具结果。 |
@@ -39,7 +39,7 @@ python3 scripts/sync_project_excel.py
 | P2 | 项目管理与可见性 | 项目状态、路线图、todo、决策记录一目了然 | 已完成 | 100% | Excel + Markdown 项目状态已建立。 |
 | P3 | 长任务运行基础 | budget_seconds、max_steps 不限步、todo、ask_user、per-tool approval、一键启动 | 已完成 | 100% | 已具备真实需求的基础运行体验。 |
 | P4 | 上下文治理 | 简单 summary/compaction，工具输出折叠，支持长需求文件 | 已完成 MVP 版 | 100% | 下一步按 OMP 风格升级 token 预算、输出 reserve、recent 保留和可选 LLM summary。 |
-| P5 | 安全与恢复增强 | synthetic tool result、patch preview、rollback、ask_user timeout、per-tool approval | 已完成 MVP 版 | 100% | 已覆盖 deadline、用户中断、length 截断、patch preview、rollback、ask_user timeout、approval mode、session decision 和 REPL 命令。 |
+| P5 | 安全与恢复增强 | synthetic tool result、patch preview、rollback、ask_user timeout、per-tool approval | 已完成 MVP 版，继续增强 | 100% | 已覆盖 deadline、用户中断、length 截断、patch preview、rollback、ask_user timeout、approval mode、session decision 和 REPL 命令；下一步补 approval prompt deadline/abort。 |
 | P6 | 高级工程能力 | LSP、TUI、subagents、reviewer、AST edit、DAP | 暂缓 | 0% | 日用闭环稳定后再评估。 |
 
 ## 已完成功能
@@ -75,8 +75,8 @@ python3 scripts/sync_project_excel.py
 | Patch preview | 已完成 | `apply_patch dry_run=true` | 复用 anchored 校验并返回 diff，不写文件 | 后续评估 rollback |
 | Patch rollback | 已完成 MVP 版 | `rollback_patch` | 校验当前文件 hash 后恢复 patch 前内容 | 继续真实任务验证 |
 | ask_user timeout | 已完成 | `timeout_seconds` / `default_answer` / budget 剩余时间 | 长任务无人响应时可以继续或明确失败 | 继续真实任务验证 |
-| Tool approval policy | 已完成 | `tool_approval` + `session_tool_approval` | config deny 最强，session allow/reject 可记住当前会话，prompt 可强制询问 | 继续真实任务验证 |
-| 测试覆盖 | 已完成 | 当前 79 个测试通过 | unittest + compileall 通过 | 继续补真实任务压测 |
+| Tool approval policy | 已完成 MVP 版 | `tool_approval` + `session_tool_approval` | config deny/prompt 是硬护栏，session allow/reject 可记住当前会话，REPL 会校验工具名 | 下一步补 approval prompt deadline/abort，避免同步 `input()` 等待耗尽预算 |
+| 测试覆盖 | 已完成 | 当前 82 个测试通过 | unittest + compileall 通过 | 继续补真实任务压测 |
 
 ## 下一步 Todo
 
@@ -105,6 +105,8 @@ python3 scripts/sync_project_excel.py
 | T-021 | P1 | P5 | 实现 ask_user timeout/default | 已完成 | Agent | 防止长任务等待用户输入时无限阻塞 | `ask_user` 支持 timeout/default，并受 budget 剩余时间约束 |
 | T-022 | P1 | P5 | 实现 tool_approval allow/prompt/deny | 已完成 | Agent | 白名单不够表达显式拒绝和强制询问 | `--tool-approval` / `AGENT_TOOL_APPROVAL` 支持每工具策略 |
 | T-023 | P1 | P5 | 实现 approvalMode / session decision / REPL 命令 | 已完成 | Agent | 对齐 OMP 三层审批模型的本地 MVP | 支持 `always-ask` / `write` / `yolo`、`s/d` 会话记忆、`/approval` 命令 |
+| T-024 | P1 | P5 | approval prompt 支持 deadline/abort | 待办 | Agent | 人工确认等待也消耗 wall-clock budget，当前 `input()` 不能被 deadline 打断 | 对齐 OMP：权限请求受 abort signal 控制；超时自动取消/拒绝，并补齐 tool result |
+| T-025 | P1 | P5 | 修复 approval 优先级和工具名校验 | 已完成 | Agent | 避免新 `tools.*` 被旧顶层字段静默覆盖、config prompt 被 session allow 绕过、REPL 工具名输错后假成功 | 新配置优先于旧字段；config prompt/deny 是硬护栏；REPL 校验未知工具名 |
 
 ## 风险与决策
 
@@ -119,6 +121,7 @@ python3 scripts/sync_project_excel.py
 | 风险 | R-007 | 中 | Prompt injection | 开放 | 文档提示；不信任仓库禁用 yolo | OMP 将仓库 context 视为 advisory，并靠 approval/yolo 策略限制工具权限；我们默认不信任仓库内容，危险工具需确认。 |
 | 风险 | R-008 | 中 | P3/P4 变更尚未提交 | 已关闭 | P3 提交 `304fbdf`，P4 提交 `4beb487` | OMP 持久化 session 和 compaction 以支持恢复，但代码里程碑仍要靠 VCS；我们继续阶段性 commit 固化节点。 |
 | 风险 | R-009 | 中 | ask_user 会阻塞等待用户 | 已缓解 | 已支持 timeout/default，并自动受剩余 budget 约束 | OMP 的 approval/elicitation 可以被拒绝或取消并回灌结果；我们给 `ask_user` 加 timeout/default，支持无人值守场景。 |
+| 风险 | R-010 | 中 | approval prompt 等待耗尽预算 | 开放 | 当前 `input()` 等待期间会消耗 `budget_seconds`，确认后可能立刻停止；后续补 deadline/abort 型 approval prompt | OMP 的 deadline 是 wall-clock absolute timestamp；但 ACP permission gate 会把 `requestPermission` 和 abort signal 竞争，deadline 到期可取消等待。 |
 | ADR | ADR-001 | 2026-07-07 | 不照搬 OMP，只借鉴能力类型和边界 | 已接受 | 每个能力做简化版 | OMP 是平台型 Agent，能力面很宽；我们只借主循环、deadline、compaction、approval、memory 等边界，逐个做简化版。 |
 | ADR | ADR-002 | 2026-07-07 | max_steps 只作为防失控保险丝 | 已落地 | 默认值已改为 0，不限步 | OMP 的 stepCounter 主要用于 telemetry，终止靠无 tool_calls、deadline、abort；我们把 `max_steps` 仅作为显式保险丝。 |
 | ADR | ADR-003 | 2026-07-07 | todo、ask_user、per-tool approval 是主功能 | 已落地 | P3 已实现 | OMP 将 todo、approval、elicitation 做成可观测会话能力；我们 P3 先做终端轻量版，后续再补 UI 化。 |

@@ -78,12 +78,24 @@ deadline 到期则 endAgentStream(...)
 外部 abort 也会进入统一收尾路径
 ```
 
+这里的 `deadline` 是 wall-clock deadline。也就是说，等待模型、执行工具、等待外部 abort/permission response 都在同一个绝对时间窗口内。OMP 不把 deadline 设计成“只统计模型和工具实际运行耗时”的 active budget。
+
+OMP 的实现差异在于：deadline 到期会触发 `AbortController`，并把 abort signal 传入后续 LLM / tool / permission gate。ACP client 权限门里的 `requestPermission` 会和 abort signal `Promise.race(...)`，因此用户长时间不点权限时，请求可以被 deadline 取消，而不是等用户回来点完才发现过期。
+
 我们项目对应设计：
 
 - `--budget-seconds` 转换成运行时 deadline；
 - 每次模型调用前检查；
 - 不在一组 tool calls 中间随意截断，避免留下不配对的 tool result；
 - 后续补 synthetic tool result 后，可以更精细地处理中断中的 tool calls。
+
+当前差异 / 后续优化：
+
+- 我们当前的终端 approval prompt 使用同步 `input()`；
+- `input()` 等待期间同样消耗 wall-clock budget；
+- 但它不能像 OMP 的 ACP permission gate 那样被 deadline/abort signal 主动取消；
+- 因此用户长时间未确认时，可能出现“确认后工具执行成功，但下一次 deadline 检查立刻停止”的体验；
+- 建议把 approval prompt 改造成带 timeout/abort 的交互：deadline 到期自动拒绝或取消，并补 synthetic tool result。
 
 ## Context Compaction
 
@@ -162,6 +174,7 @@ OMP 另有一条 ACP client 权限门：
 
 - 只在 ACP client 连接并暴露 `requestPermission` 能力时启用；
 - 默认 gate 的工具是 `bash`、`edit`、`delete`、`move`；
+- `requestPermission` 会接收 abort signal，并与 abort promise 竞争；
 - 提示选项包括 `Allow once`、`Always allow`、`Reject`、`Always reject`；
 - `Always allow` / `Always reject` 写入当前 `AgentSession` 的内存 Map：`#acpPermissionDecisions`；
 - 这个 Map 是 session 内存态，不是全局配置；
@@ -173,6 +186,8 @@ OMP 另有一条 ACP client 权限门：
 - 已补 `tool_approval` 配置，支持每个工具 `allow` / `prompt` / `deny`；
 - 保留旧的 `--auto-approve-tools`，并兼容映射成 `tool_approval.<tool>=allow`；
 - 交互式终端可以补 `once / session / no`，其中 `session` 写入运行时内存态，不落全局配置；
+- 本地版把 config `prompt` / `deny` 视为硬护栏，session allow 不绕过 config prompt，避免“强制询问”被误关；
+- 终端 approval prompt 后续应支持 deadline timeout / abort，避免同步 `input()` 长时间占满 `budget_seconds`；
 - 危险 shell 规则可以比 OMP 更保守：我们本地版可继续硬拒绝明显危险命令，避免 `yolo` 绕过。
 
 ## 病态循环上限

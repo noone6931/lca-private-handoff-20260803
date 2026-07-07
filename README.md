@@ -123,7 +123,7 @@ local-agent "帮我找一下测试失败原因"
   "跑测试并总结结果"
 ```
 
-策略含义：`allow` 直接允许，`prompt` 强制询问，`deny` 直接拒绝。显式 `tool_approval` 会优先于旧的 `--auto-approve-tools`。
+策略含义：`allow` 直接允许，`prompt` 强制询问，`deny` 直接拒绝。显式 `tool_approval` 会优先于旧的 `--auto-approve-tools`，其中 `prompt` / `deny` 是配置级护栏，不会被会话内 always allow 绕过。
 
 `write` 模式会自动允许 `read` / `state` / `interaction` / `write` 工具，`exec` 工具仍会询问。`yolo` 模式默认允许全部工具，但 `tool_approval` 中的 `prompt` / `deny` 仍会生效，危险 shell 命令也仍会被硬拒绝。
 
@@ -137,6 +137,8 @@ REPL 中可以临时调整当前会话的权限：
 /approval deny write_file
 /approval reset shell
 ```
+
+`/approval` 命令会校验工具名，输错工具名会直接提示错误。
 
 ## 会话恢复
 

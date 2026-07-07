@@ -434,6 +434,31 @@ class ToolTests(unittest.TestCase):
         self.assertEqual(session_policy, {"sample_exec": "allow_always"})
         self.assertEqual(ask.call_count, 1)
 
+    def test_config_prompt_is_not_overridden_by_session_allow(self) -> None:
+        registry = ToolRegistry(
+            [
+                Tool(
+                    name="sample_exec",
+                    description="sample exec",
+                    tier="exec",
+                    input_schema={"type": "object", "properties": {}, "additionalProperties": False},
+                    handler=lambda args, context: type("Result", (), {"content": "ok", "is_error": False})(),
+                )
+            ]
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            context = ToolContext(
+                workspace=Path(tmp).resolve(),
+                approval_mode="yolo",
+                tool_approval={"sample_exec": "prompt"},
+                session_tool_approval={"sample_exec": "allow_always"},
+            )
+            with patch("sys.stdin.isatty", return_value=False):
+                result = registry.execute("sample_exec", "{}", context)
+
+        self.assertTrue(result.is_error)
+        self.assertIn("requires approval", result.content)
+
     def test_session_deny_answer_blocks_same_tool_without_reprompt(self) -> None:
         registry = ToolRegistry(
             [

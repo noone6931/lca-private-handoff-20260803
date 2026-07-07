@@ -30,7 +30,7 @@
 
 ## 当前进度
 
-当前项目处于 P5 阶段：基础 Agent 能力、项目管理基线、长任务时间预算、todo、ask_user、per-tool approval、最小版本地 context compaction、synthetic tool result、patch preview/rollback 和 OMP 风格 approval model 都已经具备；下一步做真实任务压测。
+当前项目处于 P5 阶段：基础 Agent 能力、项目管理基线、长任务时间预算、todo、ask_user、per-tool approval、最小版本地 context compaction、synthetic tool result、patch preview/rollback 和 OMP 风格 approval model 都已经具备；下一步优先补 approval prompt deadline/abort，然后做真实任务压测。
 
 已具备的核心能力：
 
@@ -43,7 +43,7 @@
 - `apply_patch` 已支持 `replace`、`insert_before`、`insert_after`，并兼容 Python 3.12。
 - 非交互审批、LLM 非 JSON 响应、session 恢复坏尾部、search_code 绝对路径泄漏等问题已经修复。
 - 已完成 Agent 自举测试：能够通过百炼模型调用工具读取、修改、测试和查看 diff。
-- 测试基线：79 个测试在正常本地环境通过。
+- 测试基线：82 个测试在正常本地环境通过。
 
 当前已具备：
 
@@ -60,7 +60,8 @@
 真实缺口：
 
 - 当前 compaction 是本地确定性摘要，不调用 LLM 做语义总结。
-- 还没有基于模型 context window 的 token 级阈值。
+- 还没有基于模型 context window 的 token 预算、输出 reserve 和 LLM summary。
+- 当前 approval prompt 是同步 `input()`，用户长时间不确认会消耗 wall-clock budget，且不能被 deadline 主动取消。
 - provider 请求失败发生在 assistant tool_call 之前，当前会以 `LlmError` 停止；后续可继续优化用户提示。
 
 ## 阶段路线图
@@ -72,7 +73,7 @@
 | P2 | 项目管理与可见性 | 已完成 | 建立 Excel + Markdown 项目状态，让目标、进度、风险、Todo 一目了然。 |
 | P3 | 长任务运行基础 | 已完成 | 引入 deadline / budget-seconds、提高 max_steps 兜底值、todo、ask_user、per-tool approval。 |
 | P4 | 上下文治理 | 已完成 MVP 版 | 初版 summary / compaction、工具输出折叠、长需求文件工作流。 |
-| P5 | 安全与恢复增强 | 已完成 MVP 版 | synthetic tool result、patch preview、回滚策略、非信任仓库提示、OMP 风格 approval model。 |
+| P5 | 安全与恢复增强 | 已完成 MVP 版，继续增强 | synthetic tool result、patch preview、回滚策略、非信任仓库提示、OMP 风格 approval model；下一步补 approval prompt deadline/abort。 |
 | P6 | 高级工程能力 | 暂缓 | LSP、DAP、TUI、subagents、reviewer、AST edit 等能力后置评估。 |
 
 ## 已完成功能
@@ -103,7 +104,7 @@
 | 不限步主循环 | 已完成 | `max_steps=0` 表示不限步，任务主要靠 `budget_seconds` 控制。 |
 | Todo 工具 | 已完成 | `todo_read`、`todo_add`、`todo_update` 维护 session 级任务清单。 |
 | 用户澄清工具 | 已完成 | `ask_user` 可在交互式终端中向用户提问，支持超时、默认答案和 budget 上限。 |
-| Per-tool approval | 已完成 | 支持 `always-ask` / `write` / `yolo`、`--tool-approval`、旧白名单兼容映射、REPL session 权限命令。 |
+| Per-tool approval | 已完成 | 支持 `always-ask` / `write` / `yolo`、`--tool-approval`、旧白名单兼容映射、config prompt/deny 硬护栏和 REPL 工具名校验。 |
 | OMP 核心架构笔记 | 已完成 | `docs/omp-core-architecture-notes.md` 固化 OMP 主循环、deadline、compaction、stepCounter 结论。 |
 | 本地 Context Compaction | 已完成 | 超过 `context_char_budget` 时折叠早期历史，保留最近消息，并注入未完成 todo。 |
 | Synthetic Tool Result | 已完成 MVP 版 | deadline 到期、用户中断、`finish_reason=length` 时会补齐剩余 tool_call 的 tool result。 |
@@ -133,13 +134,15 @@
 | T-018 | ask_user timeout / default | 已完成 | P5 | `ask_user` 支持 `timeout_seconds`、`default_answer`，并受当前 budget 剩余时间约束。 |
 | T-019 | tool_approval allow / prompt / deny | 已完成 | P5 | 支持配置每个工具 allow、prompt、deny；旧 auto approve 白名单兼容映射为 allow。 |
 | T-020 | approvalMode / session decision / REPL commands | 已完成 | P5 | 支持 `always-ask` / `write` / `yolo`、session allow/reject always、REPL `/approval` 命令。 |
+| T-021 | approval prompt deadline / abort | 待办 | P5 | 当前终端 `input()` 等待会消耗 wall-clock budget 且不能被 deadline 主动取消；后续对齐 OMP 的 abortable permission gate。 |
+| T-022 | approval 优先级和工具名校验修复 | 已完成 | P5 | 新 `tools.*` 配置优先于旧顶层字段；config prompt/deny 不被 session allow 绕过；REPL 未知工具名会报错。 |
 
 ## 风险清单
 
 | ID | 风险 | 状态 | 影响 | 应对 |
 |---|---|---|---|---|
 | R-001 | 仓库没有初始 commit | 已关闭 | 后续修改缺少稳定回滚基线。 | 已创建初始 commit。 |
-| R-002 | 长任务上下文持续膨胀 | 已缓解 | 多轮工具调用后 token 成本和失败率上升。 | 已增加本地 context compaction；后续再做 token 级阈值和更强摘要。 |
+| R-002 | 长任务上下文持续膨胀 | 继续增强 | 多轮工具调用后 token 成本和失败率上升。 | 已增加本地 context compaction；后续按 OMP 风格补 token 预算、输出 reserve 和可选 LLM summary。 |
 | R-003 | 没有 todo 工具 | 已关闭 | 长需求中不容易追踪完成项和遗漏项。 | 已增加 session 级 todo 工具。 |
 | R-004 | 没有 ask_user 工具 | 已关闭 | 遇到歧义时模型只能猜。 | 已增加 ask_user 工具。 |
 | R-005 | ask 模式确认次数多 | 已缓解 | 日用体验偏慢。 | 已增加 per-tool approval 白名单和 allow / prompt / deny 策略；默认仍保持谨慎。 |
@@ -147,6 +150,7 @@
 | R-007 | 恶意仓库 prompt injection | 开放 | 文件内容可能诱导模型执行不安全操作。 | 不信任仓库禁用 `yolo`，保留人工审批。 |
 | R-008 | 中断时 tool_call 配对仍可增强 | 已关闭 MVP 版 | 恢复会话时可能遇到兼容性问题。 | deadline、用户中断和输出截断已补齐。 |
 | R-009 | ask_user 会阻塞等待用户 | 已缓解 | 带预算的长任务如果触发 ask_user，会等待人工输入。 | 已支持 `timeout_seconds` / `default_answer`，并自动受剩余 budget 约束。 |
+| R-010 | approval prompt 等待耗尽预算 | 开放 | 用户长时间不确认工具调用时，确认后工具可能执行成功，但下一次 deadline 检查立刻停止。 | OMP 使用 wall-clock deadline，但 permission gate 可被 abort signal 取消；本地版后续补 timeout/abort 型 approval prompt。 |
 
 ## 架构决策
 
@@ -187,13 +191,16 @@
 - 需要允许写文件但继续管住命令执行时，可以使用 `write`。
 - `read`、`state`、`interaction` tier 工具默认不额外审批；当前 `state` 用于 session todo，`interaction` 用于 `ask_user`。
 - `yolo` 只用于完全可信仓库和封闭 VM。
-- `--tool-approval tool=allow|prompt|deny` 可覆盖单个工具；REPL 中可用 `/approval` 临时调整当前会话策略。
+- `--tool-approval tool=allow|prompt|deny` 可覆盖单个工具；`prompt` / `deny` 是配置级护栏，不被 session allow 绕过；REPL 中可用 `/approval` 临时调整当前会话策略。
+- 当前终端 approval prompt 仍是同步输入；长时间不确认会消耗 `budget_seconds`，后续需要改成可被 deadline/abort 取消。
 - shell / run_tests / apply_patch 都应保留可审计日志。
 
 ## P5 开发入口
 
 用户确认本文件后，建议按以下顺序继续：
 
-1. 评估是否需要 LLM summary 或 token 级 compaction 阈值。
-2. 继续用真实需求压测 todo、compaction、preview、rollback 的协同体验。
-3. 根据日用反馈决定是否进入 P6 高级工程能力评估。
+1. 先做 approval prompt deadline/abort（对应 `project-management.md` 的 T-024）：复用 `ask_user` 的 timed stdin 思路，避免同步 `input()` 等待耗尽 `budget_seconds`。
+2. 验证行为：到达 deadline 时自动取消/拒绝 approval，并给未执行 tool_call 补 synthetic result；session `s/d` 仍然生效。
+3. 继续用真实需求压测 todo、compaction、preview、rollback、approval mode 的协同体验。
+4. 后续再做 token 预算、输出 reserve、LLM summary。
+5. 根据日用反馈决定是否进入 P6 高级工程能力评估。
