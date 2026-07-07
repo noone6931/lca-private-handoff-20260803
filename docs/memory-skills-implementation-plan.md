@@ -29,14 +29,14 @@ OMP 的 skills 也有两条路径：
 
 当前 LCA 已有：
 
-- `memory_read` / `memory_write`：写入 `.local-agent/memory/{project,decisions,conventions}.md`。
+- `memory_read` / `memory_write`：写入 `.local-agent/memory/{project,decisions,conventions,learned}.md`。
+- 启动时自动注入 `.local-agent/memory/{project,decisions,conventions,learned}.md`，并标记为 advisory context。
+- `learn` 工具：把可复用 lesson 写入 `.local-agent/memory/learned.md`。
 - deterministic context compaction：用于单个 session 内上下文治理，不等同长期 memory。
-- 工作树中已有 LLM summary 和轻量 Python LSP 的未提交实现痕迹，需 review 和压测后再改状态为完成。
+- OMP 风格 auto summary 和多语言轻量 LSP 已落地。
 
 当前 LCA 还没有：
 
-- 启动时自动注入 Markdown memory。
-- `learn` 工具。
 - skills discovery / skill metadata prompt。
 - managed skills / autolearn。
 - memory backend selector。
@@ -62,19 +62,20 @@ OMP 的 skills 也有两条路径：
 
 ### M1：Markdown Memory 启动注入
 
+状态：已完成 MVP 版。
+
 目标：让 `.local-agent/memory/*.md` 在新 session 启动时进入 system prompt。
 
-建议实现：
+当前实现：
 
-- 新增配置：
-  - `memory_enabled: bool = True`
-  - `memory_injection_char_budget: int = 6000`
+- 固定启用，当前无独立开关。
+- 注入预算为 `STARTUP_MEMORY_CHAR_LIMIT = 8000`。
 - 在 `AgentRuntime.__init__` 构建 system prompt 时读取：
   - `.local-agent/memory/project.md`
   - `.local-agent/memory/decisions.md`
   - `.local-agent/memory/conventions.md`
-  - 后续 M2 的 `.local-agent/memory/learned.md`
-- 注入格式建议：
+  - `.local-agent/memory/learned.md`
+- 注入格式：
 
 ```text
 [Project memory]
@@ -83,34 +84,36 @@ Source: .local-agent/memory/project.md
 ...
 ```
 
-验收标准：
+验收结果：
 
 - 没有 memory 文件时 system prompt 不变化。
-- 有 memory 文件时只注入截断后的内容，并带 source path。
+- 有 memory 文件时注入截断后的内容，并带 source path。
 - memory 明确标记为 advisory。
-- 单测覆盖 budget 截断和多文件合并顺序。
+- 单测覆盖启动注入。
 
 ### M2：Learn 工具
 
+状态：已完成 MVP 版。
+
 目标：用一个更明确的工具沉淀经验，避免把所有长期事实都混进 `project.md`。
 
-建议实现：
+当前实现：
 
 - 新增 `learn` 工具，tier=`write`。
 - 输入：
-  - `memory`: 自包含经验，说明 what / when / why。
-  - `context`: 可选来源上下文。
+  - `lesson`: 自包含经验。
+  - `topic`: 可选主题。
 - 写入 `.local-agent/memory/learned.md`。
-- 每条记录带 UTC 时间、source、context。
-- 每条 content 限制 2000 chars，context 限制 400 chars，文件保留最近 100 条。
-- 对会进入 system prompt 的单行字段做清洗：控制字符、尖括号、反引号、连续 fence。
+- 每条记录带 UTC 时间和 topic。
+- lesson 限制 2000 chars，topic 限制 80 chars。
+- 去除 null 字节；超长内容截断。
 
-验收标准：
+验收结果：
 
 - `learn` 写入可读 Markdown。
 - 空内容拒绝。
 - 超长内容被截断。
-- `memory_enabled` 打开时 learned lessons 会参与 M1 注入。
+- learned lessons 会参与 M1 注入。
 
 ### M3：Memory Consolidation
 
@@ -206,12 +209,9 @@ Read .local-agent/skills/code-review/SKILL.md before using it.
 
 ## 推荐落地顺序
 
-1. Review 当前 LLM summary 和轻量 LSP 未提交实现，跑测试。
-2. 做 M1 memory startup injection。
-3. 做 M2 learn 工具。
-4. 做 M4 authored skills discovery。
-5. 做 M5 managed skills。
-6. 真实项目压测后再考虑 M3 consolidation 和 autolearn autoContinue。
+1. 做 M4 authored skills discovery。
+2. 做 M5 managed skills。
+3. 真实项目压测后再考虑 M3 consolidation 和 autolearn autoContinue。
 
 ## 主要风险
 

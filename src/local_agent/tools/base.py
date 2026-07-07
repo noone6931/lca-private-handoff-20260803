@@ -19,6 +19,7 @@ class ToolResult:
 class ToolContext:
     workspace: Path
     approval_mode: str
+    allowed_dirs: tuple[Path, ...] = ()
     session_id: str | None = None
     auto_approve_tools: tuple[str, ...] = ()
     tool_approval: dict[str, str] | None = None

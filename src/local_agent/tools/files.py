@@ -6,7 +6,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from local_agent.patch.anchored import apply_anchored_patch, hash_text, resolve_workspace_path
+from local_agent.patch.anchored import apply_anchored_patch
+from local_agent.patch.anchored import display_workspace_path
+from local_agent.patch.anchored import hash_text
+from local_agent.patch.anchored import PatchError
+from local_agent.patch.anchored import resolve_workspace_path
 
 from .base import Tool, ToolContext, ToolResult
 
@@ -94,7 +98,10 @@ def file_tools() -> list[Tool]:
 
 
 def read_file(args: dict[str, Any], context: ToolContext) -> ToolResult:
-    path = resolve_workspace_path(context.workspace, args["path"])
+    try:
+        path = resolve_workspace_path(context.workspace, args["path"], context.allowed_dirs)
+    except PatchError as exc:
+        return ToolResult(str(exc), is_error=True)
     if not path.exists() or not path.is_file():
         return ToolResult(f"File not found: {args['path']}", is_error=True)
     file_size = path.stat().st_size
@@ -122,7 +129,7 @@ def read_file(args: dict[str, Any], context: ToolContext) -> ToolResult:
         max_line = start_line + MAX_READ_LINES - 1
 
     lines = text.splitlines()
-    rel = path.relative_to(context.workspace)
+    rel = display_workspace_path(context.workspace, path, context.allowed_dirs)
     rendered = [f"[{rel}#{hash_text(text)}]"]
     for index, line in enumerate(lines, start=1):
         if start_line <= index <= max_line:
@@ -136,7 +143,10 @@ def read_file(args: dict[str, Any], context: ToolContext) -> ToolResult:
 
 
 def patch_file(args: dict[str, Any], context: ToolContext) -> ToolResult:
-    path = resolve_workspace_path(context.workspace, args["path"])
+    try:
+        path = resolve_workspace_path(context.workspace, args["path"], context.allowed_dirs)
+    except PatchError as exc:
+        return ToolResult(str(exc), is_error=True)
     if not path.exists():
         return ToolResult(f"Target file does not exist: {args['path']}", is_error=True)
     before_text = path.read_bytes().decode("utf-8")
@@ -151,6 +161,7 @@ def patch_file(args: dict[str, Any], context: ToolContext) -> ToolResult:
         new_text=args["new_text"],
         mode=args.get("mode") or "replace",
         dry_run=bool(args.get("dry_run")),
+        allowed_roots=context.allowed_dirs,
     )
     if args.get("dry_run"):
         return ToolResult(
@@ -176,7 +187,10 @@ def rollback_patch(args: dict[str, Any], context: ToolContext) -> ToolResult:
             return ToolResult(f"Patch record not found or already rolled back: {patch_id}", is_error=True)
         return ToolResult("No unapplied patch record found for this session.", is_error=True)
 
-    path = resolve_workspace_path(context.workspace, str(record["path"]))
+    try:
+        path = resolve_workspace_path(context.workspace, str(record["path"]), context.allowed_dirs)
+    except PatchError as exc:
+        return ToolResult(str(exc), is_error=True)
     if not path.exists():
         return ToolResult(f"Target file does not exist: {record['path']}", is_error=True)
     current_text = path.read_bytes().decode("utf-8")
@@ -204,7 +218,10 @@ def rollback_patch(args: dict[str, Any], context: ToolContext) -> ToolResult:
 
 
 def write_file(args: dict[str, Any], context: ToolContext) -> ToolResult:
-    path = resolve_workspace_path(context.workspace, args["path"])
+    try:
+        path = resolve_workspace_path(context.workspace, args["path"], context.allowed_dirs)
+    except PatchError as exc:
+        return ToolResult(str(exc), is_error=True)
     if path.exists():
         return ToolResult(
             f"Refusing to overwrite existing file with write_file: {args['path']}. Use apply_patch instead.",
@@ -212,7 +229,7 @@ def write_file(args: dict[str, Any], context: ToolContext) -> ToolResult:
         )
     Path(path.parent).mkdir(parents=True, exist_ok=True)
     path.write_text(args["content"], encoding="utf-8")
-    return ToolResult(f"Wrote {args['path']}")
+    return ToolResult(f"Wrote {display_workspace_path(context.workspace, path, context.allowed_dirs)}")
 
 
 def _record_patch(

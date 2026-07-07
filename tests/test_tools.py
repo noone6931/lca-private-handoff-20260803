@@ -13,6 +13,7 @@ from local_agent.tools.files import file_tools, patch_file, read_file, rollback_
 from local_agent.tools.git import git_diff
 from local_agent.tools.interaction import ask_user
 from local_agent.tools.lsp import lsp_definition, lsp_diagnostics, lsp_references, lsp_symbols
+from local_agent.tools.memory import learn, memory_read
 from local_agent.tools.search import list_files
 from local_agent.tools.search import search_code
 from local_agent.tools.shell import run_shell, run_tests
@@ -229,7 +230,22 @@ class ToolTests(unittest.TestCase):
             )
 
         self.assertTrue(result.is_error)
-        self.assertIn("Path escapes workspace", result.content)
+        self.assertIn("Path escapes workspace and allowed directories", result.content)
+
+    def test_lsp_symbols_can_scan_explicitly_allowed_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace_tmp, tempfile.TemporaryDirectory() as allowed_tmp:
+            workspace = Path(workspace_tmp).resolve()
+            allowed = Path(allowed_tmp).resolve()
+            source = allowed / "ExternalService.java"
+            source.write_text("public class ExternalService {}\n", encoding="utf-8")
+
+            result = lsp_symbols(
+                {"path": str(allowed), "query": "ExternalService"},
+                ToolContext(workspace=workspace, approval_mode="yolo", allowed_dirs=(allowed,)),
+            )
+
+        self.assertFalse(result.is_error)
+        self.assertIn(f"{source}:1:14: class ExternalService", result.content)
 
     def test_read_file_rejects_large_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -241,6 +257,74 @@ class ToolTests(unittest.TestCase):
 
         self.assertTrue(result.is_error)
         self.assertIn("File too large", result.content)
+
+    def test_read_file_can_access_explicitly_allowed_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace_tmp, tempfile.TemporaryDirectory() as allowed_tmp:
+            workspace = Path(workspace_tmp).resolve()
+            allowed = Path(allowed_tmp).resolve()
+            target = allowed / "requirements.md"
+            target.write_text("outside requirement\n", encoding="utf-8")
+
+            result = read_file(
+                {"path": str(target)},
+                ToolContext(workspace=workspace, approval_mode="yolo", allowed_dirs=(allowed,)),
+            )
+
+        self.assertFalse(result.is_error)
+        self.assertIn(str(target), result.content)
+        self.assertIn("outside requirement", result.content)
+
+    def test_read_file_rejects_unallowed_absolute_path(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace_tmp, tempfile.TemporaryDirectory() as outside_tmp:
+            workspace = Path(workspace_tmp).resolve()
+            target = Path(outside_tmp).resolve() / "secret.md"
+            target.write_text("secret\n", encoding="utf-8")
+
+            result = read_file({"path": str(target)}, ToolContext(workspace=workspace, approval_mode="yolo"))
+
+        self.assertTrue(result.is_error)
+        self.assertIn("Path escapes workspace and allowed directories", result.content)
+
+    def test_list_files_returns_absolute_paths_for_allowed_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace_tmp, tempfile.TemporaryDirectory() as allowed_tmp:
+            workspace = Path(workspace_tmp).resolve()
+            allowed = Path(allowed_tmp).resolve()
+            target = allowed / "requirements.md"
+            target.write_text("outside requirement\n", encoding="utf-8")
+
+            result = list_files(
+                {"path": str(allowed)},
+                ToolContext(workspace=workspace, approval_mode="yolo", allowed_dirs=(allowed,)),
+            )
+
+        self.assertFalse(result.is_error)
+        self.assertIn(str(target), result.content)
+
+    def test_patch_file_can_edit_explicitly_allowed_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace_tmp, tempfile.TemporaryDirectory() as allowed_tmp:
+            workspace = Path(workspace_tmp).resolve()
+            allowed = Path(allowed_tmp).resolve()
+            target = allowed / "requirements.md"
+            original = "old requirement\n"
+            target.write_text(original, encoding="utf-8")
+            context = ToolContext(workspace=workspace, approval_mode="yolo", allowed_dirs=(allowed,))
+
+            result = patch_file(
+                {
+                    "path": str(target),
+                    "tag": hash_text(original),
+                    "start_line": 1,
+                    "end_line": 1,
+                    "old_text": "old requirement",
+                    "new_text": "new requirement",
+                },
+                context,
+            )
+            persisted = target.read_text(encoding="utf-8")
+
+        self.assertFalse(result.is_error)
+        self.assertIn("+new requirement", result.content)
+        self.assertEqual(persisted, "new requirement\n")
 
     def test_read_file_truncates_long_outputs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -873,6 +957,20 @@ class ToolTests(unittest.TestCase):
         self.assertFalse(read.is_error)
         self.assertIn("[done] T1: Wire budget seconds", read.content)
         self.assertIn("covered by tests", read.content)
+
+    def test_learn_writes_learned_memory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            context = ToolContext(workspace=workspace, approval_mode="yolo")
+
+            learned = learn({"topic": "tests", "lesson": "Run focused tests before full tests."}, context)
+            read = memory_read({"name": "learned"}, context)
+
+        self.assertFalse(learned.is_error)
+        self.assertIn(".local-agent/memory/learned.md", learned.content)
+        self.assertFalse(read.is_error)
+        self.assertIn("tests", read.content)
+        self.assertIn("Run focused tests before full tests.", read.content)
 
     def test_ask_user_non_interactive_returns_tool_error(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

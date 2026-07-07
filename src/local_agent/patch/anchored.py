@@ -23,8 +23,14 @@ def hash_text(text: str) -> str:
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:8]
 
 
-def format_tagged_read(path: Path, workspace: Path, text: str, start_line: int = 1) -> str:
-    rel = path.relative_to(workspace)
+def format_tagged_read(
+    path: Path,
+    workspace: Path,
+    text: str,
+    start_line: int = 1,
+    allowed_roots: tuple[Path, ...] = (),
+) -> str:
+    rel = display_workspace_path(workspace, path, allowed_roots)
     tag = hash_text(text)
     lines = text.splitlines()
     rendered = [f"[{rel}#{tag}]"]
@@ -45,10 +51,11 @@ def apply_anchored_patch(
     new_text: str,
     mode: str = "replace",
     dry_run: bool = False,
+    allowed_roots: tuple[Path, ...] = (),
 ) -> PatchResult:
     if mode not in PATCH_MODES:
         raise PatchError(f"Invalid patch mode: {mode}. Use one of: {', '.join(sorted(PATCH_MODES))}.")
-    target = resolve_workspace_path(workspace, path)
+    target = resolve_workspace_path(workspace, path, allowed_roots)
     if not target.exists():
         raise PatchError(f"Target file does not exist: {path}")
     raw_original = target.read_bytes().decode("utf-8")
@@ -120,13 +127,58 @@ def _apply_patch_mode(
     raise PatchError(f"Invalid patch mode: {mode}.")
 
 
-def resolve_workspace_path(workspace: Path, raw_path: str) -> Path:
-    candidate = (workspace / raw_path).resolve()
+def resolve_workspace_path(
+    workspace: Path,
+    raw_path: str,
+    allowed_roots: tuple[Path, ...] = (),
+) -> Path:
+    candidate = Path(raw_path).expanduser()
+    if candidate.is_absolute():
+        candidate = candidate.resolve()
+    else:
+        candidate = (workspace / candidate).resolve()
+    if _is_under_any_root(candidate, _normalized_roots(workspace, allowed_roots)):
+        return candidate
+    raise PatchError(f"Path escapes workspace and allowed directories: {raw_path}")
+
+
+def display_workspace_path(
+    workspace: Path,
+    path: Path,
+    allowed_roots: tuple[Path, ...] = (),
+) -> str:
+    resolved = path.resolve()
+    workspace = workspace.resolve()
     try:
-        candidate.relative_to(workspace)
-    except ValueError as exc:
-        raise PatchError(f"Path escapes workspace: {raw_path}") from exc
-    return candidate
+        return str(resolved.relative_to(workspace))
+    except ValueError:
+        pass
+    for root in _normalized_roots(workspace, allowed_roots)[1:]:
+        try:
+            resolved.relative_to(root)
+            return str(resolved)
+        except ValueError:
+            continue
+    return str(resolved)
+
+
+def _normalized_roots(workspace: Path, allowed_roots: tuple[Path, ...]) -> tuple[Path, ...]:
+    roots = [workspace.resolve()]
+    for root in allowed_roots:
+        resolved = root.expanduser().resolve()
+        if resolved not in roots:
+            roots.append(resolved)
+    return tuple(roots)
+
+
+def _is_under_any_root(path: Path, roots: tuple[Path, ...]) -> bool:
+    for root in roots:
+        try:
+            path.relative_to(root)
+            return True
+        except ValueError:
+            continue
+    return False
 
 
 def _normalize_to_match_existing(text: str, existing: str) -> str:

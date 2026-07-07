@@ -26,6 +26,7 @@ class AgentConfig:
     api_key: str
     model: str
     workspace: Path
+    allowed_dirs: tuple[Path, ...] = ()
     max_steps: int = DEFAULT_MAX_STEPS
     budget_seconds: int | None = DEFAULT_BUDGET_SECONDS
     request_timeout: int = 120
@@ -53,6 +54,7 @@ def load_config(
     context_char_budget: int | None = None,
     context_recent_messages: int | None = None,
     summary_mode: str | None = None,
+    allowed_dirs: object | None = None,
 ) -> AgentConfig:
     file_config = _load_json_config(config_path)
     workspace = Path(cwd or file_config.get("workspace") or os.getcwd()).expanduser().resolve()
@@ -146,6 +148,12 @@ def load_config(
         or "auto"
     )
     resolved_summary_mode = _summary_mode(raw_summary_mode)
+    raw_allowed_dirs = (
+        allowed_dirs
+        if allowed_dirs is not None
+        else file_config.get("allowed_dirs", file_config.get("allow_dirs", os.environ.get("AGENT_ALLOWED_DIRS")))
+    )
+    resolved_allowed_dirs = _path_tuple("allowed_dirs", raw_allowed_dirs, workspace)
 
     if not resolved_api_base_url:
         raise ConfigError("Missing AI_API_BASE_URL.")
@@ -159,6 +167,7 @@ def load_config(
         api_key=resolved_api_key,
         model=resolved_model,
         workspace=workspace,
+        allowed_dirs=resolved_allowed_dirs,
         max_steps=resolved_max_steps,
         budget_seconds=resolved_budget_seconds,
         request_timeout=resolved_request_timeout,
@@ -370,6 +379,36 @@ def _tool_approval_map(name: str, value: object) -> dict[str, str]:
             raise ConfigError(f"{name}.{tool} must be one of: allow, prompt, deny.")
         approvals[tool] = policy
     return approvals
+
+
+def _path_tuple(name: str, value: object, workspace: Path) -> tuple[Path, ...]:
+    if value is None or value == "":
+        return ()
+    if isinstance(value, str):
+        items = [item.strip() for item in value.split(os.pathsep)]
+    elif isinstance(value, list):
+        items = []
+        for item in value:
+            if not isinstance(item, str):
+                raise ConfigError(f"{name} entries must be strings.")
+            items.append(item.strip())
+    else:
+        raise ConfigError(f"{name} must be a {os.pathsep!r}-separated string or a list of strings.")
+
+    paths: list[Path] = []
+    for item in items:
+        if not item:
+            continue
+        path = Path(item).expanduser()
+        if not path.is_absolute():
+            path = workspace / path
+        resolved = path.resolve()
+        if not resolved.exists() or not resolved.is_dir():
+            raise ConfigError(f"{name} entry does not exist or is not a directory: {resolved}")
+        if resolved == workspace or resolved in paths:
+            continue
+        paths.append(resolved)
+    return tuple(paths)
 
 
 def _validate_tool_name(name: str, tool: str) -> None:

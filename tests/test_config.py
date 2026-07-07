@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -35,6 +36,7 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.context_recent_messages, 40)
         self.assertEqual(config.summary_mode, "auto")
         self.assertEqual(config.approval_mode, "always-ask")
+        self.assertEqual(config.allowed_dirs, ())
 
     def test_dashscope_env_auto_selects_bailian(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -476,6 +478,74 @@ class ConfigTests(unittest.TestCase):
                         max_steps=None,
                         budget_seconds=None,
                         approval_mode=None,
+                    )
+
+    def test_allowed_dirs_can_come_from_cli_argument(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            allowed = workspace / "requirements"
+            allowed.mkdir()
+            with patch.dict("os.environ", {"DASHSCOPE_API_KEY": "token"}, clear=True):
+                config = load_config(
+                    config_path=None,
+                    cwd=str(workspace),
+                    provider="bailian",
+                    api_base_url=None,
+                    api_key=None,
+                    model=None,
+                    max_steps=None,
+                    budget_seconds=None,
+                    approval_mode=None,
+                    allowed_dirs=[str(allowed)],
+                )
+
+        self.assertEqual(config.allowed_dirs, (allowed.resolve(),))
+
+    def test_allowed_dirs_can_come_from_env(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            docs = workspace / "docs-outside"
+            specs = workspace / "specs-outside"
+            docs.mkdir()
+            specs.mkdir()
+            with patch.dict(
+                "os.environ",
+                {
+                    "DASHSCOPE_API_KEY": "token",
+                    "AGENT_ALLOWED_DIRS": os.pathsep.join([str(docs), str(specs)]),
+                },
+                clear=True,
+            ):
+                config = load_config(
+                    config_path=None,
+                    cwd=str(workspace),
+                    provider="bailian",
+                    api_base_url=None,
+                    api_key=None,
+                    model=None,
+                    max_steps=None,
+                    budget_seconds=None,
+                    approval_mode=None,
+                )
+
+        self.assertEqual(config.allowed_dirs, (docs.resolve(), specs.resolve()))
+
+    def test_allowed_dirs_reject_missing_directories(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            with patch.dict("os.environ", {"DASHSCOPE_API_KEY": "token"}, clear=True):
+                with self.assertRaisesRegex(RuntimeError, "allowed_dirs entry does not exist"):
+                    load_config(
+                        config_path=None,
+                        cwd=str(workspace),
+                        provider="bailian",
+                        api_base_url=None,
+                        api_key=None,
+                        model=None,
+                        max_steps=None,
+                        budget_seconds=None,
+                        approval_mode=None,
+                        allowed_dirs=[str(workspace / "missing")],
                     )
 
 

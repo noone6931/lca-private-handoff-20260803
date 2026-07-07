@@ -30,7 +30,7 @@
 
 ## 当前进度
 
-当前项目处于 P7 轻量高级能力阶段：P5 的安全与恢复增强 MVP 已收口；P6 默认工作流 MVP 已落地，用户可以用自然语言描述任务，而不是每次手写 `list_files/read_file/dry_run/run_tests/git_diff` 工具顺序。本轮已补 OMP 风格 auto summary 和多语言轻量 LSP 风格工具。
+当前项目处于 P7 轻量高级能力阶段：P5 的安全与恢复增强 MVP 已收口；P6 默认工作流 MVP 已落地，用户可以用自然语言描述任务，而不是每次手写 `list_files/read_file/dry_run/run_tests/git_diff` 工具顺序。本轮已补 OMP 风格 auto summary、多语言轻量 LSP、multi-root `--allow-dir`、Markdown memory 启动注入和 `learn` 工具。
 
 已具备的核心能力：
 
@@ -39,11 +39,11 @@
 - 支持 `bailian` provider，对接阿里云百炼 OpenAI-compatible API。
 - Agent Runtime 已支持工具调用循环。
 - 工具注册、schema 校验、审批模式已经可用。
-- 文件读取、目录浏览、代码搜索、shell、测试、git 状态、git diff、anchored patch、patch rollback、Markdown memory 已经可用。
+- 文件读取、目录浏览、代码搜索、shell、测试、git 状态、git diff、anchored patch、patch rollback、Markdown memory、learn 已经可用。
 - `apply_patch` 已支持 `replace`、`insert_before`、`insert_after`，并兼容 Python 3.12。
 - 非交互审批、LLM 非 JSON 响应、session 恢复坏尾部、search_code 绝对路径泄漏等问题已经修复。
 - 已完成 Agent 自举测试：能够通过百炼模型调用工具读取、修改、测试和查看 diff。
-- 测试基线：106 个测试在正常本地环境通过。
+- 测试基线：116 个测试在正常本地环境通过。
 
 当前已具备：
 
@@ -61,12 +61,14 @@
 - LCA 默认工作流已沉到 system prompt 和 runtime workflow reminder：自然语言代码任务会默认先理解、必要时 todo、修改前读取、patch 写入、修改后测试和 diff。
 - OMP 风格 auto summary 已落地：默认 `--summary-mode auto`，小历史不摘要，超过 reserve 阈值后调用当前 provider 生成语义摘要，失败回退本地摘要；`local` / `llm` 仍可显式指定。
 - 轻量 LSP 风格工具已落地：`lsp_symbols`、`lsp_definition`、`lsp_references`、`lsp_diagnostics`，覆盖 Python、Java、JavaScript、TypeScript、Vue，不启动外部语言服务器。
+- Multi-root workspace 已落地：`--allow-dir` / `AGENT_ALLOWED_DIRS` 可显式授权额外目录给文件、搜索、LSP 和 patch 工具；shell、git、session、todo、memory 仍锚定 `--cwd`。
+- Markdown memory 启动注入已落地：新 session 会读取 `.local-agent/memory/{project,decisions,conventions,learned}.md` 并作为 advisory context 注入。
+- `learn` 工具已落地：可把可复用经验写入 `.local-agent/memory/learned.md`，默认仍按写工具审批。
 - OMP memory / skills / autolearn 设计已核实并形成 LCA 裁剪方案：见 `docs/memory-skills-implementation-plan.md`。
 
 真实缺口：
 
-- 还不支持“需求文档目录 + 代码项目目录”的 multi-root workspace；当前一次任务主要围绕一个 `--cwd`。
-- 当前 Markdown memory 只能手动读写，尚未在新 session 启动时自动注入；也还没有 `learn`、skills discovery、managed skills / autolearn。
+- Authored skills discovery 尚未实现；managed skills / autolearn 继续暂缓。
 - 百炼真实只读压测会话 `20260707T093557800154Z` 已验证：在 `context_char_budget=2500` 的强压缩场景下，模型完成指定 5 个工具调用后停止探索，并按要求输出三句话总结。
 - 百炼真实小改复测会话 `20260707T094246132064Z` 已验证 todo、dry_run、apply_patch、session allow、rollback、run_tests、git_diff 主链路可跑通；最终仅新增一个测试 docstring。
 - 还没有基于模型 context window 的精确 token 预算；当前用字符窗口近似 OMP reserve 策略。
@@ -84,7 +86,7 @@
 | P4 | 上下文治理 | 已完成 MVP 版 | 初版 summary / compaction、工具输出折叠、长需求文件工作流。 |
 | P5 | 安全与恢复增强 | 已完成并收口 | synthetic tool result、patch preview、回滚策略、非信任仓库提示、OMP 风格 approval model、approval prompt deadline cancel；真实小改复测通过。 |
 | P6 | 日用体验与默认工作流固化 | 已完成 MVP 版 | OMP 默认工作流本地化：system prompt、工具描述、轻量 runtime nudge。 |
-| P7 | 高级工程能力轻量版 | 进行中 | 已完成 OMP 风格 auto summary 与多语言轻量 LSP 工具；已补 Memory / Skills 设计；DAP、TUI、subagents、reviewer、AST edit、managed skills 继续后置。 |
+| P7 | 高级工程能力轻量版 | 进行中 | 已完成 OMP 风格 auto summary、多语言轻量 LSP、multi-root、Markdown memory 启动注入和 learn；Authored skills discovery、DAP、TUI、subagents、reviewer、AST edit、managed skills 继续后置。 |
 
 ## 已完成功能
 
@@ -121,9 +123,12 @@
 | OMP 风格 Auto Summary | 已完成 MVP 版 | 默认 `--summary-mode auto`；小历史不摘要，超过 reserve 阈值后调用当前 provider 总结早期历史；失败回退 local summary。 |
 | 默认工作流 | 已完成 MVP 版 | system prompt 固化探索、todo、ask_user、patch preview、验证和 diff；runtime workflow reminder 会注入非平凡代码任务。 |
 | 轻量 LSP 工具 | 已完成 MVP 版 | `lsp_symbols`、`lsp_definition`、`lsp_references`、`lsp_diagnostics` 支持 Python、Java、JavaScript、TypeScript、Vue。 |
+| Multi-root Workspace | 已完成 MVP 版 | `--allow-dir` / `AGENT_ALLOWED_DIRS` 支持显式授权额外目录给文件、搜索、LSP、patch 工具。 |
+| Markdown Memory 启动注入 | 已完成 MVP 版 | `.local-agent/memory/{project,decisions,conventions,learned}.md` 会作为 advisory context 注入 system prompt。 |
+| Learn 工具 | 已完成 MVP 版 | `learn` 写入 `.local-agent/memory/learned.md`，用于显式沉淀可复用经验。 |
 | Memory / Skills 方案 | 已完成设计 | `docs/memory-skills-implementation-plan.md` 明确 Markdown memory 注入、`learn`、skills discovery、managed skills/autolearn 的分阶段方案。 |
 | Synthetic Tool Result | 已完成 MVP 版 | deadline 到期、用户中断、`finish_reason=length` 时会补齐剩余 tool_call 的 tool result。 |
-| 测试基线 | 已完成 | 本地正常环境下 106 个测试通过。 |
+| 测试基线 | 已完成 | 本地正常环境下 116 个测试通过。 |
 
 ## 下一步 Todo
 
@@ -163,12 +168,12 @@
 | T-032 | 固化 LCA 默认工作流 system prompt | 已完成 MVP 版 | P6 | 已把理解、修改、验证、todo、ask_user、patch preview、diff 的默认规则写入系统提示，并用测试覆盖 runtime reminder。 |
 | T-033 | 增强工具描述与真实能力一致性 | 已完成 MVP 版 | P6 | 新增 LSP 工具描述；既有 create-only `write_file`、patch dry_run 等描述与实现保持一致并有测试。 |
 | T-034 | 实现轻量 runtime workflow nudge | 已完成 MVP 版 | P6 | 非平凡代码任务会注入 runtime workflow reminder；短 prompt 如“只回答 OK”不会注入。 |
-| T-035 | 评估 multi-root workspace allow-dir | 未开始 | P6 | 支持读取需求文档目录并修改另一个代码 workspace；先设计 `--allow-dir` / `AGENT_ALLOWED_DIRS`。 |
+| T-035 | 评估 multi-root workspace allow-dir | 已完成 MVP 版 | P6 | 支持读取需求文档目录并修改另一个代码 workspace；`--allow-dir` / `AGENT_ALLOWED_DIRS` 已落地。 |
 | T-036 | 实现 OMP 风格 auto summary | 已完成 MVP 版 | P7 | 默认 `summary_mode=auto`，按 reserve 阈值触发 LLM 摘要，空结果或 LLM 错误会回退本地摘要。 |
 | T-037 | 实现轻量 LSP 工具 | 已完成 MVP 版 | P7 | 不启动外部 server，使用 AST/静态扫描提供 Python、Java、JavaScript、TypeScript、Vue 的 symbols/definition/references/diagnostics。 |
 | T-038 | 固化 Memory / Skills 方案 | 已完成 | P7 | 已新增 `docs/memory-skills-implementation-plan.md`，并在 OMP 架构笔记补充 memory backend、learn、managed skills、skills discovery。 |
-| T-039 | Markdown memory 启动注入 | 未开始 | P7 | 读取 `.local-agent/memory/*.md` 并以 advisory block 注入 system prompt，带 source path 和字符预算。 |
-| T-040 | 实现 `learn` 工具 | 未开始 | P7 | 把可复用 lesson 写入 `.local-agent/memory/learned.md`，限制长度并清洗会进入 prompt 的字段。 |
+| T-039 | Markdown memory 启动注入 | 已完成 MVP 版 | P7 | 读取 `.local-agent/memory/*.md` 并以 advisory block 注入 system prompt，带 source path 和字符预算。 |
+| T-040 | 实现 `learn` 工具 | 已完成 MVP 版 | P7 | 把可复用 lesson 写入 `.local-agent/memory/learned.md`，限制长度并清洗会进入 prompt 的字段。 |
 | T-041 | Authored skills discovery | 未开始 | P7 | 先扫 `.local-agent/skills/<name>/SKILL.md`，system prompt 只列 name / description，正文按需读取。 |
 | T-042 | Managed skills / autolearn | 暂缓 | P7 | 默认关闭，后续按 OMP 风格加入 `manage_skill`，generated skills 与 authored skills 隔离且优先级最低。 |
 
@@ -188,7 +193,7 @@
 | R-009 | ask_user 会阻塞等待用户 | 已缓解 | 带预算的长任务如果触发 ask_user，会等待人工输入。 | 已支持 `timeout_seconds` / `default_answer`，并自动受剩余 budget 约束；显式 timeout 也会被剩余 budget 夹紧。 |
 | R-010 | approval prompt 等待耗尽预算 | 已关闭 MVP 版 | 用户长时间不确认工具调用时，确认后工具可能执行成功，但下一次 deadline 检查立刻停止。 | approval prompt 已按剩余 deadline 等待 stdin；deadline 到期直接取消并返回 tool error。 |
 | R-012 | 日用命令仍依赖用户手写工具流程 | 已关闭 MVP 版 | 用户不应每次提示“先 list/read，再 dry_run，再 test/diff”；否则 LCA 更像压测脚本而不是本地编程助手。 | 已采纳 OMP 分层设计：system prompt 固化默认流程，tool descriptions 说明工具规范，runtime nudge 做轻量纠偏。 |
-| R-013 | Memory / skills 注入长期 prompt injection 或陈旧事实 | 设计中 | memory 和 generated skills 会跨 session 影响模型，错误或恶意内容可能持续放大。 | 注入区标注 advisory，优先当前 repo 和用户指令；设置注入预算；清洗 description / learned metadata；managed skills 默认关闭且 authored skills 优先。 |
+| R-013 | Memory / skills 注入长期 prompt injection 或陈旧事实 | 已缓解，skills 仍设计中 | memory 和 generated skills 会跨 session 影响模型，错误或恶意内容可能持续放大。 | memory 注入区已标注 advisory，优先当前 repo 和用户指令；已设置注入预算并清洗 learned 字段；managed skills 默认关闭且 authored skills 优先。 |
 
 ## 架构决策
 
@@ -201,7 +206,7 @@
 | ADR-010 | P6 优先实现 OMP 默认工作流的本地 MVP 版。 | 已直接采纳 OMP 的分层设计：系统上下文、工具描述、runtime 纠偏共同让用户不用指定工具顺序；完整 ToolChoiceQueue、subagents 等复杂能力继续后置。 |
 | ADR-011 | 默认采用 OMP 风格 auto summary。 | 小历史不摘要；超过 reserve 阈值才调用已配置 AI API 做 LLM summary；失败回退 local summary；`local` / `llm` 仍可显式指定。 |
 | ADR-012 | LSP 第一版做轻量多语言静态工具。 | 满足 Python、Java、JavaScript、TypeScript、Vue 的 symbols/definition/references/diagnostics，不引入外部 language server、npm/pip 依赖或后台进程；完整 LSP/DAP 后置。 |
-| ADR-013 | Memory / skills 按 OMP 思路分阶段本地化。 | 先做 Markdown memory 启动注入和显式 `learn`，再做 authored skills discovery，最后才评估 managed skills/autolearn；不引入 Hindsight、Mnemopi、向量库或插件市场。 |
+| ADR-013 | Memory / skills 按 OMP 思路分阶段本地化。 | Markdown memory 启动注入和显式 `learn` 已落地；下一步做 authored skills discovery，最后才评估 managed skills/autolearn；不引入 Hindsight、Mnemopi、向量库或插件市场。 |
 | ADR-003 | Excel 作为人工视图，Markdown 作为开发协作 Agent 可读事实源。 | 这套文档服务于开发 LCA 的过程；`.xlsx` 是二进制展示产物，不适合作为协作 Agent 的事实源。 |
 | ADR-004 | 第一阶段 memory 使用 Markdown。 | Markdown 简单、可审计、封闭 VM 友好；暂不引入 SQLite 或向量库。 |
 | ADR-005 | 第一阶段使用 anchored patch，不做 AST edit。 | hash + old_text + line 校验已经足够支撑 MVP 的可控修改。 |
@@ -213,10 +218,10 @@
 | 项目 | 结论 | 依据 |
 |---|---|---|
 | 主链路 | 通过 | 百炼真实小改复测已跑通 todo、dry_run、apply_patch、session allow、rollback、run_tests、git_diff。 |
-| 测试 | 通过 | P5 收口时 90 个 unittest、compileall、xlsx 检查、diff check 均通过；P7 当前代码已跑通 106 个 unittest、compileall、xlsx 检查和 diff check。 |
+| 测试 | 通过 | P5 收口时 90 个 unittest、compileall、xlsx 检查、diff check 均通过；P7 当前代码已跑通 116 个 unittest 和 compileall。 |
 | 日用入口 | 通过 | README 已补只读分析和小改任务命令模板。 |
-| 开放风险 | 可接受 | shell 仍非沙箱、prompt injection 仍需靠审批和封闭 VM；token budget / output reserve / multi-root 留到后续评估。 |
-| 下一阶段 | P7 轻量高级能力真实压测 | 用真实需求验证默认工作流、LLM summary 和轻量 LSP 工具是否足够日用。 |
+| 开放风险 | 可接受 | shell 仍非沙箱、prompt injection 仍需靠审批和封闭 VM；token budget / output reserve / authored skills discovery 留到后续评估。 |
+| 下一阶段 | P7 轻量高级能力真实压测 | 用真实需求验证默认工作流、auto summary、轻量 LSP、multi-root、startup memory 和 learn 是否足够日用。 |
 
 ## 推荐工作流
 
@@ -253,5 +258,6 @@
 
 1. 用百炼跑一次真实任务，验证默认工作流是否不再需要用户手写工具顺序。
 2. 用默认 `--summary-mode auto --context-char-budget` 跑一次长上下文压测，验证 OMP 风格 auto summary 的真实 provider 兼容性。
-3. 让 Agent 在 Python/Java/Vue/TS 项目里主动调用 `lsp_definition` / `lsp_references` / `lsp_diagnostics`，验证轻量多语言 LSP 工具是否能改善定位效率。
-4. 评估 multi-root workspace，用于“需求文档目录 + 代码项目目录”的真实工作流。
+3. 用 `--allow-dir` 跑一次“需求文档目录 + 代码项目目录”的真实工作流。
+4. 让 Agent 在 Python/Java/Vue/TS 项目里主动调用 `lsp_definition` / `lsp_references` / `lsp_diagnostics`，验证轻量多语言 LSP 工具是否能改善定位效率。
+5. 验证 startup memory 和 `learn` 是否能减少重复交代项目约定。

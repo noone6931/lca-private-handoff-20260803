@@ -175,6 +175,31 @@ class AgentRuntimeTests(unittest.TestCase):
 
         self.assertEqual(result, "done")
 
+    def test_startup_memory_is_injected_as_advisory_context(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            memory_dir = workspace / ".local-agent" / "memory"
+            memory_dir.mkdir(parents=True)
+            (memory_dir / "project.md").write_text("Use pytest for this project.\n", encoding="utf-8")
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=workspace,
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _FinalClient):
+                runtime = AgentRuntime(config, show_tool_logs=False)
+
+        system_content = runtime._messages[0]["content"]
+        self.assertIn("[Project memory]", system_content)
+        self.assertIn(".local-agent/memory/project.md", system_content)
+        self.assertIn("Use pytest for this project.", system_content)
+        self.assertIn("advisory", system_content)
+
     def test_llm_timeout_is_clamped_to_remaining_budget(self) -> None:
         _TimeoutRecordingClient.timeouts = []
         with tempfile.TemporaryDirectory() as tmp:

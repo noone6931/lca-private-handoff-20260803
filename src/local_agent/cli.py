@@ -13,6 +13,15 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="local-agent")
     parser.add_argument("prompt", nargs="*", help="Task prompt. If omitted, starts a simple REPL.")
     parser.add_argument("--cwd", help="Workspace directory.")
+    parser.add_argument(
+        "--allow-dir",
+        dest="allowed_dirs",
+        action="append",
+        help=(
+            "Additional directory the file/search/LSP/patch tools may access. "
+            "Can be passed multiple times; shell/git/session still use --cwd."
+        ),
+    )
     parser.add_argument("--config", help="Optional JSON config file.")
     parser.add_argument(
         "--provider",
@@ -80,6 +89,7 @@ def main(argv: list[str] | None = None) -> int:
             context_char_budget=args.context_char_budget,
             context_recent_messages=args.context_recent_messages,
             summary_mode=args.summary_mode,
+            allowed_dirs=args.allowed_dirs,
         )
         runtime = AgentRuntime(
             config,

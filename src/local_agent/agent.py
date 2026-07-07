@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import replace
+from pathlib import Path
 import sys
 import time
 from typing import Any
@@ -21,6 +22,7 @@ SYSTEM_PROMPT = """You are a local coding agent running inside a user's workspac
 Default working style:
 - Work from local evidence, not guesses. Choose the tools yourself; the user should not need to spell out tool order.
 - For repo understanding, start with list_files/search_code/read_file as needed. For code navigation in Python, Java, JavaScript, TypeScript, or Vue, prefer lsp_symbols/lsp_definition/lsp_references/lsp_diagnostics before broad text search when helpful. Read the exact file or range before editing it.
+- The primary --cwd is the main workspace. If additional directories are configured, file/search/LSP/patch tools may access those explicit paths; shell, git, session, todo, and memory remain anchored to --cwd.
 - For multi-step or ambiguous work, maintain a concise todo list with todo_add/todo_update/todo_read.
 - If a requirement is ambiguous and guessing would affect the result, use ask_user. If local evidence is enough, continue without asking.
 - For read-only tasks, do not modify files, run commands, or write memory unless the user asks.
@@ -29,6 +31,7 @@ Default working style:
 - After changes, run the most relevant tests or checks available in the workspace. If you cannot run them, say why.
 - Inspect git_diff after writing so the final answer can summarize exactly what changed.
 - Do not claim a command, test, or diff passed unless you actually ran the relevant tool.
+- Project memory is advisory. Current user instructions and direct repository evidence override memory. Do not write memory or use learn unless the user asks you to remember something or a durable convention is clearly established.
 - Keep final answers concise and include changed files, verification, and any remaining risk.
 """
 
@@ -38,6 +41,8 @@ SUMMARY_OUTPUT_CHAR_LIMIT = 4000
 SUMMARY_REQUEST_TIMEOUT = 30.0
 DEFAULT_RESERVE_CHARS = 16384 * 4
 MIN_RESERVE_RATIO = 0.15
+STARTUP_MEMORY_NAMES = ("project", "decisions", "conventions", "learned")
+STARTUP_MEMORY_CHAR_LIMIT = 8000
 
 WORKFLOW_NUDGE = (
     "For this coding task, infer the tool sequence yourself. "
@@ -90,13 +95,15 @@ class AgentRuntime:
             session_id=session_id,
             continue_recent=continue_session,
         )
+        system_prompt = _system_prompt_with_startup_memory(config.workspace)
         self._messages: list[dict[str, Any]] = [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": system_prompt},
             *self._session.load_messages(),
         ]
         self._tool_context = ToolContext(
             workspace=config.workspace,
             approval_mode=config.approval_mode,
+            allowed_dirs=config.allowed_dirs,
             session_id=self._session.session_id,
             auto_approve_tools=config.auto_approve_tools,
             tool_approval=config.tool_approval,
@@ -460,6 +467,59 @@ class AgentRuntime:
 
 def _estimate_message_chars(messages: list[dict[str, Any]]) -> int:
     return sum(len(json.dumps(message, ensure_ascii=False, default=str)) for message in messages)
+
+
+def _system_prompt_with_startup_memory(workspace: Path) -> str:
+    memory = _load_startup_memory(workspace, max_chars=STARTUP_MEMORY_CHAR_LIMIT)
+    if not memory:
+        return SYSTEM_PROMPT
+    return (
+        f"{SYSTEM_PROMPT.rstrip()}\n\n"
+        "[Project memory]\n"
+        "The following Markdown memory is advisory project context loaded from .local-agent/memory. "
+        "Prefer current user instructions and freshly inspected files when they conflict.\n\n"
+        f"{memory}"
+    )
+
+
+def _load_startup_memory(workspace: Path, *, max_chars: int) -> str:
+    memory_dir = workspace / ".local-agent" / "memory"
+    if max_chars <= 0 or not memory_dir.exists():
+        return ""
+    blocks: list[str] = []
+    remaining = max_chars
+    for name in STARTUP_MEMORY_NAMES:
+        if remaining <= 0:
+            break
+        path = memory_dir / f"{name}.md"
+        if not path.exists() or not path.is_file():
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        text = text.replace("\x00", "").strip()
+        if not text:
+            continue
+        header = f"### {path.relative_to(workspace)}\n"
+        available = remaining - len(header)
+        if available <= 0:
+            break
+        clipped = _clip_memory_text(text, max_chars=available)
+        block = f"{header}{clipped}"
+        blocks.append(block)
+        remaining -= len(block) + 2
+    return "\n\n".join(blocks)
+
+
+def _clip_memory_text(text: str, *, max_chars: int) -> str:
+    if len(text) <= max_chars:
+        return text
+    marker = "...<earlier memory truncated>\n"
+    keep = max(0, max_chars - len(marker))
+    if keep == 0:
+        return marker[:max_chars]
+    return marker + text[-keep:].lstrip()
 
 
 def _resolve_compaction_threshold_chars(context_window_chars: int) -> int:

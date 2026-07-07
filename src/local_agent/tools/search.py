@@ -4,7 +4,9 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from local_agent.patch.anchored import PatchError, resolve_workspace_path
+from local_agent.patch.anchored import PatchError
+from local_agent.patch.anchored import display_workspace_path
+from local_agent.patch.anchored import resolve_workspace_path
 
 from .base import Tool, ToolContext, ToolResult
 
@@ -15,7 +17,10 @@ def search_tools() -> list[Tool]:
     return [
         Tool(
             name="list_files",
-            description="List files under a workspace path, skipping local agent and build/cache directories.",
+            description=(
+                "List files under the workspace or an explicitly allowed directory, "
+                "skipping local agent and build/cache directories."
+            ),
             tier="read",
             input_schema={
                 "type": "object",
@@ -29,7 +34,10 @@ def search_tools() -> list[Tool]:
         ),
         Tool(
             name="search_code",
-            description="Search workspace files with ripgrep. Returns workspace-relative paths.",
+            description=(
+                "Search workspace or explicitly allowed directory files with ripgrep. "
+                "Returns workspace-relative paths for the main workspace and absolute paths for allowed directories."
+            ),
             tier="read",
             input_schema={
                 "type": "object",
@@ -50,17 +58,17 @@ def list_files(args: dict[str, Any], context: ToolContext) -> ToolResult:
     max_results = min(max(int(args.get("max_results") or 200), 1), 1000)
     raw_path = args.get("path") or "."
     try:
-        root = resolve_workspace_path(context.workspace, raw_path)
+        root = resolve_workspace_path(context.workspace, raw_path, context.allowed_dirs)
     except PatchError as exc:
         return ToolResult(str(exc), is_error=True)
     if not root.exists():
         return ToolResult(f"Path not found: {raw_path}", is_error=True)
     if root.is_file():
-        return ToolResult(str(root.relative_to(context.workspace)))
+        return ToolResult(display_workspace_path(context.workspace, root, context.allowed_dirs))
 
     results: list[str] = []
     for path in _walk_files(root):
-        results.append(str(path.relative_to(context.workspace)))
+        results.append(display_workspace_path(context.workspace, path, context.allowed_dirs))
         if len(results) >= max_results:
             results.append(f"... truncated after {max_results} files")
             break
@@ -71,12 +79,12 @@ def search_code(args: dict[str, Any], context: ToolContext) -> ToolResult:
     max_results = min(max(int(args.get("max_results") or 80), 1), 200)
     raw_path = args.get("path") or "."
     try:
-        path = resolve_workspace_path(context.workspace, raw_path)
+        path = resolve_workspace_path(context.workspace, raw_path, context.allowed_dirs)
     except PatchError as exc:
         return ToolResult(str(exc), is_error=True)
     if not path.exists():
         return ToolResult(f"Path not found: {raw_path}", is_error=True)
-    search_path = "." if path == context.workspace else str(path.relative_to(context.workspace))
+    search_path = _rg_search_path(path, context)
     command = [
         "rg",
         "--line-number",
@@ -136,3 +144,12 @@ def _normalize_search_output_paths(output: str, workspace: Path) -> str:
             line = line[2:]
         normalized.append(line)
     return "\n".join(normalized)
+
+
+def _rg_search_path(path: Path, context: ToolContext) -> str:
+    if path == context.workspace:
+        return "."
+    try:
+        return str(path.relative_to(context.workspace))
+    except ValueError:
+        return str(path)

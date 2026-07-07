@@ -6,7 +6,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
-from local_agent.patch.anchored import PatchError, resolve_workspace_path
+from local_agent.patch.anchored import PatchError
+from local_agent.patch.anchored import display_workspace_path
+from local_agent.patch.anchored import resolve_workspace_path
 
 from .base import Tool, ToolContext, ToolResult
 from .search import SKIPPED_DIRS
@@ -59,8 +61,8 @@ class SymbolRecord:
     column: int
     container: str | None = None
 
-    def render(self, workspace: Path) -> str:
-        rel = self.path.relative_to(workspace)
+    def render(self, workspace: Path, allowed_roots: tuple[Path, ...] = ()) -> str:
+        rel = display_workspace_path(workspace, self.path, allowed_roots)
         scoped = f"{self.container}.{self.name}" if self.container else self.name
         return f"{rel}:{self.line}:{self.column + 1}: {self.kind} {scoped}"
 
@@ -71,7 +73,7 @@ def lsp_tools() -> list[Tool]:
         Tool(
             name="lsp_symbols",
             description=(
-                f"List lightweight symbols for {languages} files under a workspace path. "
+                f"List lightweight symbols for {languages} files under the workspace or an explicitly allowed path. "
                 "Use this for code navigation before broad text search."
             ),
             tier="read",
@@ -90,7 +92,7 @@ def lsp_tools() -> list[Tool]:
             name="lsp_definition",
             description=(
                 f"Find lightweight definitions for {languages} symbols. "
-                "Returns workspace-relative file, line, column, and symbol kind."
+                "Returns workspace-relative or absolute allowed-directory file, line, column, and symbol kind."
             ),
             tier="read",
             input_schema={
@@ -151,8 +153,8 @@ def lsp_symbols(args: dict[str, Any], context: ToolContext) -> ToolResult:
     query = str(args.get("query") or "").strip()
     max_results = _max_results(args, default=80, upper=200)
     results: list[str] = []
-    for record in _iter_symbol_records(root, context.workspace):
-        rendered = record.render(context.workspace)
+    for record in _iter_symbol_records(root, context.workspace, context.allowed_dirs):
+        rendered = record.render(context.workspace, context.allowed_dirs)
         if query and query.lower() not in rendered.lower():
             continue
         results.append(rendered)
@@ -171,9 +173,9 @@ def lsp_definition(args: dict[str, Any], context: ToolContext) -> ToolResult:
         return root
     max_results = _max_results(args, default=40, upper=100)
     matches: list[str] = []
-    for record in _iter_symbol_records(root, context.workspace):
+    for record in _iter_symbol_records(root, context.workspace, context.allowed_dirs):
         if record.name == symbol or (record.container and f"{record.container}.{record.name}" == symbol):
-            matches.append(record.render(context.workspace))
+            matches.append(record.render(context.workspace, context.allowed_dirs))
             if len(matches) >= max_results:
                 matches.append(f"... truncated after {max_results} definitions")
                 break
@@ -198,7 +200,7 @@ def lsp_references(args: dict[str, Any], context: ToolContext) -> ToolResult:
             match = pattern.search(line)
             if not match:
                 continue
-            rel = path.relative_to(context.workspace)
+            rel = display_workspace_path(context.workspace, path, context.allowed_dirs)
             snippet = line.strip()
             if len(snippet) > MAX_RESULT_LINE_CHARS:
                 snippet = snippet[: MAX_RESULT_LINE_CHARS - 14] + "...<truncated>"
@@ -220,9 +222,9 @@ def lsp_diagnostics(args: dict[str, Any], context: ToolContext) -> ToolResult:
         if text is None:
             continue
         if path.suffix == ".py":
-            diagnostic = _python_diagnostic(path, context.workspace, text)
+            diagnostic = _python_diagnostic(path, context.workspace, context.allowed_dirs, text)
         else:
-            diagnostic = _delimiter_diagnostic(path, context.workspace, text)
+            diagnostic = _delimiter_diagnostic(path, context.workspace, context.allowed_dirs, text)
         if diagnostic:
             diagnostics.append(diagnostic)
             if len(diagnostics) >= max_results:
@@ -234,7 +236,7 @@ def lsp_diagnostics(args: dict[str, Any], context: ToolContext) -> ToolResult:
 def _resolve_lsp_root(args: dict[str, Any], context: ToolContext) -> Path | ToolResult:
     raw_path = args.get("path") or "."
     try:
-        path = resolve_workspace_path(context.workspace, raw_path)
+        path = resolve_workspace_path(context.workspace, raw_path, context.allowed_dirs)
     except PatchError as exc:
         return ToolResult(str(exc), is_error=True)
     if not path.exists():
@@ -254,22 +256,27 @@ def _clean_symbol(symbol: str) -> str | None:
     return cleaned if SYMBOL_RE.fullmatch(cleaned) else None
 
 
-def _iter_symbol_records(root: Path, workspace: Path) -> Iterable[SymbolRecord]:
+def _iter_symbol_records(root: Path, workspace: Path, allowed_roots: tuple[Path, ...]) -> Iterable[SymbolRecord]:
     for path in _iter_supported_files(root):
         text = _read_text(path)
         if text is None:
             continue
         if path.suffix == ".py":
-            yield from _python_symbol_records(path, workspace, text)
+            yield from _python_symbol_records(path, workspace, allowed_roots, text)
         elif path.suffix == ".java":
             yield from _java_symbol_records(path, text)
         elif path.suffix in JS_TS_SUFFIXES:
             yield from _js_ts_vue_symbol_records(path, text)
 
 
-def _python_symbol_records(path: Path, workspace: Path, text: str) -> Iterable[SymbolRecord]:
+def _python_symbol_records(
+    path: Path,
+    workspace: Path,
+    allowed_roots: tuple[Path, ...],
+    text: str,
+) -> Iterable[SymbolRecord]:
     try:
-        tree = ast.parse(text, filename=str(path.relative_to(workspace)))
+        tree = ast.parse(text, filename=display_workspace_path(workspace, path, allowed_roots))
     except SyntaxError:
         return []
     visitor = _PythonSymbolVisitor(path)
@@ -442,18 +449,18 @@ def _read_text(path: Path) -> str | None:
         return None
 
 
-def _python_diagnostic(path: Path, workspace: Path, text: str) -> str | None:
+def _python_diagnostic(path: Path, workspace: Path, allowed_roots: tuple[Path, ...], text: str) -> str | None:
     try:
-        compile(text, str(path.relative_to(workspace)), "exec")
+        compile(text, display_workspace_path(workspace, path, allowed_roots), "exec")
     except SyntaxError as exc:
-        rel = path.relative_to(workspace)
+        rel = display_workspace_path(workspace, path, allowed_roots)
         line = exc.lineno or 1
         column = exc.offset or 1
         return f"{rel}:{line}:{column}: SyntaxError: {exc.msg}"
     return None
 
 
-def _delimiter_diagnostic(path: Path, workspace: Path, text: str) -> str | None:
+def _delimiter_diagnostic(path: Path, workspace: Path, allowed_roots: tuple[Path, ...], text: str) -> str | None:
     sanitized = _strip_strings_and_comments(text)
     stack: list[tuple[str, int, int]] = []
     pairs = {"(": ")", "{": "}", "[": "]"}
@@ -470,12 +477,12 @@ def _delimiter_diagnostic(path: Path, workspace: Path, text: str) -> str | None:
             stack.append((char, line, column))
         elif char in closers:
             if not stack or stack[-1][0] != closers[char]:
-                rel = path.relative_to(workspace)
+                rel = display_workspace_path(workspace, path, allowed_roots)
                 return f"{rel}:{line}:{column}: DelimiterError: unmatched '{char}'"
             stack.pop()
     if stack:
         opener, opener_line, opener_column = stack[-1]
-        rel = path.relative_to(workspace)
+        rel = display_workspace_path(workspace, path, allowed_roots)
         return f"{rel}:{opener_line}:{opener_column}: DelimiterError: missing closing '{pairs[opener]}'"
     return None
 

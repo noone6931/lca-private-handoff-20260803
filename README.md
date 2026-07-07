@@ -57,6 +57,7 @@ export AGENT_AUTO_APPROVE_TOOLS="run_tests,git_diff"  # optional ask-mode allowl
 export AGENT_TOOL_APPROVAL="shell=deny,run_tests=allow"  # optional per-tool allow/prompt/deny
 export AGENT_CONTEXT_CHAR_BUDGET="60000"  # optional approximate compaction window
 export AGENT_SUMMARY_MODE="auto"  # auto | local | llm
+export AGENT_ALLOWED_DIRS="/path/to/requirements:/path/to/other-read-write-root"  # optional extra roots
 ```
 
 ## 本地运行
@@ -103,6 +104,17 @@ local-agent "帮我找一下测试失败原因"
 默认 `--budget-seconds` 是 600 秒。`--budget-seconds 0` 可以关闭时间预算。
 
 `--max-steps` 默认是 0，表示不限步；它只作为显式防失控保险丝。日常限制任务时优先使用 `--budget-seconds`。
+
+如果需求文档和代码项目不在同一个目录，可以让 `--cwd` 指向代码项目，再用 `--allow-dir` 授权需求目录：
+
+```bash
+./agent \
+  --cwd /path/to/code-project \
+  --allow-dir /path/to/requirements \
+  "读取需求目录里的文档，按要求修改当前代码项目并验证"
+```
+
+`--allow-dir` 可以传多次。它只扩展文件、搜索、LSP 和 patch 类工具的可访问根目录；shell、git、session、todo 和 memory 仍锚定在 `--cwd`。
 
 长会话默认启用 OMP 风格上下文压缩策略：`--context-char-budget` 近似表示上下文窗口，runtime 会至少预留 15% 给下一轮 prompt/输出；超过阈值后压缩早期历史，保留最近消息和未完成 todo，并截断发送给模型的超大 tool 输出。默认 `--summary-mode auto`：小历史不摘要，触发 compaction 时自动调用当前配置的 AI API 生成语义摘要，失败回退本地确定性摘要。可用 `--summary-mode local` 强制只用本地摘要，`--summary-mode llm` 强制在 compaction 时尝试 LLM 摘要，`--context-char-budget 0` 关闭压缩。
 
@@ -212,6 +224,7 @@ python3 scripts/sync_project_excel.py
 - `write_file`: 只创建新文件；修改已有文件必须使用 `apply_patch`。
 - `memory_read`: 读取 Markdown 项目记忆。
 - `memory_write`: 写入 Markdown 项目记忆。
+- `learn`: 把可复用项目经验写入 `.local-agent/memory/learned.md`。
 - `todo_read`: 读取当前会话 todo。
 - `todo_add`: 添加当前会话 todo。
 - `todo_update`: 更新当前会话 todo 状态。
@@ -221,6 +234,7 @@ python3 scripts/sync_project_excel.py
 - `lsp_references`: 查找这些语言中的标识符引用。
 - `lsp_diagnostics`: 运行轻量诊断；Python 使用 `compile()`，Java/JS/TS/Vue 使用本地括号/分隔符检查。
 - context compaction: 按 OMP 风格 reserve 阈值压缩早期历史、保留当前用户请求和未完成 todo，并截断发送给模型的超大 tool 输出；默认 `--summary-mode auto` 会在触发压缩时尝试 LLM 摘要并失败回退 local。
+- startup memory injection: 新 session 启动时会读取 `.local-agent/memory/{project,decisions,conventions,learned}.md` 并作为 advisory context 注入 system prompt；当前用户指令和最新源码证据优先。
 
 ## 设计原则
 
@@ -234,7 +248,7 @@ python3 scripts/sync_project_excel.py
 - 工具参数会在执行前做运行时校验；
 - 多步骤任务可使用 session 级 todo 追踪进度；
 - 需求不清时可使用 `ask_user` 暂停并提问，也可传 `timeout_seconds` / `default_answer` 避免长任务无限等待；
-- 读、搜、写默认限制在 workspace 内；
+- 读、搜、写默认限制在 workspace 内；显式 `--allow-dir` / `AGENT_ALLOWED_DIRS` 可授权额外目录给文件、搜索、LSP 和 patch 工具；
 - `shell` / `run_tests` 仍然可以执行任意本地命令；危险命令黑名单只是防手滑，不是安全沙箱，真正隔离依赖封闭 VM 和人工审批；
 - 读取文件有大小和行数限制；
 - 明显危险的 shell 命令会被拒绝；
@@ -244,6 +258,6 @@ python3 scripts/sync_project_excel.py
 - 默认工作流已沉到 system prompt 和 runtime reminder，用户可以直接用自然语言描述任务；
 - 长上下文默认使用 OMP 风格 auto compaction：超过阈值才尝试 LLM summary，失败回退本地确定性摘要；
 - LSP 能力先做封闭 VM 友好的多语言静态导航工具，覆盖 Python、Java、JavaScript、TypeScript、Vue，不启动外部语言服务器；
-- memory 先用 Markdown。
+- memory 使用 Markdown，启动时作为 advisory context 注入，并可用 `learn` 显式沉淀长期经验。
 
 OMP 核心设计判断沉淀在 `docs/omp-core-architecture-notes.md`，后续不再重复翻源码确认主循环、deadline、compaction 和 step counter 的基本结论。
