@@ -1,0 +1,11 @@
+#!/usr/bin/env sh
+set -eu
+
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+if [ -n "${PYTHONPATH:-}" ]; then
+  export PYTHONPATH="$SCRIPT_DIR/src:$PYTHONPATH"
+else
+  export PYTHONPATH="$SCRIPT_DIR/src"
+fi
+
+exec python3 -m local_agent.cli "$@"

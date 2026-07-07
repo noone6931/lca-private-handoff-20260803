@@ -16,7 +16,7 @@
 
 ```bash
 export DASHSCOPE_API_KEY="your-token"
-PYTHONPATH=src python3 -m local_agent.cli --provider bailian --cwd /path/to/repo "阅读这个项目并总结入口"
+./agent "阅读这个项目并总结入口"
 ```
 
 `--provider bailian` 默认使用：
@@ -24,13 +24,19 @@ PYTHONPATH=src python3 -m local_agent.cli --provider bailian --cwd /path/to/repo
 - `base_url`: `https://dashscope.aliyuncs.com/compatible-mode/v1`
 - `model`: `qwen-plus`
 
+也可以把 token 写到当前项目的 `.env`，之后就不用每次 `export`：
+
+```bash
+DASHSCOPE_API_KEY=your-token
+```
+
+`.env` 已被 `.gitignore` 忽略，不会进入提交。
+
 如果控制台里开通了更适合代码的模型，可以显式指定：
 
 ```bash
-PYTHONPATH=src python3 -m local_agent.cli \
-  --provider bailian \
+./agent \
   --model qwen-plus \
-  --cwd /path/to/repo \
   "帮我找一下测试失败原因"
 ```
 
@@ -46,18 +52,28 @@ export AI_MODEL="your-model"
 
 ```bash
 export AGENT_APPROVAL_MODE="ask"   # ask | auto-read | yolo
+export AGENT_BUDGET_SECONDS="300"  # optional wall-clock budget per run
+export AGENT_AUTO_APPROVE_TOOLS="run_tests,git_diff"  # optional ask-mode allowlist
 ```
 
 ## 本地运行
 
+推荐从目标仓库目录直接启动：
+
 ```bash
-python3 -m local_agent.cli --cwd /path/to/repo "阅读这个项目并总结入口"
+./agent "阅读这个项目并总结入口"
 ```
 
-如果没有安装为包，可以直接指定源码路径：
+不带 prompt 会进入 REPL：
 
 ```bash
-PYTHONPATH=src python3 -m local_agent.cli --cwd /path/to/repo "帮我找一下测试失败原因"
+./agent
+```
+
+安装成包后也可以用：
+
+```bash
+local-agent "帮我找一下测试失败原因"
 ```
 
 工具调用日志默认输出到 stderr，例如：
@@ -73,18 +89,39 @@ PYTHONPATH=src python3 -m local_agent.cli --cwd /path/to/repo "帮我找一下�
 --hide-tools
 ```
 
+长任务建议设置墙钟预算，而不是用很小的步数截断：
+
+```bash
+./agent \
+  --budget-seconds 1200 \
+  "按 docs/requirements/feature.md 完成需求并跑测试"
+```
+
+默认 `--budget-seconds` 是 600 秒。`--budget-seconds 0` 可以关闭时间预算。
+
+`--max-steps` 默认是 0，表示不限步；它只作为显式防失控保险丝。日常限制任务时优先使用 `--budget-seconds`。
+
+如果 `ask` 模式下某些工具你已经确认安全，可以只对白名单工具免确认：
+
+```bash
+./agent \
+  --approval-mode ask \
+  --auto-approve-tools run_tests,git_diff \
+  "跑测试并总结 diff"
+```
+
 ## 会话恢复
 
 每次运行都会写入 `.local-agent/sessions/<session-id>.jsonl`。继续最近一次会话：
 
 ```bash
-PYTHONPATH=src python3 -m local_agent.cli --provider bailian --continue "继续刚才的问题"
+./agent --continue "继续刚才的问题"
 ```
 
 继续指定会话：
 
 ```bash
-PYTHONPATH=src python3 -m local_agent.cli --provider bailian --session 20260707T060000000000Z "继续这个会话"
+./agent --session 20260707T060000000000Z "继续这个会话"
 ```
 
 ## 本地测试
@@ -93,6 +130,16 @@ PYTHONPATH=src python3 -m local_agent.cli --provider bailian --session 20260707T
 PYTHONPATH=src python3 -m unittest discover -s tests
 python3 -m compileall src tests
 ```
+
+## 项目管理同步
+
+项目管理的事实源是 `docs/project-management.md`。更新它之后生成 Excel：
+
+```bash
+python3 scripts/sync_project_excel.py
+```
+
+生成结果是 `docs/local-coding-agent-project-management.xlsx`。
 
 ## 当前能力
 
@@ -107,6 +154,10 @@ python3 -m compileall src tests
 - `write_file`: 只创建新文件；修改已有文件必须使用 `apply_patch`。
 - `memory_read`: 读取 Markdown 项目记忆。
 - `memory_write`: 写入 Markdown 项目记忆。
+- `todo_read`: 读取当前会话 todo。
+- `todo_add`: 添加当前会话 todo。
+- `todo_update`: 更新当前会话 todo 状态。
+- `ask_user`: 在需求不清时向用户提问。
 
 ## 设计原则
 
@@ -116,11 +167,17 @@ python3 -m compileall src tests
 - 小工具集；
 - 本地优先；
 - 默认谨慎权限；
+- `ask` 模式可通过 `--auto-approve-tools` 对明确工具做免确认白名单；
 - 工具参数会在执行前做运行时校验；
+- 多步骤任务可使用 session 级 todo 追踪进度；
+- 需求不清时可使用 `ask_user` 暂停并提问；
 - 读、搜、写默认限制在 workspace 内；
 - `shell` / `run_tests` 仍然可以执行任意本地命令；危险命令黑名单只是防手滑，不是安全沙箱，真正隔离依赖封闭 VM 和人工审批；
 - 读取文件有大小和行数限制；
 - 明显危险的 shell 命令会被拒绝；
 - patch 必须可校验；
 - patch 会尽量保留原文件 BOM 和 CRLF/LF 换行风格；
+- `--budget-seconds` 用墙钟时间限制单次任务，`--max-steps` 默认不限步，只作为显式安全兜底；
 - memory 先用 Markdown。
+
+OMP 核心设计判断沉淀在 `docs/omp-core-architecture-notes.md`，后续不再重复翻源码确认主循环、deadline、compaction 和 step counter 的基本结论。

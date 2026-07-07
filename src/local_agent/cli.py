@@ -22,8 +22,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--api-base-url", help="OpenAI-compatible API base URL.")
     parser.add_argument("--api-key", help="API key.")
     parser.add_argument("--model", help="Model name.")
-    parser.add_argument("--max-steps", type=int, help="Maximum model/tool iterations.")
+    parser.add_argument(
+        "--max-steps",
+        type=int,
+        help="Safety cap for model/tool iterations. 0 means unlimited; use budget seconds for normal limits.",
+    )
+    parser.add_argument("--budget-seconds", type=int, help="Wall-clock budget for one prompt run. 0 disables it.")
     parser.add_argument("--approval-mode", choices=["ask", "auto-read", "yolo"], help="Tool approval policy.")
+    parser.add_argument(
+        "--auto-approve-tools",
+        help="Comma-separated tool names to allow without prompting in ask mode.",
+    )
     parser.add_argument("--continue", dest="continue_session", action="store_true", help="Continue the latest session.")
     parser.add_argument("--session", help="Continue a specific session id from .local-agent/sessions.")
     parser.add_argument("--hide-tools", action="store_true", help="Hide tool call logs from stderr.")
@@ -38,7 +47,9 @@ def main(argv: list[str] | None = None) -> int:
             api_key=args.api_key,
             model=args.model,
             max_steps=args.max_steps,
+            budget_seconds=args.budget_seconds,
             approval_mode=args.approval_mode,
+            auto_approve_tools=args.auto_approve_tools,
         )
         runtime = AgentRuntime(
             config,

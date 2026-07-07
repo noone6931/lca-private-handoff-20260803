@@ -22,7 +22,13 @@ class OpenAICompatibleClient:
     def __init__(self, config: AgentConfig):
         self._config = config
 
-    def chat(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]) -> ChatResponse:
+    def chat(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        *,
+        timeout: float | None = None,
+    ) -> ChatResponse:
         url = f"{self._config.api_base_url}/chat/completions"
         payload = {
             "model": self._config.model,
@@ -39,14 +45,17 @@ class OpenAICompatibleClient:
             },
             method="POST",
         )
+        request_timeout = timeout if timeout is not None else self._config.request_timeout
         try:
-            with urllib.request.urlopen(request, timeout=self._config.request_timeout) as response:
+            with urllib.request.urlopen(request, timeout=request_timeout) as response:
                 body = response.read().decode("utf-8")
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
             raise LlmError(f"LLM API returned HTTP {exc.code}: {detail}") from exc
         except urllib.error.URLError as exc:
             raise LlmError(f"LLM API request failed: {exc}") from exc
+        except TimeoutError as exc:
+            raise LlmError(f"LLM API request timed out after {request_timeout} seconds.") from exc
 
         try:
             data = json.loads(body)

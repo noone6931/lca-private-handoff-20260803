@@ -10,7 +10,8 @@ class ConfigError(RuntimeError):
     """Raised when the agent cannot be configured safely."""
 
 
-DEFAULT_MAX_STEPS = 20
+DEFAULT_MAX_STEPS = 0
+DEFAULT_BUDGET_SECONDS = 600
 
 
 @dataclass(frozen=True)
@@ -21,8 +22,10 @@ class AgentConfig:
     model: str
     workspace: Path
     max_steps: int = DEFAULT_MAX_STEPS
+    budget_seconds: int | None = DEFAULT_BUDGET_SECONDS
     request_timeout: int = 120
     approval_mode: str = "ask"
+    auto_approve_tools: tuple[str, ...] = ()
 
 
 def load_config(
@@ -34,12 +37,15 @@ def load_config(
     api_key: str | None,
     model: str | None,
     max_steps: int | None,
+    budget_seconds: int | None,
     approval_mode: str | None,
+    auto_approve_tools: object | None = None,
 ) -> AgentConfig:
     file_config = _load_json_config(config_path)
     workspace = Path(cwd or file_config.get("workspace") or os.getcwd()).expanduser().resolve()
     if not workspace.exists() or not workspace.is_dir():
         raise ConfigError(f"Workspace does not exist or is not a directory: {workspace}")
+    _load_dotenv(workspace / ".env")
 
     resolved_provider = _resolve_provider(provider or file_config.get("provider"))
     provider_defaults = _provider_defaults(resolved_provider)
@@ -65,15 +71,30 @@ def load_config(
         or "ask"
     )
     raw_max_steps = max_steps if max_steps is not None else file_config.get("max_steps")
-    resolved_max_steps = _positive_int(
+    resolved_max_steps = _non_negative_int(
         "max_steps",
         raw_max_steps if raw_max_steps is not None else DEFAULT_MAX_STEPS,
     )
+    if budget_seconds is not None:
+        raw_budget_seconds = budget_seconds
+    elif "budget_seconds" in file_config:
+        raw_budget_seconds = file_config.get("budget_seconds")
+    elif os.environ.get("AGENT_BUDGET_SECONDS") is not None:
+        raw_budget_seconds = os.environ.get("AGENT_BUDGET_SECONDS")
+    else:
+        raw_budget_seconds = DEFAULT_BUDGET_SECONDS
+    resolved_budget_seconds = _optional_budget_seconds("budget_seconds", raw_budget_seconds)
     raw_request_timeout = file_config.get("request_timeout")
     resolved_request_timeout = _positive_int(
         "request_timeout",
         raw_request_timeout if raw_request_timeout is not None else 120,
     )
+    raw_auto_approve_tools = (
+        auto_approve_tools
+        if auto_approve_tools is not None
+        else file_config.get("auto_approve_tools", os.environ.get("AGENT_AUTO_APPROVE_TOOLS"))
+    )
+    resolved_auto_approve_tools = _tool_name_tuple("auto_approve_tools", raw_auto_approve_tools)
 
     if not resolved_api_base_url:
         raise ConfigError("Missing AI_API_BASE_URL.")
@@ -91,8 +112,10 @@ def load_config(
         model=resolved_model,
         workspace=workspace,
         max_steps=resolved_max_steps,
+        budget_seconds=resolved_budget_seconds,
         request_timeout=resolved_request_timeout,
         approval_mode=resolved_approval_mode,
+        auto_approve_tools=resolved_auto_approve_tools,
     )
 
 
@@ -107,6 +130,31 @@ def _load_json_config(config_path: str | None) -> dict:
     if not isinstance(data, dict):
         raise ConfigError("Config file must contain a JSON object.")
     return data
+
+
+def _load_dotenv(path: Path) -> None:
+    if not path.exists():
+        return
+    with path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            if stripped.startswith("export "):
+                stripped = stripped[len("export ") :].strip()
+            if "=" not in stripped:
+                continue
+            key, value = stripped.split("=", 1)
+            key = key.strip()
+            if not key or not all(char.isalnum() or char == "_" for char in key):
+                continue
+            os.environ.setdefault(key, _strip_env_quotes(value.strip()))
+
+
+def _strip_env_quotes(value: str) -> str:
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+        return value[1:-1]
+    return value
 
 
 def _resolve_provider(raw_provider: str | None) -> str:
@@ -168,3 +216,43 @@ def _positive_int(name: str, value: object) -> int:
     if resolved < 1:
         raise ConfigError(f"{name} must be >= 1.")
     return resolved
+
+
+def _non_negative_int(name: str, value: object) -> int:
+    try:
+        resolved = int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError) as exc:
+        raise ConfigError(f"{name} must be an integer.") from exc
+    if resolved < 0:
+        raise ConfigError(f"{name} must be >= 0.")
+    return resolved
+
+
+def _optional_budget_seconds(name: str, value: object) -> int | None:
+    if value is None or value == "":
+        return None
+    resolved = _non_negative_int(name, value)
+    if resolved == 0:
+        return None
+    return resolved
+
+
+def _tool_name_tuple(name: str, value: object) -> tuple[str, ...]:
+    if value is None or value == "":
+        return ()
+    if isinstance(value, str):
+        items = [item.strip() for item in value.split(",")]
+    elif isinstance(value, list):
+        items = []
+        for item in value:
+            if not isinstance(item, str):
+                raise ConfigError(f"{name} entries must be strings.")
+            items.append(item.strip())
+    else:
+        raise ConfigError(f"{name} must be a comma-separated string or a list of strings.")
+
+    tools = tuple(item for item in items if item)
+    for tool in tools:
+        if not all(char.isalnum() or char == "_" for char in tool):
+            raise ConfigError(f"{name} contains invalid tool name: {tool}")
+    return tools

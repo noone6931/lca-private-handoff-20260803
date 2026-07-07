@@ -10,9 +10,11 @@ from unittest.mock import patch
 from local_agent.tools.base import Tool, ToolContext, ToolRegistry
 from local_agent.tools.files import read_file, write_file
 from local_agent.tools.git import git_diff
+from local_agent.tools.interaction import ask_user
 from local_agent.tools.search import list_files
 from local_agent.tools.search import search_code
 from local_agent.tools.shell import run_shell, run_tests
+from local_agent.tools.todo import todo_add, todo_read, todo_update
 
 
 class ToolTests(unittest.TestCase):
@@ -118,6 +120,27 @@ class ToolTests(unittest.TestCase):
         self.assertIn("ok", result.content)
         self.assertIn("[exit_code] 0", result.content)
 
+    def test_shell_timeout_is_clamped_to_remaining_budget(self) -> None:
+        calls: list[dict] = []
+
+        def fake_run(*args, **kwargs):
+            calls.append(kwargs)
+            return type("Completed", (), {"stdout": "ok\n", "stderr": "", "returncode": 0})()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            context = ToolContext(
+                workspace=workspace,
+                approval_mode="yolo",
+                deadline_monotonic=110.0,
+            )
+            with patch("local_agent.tools.shell.time.monotonic", return_value=100.0):
+                with patch("local_agent.tools.shell.subprocess.run", side_effect=fake_run):
+                    result = run_shell({"command": "echo ok", "timeout": 600}, context)
+
+        self.assertFalse(result.is_error)
+        self.assertEqual(calls[0]["timeout"], 10)
+
     def test_shell_rejects_dangerous_commands(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp).resolve()
@@ -169,6 +192,83 @@ class ToolTests(unittest.TestCase):
 
         self.assertTrue(result.is_error)
         self.assertIn("stdin closed", result.content)
+
+    def test_auto_approve_tool_bypasses_prompt_in_ask_mode(self) -> None:
+        registry = ToolRegistry(
+            [
+                Tool(
+                    name="sample_write",
+                    description="sample write",
+                    tier="write",
+                    input_schema={"type": "object", "properties": {}, "additionalProperties": False},
+                    handler=lambda args, context: type("Result", (), {"content": "ok", "is_error": False})(),
+                )
+            ]
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            context = ToolContext(
+                workspace=Path(tmp).resolve(),
+                approval_mode="ask",
+                auto_approve_tools=("sample_write",),
+            )
+            with patch("sys.stdin.isatty", return_value=False):
+                result = registry.execute("sample_write", "{}", context)
+
+        self.assertFalse(result.is_error)
+        self.assertEqual(result.content, "ok")
+
+    def test_state_tool_does_not_require_approval_in_ask_mode(self) -> None:
+        registry = ToolRegistry(
+            [
+                Tool(
+                    name="sample_state",
+                    description="sample state",
+                    tier="state",
+                    input_schema={"type": "object", "properties": {}, "additionalProperties": False},
+                    handler=lambda args, context: type("Result", (), {"content": "ok", "is_error": False})(),
+                )
+            ]
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            context = ToolContext(workspace=Path(tmp).resolve(), approval_mode="ask")
+            with patch("sys.stdin.isatty", return_value=False):
+                result = registry.execute("sample_state", "{}", context)
+
+        self.assertFalse(result.is_error)
+        self.assertEqual(result.content, "ok")
+
+    def test_todo_add_update_and_read_use_session_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            context = ToolContext(workspace=workspace, approval_mode="ask", session_id="session-1")
+
+            added = todo_add({"id": "T1", "task": "Wire budget seconds"}, context)
+            updated = todo_update({"id": "T1", "status": "done", "note": "covered by tests"}, context)
+            read = todo_read({}, context)
+
+        self.assertFalse(added.is_error)
+        self.assertFalse(updated.is_error)
+        self.assertFalse(read.is_error)
+        self.assertIn("[done] T1: Wire budget seconds", read.content)
+        self.assertIn("covered by tests", read.content)
+
+    def test_ask_user_non_interactive_returns_tool_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            context = ToolContext(workspace=Path(tmp).resolve(), approval_mode="ask")
+            with patch("sys.stdin.isatty", return_value=False):
+                result = ask_user({"question": "Continue?"}, context)
+
+        self.assertTrue(result.is_error)
+        self.assertIn("stdin is not interactive", result.content)
+
+    def test_ask_user_returns_answer(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            context = ToolContext(workspace=Path(tmp).resolve(), approval_mode="ask")
+            with patch("sys.stdin.isatty", return_value=True), patch("builtins.input", return_value="yes"):
+                result = ask_user({"question": "Continue?"}, context)
+
+        self.assertFalse(result.is_error)
+        self.assertEqual(result.content, "yes")
 
     def test_git_diff_explains_untracked_files_when_diff_is_empty(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

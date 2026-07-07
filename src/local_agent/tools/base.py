@@ -17,6 +17,9 @@ class ToolResult:
 class ToolContext:
     workspace: Path
     approval_mode: str
+    session_id: str | None = None
+    auto_approve_tools: tuple[str, ...] = ()
+    deadline_monotonic: float | None = None
 
 
 class ToolValidationError(RuntimeError):
@@ -72,9 +75,11 @@ class ToolRegistry:
 def _approval_denial_reason(tool: Tool, context: ToolContext) -> str | None:
     if context.approval_mode == "yolo":
         return None
+    if tool.name in context.auto_approve_tools:
+        return None
     if context.approval_mode == "auto-read" and tool.tier == "read":
         return None
-    if tool.tier == "read":
+    if tool.tier in {"read", "state", "interaction"}:
         return None
     if not sys.stdin.isatty():
         return (

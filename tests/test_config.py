@@ -20,6 +20,7 @@ class ConfigTests(unittest.TestCase):
                     api_key=None,
                     model=None,
                     max_steps=None,
+                    budget_seconds=None,
                     approval_mode=None,
                 )
 
@@ -27,7 +28,8 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.api_base_url, "https://dashscope.aliyuncs.com/compatible-mode/v1")
         self.assertEqual(config.api_key, "token")
         self.assertEqual(config.model, "qwen-plus")
-        self.assertEqual(config.max_steps, 20)
+        self.assertEqual(config.max_steps, 0)
+        self.assertEqual(config.budget_seconds, 600)
 
     def test_dashscope_env_auto_selects_bailian(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -40,6 +42,7 @@ class ConfigTests(unittest.TestCase):
                     api_key=None,
                     model=None,
                     max_steps=None,
+                    budget_seconds=None,
                     approval_mode=None,
                 )
 
@@ -57,13 +60,31 @@ class ConfigTests(unittest.TestCase):
                         api_key=None,
                         model=None,
                         max_steps=None,
+                        budget_seconds=None,
                         approval_mode=None,
                     )
 
-    def test_max_steps_must_be_positive(self) -> None:
+    def test_max_steps_zero_means_unlimited(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             with patch.dict("os.environ", {"DASHSCOPE_API_KEY": "token"}, clear=True):
-                with self.assertRaisesRegex(RuntimeError, "max_steps must be >= 1"):
+                config = load_config(
+                    config_path=None,
+                    cwd=tmp,
+                    provider="bailian",
+                    api_base_url=None,
+                    api_key=None,
+                    model=None,
+                    max_steps=0,
+                    budget_seconds=None,
+                    approval_mode=None,
+                )
+
+        self.assertEqual(config.max_steps, 0)
+
+    def test_max_steps_rejects_negative_values(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.dict("os.environ", {"DASHSCOPE_API_KEY": "token"}, clear=True):
+                with self.assertRaisesRegex(RuntimeError, "max_steps must be >= 0"):
                     load_config(
                         config_path=None,
                         cwd=tmp,
@@ -71,8 +92,121 @@ class ConfigTests(unittest.TestCase):
                         api_base_url=None,
                         api_key=None,
                         model=None,
-                        max_steps=0,
+                        max_steps=-1,
+                        budget_seconds=None,
                         approval_mode=None,
+                    )
+
+    def test_budget_seconds_zero_disables_budget(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.dict("os.environ", {"DASHSCOPE_API_KEY": "token"}, clear=True):
+                config = load_config(
+                    config_path=None,
+                    cwd=tmp,
+                    provider="bailian",
+                    api_base_url=None,
+                    api_key=None,
+                    model=None,
+                    max_steps=None,
+                    budget_seconds=0,
+                    approval_mode=None,
+                )
+
+        self.assertIsNone(config.budget_seconds)
+
+    def test_budget_seconds_rejects_negative_values(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.dict("os.environ", {"DASHSCOPE_API_KEY": "token"}, clear=True):
+                with self.assertRaisesRegex(RuntimeError, "budget_seconds must be >= 0"):
+                    load_config(
+                        config_path=None,
+                        cwd=tmp,
+                        provider="bailian",
+                        api_base_url=None,
+                        api_key=None,
+                        model=None,
+                        max_steps=None,
+                        budget_seconds=-1,
+                        approval_mode=None,
+                    )
+
+    def test_budget_seconds_can_come_from_env(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.dict(
+                "os.environ",
+                {"DASHSCOPE_API_KEY": "token", "AGENT_BUDGET_SECONDS": "30"},
+                clear=True,
+            ):
+                config = load_config(
+                    config_path=None,
+                    cwd=tmp,
+                    provider="bailian",
+                    api_base_url=None,
+                    api_key=None,
+                    model=None,
+                    max_steps=None,
+                    budget_seconds=None,
+                    approval_mode=None,
+                )
+
+        self.assertEqual(config.budget_seconds, 30)
+
+    def test_dotenv_can_supply_bailian_token_for_one_command_start(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            (workspace / ".env").write_text('DASHSCOPE_API_KEY="token-from-dotenv"\n', encoding="utf-8")
+            with patch.dict("os.environ", {}, clear=True):
+                config = load_config(
+                    config_path=None,
+                    cwd=str(workspace),
+                    provider=None,
+                    api_base_url=None,
+                    api_key=None,
+                    model=None,
+                    max_steps=None,
+                    budget_seconds=None,
+                    approval_mode=None,
+                )
+
+        self.assertEqual(config.provider, "bailian")
+        self.assertEqual(config.api_key, "token-from-dotenv")
+
+    def test_auto_approve_tools_can_come_from_env(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.dict(
+                "os.environ",
+                {"DASHSCOPE_API_KEY": "token", "AGENT_AUTO_APPROVE_TOOLS": "run_tests, git_diff"},
+                clear=True,
+            ):
+                config = load_config(
+                    config_path=None,
+                    cwd=tmp,
+                    provider="bailian",
+                    api_base_url=None,
+                    api_key=None,
+                    model=None,
+                    max_steps=None,
+                    budget_seconds=None,
+                    approval_mode=None,
+                )
+
+        self.assertEqual(config.auto_approve_tools, ("run_tests", "git_diff"))
+
+    def test_auto_approve_tools_rejects_invalid_names(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.dict("os.environ", {"DASHSCOPE_API_KEY": "token"}, clear=True):
+                with self.assertRaisesRegex(RuntimeError, "invalid tool name"):
+                    load_config(
+                        config_path=None,
+                        cwd=tmp,
+                        provider="bailian",
+                        api_base_url=None,
+                        api_key=None,
+                        model=None,
+                        max_steps=None,
+                        budget_seconds=None,
+                        approval_mode=None,
+                        auto_approve_tools="run-tests",
                     )
 
     def test_request_timeout_must_be_positive(self) -> None:
@@ -89,6 +223,7 @@ class ConfigTests(unittest.TestCase):
                         api_key=None,
                         model=None,
                         max_steps=None,
+                        budget_seconds=None,
                         approval_mode=None,
                     )
 

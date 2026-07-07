@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import subprocess
+import time
 from typing import Any
 
 from .base import Tool, ToolContext, ToolResult
@@ -72,15 +73,26 @@ def _run_command(command: str, args: dict[str, Any], context: ToolContext, *, de
     if dangerous_reason:
         return ToolResult(dangerous_reason, is_error=True)
     timeout = min(max(int(args.get("timeout") or default_timeout), 1), 600)
-    completed = subprocess.run(
-        command,
-        cwd=context.workspace,
-        shell=True,
-        text=True,
-        capture_output=True,
-        timeout=timeout,
-        check=False,
-    )
+    timeout = _clamp_timeout_to_budget(timeout, context)
+    if timeout < 1:
+        return ToolResult("Command was not run because budget_seconds is exhausted.", is_error=True)
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=context.workspace,
+            shell=True,
+            text=True,
+            capture_output=True,
+            timeout=timeout,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        output = f"Command timed out after {timeout} seconds."
+        if exc.stdout:
+            output += f"\n[stdout]\n{exc.stdout}"
+        if exc.stderr:
+            output += f"\n[stderr]\n{exc.stderr}"
+        return ToolResult(output[:30000], is_error=True)
     output = completed.stdout
     if completed.stderr:
         output += "\n[stderr]\n" + completed.stderr
@@ -93,3 +105,12 @@ def _dangerous_command_reason(command: str) -> str | None:
         if pattern.search(command):
             return f"Refusing dangerous command matching pattern: {pattern.pattern}"
     return None
+
+
+def _clamp_timeout_to_budget(timeout: int, context: ToolContext) -> int:
+    if context.deadline_monotonic is None:
+        return timeout
+    remaining = context.deadline_monotonic - time.monotonic()
+    if remaining <= 0:
+        return 0
+    return min(timeout, max(1, int(remaining)))
