@@ -34,7 +34,7 @@ python3 scripts/sync_project_excel.py
 
 | 阶段 | 名称 | 目标 | 状态 | 完成度 | 下一步判定 |
 |---|---|---|---|---:|---|
-| P0 | OMP 分析与方案设计 | 看懂 OMP，确定我们自己的 MVP 路线 | 已完成 | 100% | 已形成不照搬、做简化版的原则。 |
+| P0 | OMP 分析与方案设计 | 看懂 OMP，确定我们自己的 MVP 路线 | 已完成 | 100% | 已形成“优先吸收成熟设计，按本地目标裁剪”的原则。 |
 | P1 | 基础 Agent 闭环 | 接 AI API，完成读、搜、改、测、diff、session、memory | 已完成 | 100% | 已创建初始 git commit，基础闭环可回滚。 |
 | P2 | 项目管理与可见性 | 项目状态、路线图、todo、决策记录一目了然 | 已完成 | 100% | Excel + Markdown 项目状态已建立。 |
 | P3 | 长任务运行基础 | budget_seconds、max_steps 不限步、todo、ask_user、per-tool approval、一键启动 | 已完成 | 100% | 已具备真实需求的基础运行体验。 |
@@ -122,7 +122,7 @@ python3 scripts/sync_project_excel.py
 | 风险 | R-008 | 中 | P3/P4 变更尚未提交 | 已关闭 | P3 提交 `304fbdf`，P4 提交 `4beb487` | OMP 持久化 session 和 compaction 以支持恢复，但代码里程碑仍要靠 VCS；我们继续阶段性 commit 固化节点。 |
 | 风险 | R-009 | 中 | ask_user 会阻塞等待用户 | 已缓解 | 已支持 timeout/default，并自动受剩余 budget 约束 | OMP 的 approval/elicitation 可以被拒绝或取消并回灌结果；我们给 `ask_user` 加 timeout/default，支持无人值守场景。 |
 | 风险 | R-010 | 中 | approval prompt 等待耗尽预算 | 已关闭 MVP 版 | approval prompt 已使用 deadline-aware timed stdin；deadline 已过或等待超时会取消工具调用 | OMP 的 deadline 是 wall-clock absolute timestamp；ACP permission gate 会把 `requestPermission` 和 abort signal 竞争。我们本地版用 `select.select` 按剩余 deadline 等 stdin，超时即取消。 |
-| ADR | ADR-001 | 2026-07-07 | 不照搬 OMP，只借鉴能力类型和边界 | 已接受 | 每个能力做简化版 | OMP 是平台型 Agent，能力面很宽；我们只借主循环、deadline、compaction、approval、memory 等边界，逐个做简化版。 |
+| ADR | ADR-001 | 2026-07-07 | 优先采纳 OMP 成熟设计，按本地目标裁剪 | 已接受 | 好设计可直接采用，复杂度按需收敛 | OMP 是重要参考实现；我们不为了“避免复制”而绕开好设计。采用标准是收益是否大于复杂度，并且不破坏个人本地使用、封闭 VM、无公网依赖和第一阶段 MVP 边界。 |
 | ADR | ADR-002 | 2026-07-07 | max_steps 只作为防失控保险丝 | 已落地 | 默认值已改为 0，不限步 | OMP 的 stepCounter 主要用于 telemetry，终止靠无 tool_calls、deadline、abort；我们把 `max_steps` 仅作为显式保险丝。 |
 | ADR | ADR-003 | 2026-07-07 | todo、ask_user、per-tool approval 是主功能 | 已落地 | P3 已实现 | OMP 将 todo、approval、elicitation 做成可观测会话能力；我们 P3 先做终端轻量版，后续再补 UI 化。 |
 | ADR | ADR-004 | 2026-07-07 | 第一阶段 memory 用 Markdown | 已接受 | 后续看需求升级 | OMP 有本地 memory 后台抽取，并在启动时注入 Memory Guidance；我们先用项目 Markdown，后续再做自动整理。 |

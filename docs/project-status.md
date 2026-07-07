@@ -68,7 +68,7 @@
 
 | 阶段 | 名称 | 状态 | 目标 |
 |---|---|---|---|
-| P0 | OMP 分析与 MVP 设计 | 已完成 | 明确不照搬 OMP，采用本地优先、封闭 VM 友好的简化架构。 |
+| P0 | OMP 分析与 MVP 设计 | 已完成 | 明确优先吸收 OMP 成熟设计，并按本地优先、封闭 VM 友好和 MVP 边界做裁剪。 |
 | P1 | 基础 Agent Loop | 已完成 | CLI、Provider、Agent Runtime、基础工具、patch、memory、session、测试基线。 |
 | P2 | 项目管理与可见性 | 已完成 | 建立 Excel + Markdown 项目状态，让目标、进度、风险、Todo 一目了然。 |
 | P3 | 长任务运行基础 | 已完成 | 引入 deadline / budget-seconds、提高 max_steps 兜底值、todo、ask_user、per-tool approval。 |
@@ -156,7 +156,7 @@
 
 | ID | 决策 | 依据 |
 |---|---|---|
-| ADR-001 | 不照搬 OMP，只借鉴能力边界和关键机制。 | OMP 功能很完整，但第一阶段个人本地使用不需要 LSP、DAP、多 Agent、Browser 等复杂能力。 |
+| ADR-001 | 优先采纳 OMP 成熟设计，按本地目标裁剪。 | 不为了“避免复制”而绕开好设计；判断标准是收益是否大于复杂度，并且不破坏个人本地使用、封闭 VM、无公网依赖和第一阶段 MVP 边界。 |
 | ADR-002 | `max_steps` 只作为安全保险丝，不作为主要预算。 | OMP 主循环不靠步数终止，而靠模型是否继续请求工具、时间预算和上下文预算。 |
 | ADR-008 | 默认不限步，默认使用时间预算。 | 避免 `100` 这类硬上限卡住真实任务；默认 `budget_seconds=600`，`max_steps=0`。 |
 | ADR-009 | 固化 OMP 核心架构笔记。 | OMP 的主循环、deadline、compaction、synthetic tool result 等结论写入 `docs/omp-core-architecture-notes.md`，后续不再重复扫描。 |

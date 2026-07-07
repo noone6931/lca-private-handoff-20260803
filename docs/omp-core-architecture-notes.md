@@ -236,6 +236,7 @@ OMP 有一些小上限，但它们不是主任务步数限制：
 ## 后续禁止反复争论的点
 
 - 不再把 `max_steps=100` 当作默认方案。
-- 不照搬 OMP 的完整复杂实现。
+- 不再把“不复制 OMP”当成限制；OMP 的成熟设计可以直接采纳。
+- 但不无判断地搬入 OMP 的完整复杂度；每个能力仍按个人本地使用、封闭 VM、无公网依赖和 MVP 边界裁剪。
 - OMP 的可长跑来自 deadline + compaction + abort + synthetic tool result，不是来自把步数调大。
 - 第一阶段先做本地单 Agent，LSP / DAP / subagents / Browser 继续后置。
