@@ -7,8 +7,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from local_agent.patch.anchored import hash_text
 from local_agent.tools.base import Tool, ToolContext, ToolRegistry
-from local_agent.tools.files import read_file, write_file
+from local_agent.tools.files import patch_file, read_file, write_file
 from local_agent.tools.git import git_diff
 from local_agent.tools.interaction import ask_user
 from local_agent.tools.search import list_files
@@ -107,6 +108,32 @@ class ToolTests(unittest.TestCase):
 
         self.assertTrue(result.is_error)
         self.assertIn("Refusing to overwrite", result.content)
+
+    def test_patch_file_dry_run_previews_without_writing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            target = workspace / "README.md"
+            original = "old\n"
+            target.write_text(original, encoding="utf-8")
+
+            result = patch_file(
+                {
+                    "path": "README.md",
+                    "tag": hash_text(original),
+                    "start_line": 1,
+                    "end_line": 1,
+                    "old_text": "old",
+                    "new_text": "new",
+                    "dry_run": True,
+                },
+                ToolContext(workspace=workspace, approval_mode="yolo"),
+            )
+            persisted = target.read_text(encoding="utf-8")
+
+        self.assertFalse(result.is_error)
+        self.assertIn("Patch preview only", result.content)
+        self.assertIn("+new", result.content)
+        self.assertEqual(persisted, original)
 
     def test_run_tests_runs_command(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

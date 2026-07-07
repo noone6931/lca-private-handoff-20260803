@@ -44,6 +44,7 @@ def apply_anchored_patch(
     old_text: str,
     new_text: str,
     mode: str = "replace",
+    dry_run: bool = False,
 ) -> PatchResult:
     if mode not in PATCH_MODES:
         raise PatchError(f"Invalid patch mode: {mode}. Use one of: {', '.join(sorted(PATCH_MODES))}.")
@@ -88,7 +89,8 @@ def apply_anchored_patch(
         )
     )
     persisted = bom + _restore_line_endings(updated, line_ending)
-    target.write_bytes(persisted.encode("utf-8"))
+    if not dry_run:
+        target.write_bytes(persisted.encode("utf-8"))
     return PatchResult(diff=diff, new_tag=hash_text(persisted))
 
 

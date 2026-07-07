@@ -34,7 +34,8 @@ def file_tools() -> list[Tool]:
             description=(
                 "Apply a safe anchored patch to a previously read file. "
                 "Use mode=replace to replace the anchored lines, insert_before to insert before them, "
-                "or insert_after to insert after them. old_text must match the anchored lines."
+                "or insert_after to insert after them. old_text must match the anchored lines. "
+                "Set dry_run=true to preview the diff without changing the file."
             ),
             tier="write",
             input_schema={
@@ -47,6 +48,7 @@ def file_tools() -> list[Tool]:
                     "end_line": {"type": "integer"},
                     "old_text": {"type": "string"},
                     "new_text": {"type": "string"},
+                    "dry_run": {"type": "boolean"},
                 },
                 "required": ["path", "tag", "start_line", "end_line", "old_text", "new_text"],
                 "additionalProperties": False,
@@ -121,7 +123,12 @@ def patch_file(args: dict[str, Any], context: ToolContext) -> ToolResult:
         old_text=args["old_text"],
         new_text=args["new_text"],
         mode=args.get("mode") or "replace",
+        dry_run=bool(args.get("dry_run")),
     )
+    if args.get("dry_run"):
+        return ToolResult(
+            f"Patch preview only. File not changed. New tag after apply would be: {result.new_tag}\n\n{result.diff}"
+        )
     return ToolResult(f"Applied patch. New tag: {result.new_tag}\n\n{result.diff}")
 
 

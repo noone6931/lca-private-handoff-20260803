@@ -153,7 +153,7 @@ python3 scripts/sync_project_excel.py
 - `run_tests`: 运行测试命令，默认执行 `PYTHONPATH=src python3 -m unittest discover -s tests`。
 - `git_status`: 查看本地 git 状态。
 - `git_diff`: 查看本地 diff。
-- `apply_patch`: 简化版 anchored patch，校验文件 hash 与旧文本后写入；支持 `replace`、`insert_before`、`insert_after`。
+- `apply_patch`: 简化版 anchored patch，校验文件 hash 与旧文本后写入；支持 `replace`、`insert_before`、`insert_after`，也支持 `dry_run=true` 只预览 diff 不写文件。
 - `write_file`: 只创建新文件；修改已有文件必须使用 `apply_patch`。
 - `memory_read`: 读取 Markdown 项目记忆。
 - `memory_write`: 写入 Markdown 项目记忆。

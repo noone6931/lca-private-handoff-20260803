@@ -47,6 +47,29 @@ class AnchoredPatchTests(unittest.TestCase):
             self.assertIn("-    return 'old'", result.diff)
             self.assertIn("+    return 'new'", result.diff)
 
+    def test_apply_patch_dry_run_returns_diff_without_writing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            target = workspace / "app.py"
+            original = "def main():\n    return 'old'\n"
+            target.write_text(original, encoding="utf-8")
+
+            result = apply_anchored_patch(
+                workspace=workspace,
+                path="app.py",
+                tag=hash_text(original),
+                start_line=2,
+                end_line=2,
+                old_text="    return 'old'",
+                new_text="    return 'new'",
+                dry_run=True,
+            )
+
+            self.assertEqual(target.read_text(encoding="utf-8"), original)
+            self.assertIn("-    return 'old'", result.diff)
+            self.assertIn("+    return 'new'", result.diff)
+            self.assertEqual(result.new_tag, hash_text("def main():\n    return 'new'\n"))
+
     def test_apply_patch_inserts_before_anchor(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp).resolve()
