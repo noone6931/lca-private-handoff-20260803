@@ -781,6 +781,24 @@ class ToolTests(unittest.TestCase):
         self.assertEqual(result.content, "yes")
         self.assertEqual(read_answer.call_args.args[1], 5)
 
+    def test_ask_user_clamps_requested_timeout_to_remaining_budget(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            context = ToolContext(
+                workspace=Path(tmp).resolve(),
+                approval_mode="ask",
+                deadline_monotonic=105.0,
+            )
+            with (
+                patch("sys.stdin.isatty", return_value=True),
+                patch("local_agent.tools.interaction.time.monotonic", return_value=100.0),
+                patch("local_agent.tools.interaction._read_timed_answer", return_value="yes") as read_answer,
+            ):
+                result = ask_user({"question": "Continue?", "timeout_seconds": 3600}, context)
+
+        self.assertFalse(result.is_error)
+        self.assertEqual(result.content, "yes")
+        self.assertEqual(read_answer.call_args.args[1], 5)
+
     def test_git_diff_explains_untracked_files_when_diff_is_empty(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp).resolve()

@@ -26,6 +26,8 @@ Do not claim a command or test passed unless you ran it.
 Keep final answers concise and include changed files and verification.
 """
 
+COMPACTION_TOOL_CONTENT_CHAR_LIMIT = 6000
+
 
 class AgentRuntime:
     def __init__(
@@ -178,7 +180,7 @@ class AgentRuntime:
         recent_count = min(self._config.context_recent_messages, len(non_system))
 
         while recent_count > 0:
-            recent = _valid_recent_messages(non_system[-recent_count:])
+            recent = _truncate_recent_tool_outputs(_valid_recent_messages(non_system[-recent_count:]))
             dropped_count = len(non_system) - recent_count
             dropped = non_system[: max(dropped_count, 0)]
             compacted = [
@@ -331,6 +333,29 @@ def _valid_recent_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any
     while recent and recent[0].get("role") == "tool":
         recent = recent[1:]
     return _drop_trailing_unpaired_tool_calls(recent)
+
+
+def _truncate_recent_tool_outputs(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    truncated: list[dict[str, Any]] = []
+    for message in messages:
+        content = message.get("content")
+        if message.get("role") == "tool" and isinstance(content, str):
+            truncated.append(_truncate_tool_message(message, content))
+        else:
+            truncated.append(message)
+    return truncated
+
+
+def _truncate_tool_message(message: dict[str, Any], content: str) -> dict[str, Any]:
+    if len(content) <= COMPACTION_TOOL_CONTENT_CHAR_LIMIT:
+        return message
+    omitted = len(content) - COMPACTION_TOOL_CONTENT_CHAR_LIMIT
+    copied = dict(message)
+    copied["content"] = (
+        content[:COMPACTION_TOOL_CONTENT_CHAR_LIMIT]
+        + f"\n...<truncated {omitted} chars from tool output during local context compaction>"
+    )
+    return copied
 
 
 def _drop_trailing_unpaired_tool_calls(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:

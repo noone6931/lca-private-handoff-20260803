@@ -74,14 +74,15 @@ def _default_answer(args: dict[str, Any]) -> str | None:
 
 def _effective_timeout(args: dict[str, Any], context: ToolContext) -> int | None:
     requested = args.get("timeout_seconds")
-    if requested is not None:
-        return int(requested)
     if context.deadline_monotonic is None:
-        return None
+        return int(requested) if requested is not None else None
     remaining = context.deadline_monotonic - time.monotonic()
     if remaining <= 0:
         return 0
-    return max(1, int(remaining))
+    budget_timeout = max(1, int(remaining))
+    if requested is not None:
+        return min(int(requested), budget_timeout)
+    return budget_timeout
 
 
 def _read_timed_answer(prompt: str, timeout: int) -> str | None:

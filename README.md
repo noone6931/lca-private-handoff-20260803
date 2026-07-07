@@ -103,7 +103,7 @@ local-agent "帮我找一下测试失败原因"
 
 `--max-steps` 默认是 0，表示不限步；它只作为显式防失控保险丝。日常限制任务时优先使用 `--budget-seconds`。
 
-长会话默认启用本地上下文压缩：当消息历史超过约 `60000` 字符时，会把早期历史折叠成系统摘要，保留最近消息，并注入未完成 todo。可用 `--context-char-budget 0` 关闭。
+长会话默认启用本地上下文压缩：当消息历史超过约 `60000` 字符时，会把早期历史折叠成系统摘要，保留最近消息，注入未完成 todo，并截断发送给模型的超大 tool 输出。可用 `--context-char-budget 0` 关闭。
 
 如果 `always-ask` 模式下某些工具你已经确认安全，可以只对白名单工具免确认：
 
@@ -192,8 +192,8 @@ python3 scripts/sync_project_excel.py
 - `todo_read`: 读取当前会话 todo。
 - `todo_add`: 添加当前会话 todo。
 - `todo_update`: 更新当前会话 todo 状态。
-- `ask_user`: 在需求不清时向用户提问；支持 `timeout_seconds` 和 `default_answer`，并会受当前任务剩余预算约束。
-- 本地 context compaction: 超过上下文预算时压缩早期历史，并保留未完成 todo。
+- `ask_user`: 在需求不清时向用户提问；支持 `timeout_seconds` 和 `default_answer`，显式 timeout 也会被当前任务剩余预算夹紧。
+- 本地 context compaction: 超过上下文预算时压缩早期历史、保留未完成 todo，并截断发送给模型的超大 tool 输出。
 
 ## 设计原则
 

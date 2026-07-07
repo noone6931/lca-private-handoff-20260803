@@ -18,15 +18,15 @@ python3 scripts/sync_project_excel.py
 | 当前阶段 | P5：安全与恢复增强 MVP 完成，进入真实任务压测 | Context compaction、synthetic tool result、patch preview、rollback、ask_user timeout、approval prompt deadline cancel 和 OMP 风格 approval model 已完成；下一步做真实任务压测。 |
 | 推荐入口 | `./agent "阅读当前项目"` | 自动设置 `PYTHONPATH=src`，默认当前目录为 workspace。 |
 | Token 配置 | `.env` 或环境变量 | `.env` 可写 `DASHSCOPE_API_KEY=...`，该文件已被 `.gitignore` 忽略。 |
-| 测试数 | 87 | 完整 unittest 通过；compileall 通过。 |
+| 测试数 | 89 | 完整 unittest 通过；compileall 通过。 |
 | 默认 budget_seconds | 600 | 单次任务默认 10 分钟墙钟预算；`--budget-seconds 0` 可关闭。 |
 | 默认 max_steps | 0 | 表示不限步；仅在用户显式设置时作为防失控保险丝。 |
 | 预算执行 | 细粒度 | LLM 请求和 shell/run_tests timeout 会按剩余预算夹紧；deadline 到期会补齐未执行工具结果。 |
-| Context compaction | 本地确定性 | 超过约 60000 字符时折叠早期历史，保留最近消息，并注入未完成 todo。 |
+| Context compaction | 本地确定性 | 超过约 60000 字符时折叠早期历史，保留最近消息，注入未完成 todo，并截断发送给模型的超大 tool 输出。 |
 | Synthetic tool result | 已完成 MVP 版 | deadline 到期、用户中断和 `finish_reason=length` 时会补齐剩余 tool_call 的 tool result。 |
 | Patch preview | 已完成 | `apply_patch dry_run=true` 只校验并返回 diff，不写文件。 |
 | Patch rollback | 已完成 MVP 版 | `rollback_patch` 只回滚本 session 的 patch 记录，且要求当前文件仍匹配 after tag。 |
-| ask_user timeout | 已完成 | `ask_user` 支持 `timeout_seconds` / `default_answer`，并受当前 budget 剩余时间约束。 |
+| ask_user timeout | 已完成 | `ask_user` 支持 `timeout_seconds` / `default_answer`，显式 timeout 也会被当前 budget 剩余时间夹紧。 |
 | Per-tool approval | 已完成 | 支持 `always-ask` / `write` / `yolo`、per-tool `allow` / `prompt` / `deny`、session always allow/reject 和 REPL `/approval`。 |
 | OMP 核心判断 | 已固化 | 见 `docs/omp-core-architecture-notes.md`。 |
 
@@ -70,13 +70,13 @@ python3 scripts/sync_project_excel.py
 | 一键启动 | 已完成 | `./agent` | 自动设置 `PYTHONPATH` 并以当前目录为 workspace | 日常入口 |
 | `.env` 加载 | 已完成 | workspace `.env` | 可放 `DASHSCOPE_API_KEY`，被 gitignore | 避免重复 export |
 | OMP 核心架构笔记 | 已完成 | `docs/omp-core-architecture-notes.md` | 固化主循环、deadline、compaction 结论 | 后续设计依据 |
-| 本地 Context Compaction | 已完成 MVP 版 | `context_char_budget` / `context_recent_messages` | 折叠早期历史，保留最近消息，注入未完成 todo | 下一步补 token 预算、输出 reserve 和可选 LLM summary；字符阈值保留兜底 |
+| 本地 Context Compaction | 已完成 MVP 版 | `context_char_budget` / `context_recent_messages` | 折叠早期历史，保留最近消息，注入未完成 todo，并截断发送给模型的超大 tool 输出 | 下一步补 token 预算、输出 reserve 和可选 LLM summary；字符阈值保留兜底 |
 | Synthetic tool result | 已完成 MVP 版 | deadline 到期、用户中断和 `finish_reason=length` 时补齐 tool result | 避免 session 留下未配对 tool_calls | 继续真实任务验证 |
 | Patch preview | 已完成 | `apply_patch dry_run=true` | 复用 anchored 校验并返回 diff，不写文件 | 后续评估 rollback |
 | Patch rollback | 已完成 MVP 版 | `rollback_patch` | 校验当前文件 hash 后恢复 patch 前内容 | 继续真实任务验证 |
-| ask_user timeout | 已完成 | `timeout_seconds` / `default_answer` / budget 剩余时间 | 长任务无人响应时可以继续或明确失败 | 继续真实任务验证 |
+| ask_user timeout | 已完成 | `timeout_seconds` / `default_answer` / budget 剩余时间 | 长任务无人响应时可以继续或明确失败；显式 timeout 也受 budget 夹紧 | 继续真实任务验证 |
 | Tool approval policy | 已完成 MVP 版 | `tool_approval` + `session_tool_approval` | config deny/prompt 是硬护栏，session allow/reject 可记住当前会话，REPL 会校验工具名，approval prompt 受 deadline 约束 | 继续真实任务压测 |
-| 测试覆盖 | 已完成 | 当前 87 个测试通过 | unittest + compileall 通过 | 继续补真实任务压测 |
+| 测试覆盖 | 已完成 | 当前 89 个测试通过 | unittest + compileall 通过 | 继续补真实任务压测 |
 
 ## 下一步 Todo
 
@@ -107,12 +107,13 @@ python3 scripts/sync_project_excel.py
 | T-023 | P1 | P5 | 实现 approvalMode / session decision / REPL 命令 | 已完成 | Agent | 对齐 OMP 三层审批模型的本地 MVP | 支持 `always-ask` / `write` / `yolo`、`s/d` 会话记忆、`/approval` 命令 |
 | T-024 | P1 | P5 | approval prompt 支持 deadline/abort | 已完成 MVP 版 | Agent | 人工确认等待也消耗 wall-clock budget，不能让确认等待绕过 `budget_seconds` | approval prompt 使用 deadline-aware timed stdin；deadline 到期自动取消/拒绝，保留 `y/s/n/d` 和 session allow/reject |
 | T-025 | P1 | P5 | 修复 approval 优先级和工具名校验 | 已完成 | Agent | 避免新 `tools.*` 被旧顶层字段静默覆盖、config prompt 被 session allow 绕过、REPL 工具名输错后假成功 | 新配置优先于旧字段；config prompt/deny 是硬护栏；REPL 校验未知工具名 |
+| T-026 | P1 | P5 | 夹紧 ask_user timeout 并截断 compaction tool 输出 | 已完成 | Agent | 消除 ask_user 文档与代码不一致，降低长任务 compaction 软预算超标风险 | 显式 `timeout_seconds` 会被剩余 budget 夹紧；recent tool 输出只在发送模型副本中截断，session 原文保留 |
 
 ## 风险与决策
 
 | 类型 | ID | 严重度/日期 | 事项 | 状态 | 应对/后续 | OMP 是怎么实现的（建议实现方式） |
 |---|---|---|---|---|---|---|
-| 风险 | R-001 | 高 | 长任务上下文膨胀 | 继续增强 | 已做字符阈值 compaction；下一步按 OMP 风格升级 token 预算、输出 reserve、recent 保留和 LLM summary | OMP 按上下文 token 预算触发压缩，给下一轮 prompt/输出预留 reserve，并把早期历史压成 summary；建议我们把字符阈值升级为 token 估算 + reserve + 可选 LLM summary，字符阈值只保留为兜底。 |
+| 风险 | R-001 | 高 | 长任务上下文膨胀 | 已进一步缓解，继续增强 | 已做字符阈值 compaction，并截断发送给模型的超大 tool 输出；下一步真实压测后再评估 token 预算、输出 reserve、recent 保留和 LLM summary | OMP 按上下文 token 预算触发压缩，给下一轮 prompt/输出预留 reserve，并把早期历史压成 summary；建议我们把字符阈值升级为 token 估算 + reserve + 可选 LLM summary，字符阈值只保留为兜底。 |
 | 风险 | R-002 | 高 | 没有 todo 工具 | 已关闭 | 已增加 session 级 todo 工具 | OMP 把 todo 作为会话状态在 UI、session 和 reminder 中同步；我们保留轻量 `todo_read/add/update`，先满足长任务追踪。 |
 | 风险 | R-003 | 中 | ask 模式确认过多 | 已关闭 MVP 版 | 已增加 approvalMode、per-tool allow/prompt/deny、session allow/reject | OMP 用 tool approval tier、approvalMode 和 per-tool policy 控制确认；我们保留旧白名单并补 `tool_approval` 和 session decision，危险 shell 仍可显式 deny。 |
 | 风险 | R-004 | 中 | 中断时 tool_calls 配对仍可增强 | 已关闭 MVP 版 | deadline、用户中断和输出截断已补齐 | OMP 在 abort、error、skipped、截断时补 synthetic tool result；我们按 call_id 补齐未执行工具，并已处理 `finish_reason=length`。 |
@@ -120,7 +121,7 @@ python3 scripts/sync_project_excel.py
 | 风险 | R-006 | 低 | 高级能力过早引入 | 受控 | P6 暂缓，先稳定日用闭环 | OMP 将 LSP、subagents、AST edit、TUI 等做成可组合高级能力；我们 P6 后置，先稳定单 Agent 闭环。 |
 | 风险 | R-007 | 中 | Prompt injection | 开放 | 文档提示；不信任仓库禁用 yolo | OMP 将仓库 context 视为 advisory，并靠 approval/yolo 策略限制工具权限；我们默认不信任仓库内容，危险工具需确认。 |
 | 风险 | R-008 | 中 | P3/P4 变更尚未提交 | 已关闭 | P3 提交 `304fbdf`，P4 提交 `4beb487` | OMP 持久化 session 和 compaction 以支持恢复，但代码里程碑仍要靠 VCS；我们继续阶段性 commit 固化节点。 |
-| 风险 | R-009 | 中 | ask_user 会阻塞等待用户 | 已缓解 | 已支持 timeout/default，并自动受剩余 budget 约束 | OMP 的 approval/elicitation 可以被拒绝或取消并回灌结果；我们给 `ask_user` 加 timeout/default，支持无人值守场景。 |
+| 风险 | R-009 | 中 | ask_user 会阻塞等待用户 | 已缓解 | 已支持 timeout/default，并自动受剩余 budget 约束；显式 timeout 也会被剩余 budget 夹紧 | OMP 的 approval/elicitation 可以被拒绝或取消并回灌结果；我们给 `ask_user` 加 timeout/default，支持无人值守场景。 |
 | 风险 | R-010 | 中 | approval prompt 等待耗尽预算 | 已关闭 MVP 版 | approval prompt 已使用 deadline-aware timed stdin；deadline 已过或等待超时会取消工具调用 | OMP 的 deadline 是 wall-clock absolute timestamp；ACP permission gate 会把 `requestPermission` 和 abort signal 竞争。我们本地版用 `select.select` 按剩余 deadline 等 stdin，超时即取消。 |
 | ADR | ADR-001 | 2026-07-07 | 优先采纳 OMP 成熟设计，按本地目标裁剪 | 已接受 | 好设计可直接采用，复杂度按需收敛 | OMP 是重要参考实现；我们不为了“避免复制”而绕开好设计。采用标准是收益是否大于复杂度，并且不破坏个人本地使用、封闭 VM、无公网依赖和第一阶段 MVP 边界。 |
 | ADR | ADR-002 | 2026-07-07 | max_steps 只作为防失控保险丝 | 已落地 | 默认值已改为 0，不限步 | OMP 的 stepCounter 主要用于 telemetry，终止靠无 tool_calls、deadline、abort；我们把 `max_steps` 仅作为显式保险丝。 |

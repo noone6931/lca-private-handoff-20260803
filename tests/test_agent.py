@@ -312,6 +312,56 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertTrue(any("T1: Finish compaction" in m.get("content", "") for m in sent))
         self.assertFalse(any("T2: Already done" in m.get("content", "") for m in sent))
 
+    def test_context_compaction_truncates_large_recent_tool_outputs_for_model_only(self) -> None:
+        _MessageRecordingClient.messages = []
+        large_tool_output = "tool-output-" + ("z" * 10000)
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=workspace,
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+                context_char_budget=3000,
+                context_recent_messages=4,
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _MessageRecordingClient):
+                runtime = AgentRuntime(config, show_tool_logs=False)
+                runtime._messages.extend(
+                    [
+                        {"role": "user", "content": "old request " + ("x" * 3000)},
+                        {
+                            "role": "assistant",
+                            "content": None,
+                            "tool_calls": [
+                                {
+                                    "id": "call_1",
+                                    "type": "function",
+                                    "function": {"name": "shell", "arguments": "{}"},
+                                }
+                            ],
+                        },
+                        {
+                            "role": "tool",
+                            "tool_call_id": "call_1",
+                            "content": large_tool_output,
+                        },
+                    ]
+                )
+                result = runtime.run("new request")
+
+        sent_tool_messages = [message for message in _MessageRecordingClient.messages if message.get("role") == "tool"]
+        stored_tool_messages = [message for message in runtime._messages if message.get("role") == "tool"]
+        self.assertEqual(result, "done")
+        self.assertEqual(len(sent_tool_messages), 1)
+        self.assertIn("...<truncated", sent_tool_messages[0]["content"])
+        self.assertLess(len(sent_tool_messages[0]["content"]), len(large_tool_output))
+        self.assertEqual(stored_tool_messages[0]["content"], large_tool_output)
+
     def test_session_tool_policy_rejects_unknown_tool_name(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             config = AgentConfig(
