@@ -1,0 +1,62 @@
+from __future__ import annotations
+
+import json
+import urllib.error
+import urllib.request
+from dataclasses import dataclass
+from typing import Any
+
+from .config import AgentConfig
+
+
+class LlmError(RuntimeError):
+    """Raised when the LLM API request fails."""
+
+
+@dataclass(frozen=True)
+class ChatResponse:
+    message: dict[str, Any]
+
+
+class OpenAICompatibleClient:
+    def __init__(self, config: AgentConfig):
+        self._config = config
+
+    def chat(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]) -> ChatResponse:
+        url = f"{self._config.api_base_url}/chat/completions"
+        payload = {
+            "model": self._config.model,
+            "messages": messages,
+            "tools": tools,
+            "tool_choice": "auto",
+        }
+        request = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {self._config.api_key}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=self._config.request_timeout) as response:
+                body = response.read().decode("utf-8")
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")
+            raise LlmError(f"LLM API returned HTTP {exc.code}: {detail}") from exc
+        except urllib.error.URLError as exc:
+            raise LlmError(f"LLM API request failed: {exc}") from exc
+
+        try:
+            data = json.loads(body)
+        except json.JSONDecodeError as exc:
+            preview = body[:500] + ("...<truncated>" if len(body) > 500 else "")
+            raise LlmError(f"LLM API returned non-JSON response: {preview}") from exc
+        choices = data.get("choices")
+        if not choices:
+            raise LlmError(f"LLM API returned no choices: {data}")
+        message = choices[0].get("message")
+        if not isinstance(message, dict):
+            raise LlmError(f"LLM API returned malformed message: {data}")
+        return ChatResponse(message=message)

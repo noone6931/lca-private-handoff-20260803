@@ -1,0 +1,16 @@
+[project]
+name = "local-coding-agent"
+version = "0.1.0"
+description = "A local-first coding agent MVP for personal and sealed-VM use."
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+local-agent = "local_agent.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
