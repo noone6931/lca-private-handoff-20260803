@@ -28,7 +28,11 @@ def main(argv: list[str] | None = None) -> int:
         help="Safety cap for model/tool iterations. 0 means unlimited; use budget seconds for normal limits.",
     )
     parser.add_argument("--budget-seconds", type=int, help="Wall-clock budget for one prompt run. 0 disables it.")
-    parser.add_argument("--approval-mode", choices=["ask", "auto-read", "yolo"], help="Tool approval policy.")
+    parser.add_argument(
+        "--approval-mode",
+        choices=["ask", "auto-read", "always-ask", "write", "yolo"],
+        help="Tool approval policy.",
+    )
     parser.add_argument(
         "--auto-approve-tools",
         help="Comma-separated tool names to allow without prompting in ask mode.",
@@ -96,7 +100,42 @@ def _repl(runtime: AgentRuntime) -> int:
             return 0
         if not prompt:
             continue
+        if prompt.startswith("/"):
+            _handle_repl_command(runtime, prompt)
+            continue
         print(runtime.run(prompt))
+
+
+def _handle_repl_command(runtime: AgentRuntime, command: str) -> None:
+    parts = command.split()
+    if not parts:
+        return
+    if parts[0] != "/approval":
+        print(f"Unknown command: {parts[0]}")
+        return
+    try:
+        if len(parts) == 1:
+            print(runtime.approval_summary())
+            return
+        if len(parts) == 3 and parts[1] == "mode":
+            runtime.set_session_approval_mode(parts[2])
+            print(runtime.approval_summary())
+            return
+        if len(parts) == 3 and parts[1] in {"allow", "prompt", "deny"}:
+            runtime.set_session_tool_policy(parts[2], parts[1])
+            print(runtime.approval_summary())
+            return
+        if len(parts) == 3 and parts[1] == "reset":
+            runtime.reset_session_tool_policy(parts[2])
+            print(runtime.approval_summary())
+            return
+    except (ConfigError, ValueError) as exc:
+        print(f"error: {exc}")
+        return
+    print(
+        "Usage: /approval | /approval mode always-ask|write|yolo | "
+        "/approval allow|prompt|deny TOOL | /approval reset TOOL"
+    )
 
 
 if __name__ == "__main__":

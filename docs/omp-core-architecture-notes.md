@@ -100,14 +100,21 @@ OMP 使用 compaction 处理长上下文，而不是靠减少 step 数。
 - 历史消息压缩成 summary / compaction entries；
 - 最近消息和关键文件操作需要保留。
 
-我们项目 P4 的最小设计：
+我们项目当前状态：
 
-- 先不做复杂 token 精算；
-- 用字符数或粗略 token 估算作为触发阈值；
+- 已完成 deterministic compaction MVP；
+- 当前使用 `context_char_budget` / `context_recent_messages` 控制触发与最近消息保留；
 - 把早期 user / assistant / tool 输出折叠成 Markdown summary；
-- 保留最近若干轮原文；
 - 保留文件修改、测试结果、用户明确决策；
 - summary 写入 session，并作为后续上下文注入。
+
+下一步按 OMP 风格增强：
+
+- 增加 token 估算，把字符阈值保留为兜底；
+- 按上下文 token 预算触发 compaction，而不是只按字符数；
+- 为下一轮 prompt 和模型输出预留 reserve；
+- recent messages 继续保留原文，早期历史压成 summary / compaction entries；
+- 优先支持 LLM summary，失败时回退 deterministic summary。
 
 ## Tool Call 配对
 

@@ -15,6 +15,7 @@ DEFAULT_BUDGET_SECONDS = 600
 DEFAULT_CONTEXT_CHAR_BUDGET = 60000
 DEFAULT_CONTEXT_RECENT_MESSAGES = 40
 TOOL_APPROVAL_POLICIES = {"allow", "prompt", "deny"}
+APPROVAL_MODES = {"always-ask", "write", "yolo"}
 
 
 @dataclass(frozen=True)
@@ -27,7 +28,7 @@ class AgentConfig:
     max_steps: int = DEFAULT_MAX_STEPS
     budget_seconds: int | None = DEFAULT_BUDGET_SECONDS
     request_timeout: int = 120
-    approval_mode: str = "ask"
+    approval_mode: str = "always-ask"
     auto_approve_tools: tuple[str, ...] = ()
     tool_approval: dict[str, str] | None = None
     context_char_budget: int = DEFAULT_CONTEXT_CHAR_BUDGET
@@ -73,12 +74,15 @@ def load_config(
         or provider_defaults.get("model")
         or ""
     )
-    resolved_approval_mode = (
+    tools_config = _tools_config(file_config)
+    raw_approval_mode = (
         approval_mode
         or file_config.get("approval_mode")
+        or tools_config.get("approvalMode")
         or os.environ.get("AGENT_APPROVAL_MODE")
-        or "ask"
+        or "always-ask"
     )
+    resolved_approval_mode = normalize_approval_mode(raw_approval_mode)
     raw_max_steps = max_steps if max_steps is not None else file_config.get("max_steps")
     resolved_max_steps = _non_negative_int(
         "max_steps",
@@ -107,7 +111,7 @@ def load_config(
     raw_tool_approval = (
         tool_approval
         if tool_approval is not None
-        else file_config.get("tool_approval", os.environ.get("AGENT_TOOL_APPROVAL"))
+        else file_config.get("tool_approval", tools_config.get("approval", os.environ.get("AGENT_TOOL_APPROVAL")))
     )
     resolved_tool_approval = _tool_approval_map("tool_approval", raw_tool_approval)
     for tool in resolved_auto_approve_tools:
@@ -139,9 +143,6 @@ def load_config(
         raise ConfigError("Missing AI_API_KEY.")
     if not resolved_model:
         raise ConfigError("Missing AI_MODEL.")
-    if resolved_approval_mode not in {"ask", "auto-read", "yolo"}:
-        raise ConfigError("approval_mode must be one of: ask, auto-read, yolo.")
-
     return AgentConfig(
         provider=resolved_provider,
         api_base_url=resolved_api_base_url,
@@ -170,6 +171,30 @@ def _load_json_config(config_path: str | None) -> dict:
     if not isinstance(data, dict):
         raise ConfigError("Config file must contain a JSON object.")
     return data
+
+
+def _tools_config(file_config: dict) -> dict:
+    tools = file_config.get("tools") or {}
+    if not isinstance(tools, dict):
+        raise ConfigError("tools must be an object.")
+    return tools
+
+
+def normalize_approval_mode(raw_mode: object) -> str:
+    if not isinstance(raw_mode, str):
+        raise ConfigError("approval_mode must be a string.")
+    mode = raw_mode.strip().lower()
+    aliases = {
+        "ask": "always-ask",
+        "auto-read": "always-ask",
+        "always_ask": "always-ask",
+        "write": "write",
+        "yolo": "yolo",
+    }
+    resolved = aliases.get(mode, mode)
+    if resolved not in APPROVAL_MODES:
+        raise ConfigError("approval_mode must be one of: always-ask, write, yolo.")
+    return resolved
 
 
 def _load_dotenv(path: Path) -> None:

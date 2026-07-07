@@ -375,6 +375,96 @@ class ToolTests(unittest.TestCase):
         self.assertTrue(result.is_error)
         self.assertIn("requires approval", result.content)
 
+    def test_write_approval_mode_allows_write_but_prompts_exec(self) -> None:
+        registry = ToolRegistry(
+            [
+                Tool(
+                    name="sample_write",
+                    description="sample write",
+                    tier="write",
+                    input_schema={"type": "object", "properties": {}, "additionalProperties": False},
+                    handler=lambda args, context: type("Result", (), {"content": "write ok", "is_error": False})(),
+                ),
+                Tool(
+                    name="sample_exec",
+                    description="sample exec",
+                    tier="exec",
+                    input_schema={"type": "object", "properties": {}, "additionalProperties": False},
+                    handler=lambda args, context: type("Result", (), {"content": "exec ok", "is_error": False})(),
+                ),
+            ]
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            context = ToolContext(workspace=Path(tmp).resolve(), approval_mode="write")
+            with patch("sys.stdin.isatty", return_value=False):
+                write_result = registry.execute("sample_write", "{}", context)
+                exec_result = registry.execute("sample_exec", "{}", context)
+
+        self.assertFalse(write_result.is_error)
+        self.assertEqual(write_result.content, "write ok")
+        self.assertTrue(exec_result.is_error)
+        self.assertIn("requires approval", exec_result.content)
+
+    def test_session_allow_answer_allows_same_tool_without_reprompt(self) -> None:
+        registry = ToolRegistry(
+            [
+                Tool(
+                    name="sample_exec",
+                    description="sample exec",
+                    tier="exec",
+                    input_schema={"type": "object", "properties": {}, "additionalProperties": False},
+                    handler=lambda args, context: type("Result", (), {"content": "ok", "is_error": False})(),
+                )
+            ]
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            session_policy: dict[str, str] = {}
+            context = ToolContext(
+                workspace=Path(tmp).resolve(),
+                approval_mode="always-ask",
+                session_tool_approval=session_policy,
+            )
+            with patch("sys.stdin.isatty", return_value=True), patch("builtins.input", return_value="s") as ask:
+                first = registry.execute("sample_exec", "{}", context)
+            with patch("sys.stdin.isatty", return_value=False):
+                second = registry.execute("sample_exec", "{}", context)
+
+        self.assertFalse(first.is_error)
+        self.assertFalse(second.is_error)
+        self.assertEqual(session_policy, {"sample_exec": "allow_always"})
+        self.assertEqual(ask.call_count, 1)
+
+    def test_session_deny_answer_blocks_same_tool_without_reprompt(self) -> None:
+        registry = ToolRegistry(
+            [
+                Tool(
+                    name="sample_exec",
+                    description="sample exec",
+                    tier="exec",
+                    input_schema={"type": "object", "properties": {}, "additionalProperties": False},
+                    handler=lambda args, context: type("Result", (), {"content": "ok", "is_error": False})(),
+                )
+            ]
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            session_policy: dict[str, str] = {}
+            context = ToolContext(
+                workspace=Path(tmp).resolve(),
+                approval_mode="always-ask",
+                session_tool_approval=session_policy,
+            )
+            with patch("sys.stdin.isatty", return_value=True), patch("builtins.input", return_value="d") as ask:
+                first = registry.execute("sample_exec", "{}", context)
+            with patch("sys.stdin.isatty", return_value=True), patch("builtins.input", return_value="y") as second_ask:
+                second = registry.execute("sample_exec", "{}", context)
+
+        self.assertTrue(first.is_error)
+        self.assertTrue(second.is_error)
+        self.assertIn("denied by session approval", second.content)
+        self.assertEqual(session_policy, {"sample_exec": "reject_always"})
+        self.assertEqual(ask.call_count, 1)
+        self.assertEqual(second_ask.call_count, 0)
+
     def test_state_tool_does_not_require_approval_in_ask_mode(self) -> None:
         registry = ToolRegistry(
             [

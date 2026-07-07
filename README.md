@@ -51,7 +51,7 @@ export AI_MODEL="your-model"
 可选：
 
 ```bash
-export AGENT_APPROVAL_MODE="ask"   # ask | auto-read | yolo
+export AGENT_APPROVAL_MODE="always-ask"   # always-ask | write | yolo; ask/auto-read are legacy aliases
 export AGENT_BUDGET_SECONDS="300"  # optional wall-clock budget per run
 export AGENT_AUTO_APPROVE_TOOLS="run_tests,git_diff"  # optional ask-mode allowlist
 export AGENT_TOOL_APPROVAL="shell=deny,run_tests=allow"  # optional per-tool allow/prompt/deny
@@ -105,7 +105,7 @@ local-agent "帮我找一下测试失败原因"
 
 长会话默认启用本地上下文压缩：当消息历史超过约 `60000` 字符时，会把早期历史折叠成系统摘要，保留最近消息，并注入未完成 todo。可用 `--context-char-budget 0` 关闭。
 
-如果 `ask` 模式下某些工具你已经确认安全，可以只对白名单工具免确认：
+如果 `always-ask` 模式下某些工具你已经确认安全，可以只对白名单工具免确认：
 
 ```bash
 ./agent \
@@ -118,12 +118,25 @@ local-agent "帮我找一下测试失败原因"
 
 ```bash
 ./agent \
-  --approval-mode ask \
+  --approval-mode always-ask \
   --tool-approval shell=deny,run_tests=allow,apply_patch=prompt \
   "跑测试并总结结果"
 ```
 
 策略含义：`allow` 直接允许，`prompt` 强制询问，`deny` 直接拒绝。显式 `tool_approval` 会优先于旧的 `--auto-approve-tools`。
+
+`write` 模式会自动允许 `read` / `state` / `interaction` / `write` 工具，`exec` 工具仍会询问。`yolo` 模式默认允许全部工具，但 `tool_approval` 中的 `prompt` / `deny` 仍会生效，危险 shell 命令也仍会被硬拒绝。
+
+REPL 中可以临时调整当前会话的权限：
+
+```text
+/approval
+/approval mode write
+/approval allow run_tests
+/approval prompt shell
+/approval deny write_file
+/approval reset shell
+```
 
 ## 会话恢复
 
@@ -186,7 +199,7 @@ python3 scripts/sync_project_excel.py
 - 小工具集；
 - 本地优先；
 - 默认谨慎权限；
-- `ask` 模式可通过 `--auto-approve-tools` 对明确工具做免确认白名单，也可用 `--tool-approval tool=allow|prompt|deny` 做更细策略；
+- `always-ask` 模式可通过 `--auto-approve-tools` 对明确工具做免确认白名单，也可用 `--tool-approval tool=allow|prompt|deny` 做更细策略；
 - 工具参数会在执行前做运行时校验；
 - 多步骤任务可使用 session 级 todo 追踪进度；
 - 需求不清时可使用 `ask_user` 暂停并提问，也可传 `timeout_seconds` / `default_answer` 避免长任务无限等待；

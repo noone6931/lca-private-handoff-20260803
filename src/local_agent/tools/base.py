@@ -20,6 +20,7 @@ class ToolContext:
     session_id: str | None = None
     auto_approve_tools: tuple[str, ...] = ()
     tool_approval: dict[str, str] | None = None
+    session_tool_approval: dict[str, str] | None = None
     deadline_monotonic: float | None = None
 
 
@@ -74,32 +75,62 @@ class ToolRegistry:
 
 
 def _approval_denial_reason(tool: Tool, context: ToolContext) -> str | None:
-    policy = (context.tool_approval or {}).get(tool.name)
-    if policy == "deny":
+    config_policy = (context.tool_approval or {}).get(tool.name)
+    session_policy = (context.session_tool_approval or {}).get(tool.name)
+    if config_policy == "deny":
         return f"Tool '{tool.name}' is denied by tool_approval policy."
-    if policy == "allow":
+    if session_policy == "reject_always":
+        return f"Tool '{tool.name}' is denied by session approval policy."
+    if session_policy == "allow_always":
         return None
-    if context.approval_mode == "yolo" and policy != "prompt":
+    if session_policy == "prompt":
+        return _interactive_approval_denial_reason(tool, context)
+    if config_policy == "allow":
         return None
-    if policy is None and tool.name in context.auto_approve_tools:
+    if config_policy == "prompt":
+        return _interactive_approval_denial_reason(tool, context)
+    if _approval_mode(context.approval_mode) == "yolo":
         return None
-    if context.approval_mode == "auto-read" and tool.tier == "read" and policy != "prompt":
+    if config_policy is None and tool.name in context.auto_approve_tools:
         return None
-    if tool.tier in {"read", "state", "interaction"} and policy != "prompt":
+    mode = _approval_mode(context.approval_mode)
+    if mode == "write" and tool.tier in {"read", "state", "interaction", "write"}:
         return None
+    if mode == "always-ask" and tool.tier in {"read", "state", "interaction"}:
+        return None
+    return _interactive_approval_denial_reason(tool, context)
+
+
+def _interactive_approval_denial_reason(tool: Tool, context: ToolContext) -> str | None:
     if not sys.stdin.isatty():
         return (
             f"Tool '{tool.name}' requires approval, but stdin is not interactive. "
-            "Run with an interactive terminal, use --approval-mode auto-read for read-only tasks, "
+            "Run with an interactive terminal, use --approval-mode write for write-safe tasks, "
             "or use --approval-mode yolo only in a trusted workspace."
         )
     try:
-        answer = input(f"Allow {tool.tier} tool '{tool.name}'? [y/N] ").strip().lower()
+        answer = input(
+            f"Allow {tool.tier} tool '{tool.name}'?\n"
+            "[y] once / [s] always this session / [n] reject / [d] reject this session: "
+        ).strip().lower()
     except EOFError:
         return f"Tool '{tool.name}' requires approval, but stdin closed before a decision."
     if answer in {"y", "yes"}:
         return None
+    if answer in {"s", "session", "always"}:
+        if context.session_tool_approval is not None:
+            context.session_tool_approval[tool.name] = "allow_always"
+        return None
+    if answer in {"d", "deny", "reject_always"}:
+        if context.session_tool_approval is not None:
+            context.session_tool_approval[tool.name] = "reject_always"
+        return f"User denied tool execution for this session: {tool.name}"
     return f"User denied tool execution: {tool.name}"
+
+
+def _approval_mode(raw_mode: str) -> str:
+    aliases = {"ask": "always-ask", "auto-read": "always-ask", "always_ask": "always-ask"}
+    return aliases.get(raw_mode, raw_mode)
 
 
 def validate_tool_arguments(schema: dict[str, Any], arguments: dict[str, Any]) -> dict[str, Any]:

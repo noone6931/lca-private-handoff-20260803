@@ -15,10 +15,10 @@ python3 scripts/sync_project_excel.py
 | 字段 | 当前值 | 说明 |
 |---|---|---|
 | 最终目标 | 个人本地编程助手 Agent | 本地优先、封闭 VM 可用、只访问指定 AI API，能读代码、搜代码、改代码、跑测试、生成 diff、沉淀项目记忆。 |
-| 当前阶段 | P5：安全与恢复增强进行中 | Context compaction、synthetic tool result、patch preview、rollback、ask_user timeout 和 per-tool approval 已完成；正在继续做真实任务压测。 |
+| 当前阶段 | P5：安全与恢复增强 MVP 完成 | Context compaction、synthetic tool result、patch preview、rollback、ask_user timeout 和 OMP 风格 approval model 已完成；下一步做真实任务压测。 |
 | 推荐入口 | `./agent "阅读当前项目"` | 自动设置 `PYTHONPATH=src`，默认当前目录为 workspace。 |
 | Token 配置 | `.env` 或环境变量 | `.env` 可写 `DASHSCOPE_API_KEY=...`，该文件已被 `.gitignore` 忽略。 |
-| 测试数 | 73 | 完整 unittest 通过；compileall 通过。 |
+| 测试数 | 79 | 完整 unittest 通过；compileall 通过。 |
 | 默认 budget_seconds | 600 | 单次任务默认 10 分钟墙钟预算；`--budget-seconds 0` 可关闭。 |
 | 默认 max_steps | 0 | 表示不限步；仅在用户显式设置时作为防失控保险丝。 |
 | 预算执行 | 细粒度 | LLM 请求和 shell/run_tests timeout 会按剩余预算夹紧；deadline 到期会补齐未执行工具结果。 |
@@ -27,7 +27,7 @@ python3 scripts/sync_project_excel.py
 | Patch preview | 已完成 | `apply_patch dry_run=true` 只校验并返回 diff，不写文件。 |
 | Patch rollback | 已完成 MVP 版 | `rollback_patch` 只回滚本 session 的 patch 记录，且要求当前文件仍匹配 after tag。 |
 | ask_user timeout | 已完成 | `ask_user` 支持 `timeout_seconds` / `default_answer`，并受当前 budget 剩余时间约束。 |
-| Per-tool approval | 已完成 | `tool_approval` 支持每个工具 `allow` / `prompt` / `deny`，旧 auto approve 白名单兼容映射为 allow。 |
+| Per-tool approval | 已完成 | 支持 `always-ask` / `write` / `yolo`、per-tool `allow` / `prompt` / `deny`、session always allow/reject 和 REPL `/approval`。 |
 | OMP 核心判断 | 已固化 | 见 `docs/omp-core-architecture-notes.md`。 |
 
 ## 阶段路线图
@@ -38,8 +38,8 @@ python3 scripts/sync_project_excel.py
 | P1 | 基础 Agent 闭环 | 接 AI API，完成读、搜、改、测、diff、session、memory | 已完成 | 100% | 已创建初始 git commit，基础闭环可回滚。 |
 | P2 | 项目管理与可见性 | 项目状态、路线图、todo、决策记录一目了然 | 已完成 | 100% | Excel + Markdown 项目状态已建立。 |
 | P3 | 长任务运行基础 | budget_seconds、max_steps 不限步、todo、ask_user、per-tool approval、一键启动 | 已完成 | 100% | 已具备真实需求的基础运行体验。 |
-| P4 | 上下文治理 | 简单 summary/compaction，工具输出折叠，支持长需求文件 | 已完成 MVP 版 | 100% | 后续可评估 LLM summary 和 token 级阈值。 |
-| P5 | 安全与恢复增强 | synthetic tool result、patch preview、rollback、ask_user timeout、per-tool approval | 进行中 | 95% | 已覆盖 deadline、用户中断、length 截断、patch preview、rollback、ask_user timeout 和 per-tool policy；下一步真实任务压测。 |
+| P4 | 上下文治理 | 简单 summary/compaction，工具输出折叠，支持长需求文件 | 已完成 MVP 版 | 100% | 下一步按 OMP 风格升级 token 预算、输出 reserve、recent 保留和可选 LLM summary。 |
+| P5 | 安全与恢复增强 | synthetic tool result、patch preview、rollback、ask_user timeout、per-tool approval | 已完成 MVP 版 | 100% | 已覆盖 deadline、用户中断、length 截断、patch preview、rollback、ask_user timeout、approval mode、session decision 和 REPL 命令。 |
 | P6 | 高级工程能力 | LSP、TUI、subagents、reviewer、AST edit、DAP | 暂缓 | 0% | 日用闭环稳定后再评估。 |
 
 ## 已完成功能
@@ -66,17 +66,17 @@ python3 scripts/sync_project_excel.py
 | 不限步主循环 | 已完成 | `max_steps=0` | 默认不限步，显式设置才作为保险丝 | 保持 |
 | Todo 工具 | 已完成 | `todo_read` / `todo_add` / `todo_update` | session 级状态追踪 | P4 长任务中继续验证 |
 | ask_user | 已完成 | 交互式终端可中途提问，支持 timeout/default | 避免需求歧义时硬猜，也避免长任务无限等待 | 继续真实任务验证 |
-| Per-tool approval | 已完成 | `--auto-approve-tools` + `--tool-approval` | 兼容旧白名单，并支持每个工具 allow / prompt / deny | 继续真实任务验证 |
+| Per-tool approval | 已完成 | `--auto-approve-tools` + `--tool-approval` + `/approval` | 兼容旧白名单，并支持每个工具 allow / prompt / deny、session always allow/reject | 继续真实任务验证 |
 | 一键启动 | 已完成 | `./agent` | 自动设置 `PYTHONPATH` 并以当前目录为 workspace | 日常入口 |
 | `.env` 加载 | 已完成 | workspace `.env` | 可放 `DASHSCOPE_API_KEY`，被 gitignore | 避免重复 export |
 | OMP 核心架构笔记 | 已完成 | `docs/omp-core-architecture-notes.md` | 固化主循环、deadline、compaction 结论 | 后续设计依据 |
-| 本地 Context Compaction | 已完成 | `context_char_budget` / `context_recent_messages` | 折叠早期历史，保留最近消息，注入未完成 todo | 后续评估 LLM summary |
+| 本地 Context Compaction | 已完成 MVP 版 | `context_char_budget` / `context_recent_messages` | 折叠早期历史，保留最近消息，注入未完成 todo | 下一步补 token 预算、输出 reserve 和可选 LLM summary；字符阈值保留兜底 |
 | Synthetic tool result | 已完成 MVP 版 | deadline 到期、用户中断和 `finish_reason=length` 时补齐 tool result | 避免 session 留下未配对 tool_calls | 继续真实任务验证 |
 | Patch preview | 已完成 | `apply_patch dry_run=true` | 复用 anchored 校验并返回 diff，不写文件 | 后续评估 rollback |
 | Patch rollback | 已完成 MVP 版 | `rollback_patch` | 校验当前文件 hash 后恢复 patch 前内容 | 继续真实任务验证 |
 | ask_user timeout | 已完成 | `timeout_seconds` / `default_answer` / budget 剩余时间 | 长任务无人响应时可以继续或明确失败 | 继续真实任务验证 |
-| Tool approval policy | 已完成 | `tool_approval` | `deny` 最强，`allow` 直接放行，`prompt` 强制询问 | 继续真实任务验证 |
-| 测试覆盖 | 已完成 | 当前 73 个测试通过 | unittest + compileall 通过 | 继续补 P5 边界 |
+| Tool approval policy | 已完成 | `tool_approval` + `session_tool_approval` | config deny 最强，session allow/reject 可记住当前会话，prompt 可强制询问 | 继续真实任务验证 |
+| 测试覆盖 | 已完成 | 当前 79 个测试通过 | unittest + compileall 通过 | 继续补真实任务压测 |
 
 ## 下一步 Todo
 
@@ -91,7 +91,7 @@ python3 scripts/sync_project_excel.py
 | T-007 | P0 | P3 | 实现 ask_user 工具 | 已完成 | Agent | 需求歧义时不硬猜 | 交互式终端可提问 |
 | T-008 | P0 | P3 | 增加 per-tool approval policy | 已完成 | Agent | 减少重复敲 y | `--auto-approve-tools` 可用 |
 | T-009 | P1 | P2 | 更新 README 安全工作流 | 已完成 | Agent | 说明预算、审批和 shell 边界 | README 已更新 |
-| T-010 | P1 | P4 | 简单上下文 summary | 已完成 | Agent | 长任务会被全量历史拖垮 | 已实现本地 deterministic compaction，并注入未完成 todo |
+| T-010 | P1 | P4 | 简单上下文 summary | 已完成 MVP 版 | Agent | 长任务会被全量历史拖垮 | 已实现字符阈值 deterministic compaction；下一步升级 token budget / reserve / LLM summary |
 | T-011 | P1 | P5 | 补 synthetic tool result | 已完成 MVP 版 | Agent | 中断/异常时避免 orphan tool_calls | deadline 到期、用户中断和 length 截断已补齐 |
 | T-012 | P1 | P5 | Patch preview/rollback 设计 | 已完成 MVP 版 | Agent | 进一步降低改错风险 | 已完成 dry_run 预览和 session 级 hash 校验 rollback |
 | T-013 | P2 | P6 | 评估 LSP/TUI/subagents/AST edit | 暂缓 | User + Agent | 高级能力强但复杂 | P4/P5 稳定后再取舍 |
@@ -104,14 +104,15 @@ python3 scripts/sync_project_excel.py
 | T-020 | P1 | P5 | 实现 session 级 patch rollback | 已完成 | Agent | 写错后可以在安全条件下恢复 | `rollback_patch` 校验 after tag 后恢复 before_text |
 | T-021 | P1 | P5 | 实现 ask_user timeout/default | 已完成 | Agent | 防止长任务等待用户输入时无限阻塞 | `ask_user` 支持 timeout/default，并受 budget 剩余时间约束 |
 | T-022 | P1 | P5 | 实现 tool_approval allow/prompt/deny | 已完成 | Agent | 白名单不够表达显式拒绝和强制询问 | `--tool-approval` / `AGENT_TOOL_APPROVAL` 支持每工具策略 |
+| T-023 | P1 | P5 | 实现 approvalMode / session decision / REPL 命令 | 已完成 | Agent | 对齐 OMP 三层审批模型的本地 MVP | 支持 `always-ask` / `write` / `yolo`、`s/d` 会话记忆、`/approval` 命令 |
 
 ## 风险与决策
 
 | 类型 | ID | 严重度/日期 | 事项 | 状态 | 应对/后续 | OMP 是怎么实现的（建议实现方式） |
 |---|---|---|---|---|---|---|
-| 风险 | R-001 | 高 | 长任务上下文膨胀 | 已缓解 | 已做本地 compaction；后续评估 token 级阈值和 LLM summary | OMP 用 token 估算触发 compaction，保留 recent 和输出 reserve；我们短期用字符阈值，后续补 token 估算和 LLM summary。 |
+| 风险 | R-001 | 高 | 长任务上下文膨胀 | 继续增强 | 已做字符阈值 compaction；下一步按 OMP 风格升级 token 预算、输出 reserve、recent 保留和 LLM summary | OMP 按上下文 token 预算触发压缩，给下一轮 prompt/输出预留 reserve，并把早期历史压成 summary；建议我们把字符阈值升级为 token 估算 + reserve + 可选 LLM summary，字符阈值只保留为兜底。 |
 | 风险 | R-002 | 高 | 没有 todo 工具 | 已关闭 | 已增加 session 级 todo 工具 | OMP 把 todo 作为会话状态在 UI、session 和 reminder 中同步；我们保留轻量 `todo_read/add/update`，先满足长任务追踪。 |
-| 风险 | R-003 | 中 | ask 模式确认过多 | 已缓解 | 已增加 per-tool allow/prompt/deny 策略 | OMP 用 tool approval tier、approvalMode 和 per-tool policy 控制确认；我们保留旧白名单并补 `tool_approval`，危险 shell 仍可显式 deny。 |
+| 风险 | R-003 | 中 | ask 模式确认过多 | 已关闭 MVP 版 | 已增加 approvalMode、per-tool allow/prompt/deny、session allow/reject | OMP 用 tool approval tier、approvalMode 和 per-tool policy 控制确认；我们保留旧白名单并补 `tool_approval` 和 session decision，危险 shell 仍可显式 deny。 |
 | 风险 | R-004 | 中 | 中断时 tool_calls 配对仍可增强 | 已关闭 MVP 版 | deadline、用户中断和输出截断已补齐 | OMP 在 abort、error、skipped、截断时补 synthetic tool result；我们按 call_id 补齐未执行工具，并已处理 `finish_reason=length`。 |
 | 风险 | R-005 | 中 | 没有初始 git commit | 已关闭 | 已创建初始 commit | OMP 依赖 session、diff 和工作区状态追踪修改，但不替代 VCS 基线；我们继续用 git commit 作为回滚锚点。 |
 | 风险 | R-006 | 低 | 高级能力过早引入 | 受控 | P6 暂缓，先稳定日用闭环 | OMP 将 LSP、subagents、AST edit、TUI 等做成可组合高级能力；我们 P6 后置，先稳定单 Agent 闭环。 |
@@ -134,7 +135,7 @@ python3 scripts/sync_project_excel.py
 |---:|---|---|---|---|---|
 | 1 | 确认需求 | 需求复杂时先写到 `docs/requirements/*.md` | 避免长 prompt 挤占上下文 | P2+ | 让 Agent 分段 `read_file` |
 | 2 | 启动 Agent | `./agent "描述当前项目"` | 一键启动，默认当前目录为 workspace | P3+ | token 可来自环境变量或 `.env` |
-| 3 | 权限模式 | 默认 ask；只读可 auto-read；可信重复工具可 auto-approve；信任仓库才 yolo | 平衡安全和效率 | P3+ | `--auto-approve-tools run_tests,git_diff` 可用 |
+| 3 | 权限模式 | 默认 always-ask；写操作可用 write；可信重复工具可 tool-approval allow；信任仓库才 yolo | 平衡安全和效率 | P5+ | `--tool-approval run_tests=allow,shell=prompt,write_file=deny` 可用 |
 | 4 | 修改前 | 要求 Agent `read_file/list_files/search_code` | 减少凭空猜测 | P1+ | 已在 prompt 中约束 |
 | 5 | 修改时 | 必须 `apply_patch`，修改已有文件不使用 `write_file` | 保留 hash/old_text 校验 | P1+ | 已支持插入模式 |
 | 6 | 修改后 | 必须 `run_tests + git_diff` | 形成可验证闭环 | P1+ | 初始 commit 后 diff 更好用 |

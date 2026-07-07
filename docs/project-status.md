@@ -30,7 +30,7 @@
 
 ## 当前进度
 
-当前项目处于 P5 阶段：基础 Agent 能力、项目管理基线、长任务时间预算、todo、ask_user、per-tool approval、最小版本地 context compaction、synthetic tool result 和 patch preview/rollback 都已经具备；正在继续做真实任务压测。
+当前项目处于 P5 阶段：基础 Agent 能力、项目管理基线、长任务时间预算、todo、ask_user、per-tool approval、最小版本地 context compaction、synthetic tool result、patch preview/rollback 和 OMP 风格 approval model 都已经具备；下一步做真实任务压测。
 
 已具备的核心能力：
 
@@ -43,7 +43,7 @@
 - `apply_patch` 已支持 `replace`、`insert_before`、`insert_after`，并兼容 Python 3.12。
 - 非交互审批、LLM 非 JSON 响应、session 恢复坏尾部、search_code 绝对路径泄漏等问题已经修复。
 - 已完成 Agent 自举测试：能够通过百炼模型调用工具读取、修改、测试和查看 diff。
-- 测试基线：73 个测试在正常本地环境通过。
+- 测试基线：79 个测试在正常本地环境通过。
 
 当前已具备：
 
@@ -52,7 +52,7 @@
 - `max_steps` 默认值为 0，表示不限步；只在用户显式设置时作为安全保险丝。
 - 已有 Agent 可维护的 session 级 todo 工具。
 - 已有 ask_user 工具，需求歧义时可以主动暂停提问，并支持 `timeout_seconds` / `default_answer`。
-- `ask` 模式已有 `--auto-approve-tools` 白名单和 `--tool-approval tool=allow|prompt|deny` 细粒度策略，减少重复确认并支持显式拒绝。
+- 审批模型已支持 `always-ask` / `write` / `yolo`，并支持每工具 `allow` / `prompt` / `deny` 和 session 内 always allow / always reject。
 - deadline 到期、用户中断工具执行、模型输出 `length` 截断时，会补齐 synthetic tool result，避免 session 留下未配对 tool_calls。
 - `apply_patch` 支持 `dry_run=true`，可在不写文件的情况下预览 diff。
 - `rollback_patch` 可回滚当前 session 中由 `apply_patch` 写入的补丁，并在回滚前校验当前文件 hash。
@@ -72,7 +72,7 @@
 | P2 | 项目管理与可见性 | 已完成 | 建立 Excel + Markdown 项目状态，让目标、进度、风险、Todo 一目了然。 |
 | P3 | 长任务运行基础 | 已完成 | 引入 deadline / budget-seconds、提高 max_steps 兜底值、todo、ask_user、per-tool approval。 |
 | P4 | 上下文治理 | 已完成 MVP 版 | 初版 summary / compaction、工具输出折叠、长需求文件工作流。 |
-| P5 | 安全与恢复增强 | 进行中 | synthetic tool result、patch preview、回滚策略、非信任仓库提示。 |
+| P5 | 安全与恢复增强 | 已完成 MVP 版 | synthetic tool result、patch preview、回滚策略、非信任仓库提示、OMP 风格 approval model。 |
 | P6 | 高级工程能力 | 暂缓 | LSP、DAP、TUI、subagents、reviewer、AST edit 等能力后置评估。 |
 
 ## 已完成功能
@@ -103,7 +103,7 @@
 | 不限步主循环 | 已完成 | `max_steps=0` 表示不限步，任务主要靠 `budget_seconds` 控制。 |
 | Todo 工具 | 已完成 | `todo_read`、`todo_add`、`todo_update` 维护 session 级任务清单。 |
 | 用户澄清工具 | 已完成 | `ask_user` 可在交互式终端中向用户提问，支持超时、默认答案和 budget 上限。 |
-| Per-tool approval | 已完成 | `--auto-approve-tools` 保持兼容；`--tool-approval` / `AGENT_TOOL_APPROVAL` 支持 allow / prompt / deny。 |
+| Per-tool approval | 已完成 | 支持 `always-ask` / `write` / `yolo`、`--tool-approval`、旧白名单兼容映射、REPL session 权限命令。 |
 | OMP 核心架构笔记 | 已完成 | `docs/omp-core-architecture-notes.md` 固化 OMP 主循环、deadline、compaction、stepCounter 结论。 |
 | 本地 Context Compaction | 已完成 | 超过 `context_char_budget` 时折叠早期历史，保留最近消息，并注入未完成 todo。 |
 | Synthetic Tool Result | 已完成 MVP 版 | deadline 到期、用户中断、`finish_reason=length` 时会补齐剩余 tool_call 的 tool result。 |
@@ -132,6 +132,7 @@
 | T-017 | 处理模型输出截断的 synthetic result | 已完成 | P5 | LLM 层已暴露 `finish_reason`，`length` 截断会补齐 synthetic tool result 并停止。 |
 | T-018 | ask_user timeout / default | 已完成 | P5 | `ask_user` 支持 `timeout_seconds`、`default_answer`，并受当前 budget 剩余时间约束。 |
 | T-019 | tool_approval allow / prompt / deny | 已完成 | P5 | 支持配置每个工具 allow、prompt、deny；旧 auto approve 白名单兼容映射为 allow。 |
+| T-020 | approvalMode / session decision / REPL commands | 已完成 | P5 | 支持 `always-ask` / `write` / `yolo`、session allow/reject always、REPL `/approval` 命令。 |
 
 ## 风险清单
 
@@ -182,10 +183,11 @@
 
 审批建议：
 
-- 默认使用 `ask`。
-- 只读探索可以使用 `auto-read`。
+- 默认使用 `always-ask`。旧的 `ask` / `auto-read` 会兼容映射为 `always-ask`。
+- 需要允许写文件但继续管住命令执行时，可以使用 `write`。
 - `read`、`state`、`interaction` tier 工具默认不额外审批；当前 `state` 用于 session todo，`interaction` 用于 `ask_user`。
 - `yolo` 只用于完全可信仓库和封闭 VM。
+- `--tool-approval tool=allow|prompt|deny` 可覆盖单个工具；REPL 中可用 `/approval` 临时调整当前会话策略。
 - shell / run_tests / apply_patch 都应保留可审计日志。
 
 ## P5 开发入口

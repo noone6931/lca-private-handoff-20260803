@@ -7,6 +7,7 @@ import time
 from typing import Any
 
 from .config import AgentConfig
+from .config import normalize_approval_mode
 from .llm import OpenAICompatibleClient
 from .session.jsonl_store import JsonlSessionStore
 from .tools import create_default_registry
@@ -39,6 +40,7 @@ class AgentRuntime:
         self._show_tool_logs = show_tool_logs
         self._client = OpenAICompatibleClient(config)
         self._registry = create_default_registry()
+        self._session_tool_approval: dict[str, str] = {}
         self._session = JsonlSessionStore(
             config.workspace,
             session_id=session_id,
@@ -54,6 +56,7 @@ class AgentRuntime:
             session_id=self._session.session_id,
             auto_approve_tools=config.auto_approve_tools,
             tool_approval=config.tool_approval,
+            session_tool_approval=self._session_tool_approval,
         )
         if self._show_tool_logs:
             print(f"[session] {self._session.session_id}", file=sys.stderr)
@@ -118,6 +121,44 @@ class AgentRuntime:
             step += 1
 
         return f"Stopped after reaching max_steps={self._config.max_steps}."
+
+    def approval_summary(self) -> str:
+        lines = [
+            "Approval settings:",
+            f"- mode: {self._tool_context.approval_mode}",
+        ]
+        config_policies = self._tool_context.tool_approval or {}
+        if config_policies:
+            lines.append("- configured tool policies:")
+            for tool, policy in sorted(config_policies.items()):
+                lines.append(f"  - {tool}: {policy}")
+        else:
+            lines.append("- configured tool policies: none")
+        if self._session_tool_approval:
+            lines.append("- session tool policies:")
+            for tool, policy in sorted(self._session_tool_approval.items()):
+                lines.append(f"  - {tool}: {policy}")
+        else:
+            lines.append("- session tool policies: none")
+        return "\n".join(lines)
+
+    def set_session_approval_mode(self, mode: str) -> None:
+        self._tool_context = replace(self._tool_context, approval_mode=normalize_approval_mode(mode))
+
+    def set_session_tool_policy(self, tool: str, policy: str) -> None:
+        tool = _validate_runtime_tool_name(tool)
+        normalized = policy.strip().lower()
+        if normalized == "allow":
+            self._session_tool_approval[tool] = "allow_always"
+        elif normalized == "prompt":
+            self._session_tool_approval[tool] = "prompt"
+        elif normalized == "deny":
+            self._session_tool_approval[tool] = "reject_always"
+        else:
+            raise ValueError("approval policy must be one of: allow, prompt, deny.")
+
+    def reset_session_tool_policy(self, tool: str) -> None:
+        self._session_tool_approval.pop(_validate_runtime_tool_name(tool), None)
 
     def _messages_for_model(self) -> list[dict[str, Any]]:
         if self._config.context_char_budget <= 0:
@@ -371,3 +412,10 @@ def _one_line(content: str, *, max_chars: int = 240) -> str:
     if len(normalized) <= max_chars:
         return normalized
     return normalized[: max_chars - 14] + "...<truncated>"
+
+
+def _validate_runtime_tool_name(tool: str) -> str:
+    normalized = tool.strip()
+    if not normalized or not all(char.isalnum() or char == "_" for char in normalized):
+        raise ValueError(f"invalid tool name: {tool}")
+    return normalized
