@@ -17,7 +17,7 @@ python3 scripts/sync_project_excel.py
 | 字段 | 当前值 | 说明 |
 |---|---|---|
 | 最终目标 | 个人本地编程助手 Agent | 本地优先、封闭 VM 可用、只访问指定 AI API，能读代码、搜代码、改代码、跑测试、生成 diff、沉淀项目记忆。 |
-| 当前阶段 | P5：安全与恢复增强 MVP 主链路复测通过，进入收口检查 | 百炼只读 compaction 压测已通过；真实小改复测跑通 todo、dry_run、apply_patch、session allow、rollback、run_tests、git_diff，P5 主链路已具备日用基础。 |
+| 当前阶段 | P5：安全与恢复增强 MVP 收口完成，进入日用试用 / P6 取舍 | 百炼只读 compaction 压测已通过；真实小改复测跑通 todo、dry_run、apply_patch、session allow、rollback、run_tests、git_diff；README 已补日用命令模板。 |
 | 推荐入口 | `./agent "阅读当前项目"` | 自动设置 `PYTHONPATH=src`，默认当前目录为 workspace。 |
 | Token 配置 | `.env` 或环境变量 | `.env` 可写 `DASHSCOPE_API_KEY=...`，该文件已被 `.gitignore` 忽略。 |
 | 测试数 | 90 | 完整 unittest 通过；compileall 通过。 |
@@ -41,8 +41,8 @@ python3 scripts/sync_project_excel.py
 | P2 | 项目管理与可见性 | 项目状态、路线图、todo、决策记录一目了然 | 已完成 | 100% | Excel + Markdown 项目状态已建立。 |
 | P3 | 长任务运行基础 | budget_seconds、max_steps 不限步、todo、ask_user、per-tool approval、一键启动 | 已完成 | 100% | 已具备真实需求的基础运行体验。 |
 | P4 | 上下文治理 | 简单 summary/compaction，工具输出折叠，支持长需求文件 | 已完成 MVP 版 | 100% | 首轮百炼只读 compaction 压测已通过；继续用真实小改任务压测后再评估 token 预算、输出 reserve、recent 保留和可选 LLM summary。 |
-| P5 | 安全与恢复增强 | synthetic tool result、patch preview、rollback、ask_user timeout、per-tool approval | 已完成 MVP 版 | 100% | 真实小改复测已覆盖 dry_run、apply_patch、session allow、rollback、run_tests、git_diff；下一步做 P5 收口检查。 |
-| P6 | 高级工程能力 | LSP、TUI、subagents、reviewer、AST edit、DAP | 暂缓 | 0% | 日用闭环稳定后再评估。 |
+| P5 | 安全与恢复增强 | synthetic tool result、patch preview、rollback、ask_user timeout、per-tool approval | 已完成并收口 | 100% | 主链路已通过真实百炼复测；后续只修日用反馈中的 P0/P1 问题。 |
+| P6 | 高级工程能力 | LSP、TUI、subagents、reviewer、AST edit、DAP、token budget / LLM summary | 待取舍 | 0% | 先日用试用；再决定是否引入 token budget / LLM summary，LSP/TUI 等继续后置。 |
 
 ## 已完成功能
 
@@ -77,8 +77,8 @@ python3 scripts/sync_project_excel.py
 | Patch preview | 已完成 | `apply_patch dry_run=true` | 复用 anchored 校验并返回 diff，不写文件 | 后续评估 rollback |
 | Patch rollback | 已完成 MVP 版 | `rollback_patch` | 校验当前文件 hash 后恢复 patch 前内容 | 继续真实任务验证 |
 | ask_user timeout | 已完成 | `timeout_seconds` / `default_answer` / budget 剩余时间 | 长任务无人响应时可以继续或明确失败；显式 timeout 也受 budget 夹紧 | 继续真实任务验证 |
-| Tool approval policy | 已完成 MVP 版 | `tool_approval` + `session_tool_approval` | config deny/prompt 是硬护栏，session allow/reject 可记住当前会话，REPL 会校验工具名，approval prompt 受 deadline 约束 | P5 收口检查 |
-| 测试覆盖 | 已完成 | 当前 90 个测试通过 | unittest + compileall 通过 | 继续补真实任务压测 |
+| Tool approval policy | 已完成 MVP 版 | `tool_approval` + `session_tool_approval` | config deny/prompt 是硬护栏，session allow/reject 可记住当前会话，REPL 会校验工具名，approval prompt 受 deadline 约束 | 日用反馈 |
+| 测试覆盖 | 已完成 | 当前 90 个测试通过 | unittest + compileall 通过 | 日用反馈补测 |
 
 ## 下一步 Todo
 
@@ -115,7 +115,8 @@ python3 scripts/sync_project_excel.py
 | T-029 | P1 | P5 | 复测百炼只读 compaction 压测 | 已完成 | User + Agent | 验证 T-028 是否真正修复目标漂移 | 会话 `20260707T093557800154Z` 严格完成 5 个指定工具调用后输出三句话总结，未继续额外读文件 |
 | T-030 | P1 | P5 | 真实小改任务压测 | 已完成 | User + Agent | 验证 compaction、approval、patch preview/rollback、run_tests、git_diff 在真实修改任务中的协同 | 复测会话 `20260707T094246132064Z` 跑通 todo、dry_run、apply_patch、session allow、rollback、run_tests、git_diff；最终仅新增一个测试 docstring |
 | T-031 | P0 | P5 | 修正 `write_file` schema 描述误导 | 已完成 | Agent | 工具描述会进入模型上下文，错误描述会直接导致错误修改 | `write_file` 描述已改为 create-only，并加测试确保不再出现 `fully overwrite` |
-| T-032 | P1 | P5 | P5 收口检查 | 未开始 | Agent | 收口前确认文档、测试、工作树和已知风险一致 | 运行全量测试、检查项目状态、确认未引入新的 P0/P1 阻塞问题 |
+| T-032 | P1 | P5 | P5 收口检查 | 已完成 | Agent | 收口前确认文档、测试、工作树和已知风险一致 | README 已补日用模板；项目状态和 Excel 已同步；90 个测试、compileall、xlsx、diff check 通过 |
+| T-033 | P1 | P6 | P6 取舍评估 | 未开始 | User + Agent | 决定下一阶段是继续日用打磨，还是引入 token budget / LLM summary / LSP / TUI 等高级能力 | 基于日用反馈和复杂任务失败样例做取舍 |
 
 ## 风险与决策
 
@@ -141,6 +142,16 @@ python3 scripts/sync_project_excel.py
 | ADR | ADR-007 | 2026-07-07 | 封闭 VM 下不做公网搜索/自动下载 | 已接受 | 依赖提前准备 | OMP 可接 web、MCP、插件等外部能力，并由配置和 approval 管控；我们封闭 VM 默认离线，依赖提前准备。 |
 | ADR | ADR-008 | 2026-07-07 | Excel 给人看，Markdown 给开发协作 Agent 读 | 已接受 | 持续同步本文件和 `project-status.md` | 这套项目管理文档服务于开发 LCA 的过程，不是 LCA 运行时 memory。我们以 Markdown 作为开发项目事实源，Excel 只生成展示视图。 |
 | ADR | ADR-009 | 2026-07-07 | OMP 核心架构笔记单独固化 | 已接受 | 见 `docs/omp-core-architecture-notes.md` | OMP 的关键判断来自源码和 docs，需要沉淀成项目 context；我们单独维护笔记，避免每次重复扫源码。 |
+
+## P5 收口结论
+
+| 项目 | 结论 | 依据 |
+|---|---|---|
+| 主链路 | 通过 | 百炼真实小改复测已跑通 todo、dry_run、apply_patch、session allow、rollback、run_tests、git_diff。 |
+| 测试 | 通过 | 90 个 unittest、compileall、xlsx 检查、diff check 均通过。 |
+| 日用入口 | 通过 | README 已补只读分析和小改任务命令模板。 |
+| 开放风险 | 可接受 | shell 仍非沙箱、prompt injection 仍需靠审批和封闭 VM；token budget / LLM summary 留到 P6 评估。 |
+| 下一阶段 | 待用户取舍 | 推荐先日用试用，再基于真实失败样例决定是否进入 P6。 |
 
 ## 推荐工作流
 

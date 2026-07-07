@@ -129,6 +129,26 @@ local-agent "帮我找一下测试失败原因"
 
 需要人工确认的 approval prompt 会受 `--budget-seconds` 约束；如果用户一直没有确认，deadline 到期后会取消该工具调用并把错误结果回传给模型。
 
+常用模板：
+
+```bash
+# 只读分析：禁止 shell 和写入类工具
+./agent --provider bailian \
+  --approval-mode always-ask \
+  --tool-approval shell=deny,write_file=deny,memory_write=deny \
+  "阅读当前项目并总结架构"
+
+# 小改任务：run_tests 免确认，apply_patch 走 y/s/n/d 会话审批
+./agent --provider bailian \
+  --approval-mode always-ask \
+  --tool-approval shell=deny,run_tests=allow,write_file=deny,memory_write=deny,rollback_patch=prompt \
+  --budget-seconds 600 \
+  --context-char-budget 60000 \
+  "先 todo，再读文件，写入前 apply_patch dry_run=true，写入后 run_tests 和 git_diff"
+```
+
+如果希望 `apply_patch` 出现 `y/s/n/d` 并可用 `s` 记住当前 session，不要把 `apply_patch` 写成 `tool_approval=prompt`。显式 `prompt` 是配置级硬护栏，会每次询问。
+
 REPL 中可以临时调整当前会话的权限：
 
 ```text

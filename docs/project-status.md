@@ -30,7 +30,7 @@
 
 ## 当前进度
 
-当前项目处于 P5 阶段：基础 Agent 能力、项目管理基线、长任务时间预算、todo、ask_user、per-tool approval、最小版本地 context compaction、synthetic tool result、patch preview/rollback、approval prompt deadline cancel 和 OMP 风格 approval model 都已经具备；百炼只读 compaction 压测和真实小改复测均已通过，下一步做 P5 收口检查。
+当前项目处于 P5 阶段：基础 Agent 能力、项目管理基线、长任务时间预算、todo、ask_user、per-tool approval、最小版本地 context compaction、synthetic tool result、patch preview/rollback、approval prompt deadline cancel 和 OMP 风格 approval model 都已经具备；百炼只读 compaction 压测和真实小改复测均已通过，P5 收口完成，下一步进入日用试用 / P6 取舍。
 
 已具备的核心能力：
 
@@ -75,8 +75,8 @@
 | P2 | 项目管理与可见性 | 已完成 | 建立 Excel + Markdown 项目状态，让目标、进度、风险、Todo 一目了然。 |
 | P3 | 长任务运行基础 | 已完成 | 引入 deadline / budget-seconds、提高 max_steps 兜底值、todo、ask_user、per-tool approval。 |
 | P4 | 上下文治理 | 已完成 MVP 版 | 初版 summary / compaction、工具输出折叠、长需求文件工作流。 |
-| P5 | 安全与恢复增强 | 已完成 MVP 版 | synthetic tool result、patch preview、回滚策略、非信任仓库提示、OMP 风格 approval model、approval prompt deadline cancel。 |
-| P6 | 高级工程能力 | 暂缓 | LSP、DAP、TUI、subagents、reviewer、AST edit 等能力后置评估。 |
+| P5 | 安全与恢复增强 | 已完成并收口 | synthetic tool result、patch preview、回滚策略、非信任仓库提示、OMP 风格 approval model、approval prompt deadline cancel；真实小改复测通过。 |
+| P6 | 高级工程能力 | 待取舍 | token budget / LLM summary、LSP、DAP、TUI、subagents、reviewer、AST edit 等能力后置评估。 |
 
 ## 已完成功能
 
@@ -144,7 +144,8 @@
 | T-026 | 复测百炼只读 compaction 压测 | 已完成 | P5 | 会话 `20260707T093557800154Z` 严格完成 5 个指定工具调用后输出三句话总结，未继续额外读文件。 |
 | T-027 | 真实小改任务压测 | 已完成 | P5 | 复测会话 `20260707T094246132064Z` 跑通 todo、dry_run、apply_patch、session allow、rollback、run_tests、git_diff；最终仅新增一个测试 docstring。 |
 | T-028 | 修正 `write_file` schema 描述误导 | 已完成 | P5 | `write_file` 描述已改为 create-only，并新增测试确保描述不再宣称 `fully overwrite`。 |
-| T-029 | P5 收口检查 | 未开始 | P5 | 收口前确认文档、测试、工作树和已知风险一致，确认是否进入 P6 评估。 |
+| T-029 | P5 收口检查 | 已完成 | P5 | README 已补日用模板；项目状态和 Excel 已同步；90 个测试、compileall、xlsx、diff check 通过。 |
+| T-030 | P6 取舍评估 | 未开始 | P6 | 基于日用反馈和复杂任务失败样例，决定是否进入 token budget / LLM summary / LSP / TUI 等高级能力建设。 |
 
 ## 风险清单
 
@@ -175,6 +176,16 @@
 | ADR-005 | 第一阶段使用 anchored patch，不做 AST edit。 | hash + old_text + line 校验已经足够支撑 MVP 的可控修改。 |
 | ADR-006 | 长需求应写入文件，让 Agent 读取。 | 直接把大段需求塞进 prompt 会挤占上下文，不利于长任务。 |
 | ADR-007 | 封闭 VM 目标优先于联网能力。 | 第一阶段只允许访问指定 AI API，不引入公网搜索和自动下载依赖。 |
+
+## P5 收口结论
+
+| 项目 | 结论 | 依据 |
+|---|---|---|
+| 主链路 | 通过 | 百炼真实小改复测已跑通 todo、dry_run、apply_patch、session allow、rollback、run_tests、git_diff。 |
+| 测试 | 通过 | 90 个 unittest、compileall、xlsx 检查、diff check 均通过。 |
+| 日用入口 | 通过 | README 已补只读分析和小改任务命令模板。 |
+| 开放风险 | 可接受 | shell 仍非沙箱、prompt injection 仍需靠审批和封闭 VM；token budget / LLM summary 留到 P6 评估。 |
+| 下一阶段 | 待用户取舍 | 推荐先日用试用，再基于真实失败样例决定是否进入 P6。 |
 
 ## 推荐工作流
 
@@ -209,7 +220,7 @@
 
 用户确认本文件后，建议按以下顺序继续：
 
-1. 做 P5 收口检查，确认测试、文档、Excel、工作树和已知风险一致。
-2. 记录真实任务中 approval deadline cancel 的体验问题。
-3. P5 收口后再决定是否做 token 预算、输出 reserve、LLM summary。
-4. 根据日用反馈决定是否进入 P6 高级工程能力评估。
+1. 进入日用试用，用 README 中的小改任务模板处理真实本地需求。
+2. 记录真实任务中 approval deadline cancel、compaction、patch/rollback 的体验问题。
+3. 基于真实失败样例决定是否做 token budget、输出 reserve、LLM summary。
+4. 根据日用反馈决定是否进入 LSP / TUI / reviewer 等 P6 高级工程能力评估。
