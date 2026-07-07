@@ -116,11 +116,57 @@ OMP 对 abort、error、skipped、length truncation 等情况会补合成 tool r
 我们已经做过：
 
 - session 恢复时丢弃尾部未配对 tool_calls；
-
-我们还没做：
-
 - 运行中中断、超时、工具参数截断时生成 synthetic tool result；
 - 把未执行原因明确告诉模型，避免恢复后 API 拒绝。
+
+## Tool Approval / Permission Gate
+
+源码依据：
+
+- `docs/approval-mode.md`
+- `packages/coding-agent/src/session/agent-session.ts` 中 ACP Permission Gate
+
+OMP 的普通工具审批是两层结构：
+
+```text
+tool.approval(args) -> read / write / exec / { tier, reason, override }
+tools.approvalMode -> always-ask / write / yolo
+tools.approval.<toolName> -> allow / prompt / deny
+```
+
+模式语义：
+
+- `always-ask`：自动允许 `read`，`write` / `exec` 询问；
+- `write`：自动允许 `read` / `write`，`exec` 询问；
+- `yolo`：默认自动允许全部 tier；
+- `tools.approval.<toolName>` 在各模式下都可覆盖单个工具；
+- 没有声明 approval 的工具按 `exec` 处理，这是安全默认值。
+
+审批解析顺序：
+
+1. 工具先给出自身 tier 或动态审批决策；
+2. 读取用户 per-tool policy；
+3. `yolo` 模式下，没有 per-tool policy 就直接允许；
+4. 非 `yolo` 模式下，如果工具带 `override: true`，会强制 prompt，`deny` 仍阻断；
+5. 否则 per-tool policy 优先生效；
+6. 最后按 active `approvalMode` 和工具 tier 决定自动允许还是询问。
+
+OMP 另有一条 ACP client 权限门：
+
+- 只在 ACP client 连接并暴露 `requestPermission` 能力时启用；
+- 默认 gate 的工具是 `bash`、`edit`、`delete`、`move`；
+- 提示选项包括 `Allow once`、`Always allow`、`Reject`、`Always reject`；
+- `Always allow` / `Always reject` 写入当前 `AgentSession` 的内存 Map：`#acpPermissionDecisions`；
+- 这个 Map 是 session 内存态，不是全局配置；
+- 再次遇到相同 permission intent 时先查 Map，命中 `allow_always` 直接执行，命中 `reject_always` 直接拒绝。
+
+对我们项目的设计含义：
+
+- 现有 `approval_mode=ask/auto-read/yolo` 是简化版 `approvalMode`，但命名和 OMP 不完全一致；
+- 已补 `tool_approval` 配置，支持每个工具 `allow` / `prompt` / `deny`；
+- 保留旧的 `--auto-approve-tools`，并兼容映射成 `tool_approval.<tool>=allow`；
+- 交互式终端可以补 `once / session / no`，其中 `session` 写入运行时内存态，不落全局配置；
+- 危险 shell 规则可以比 OMP 更保守：我们本地版可继续硬拒绝明显危险命令，避免 `yolo` 绕过。
 
 ## 病态循环上限
 

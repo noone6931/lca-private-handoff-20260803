@@ -14,6 +14,7 @@ DEFAULT_MAX_STEPS = 0
 DEFAULT_BUDGET_SECONDS = 600
 DEFAULT_CONTEXT_CHAR_BUDGET = 60000
 DEFAULT_CONTEXT_RECENT_MESSAGES = 40
+TOOL_APPROVAL_POLICIES = {"allow", "prompt", "deny"}
 
 
 @dataclass(frozen=True)
@@ -28,6 +29,7 @@ class AgentConfig:
     request_timeout: int = 120
     approval_mode: str = "ask"
     auto_approve_tools: tuple[str, ...] = ()
+    tool_approval: dict[str, str] | None = None
     context_char_budget: int = DEFAULT_CONTEXT_CHAR_BUDGET
     context_recent_messages: int = DEFAULT_CONTEXT_RECENT_MESSAGES
 
@@ -44,6 +46,7 @@ def load_config(
     budget_seconds: int | None,
     approval_mode: str | None,
     auto_approve_tools: object | None = None,
+    tool_approval: object | None = None,
     context_char_budget: int | None = None,
     context_recent_messages: int | None = None,
 ) -> AgentConfig:
@@ -101,6 +104,14 @@ def load_config(
         else file_config.get("auto_approve_tools", os.environ.get("AGENT_AUTO_APPROVE_TOOLS"))
     )
     resolved_auto_approve_tools = _tool_name_tuple("auto_approve_tools", raw_auto_approve_tools)
+    raw_tool_approval = (
+        tool_approval
+        if tool_approval is not None
+        else file_config.get("tool_approval", os.environ.get("AGENT_TOOL_APPROVAL"))
+    )
+    resolved_tool_approval = _tool_approval_map("tool_approval", raw_tool_approval)
+    for tool in resolved_auto_approve_tools:
+        resolved_tool_approval.setdefault(tool, "allow")
     raw_context_char_budget = (
         context_char_budget
         if context_char_budget is not None
@@ -142,6 +153,7 @@ def load_config(
         request_timeout=resolved_request_timeout,
         approval_mode=resolved_approval_mode,
         auto_approve_tools=resolved_auto_approve_tools,
+        tool_approval=resolved_tool_approval,
         context_char_budget=resolved_context_char_budget,
         context_recent_messages=resolved_context_recent_messages,
     )
@@ -281,6 +293,40 @@ def _tool_name_tuple(name: str, value: object) -> tuple[str, ...]:
 
     tools = tuple(item for item in items if item)
     for tool in tools:
-        if not all(char.isalnum() or char == "_" for char in tool):
-            raise ConfigError(f"{name} contains invalid tool name: {tool}")
+        _validate_tool_name(name, tool)
     return tools
+
+
+def _tool_approval_map(name: str, value: object) -> dict[str, str]:
+    if value is None or value == "":
+        return {}
+    raw_items: dict[str, object] = {}
+    if isinstance(value, str):
+        for item in value.split(","):
+            part = item.strip()
+            if not part:
+                continue
+            if "=" not in part:
+                raise ConfigError(f"{name} entries must use tool=allow|prompt|deny.")
+            tool, policy = part.split("=", 1)
+            raw_items[tool.strip()] = policy.strip()
+    elif isinstance(value, dict):
+        raw_items = {str(tool).strip(): policy for tool, policy in value.items()}
+    else:
+        raise ConfigError(f"{name} must be a comma-separated tool=policy string or an object.")
+
+    approvals: dict[str, str] = {}
+    for tool, raw_policy in raw_items.items():
+        _validate_tool_name(name, tool)
+        if not isinstance(raw_policy, str):
+            raise ConfigError(f"{name}.{tool} must be a string policy.")
+        policy = raw_policy.strip().lower()
+        if policy not in TOOL_APPROVAL_POLICIES:
+            raise ConfigError(f"{name}.{tool} must be one of: allow, prompt, deny.")
+        approvals[tool] = policy
+    return approvals
+
+
+def _validate_tool_name(name: str, tool: str) -> None:
+    if not tool or not all(char.isalnum() or char == "_" for char in tool):
+        raise ConfigError(f"{name} contains invalid tool name: {tool}")

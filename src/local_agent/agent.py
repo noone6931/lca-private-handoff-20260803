@@ -53,6 +53,7 @@ class AgentRuntime:
             approval_mode=config.approval_mode,
             session_id=self._session.session_id,
             auto_approve_tools=config.auto_approve_tools,
+            tool_approval=config.tool_approval,
         )
         if self._show_tool_logs:
             print(f"[session] {self._session.session_id}", file=sys.stderr)

@@ -43,7 +43,7 @@
 - `apply_patch` 已支持 `replace`、`insert_before`、`insert_after`，并兼容 Python 3.12。
 - 非交互审批、LLM 非 JSON 响应、session 恢复坏尾部、search_code 绝对路径泄漏等问题已经修复。
 - 已完成 Agent 自举测试：能够通过百炼模型调用工具读取、修改、测试和查看 diff。
-- 测试基线：67 个测试在正常本地环境通过。
+- 测试基线：73 个测试在正常本地环境通过。
 
 当前已具备：
 
@@ -52,7 +52,7 @@
 - `max_steps` 默认值为 0，表示不限步；只在用户显式设置时作为安全保险丝。
 - 已有 Agent 可维护的 session 级 todo 工具。
 - 已有 ask_user 工具，需求歧义时可以主动暂停提问，并支持 `timeout_seconds` / `default_answer`。
-- `ask` 模式已有 `--auto-approve-tools` 白名单，减少重复确认。
+- `ask` 模式已有 `--auto-approve-tools` 白名单和 `--tool-approval tool=allow|prompt|deny` 细粒度策略，减少重复确认并支持显式拒绝。
 - deadline 到期、用户中断工具执行、模型输出 `length` 截断时，会补齐 synthetic tool result，避免 session 留下未配对 tool_calls。
 - `apply_patch` 支持 `dry_run=true`，可在不写文件的情况下预览 diff。
 - `rollback_patch` 可回滚当前 session 中由 `apply_patch` 写入的补丁，并在回滚前校验当前文件 hash。
@@ -103,7 +103,7 @@
 | 不限步主循环 | 已完成 | `max_steps=0` 表示不限步，任务主要靠 `budget_seconds` 控制。 |
 | Todo 工具 | 已完成 | `todo_read`、`todo_add`、`todo_update` 维护 session 级任务清单。 |
 | 用户澄清工具 | 已完成 | `ask_user` 可在交互式终端中向用户提问，支持超时、默认答案和 budget 上限。 |
-| Per-tool approval | 已完成 | `--auto-approve-tools` / `AGENT_AUTO_APPROVE_TOOLS` 支持 ask 模式工具白名单。 |
+| Per-tool approval | 已完成 | `--auto-approve-tools` 保持兼容；`--tool-approval` / `AGENT_TOOL_APPROVAL` 支持 allow / prompt / deny。 |
 | OMP 核心架构笔记 | 已完成 | `docs/omp-core-architecture-notes.md` 固化 OMP 主循环、deadline、compaction、stepCounter 结论。 |
 | 本地 Context Compaction | 已完成 | 超过 `context_char_budget` 时折叠早期历史，保留最近消息，并注入未完成 todo。 |
 | Synthetic Tool Result | 已完成 MVP 版 | deadline 到期、用户中断、`finish_reason=length` 时会补齐剩余 tool_call 的 tool result。 |
@@ -120,7 +120,7 @@
 | T-005 | 将 `max_steps` 调整为不限步保险丝 | 已完成 | P1 | 默认值为 0，表示不限步；日常任务预算交给 `budget_seconds`。 |
 | T-006 | 增加 todo 工具 | 已完成 | P1 | Agent 可维护 session 级待办、进行中、已完成、阻塞、跳过状态。 |
 | T-007 | 增加 ask_user 工具 | 已完成 | P1 | 需求不清时允许 Agent 在交互式终端中暂停并向用户提问。 |
-| T-008 | 增加 per-tool approval policy | 已完成 | P2 | 已支持 ask 模式下按工具名免确认。 |
+| T-008 | 增加 per-tool approval policy | 已完成 | P2 | 已支持 ask 模式下按工具名免确认，并支持 allow / prompt / deny。 |
 | T-009 | 更新 README 安全工作流 | 已完成 | P2 | 已明确 shell 不是沙箱，并补充预算和审批白名单说明。 |
 | T-010 | 初版 context summary / compaction | 已完成 | P3 | 已实现本地确定性 compaction；超过字符预算时折叠早期历史并注入未完成 todo。 |
 | T-011 | synthetic tool result | 已完成 MVP 版 | P3 | deadline 到期、用户中断和模型 `length` 截断已补齐 tool_call 配对。 |
@@ -131,6 +131,7 @@
 | T-016 | 细化 budget deadline 执行检查 | 已完成 | P1 | LLM/tool timeout 使用剩余预算；到期时为未执行工具补 synthetic result。 |
 | T-017 | 处理模型输出截断的 synthetic result | 已完成 | P5 | LLM 层已暴露 `finish_reason`，`length` 截断会补齐 synthetic tool result 并停止。 |
 | T-018 | ask_user timeout / default | 已完成 | P5 | `ask_user` 支持 `timeout_seconds`、`default_answer`，并受当前 budget 剩余时间约束。 |
+| T-019 | tool_approval allow / prompt / deny | 已完成 | P5 | 支持配置每个工具 allow、prompt、deny；旧 auto approve 白名单兼容映射为 allow。 |
 
 ## 风险清单
 
@@ -140,7 +141,7 @@
 | R-002 | 长任务上下文持续膨胀 | 已缓解 | 多轮工具调用后 token 成本和失败率上升。 | 已增加本地 context compaction；后续再做 token 级阈值和更强摘要。 |
 | R-003 | 没有 todo 工具 | 已关闭 | 长需求中不容易追踪完成项和遗漏项。 | 已增加 session 级 todo 工具。 |
 | R-004 | 没有 ask_user 工具 | 已关闭 | 遇到歧义时模型只能猜。 | 已增加 ask_user 工具。 |
-| R-005 | ask 模式确认次数多 | 已缓解 | 日用体验偏慢。 | 已增加 per-tool approval 白名单；默认仍保持谨慎。 |
+| R-005 | ask 模式确认次数多 | 已缓解 | 日用体验偏慢。 | 已增加 per-tool approval 白名单和 allow / prompt / deny 策略；默认仍保持谨慎。 |
 | R-006 | shell 工具不是安全沙箱 | 开放 | 命令可以越过 workspace 访问系统。 | 文档明确风险；封闭 VM 作为真正边界。 |
 | R-007 | 恶意仓库 prompt injection | 开放 | 文件内容可能诱导模型执行不安全操作。 | 不信任仓库禁用 `yolo`，保留人工审批。 |
 | R-008 | 中断时 tool_call 配对仍可增强 | 已关闭 MVP 版 | 恢复会话时可能遇到兼容性问题。 | deadline、用户中断和输出截断已补齐。 |

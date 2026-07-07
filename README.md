@@ -54,6 +54,7 @@ export AI_MODEL="your-model"
 export AGENT_APPROVAL_MODE="ask"   # ask | auto-read | yolo
 export AGENT_BUDGET_SECONDS="300"  # optional wall-clock budget per run
 export AGENT_AUTO_APPROVE_TOOLS="run_tests,git_diff"  # optional ask-mode allowlist
+export AGENT_TOOL_APPROVAL="shell=deny,run_tests=allow"  # optional per-tool allow/prompt/deny
 export AGENT_CONTEXT_CHAR_BUDGET="60000"  # optional local compaction trigger
 ```
 
@@ -112,6 +113,17 @@ local-agent "帮我找一下测试失败原因"
   --auto-approve-tools run_tests,git_diff \
   "跑测试并总结 diff"
 ```
+
+更细的工具策略可以使用 `--tool-approval`：
+
+```bash
+./agent \
+  --approval-mode ask \
+  --tool-approval shell=deny,run_tests=allow,apply_patch=prompt \
+  "跑测试并总结结果"
+```
+
+策略含义：`allow` 直接允许，`prompt` 强制询问，`deny` 直接拒绝。显式 `tool_approval` 会优先于旧的 `--auto-approve-tools`。
 
 ## 会话恢复
 
@@ -174,7 +186,7 @@ python3 scripts/sync_project_excel.py
 - 小工具集；
 - 本地优先；
 - 默认谨慎权限；
-- `ask` 模式可通过 `--auto-approve-tools` 对明确工具做免确认白名单；
+- `ask` 模式可通过 `--auto-approve-tools` 对明确工具做免确认白名单，也可用 `--tool-approval tool=allow|prompt|deny` 做更细策略；
 - 工具参数会在执行前做运行时校验；
 - 多步骤任务可使用 session 级 todo 追踪进度；
 - 需求不清时可使用 `ask_user` 暂停并提问，也可传 `timeout_seconds` / `default_answer` 避免长任务无限等待；

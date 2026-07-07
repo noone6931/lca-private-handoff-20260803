@@ -19,6 +19,7 @@ class ToolContext:
     approval_mode: str
     session_id: str | None = None
     auto_approve_tools: tuple[str, ...] = ()
+    tool_approval: dict[str, str] | None = None
     deadline_monotonic: float | None = None
 
 
@@ -73,13 +74,18 @@ class ToolRegistry:
 
 
 def _approval_denial_reason(tool: Tool, context: ToolContext) -> str | None:
-    if context.approval_mode == "yolo":
+    policy = (context.tool_approval or {}).get(tool.name)
+    if policy == "deny":
+        return f"Tool '{tool.name}' is denied by tool_approval policy."
+    if policy == "allow":
         return None
-    if tool.name in context.auto_approve_tools:
+    if context.approval_mode == "yolo" and policy != "prompt":
         return None
-    if context.approval_mode == "auto-read" and tool.tier == "read":
+    if policy is None and tool.name in context.auto_approve_tools:
         return None
-    if tool.tier in {"read", "state", "interaction"}:
+    if context.approval_mode == "auto-read" and tool.tier == "read" and policy != "prompt":
+        return None
+    if tool.tier in {"read", "state", "interaction"} and policy != "prompt":
         return None
     if not sys.stdin.isatty():
         return (

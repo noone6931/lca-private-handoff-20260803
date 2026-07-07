@@ -304,6 +304,77 @@ class ToolTests(unittest.TestCase):
         self.assertFalse(result.is_error)
         self.assertEqual(result.content, "ok")
 
+    def test_tool_approval_allow_bypasses_prompt_in_ask_mode(self) -> None:
+        registry = ToolRegistry(
+            [
+                Tool(
+                    name="sample_exec",
+                    description="sample exec",
+                    tier="exec",
+                    input_schema={"type": "object", "properties": {}, "additionalProperties": False},
+                    handler=lambda args, context: type("Result", (), {"content": "ok", "is_error": False})(),
+                )
+            ]
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            context = ToolContext(
+                workspace=Path(tmp).resolve(),
+                approval_mode="ask",
+                tool_approval={"sample_exec": "allow"},
+            )
+            with patch("sys.stdin.isatty", return_value=False):
+                result = registry.execute("sample_exec", "{}", context)
+
+        self.assertFalse(result.is_error)
+        self.assertEqual(result.content, "ok")
+
+    def test_tool_approval_deny_blocks_even_in_yolo_mode(self) -> None:
+        registry = ToolRegistry(
+            [
+                Tool(
+                    name="sample_exec",
+                    description="sample exec",
+                    tier="exec",
+                    input_schema={"type": "object", "properties": {}, "additionalProperties": False},
+                    handler=lambda args, context: type("Result", (), {"content": "ok", "is_error": False})(),
+                )
+            ]
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            context = ToolContext(
+                workspace=Path(tmp).resolve(),
+                approval_mode="yolo",
+                tool_approval={"sample_exec": "deny"},
+            )
+            result = registry.execute("sample_exec", "{}", context)
+
+        self.assertTrue(result.is_error)
+        self.assertIn("denied by tool_approval", result.content)
+
+    def test_tool_approval_prompt_forces_prompt_for_read_tool(self) -> None:
+        registry = ToolRegistry(
+            [
+                Tool(
+                    name="sample_read",
+                    description="sample read",
+                    tier="read",
+                    input_schema={"type": "object", "properties": {}, "additionalProperties": False},
+                    handler=lambda args, context: type("Result", (), {"content": "ok", "is_error": False})(),
+                )
+            ]
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            context = ToolContext(
+                workspace=Path(tmp).resolve(),
+                approval_mode="auto-read",
+                tool_approval={"sample_read": "prompt"},
+            )
+            with patch("sys.stdin.isatty", return_value=False):
+                result = registry.execute("sample_read", "{}", context)
+
+        self.assertTrue(result.is_error)
+        self.assertIn("requires approval", result.content)
+
     def test_state_tool_does_not_require_approval_in_ask_mode(self) -> None:
         registry = ToolRegistry(
             [

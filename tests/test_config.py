@@ -193,6 +193,73 @@ class ConfigTests(unittest.TestCase):
                 )
 
         self.assertEqual(config.auto_approve_tools, ("run_tests", "git_diff"))
+        self.assertEqual(config.tool_approval, {"run_tests": "allow", "git_diff": "allow"})
+
+    def test_tool_approval_can_come_from_env(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.dict(
+                "os.environ",
+                {"DASHSCOPE_API_KEY": "token", "AGENT_TOOL_APPROVAL": "shell=deny, run_tests=allow"},
+                clear=True,
+            ):
+                config = load_config(
+                    config_path=None,
+                    cwd=tmp,
+                    provider="bailian",
+                    api_base_url=None,
+                    api_key=None,
+                    model=None,
+                    max_steps=None,
+                    budget_seconds=None,
+                    approval_mode=None,
+                )
+
+        self.assertEqual(config.tool_approval, {"shell": "deny", "run_tests": "allow"})
+
+    def test_tool_approval_explicit_policy_wins_over_auto_approve_tools(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.dict(
+                "os.environ",
+                {
+                    "DASHSCOPE_API_KEY": "token",
+                    "AGENT_AUTO_APPROVE_TOOLS": "shell,run_tests",
+                    "AGENT_TOOL_APPROVAL": "shell=deny",
+                },
+                clear=True,
+            ):
+                config = load_config(
+                    config_path=None,
+                    cwd=tmp,
+                    provider="bailian",
+                    api_base_url=None,
+                    api_key=None,
+                    model=None,
+                    max_steps=None,
+                    budget_seconds=None,
+                    approval_mode=None,
+                )
+
+        self.assertEqual(config.tool_approval, {"shell": "deny", "run_tests": "allow"})
+
+    def test_tool_approval_rejects_invalid_policy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.dict(
+                "os.environ",
+                {"DASHSCOPE_API_KEY": "token", "AGENT_TOOL_APPROVAL": "shell=maybe"},
+                clear=True,
+            ):
+                with self.assertRaisesRegex(RuntimeError, "tool_approval.shell must be one of"):
+                    load_config(
+                        config_path=None,
+                        cwd=tmp,
+                        provider="bailian",
+                        api_base_url=None,
+                        api_key=None,
+                        model=None,
+                        max_steps=None,
+                        budget_seconds=None,
+                        approval_mode=None,
+                    )
 
     def test_auto_approve_tools_rejects_invalid_names(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

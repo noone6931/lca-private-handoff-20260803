@@ -34,6 +34,10 @@ def main(argv: list[str] | None = None) -> int:
         help="Comma-separated tool names to allow without prompting in ask mode.",
     )
     parser.add_argument(
+        "--tool-approval",
+        help="Comma-separated per-tool policies, e.g. shell=deny,run_tests=allow,apply_patch=prompt.",
+    )
+    parser.add_argument(
         "--context-char-budget",
         type=int,
         help="Approximate message character budget before local compaction. 0 disables compaction.",
@@ -60,6 +64,7 @@ def main(argv: list[str] | None = None) -> int:
             budget_seconds=args.budget_seconds,
             approval_mode=args.approval_mode,
             auto_approve_tools=args.auto_approve_tools,
+            tool_approval=args.tool_approval,
             context_char_budget=args.context_char_budget,
             context_recent_messages=args.context_recent_messages,
         )
