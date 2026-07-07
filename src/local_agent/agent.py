@@ -178,12 +178,13 @@ class AgentRuntime:
         system_messages = [message for message in self._messages if message.get("role") == "system"]
         non_system = [message for message in self._messages if message.get("role") != "system"]
         recent_count = min(self._config.context_recent_messages, len(non_system))
+        current_user_request = _latest_user_content(non_system)
 
         while recent_count > 0:
             recent = _truncate_recent_tool_outputs(_valid_recent_messages(non_system[-recent_count:]))
             dropped_count = len(non_system) - recent_count
             dropped = non_system[: max(dropped_count, 0)]
-            compaction_summary = self._build_compaction_summary(dropped)
+            compaction_summary = self._build_compaction_summary(dropped, current_user_request)
             compacted = [
                 _system_message_with_compaction_summary(system_messages, compaction_summary),
                 *recent,
@@ -201,13 +202,22 @@ class AgentRuntime:
             recent_count = max(6, recent_count // 2)
         return self._messages
 
-    def _build_compaction_summary(self, dropped: list[dict[str, Any]]) -> str:
+    def _build_compaction_summary(self, dropped: list[dict[str, Any]], current_user_request: str | None) -> str:
         lines = [
             "Earlier conversation was compacted locally to stay within the context budget.",
             "Preserve these facts while continuing the current task.",
             "",
             f"- Compacted messages: {len(dropped)}",
         ]
+        if current_user_request:
+            lines.extend(
+                [
+                    "",
+                    "Current user request:",
+                    f"- {_one_line(current_user_request, max_chars=1200)}",
+                    "- After completing explicitly requested tool calls, answer the requested final response instead of exploring further unless more information is truly necessary.",
+                ]
+            )
         todo_summary = self._open_todo_summary()
         if todo_summary:
             lines.extend(["", "Open todos:", *todo_summary])
@@ -448,6 +458,16 @@ def _tool_snippets(messages: list[dict[str, Any]], *, limit: int) -> list[str]:
         if isinstance(content, str) and content.strip():
             snippets.append(f"- {_one_line(content)}")
     return snippets[-limit:]
+
+
+def _latest_user_content(messages: list[dict[str, Any]]) -> str | None:
+    for message in reversed(messages):
+        if message.get("role") != "user":
+            continue
+        content = message.get("content")
+        if isinstance(content, str) and content.strip():
+            return content
+    return None
 
 
 def _one_line(content: str, *, max_chars: int = 240) -> str:

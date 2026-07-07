@@ -106,7 +106,8 @@ class ToolTests(unittest.TestCase):
             result = read_file({"path": "many.txt"}, ToolContext(workspace=workspace, approval_mode="yolo"))
 
         self.assertFalse(result.is_error)
-        self.assertIn("... truncated after line 400", result.content)
+        self.assertIn("... more lines exist after line 400", result.content)
+        self.assertIn("only if needed for the task", result.content)
 
     def test_write_file_refuses_to_overwrite(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

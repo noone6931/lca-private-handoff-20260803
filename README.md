@@ -193,7 +193,7 @@ python3 scripts/sync_project_excel.py
 - `todo_add`: 添加当前会话 todo。
 - `todo_update`: 更新当前会话 todo 状态。
 - `ask_user`: 在需求不清时向用户提问；支持 `timeout_seconds` 和 `default_answer`，显式 timeout 也会被当前任务剩余预算夹紧。
-- 本地 context compaction: 超过上下文预算时压缩早期历史、保留未完成 todo，并截断发送给模型的超大 tool 输出。
+- 本地 context compaction: 超过上下文预算时压缩早期历史、保留当前用户请求和未完成 todo，并截断发送给模型的超大 tool 输出。
 
 ## 设计原则
 

@@ -128,7 +128,9 @@ def read_file(args: dict[str, Any], context: ToolContext) -> ToolResult:
         if start_line <= index <= max_line:
             rendered.append(f"{index}:{line}")
     if max_line < len(lines):
-        rendered.append(f"... truncated after line {max_line}; use start_line/end_line to continue.")
+        rendered.append(
+            f"... more lines exist after line {max_line}; continue with start_line/end_line only if needed for the task."
+        )
     rendered = "\n".join(rendered)
     return ToolResult(rendered)
 
