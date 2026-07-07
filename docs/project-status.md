@@ -2,7 +2,7 @@
 
 更新时间：2026-07-07
 
-本文档是 `local-coding-agent` 的 Agent 可读项目管理基线。`docs/local-coding-agent-project-management.xlsx` 继续作为人工查看的表格视图；本 Markdown 文件作为后续开发时优先读取的项目状态、路线、Todo 和决策来源。
+本文档是开发 `local-coding-agent` 时给参与开发的人和协作 Agent 读取的项目管理基线。`docs/local-coding-agent-project-management.xlsx` 继续作为人工查看的表格视图；本 Markdown 文件作为后续开发时优先读取的项目状态、路线、Todo 和决策来源。它不是 LCA 运行时自己的 memory 或用户项目记忆。
 
 ## 最终目标
 
@@ -115,7 +115,7 @@
 | ID | 任务 | 状态 | 优先级 | 说明 |
 |---|---|---|---|---|
 | T-001 | 确认项目管理基线 | 已完成 | P0 | Excel 已被人工复核，结论可信。 |
-| T-002 | 建立 `docs/project-status.md` | 已完成 | P0 | 已将 Excel 内容转成 Agent 可读 Markdown，作为后续开发基线。 |
+| T-002 | 建立 `docs/project-status.md` | 已完成 | P0 | 已将 Excel 内容转成开发协作 Agent 可读 Markdown，作为后续开发基线。 |
 | T-003 | 创建初始 git commit | 已完成 | P0 | 初始提交已创建，作为后续开发可回滚基线。 |
 | T-004 | 增加 `--budget-seconds` / deadline | 已完成 | P1 | 已支持 CLI、环境变量和配置文件中的墙钟预算。 |
 | T-005 | 将 `max_steps` 调整为不限步保险丝 | 已完成 | P1 | 默认值为 0，表示不限步；日常任务预算交给 `budget_seconds`。 |
@@ -161,7 +161,7 @@
 | ADR-002 | `max_steps` 只作为安全保险丝，不作为主要预算。 | OMP 主循环不靠步数终止，而靠模型是否继续请求工具、时间预算和上下文预算。 |
 | ADR-008 | 默认不限步，默认使用时间预算。 | 避免 `100` 这类硬上限卡住真实任务；默认 `budget_seconds=600`，`max_steps=0`。 |
 | ADR-009 | 固化 OMP 核心架构笔记。 | OMP 的主循环、deadline、compaction、synthetic tool result 等结论写入 `docs/omp-core-architecture-notes.md`，后续不再重复扫描。 |
-| ADR-003 | Excel 作为人工视图，Markdown 作为 Agent 可读事实源。 | 当前 Agent 的 `read_file` 不能读取 `.xlsx` 二进制文件。 |
+| ADR-003 | Excel 作为人工视图，Markdown 作为开发协作 Agent 可读事实源。 | 这套文档服务于开发 LCA 的过程；`.xlsx` 是二进制展示产物，不适合作为协作 Agent 的事实源。 |
 | ADR-004 | 第一阶段 memory 使用 Markdown。 | Markdown 简单、可审计、封闭 VM 友好；暂不引入 SQLite 或向量库。 |
 | ADR-005 | 第一阶段使用 anchored patch，不做 AST edit。 | hash + old_text + line 校验已经足够支撑 MVP 的可控修改。 |
 | ADR-006 | 长需求应写入文件，让 Agent 读取。 | 直接把大段需求塞进 prompt 会挤占上下文，不利于长任务。 |

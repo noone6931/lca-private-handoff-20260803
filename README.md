@@ -165,9 +165,9 @@ PYTHONPATH=src python3 -m unittest discover -s tests
 python3 -m compileall src tests
 ```
 
-## 项目管理同步
+## 开发项目管理同步
 
-项目管理的事实源是 `docs/project-management.md`。更新它之后生成 Excel：
+开发 `local-coding-agent` 时，项目管理的事实源是 `docs/project-management.md`。这套 Markdown/Excel 给参与开发本项目的人和协作 Agent 使用，不是 LCA 运行时自己的 memory。更新它之后生成 Excel：
 
 ```bash
 python3 scripts/sync_project_excel.py

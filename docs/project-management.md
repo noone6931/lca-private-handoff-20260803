@@ -1,8 +1,10 @@
-# Local Coding Agent 项目管理数据源
+# Local Coding Agent 开发项目管理数据源
 
 更新时间：2026-07-07
 
-本文件是项目管理 Excel 的唯一数据源。更新项目进度时优先修改本 Markdown，然后运行：
+本文件是开发 `local-coding-agent` 过程中的项目管理数据源，给参与开发本项目的人和协作 Agent 读取。它不是 LCA 运行时自己的 memory 或用户项目记忆。
+
+本文件也是项目管理 Excel 的唯一数据源。更新项目进度时优先修改本 Markdown，然后运行：
 
 ```bash
 python3 scripts/sync_project_excel.py
@@ -83,7 +85,7 @@ python3 scripts/sync_project_excel.py
 | ID | 优先级 | 阶段 | 任务 | 状态 | 负责人 | 为什么重要 | 完成标准 |
 |---|---|---|---|---|---|---|---|
 | T-001 | P0 | P2 | 确认项目管理基线 | 已完成 | User + Agent | 统一目标、阶段和下一步 | Excel 已复核；Markdown 看板已建立 |
-| T-002 | P0 | P2 | 建立 `docs/project-status.md` | 已完成 | Agent | 让 Agent 可读项目路线 | 文档已存在 |
+| T-002 | P0 | P2 | 建立 `docs/project-status.md` | 已完成 | Agent | 让开发协作 Agent 可读项目路线 | 文档已存在 |
 | T-003 | P0 | P2 | 做第一次 git commit | 已完成 | User + Agent | 建立干净回滚基线 | 提交 `2c4348b` 已创建 |
 | T-004 | P0 | P3 | 加入 budget-seconds/deadline | 已完成 | Agent | 用时间预算控制长任务 | CLI/env/config 已支持；默认 600 秒 |
 | T-005 | P0 | P3 | max_steps 改为不限步保险丝 | 已完成 | Agent | 步数不限制日常任务 | 默认值 0；显式设置才作为保险丝 |
@@ -130,7 +132,7 @@ python3 scripts/sync_project_excel.py
 | ADR | ADR-005 | 2026-07-07 | Patch 先用 anchored patch，不上 AST edit | 已接受 | P5 再评估 preview/rollback | OMP 的 edit/apply_patch 结合审批、渲染和更丰富编辑链路；我们先做 anchored patch 与 dry_run，AST edit 后置。 |
 | ADR | ADR-006 | 2026-07-07 | 长需求建议放文件让 Agent read_file | 已接受 | README 已写推荐工作流 | OMP 会自动发现 context files，也支持按需读取 Markdown；我们让复杂需求落 md，再用 `read_file` 分段注入。 |
 | ADR | ADR-007 | 2026-07-07 | 封闭 VM 下不做公网搜索/自动下载 | 已接受 | 依赖提前准备 | OMP 可接 web、MCP、插件等外部能力，并由配置和 approval 管控；我们封闭 VM 默认离线，依赖提前准备。 |
-| ADR | ADR-008 | 2026-07-07 | Excel 给人看，Markdown 给 Agent 读 | 已接受 | 持续同步本文件和 `project-status.md` | OMP 的事实上下文来自 session、memory 和 Markdown 规则，UI 只是视图；我们以 Markdown 为事实源，Excel 只生成展示。 |
+| ADR | ADR-008 | 2026-07-07 | Excel 给人看，Markdown 给开发协作 Agent 读 | 已接受 | 持续同步本文件和 `project-status.md` | 这套项目管理文档服务于开发 LCA 的过程，不是 LCA 运行时 memory。我们以 Markdown 作为开发项目事实源，Excel 只生成展示视图。 |
 | ADR | ADR-009 | 2026-07-07 | OMP 核心架构笔记单独固化 | 已接受 | 见 `docs/omp-core-architecture-notes.md` | OMP 的关键判断来自源码和 docs，需要沉淀成项目 context；我们单独维护笔记，避免每次重复扫源码。 |
 
 ## 推荐工作流
@@ -145,4 +147,4 @@ python3 scripts/sync_project_excel.py
 | 6 | 修改后 | 必须 `run_tests + git_diff` | 形成可验证闭环 | P1+ | 初始 commit 后 diff 更好用 |
 | 7 | 长任务 | 先 todo，再做实现，再验证 | 防止漏任务 | P3+ | `todo_read/add/update` 已可用 |
 | 8 | 有歧义 | 使用 `ask_user` 中途问用户 | 避免模型瞎猜 | P3+ | 非交互会返回明确错误 |
-| 9 | 同步 Excel | `python3 scripts/sync_project_excel.py` | Excel 是产物，Markdown 是事实源 | P2+ | 无第三方依赖 |
+| 9 | 同步 Excel | `python3 scripts/sync_project_excel.py` | Excel 是开发展示产物，Markdown 是开发事实源 | P2+ | 无第三方依赖 |
