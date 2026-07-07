@@ -15,14 +15,15 @@ python3 scripts/sync_project_excel.py
 | 字段 | 当前值 | 说明 |
 |---|---|---|
 | 最终目标 | 个人本地编程助手 Agent | 本地优先、封闭 VM 可用、只访问指定 AI API，能读代码、搜代码、改代码、跑测试、生成 diff、沉淀项目记忆。 |
-| 当前阶段 | P4：上下文治理进行中 | 最小版本地 context compaction 已完成；下一步增强中断恢复。 |
+| 当前阶段 | P5：安全与恢复增强进行中 | 最小版本地 context compaction 已完成；正在增强 synthetic tool result 和恢复能力。 |
 | 推荐入口 | `./agent "阅读当前项目"` | 自动设置 `PYTHONPATH=src`，默认当前目录为 workspace。 |
 | Token 配置 | `.env` 或环境变量 | `.env` 可写 `DASHSCOPE_API_KEY=...`，该文件已被 `.gitignore` 忽略。 |
-| 测试数 | 57 | 完整 unittest 通过；compileall 通过。 |
+| 测试数 | 58 | 完整 unittest 通过；compileall 通过。 |
 | 默认 budget_seconds | 600 | 单次任务默认 10 分钟墙钟预算；`--budget-seconds 0` 可关闭。 |
 | 默认 max_steps | 0 | 表示不限步；仅在用户显式设置时作为防失控保险丝。 |
 | 预算执行 | 细粒度 | LLM 请求和 shell/run_tests timeout 会按剩余预算夹紧；deadline 到期会补齐未执行工具结果。 |
 | Context compaction | 本地确定性 | 超过约 60000 字符时折叠早期历史，保留最近消息，并注入未完成 todo。 |
+| Synthetic tool result | 部分完成 | deadline 到期和用户中断工具执行时会补齐剩余 tool_call 的 tool result。 |
 | OMP 核心判断 | 已固化 | 见 `docs/omp-core-architecture-notes.md`。 |
 
 ## 阶段路线图
@@ -33,8 +34,8 @@ python3 scripts/sync_project_excel.py
 | P1 | 基础 Agent 闭环 | 接 AI API，完成读、搜、改、测、diff、session、memory | 已完成 | 100% | 已创建初始 git commit，基础闭环可回滚。 |
 | P2 | 项目管理与可见性 | 项目状态、路线图、todo、决策记录一目了然 | 已完成 | 100% | Excel + Markdown 项目状态已建立。 |
 | P3 | 长任务运行基础 | budget_seconds、max_steps 不限步、todo、ask_user、per-tool approval、一键启动 | 已完成 | 100% | 已具备真实需求的基础运行体验。 |
-| P4 | 上下文治理 | 简单 summary/compaction，工具输出折叠，支持长需求文件 | 进行中 | 35% | 已完成本地 compaction；下一步补更强中断恢复。 |
-| P5 | 安全与恢复增强 | synthetic tool result、patch preview、rollback | 未开始 | 0% | P4 后补 synthetic tool result 与 patch preview/rollback。 |
+| P4 | 上下文治理 | 简单 summary/compaction，工具输出折叠，支持长需求文件 | 已完成 MVP 版 | 100% | 后续可评估 LLM summary 和 token 级阈值。 |
+| P5 | 安全与恢复增强 | synthetic tool result、patch preview、rollback | 进行中 | 30% | 已覆盖 deadline 和用户中断；下一步评估 patch preview/rollback。 |
 | P6 | 高级工程能力 | LSP、TUI、subagents、reviewer、AST edit、DAP | 暂缓 | 0% | 日用闭环稳定后再评估。 |
 
 ## 已完成功能
@@ -65,7 +66,8 @@ python3 scripts/sync_project_excel.py
 | `.env` 加载 | 已完成 | workspace `.env` | 可放 `DASHSCOPE_API_KEY`，被 gitignore | 避免重复 export |
 | OMP 核心架构笔记 | 已完成 | `docs/omp-core-architecture-notes.md` | 固化主循环、deadline、compaction 结论 | 后续设计依据 |
 | 本地 Context Compaction | 已完成 | `context_char_budget` / `context_recent_messages` | 折叠早期历史，保留最近消息，注入未完成 todo | 后续评估 LLM summary |
-| 测试覆盖 | 已完成 | 当前 57 个测试通过 | unittest + compileall 通过 | 继续补 P4 边界 |
+| Synthetic tool result | 部分完成 | deadline 到期和用户中断工具执行时补齐 tool result | 避免 session 留下未配对 tool_calls | 后续处理 `finish_reason=length` |
+| 测试覆盖 | 已完成 | 当前 58 个测试通过 | unittest + compileall 通过 | 继续补 P5 边界 |
 
 ## 下一步 Todo
 
@@ -81,12 +83,14 @@ python3 scripts/sync_project_excel.py
 | T-008 | P0 | P3 | 增加 per-tool approval policy | 已完成 | Agent | 减少重复敲 y | `--auto-approve-tools` 可用 |
 | T-009 | P1 | P2 | 更新 README 安全工作流 | 已完成 | Agent | 说明预算、审批和 shell 边界 | README 已更新 |
 | T-010 | P1 | P4 | 简单上下文 summary | 已完成 | Agent | 长任务会被全量历史拖垮 | 已实现本地 deterministic compaction，并注入未完成 todo |
-| T-011 | P1 | P5 | 补 synthetic tool result | 未开始 | Agent | 中断/异常时避免 orphan tool_calls | 未执行工具也写入配对 tool result |
+| T-011 | P1 | P5 | 补 synthetic tool result | 部分完成 | Agent | 中断/异常时避免 orphan tool_calls | deadline 到期和用户中断已补齐；模型输出截断待评估 |
 | T-012 | P1 | P5 | Patch preview/rollback 设计 | 暂缓 | Agent | 进一步降低改错风险 | 先做最小设计再实现 |
 | T-013 | P2 | P6 | 评估 LSP/TUI/subagents/AST edit | 暂缓 | User + Agent | 高级能力强但复杂 | P4/P5 稳定后再取舍 |
-| T-014 | P0 | P3 | 提交 P3 变更 | 待确认 | User + Agent | 把本轮 P3 工作固化为第二个 commit | 用户 review 后提交 |
+| T-014 | P0 | P3 | 提交 P3 变更 | 已完成 | User + Agent | 把本轮 P3 工作固化为第二个 commit | 提交 `304fbdf` 已创建 |
 | T-015 | P0 | P2 | Markdown 模板同步 Excel | 已完成 | Agent | 避免手工同步 Excel 出错 | `scripts/sync_project_excel.py` 可从本文件生成 Excel |
 | T-016 | P0 | P3 | 细化 budget deadline 执行检查 | 已完成 | Agent | 让时间预算从软闸变成实际主控 | LLM/tool timeout 按剩余预算夹紧；未执行工具有 synthetic result |
+| T-017 | P0 | P4 | 提交 P4 compaction 变更 | 已完成 | Agent | 把上下文治理节点固化为 commit | 提交 `4beb487` 已创建 |
+| T-018 | P1 | P5 | 处理模型输出截断 synthetic result | 未开始 | Agent | `finish_reason=length` 可能产生不完整工具参数 | LLM 层暴露 finish_reason 并补可恢复提示 |
 
 ## 风险与决策
 
@@ -95,11 +99,11 @@ python3 scripts/sync_project_excel.py
 | 风险 | R-001 | 高 | 长任务上下文膨胀 | 已缓解 | 已做本地 compaction；后续评估 token 级阈值和 LLM summary |
 | 风险 | R-002 | 高 | 没有 todo 工具 | 已关闭 | 已增加 session 级 todo 工具 |
 | 风险 | R-003 | 中 | ask 模式确认过多 | 已缓解 | 已增加 per-tool approval 白名单 |
-| 风险 | R-004 | 中 | 中断时 tool_calls 配对仍可增强 | 开放 | P5 补 synthetic tool result |
+| 风险 | R-004 | 中 | 中断时 tool_calls 配对仍可增强 | 已缓解 | deadline 和用户中断已补齐；输出截断场景后续处理 |
 | 风险 | R-005 | 中 | 没有初始 git commit | 已关闭 | 已创建初始 commit |
 | 风险 | R-006 | 低 | 高级能力过早引入 | 受控 | P6 暂缓，先稳定日用闭环 |
 | 风险 | R-007 | 中 | Prompt injection | 开放 | 文档提示；不信任仓库禁用 yolo |
-| 风险 | R-008 | 中 | P3 变更尚未提交 | 开放 | 用户 review 后提交第二个 commit |
+| 风险 | R-008 | 中 | P3/P4 变更尚未提交 | 已关闭 | P3 提交 `304fbdf`，P4 提交 `4beb487` |
 | 风险 | R-009 | 中 | ask_user 会阻塞等待用户 | 开放 | 长任务需求尽量写清；后续评估 ask_user 超时策略 |
 | ADR | ADR-001 | 2026-07-07 | 不照搬 OMP，只借鉴能力类型和边界 | 已接受 | 每个能力做简化版 |
 | ADR | ADR-002 | 2026-07-07 | max_steps 只作为防失控保险丝 | 已落地 | 默认值已改为 0，不限步 |

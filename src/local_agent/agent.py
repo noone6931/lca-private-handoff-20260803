@@ -97,7 +97,15 @@ class AgentRuntime:
                 name = function.get("name") or ""
                 arguments = function.get("arguments") or "{}"
                 self._log_tool_start(name, arguments)
-                result = self._registry.execute(name, arguments, tool_context)
+                try:
+                    result = self._registry.execute(name, arguments, tool_context)
+                except KeyboardInterrupt:
+                    self._append_synthetic_tool_results(
+                        tool_calls[index:],
+                        "the user interrupted execution before the tool call completed.",
+                    )
+                    self._stop_for_interrupt()
+                    raise
                 self._log_tool_end(name, result.is_error, len(result.content))
                 self._append_tool_result(tool_call, name, result.content, is_error=result.is_error)
                 if self._deadline_exceeded(deadline):
@@ -200,6 +208,11 @@ class AgentRuntime:
 
     def _stop_for_budget(self) -> str:
         content = self._budget_stop_message()
+        self._session.append("final", {"content": content})
+        return content
+
+    def _stop_for_interrupt(self) -> str:
+        content = "Stopped after user interrupt."
         self._session.append("final", {"content": content})
         return content
 

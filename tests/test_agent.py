@@ -76,6 +76,14 @@ class _TwoToolClient:
         )()
 
 
+class _InterruptingRegistry:
+    def schemas(self):
+        return []
+
+    def execute(self, name, raw_arguments, context):
+        raise KeyboardInterrupt
+
+
 class AgentRuntimeTests(unittest.TestCase):
     def test_budget_seconds_stops_before_next_llm_request(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -166,6 +174,38 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertEqual(result, "Stopped after reaching budget_seconds=1.")
         self.assertEqual([message["tool_call_id"] for message in tool_messages], ["call_1", "call_2"])
         self.assertIn("Tool call was not executed", tool_messages[1]["content"])
+
+    def test_keyboard_interrupt_synthesizes_remaining_tool_results(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=Path(tmp).resolve(),
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+            )
+            with (
+                patch("local_agent.agent.OpenAICompatibleClient", _TwoToolClient),
+                patch("local_agent.agent.create_default_registry", return_value=_InterruptingRegistry()),
+            ):
+                runtime = AgentRuntime(config, show_tool_logs=False)
+                with self.assertRaises(KeyboardInterrupt):
+                    runtime.run("hello")
+            records = [json.loads(line) for line in runtime._session.path.read_text(encoding="utf-8").splitlines()]
+
+        tool_messages = [message for message in runtime._messages if message.get("role") == "tool"]
+        self.assertEqual([message["tool_call_id"] for message in tool_messages], ["call_1", "call_2"])
+        self.assertTrue(all("interrupted execution" in message["content"] for message in tool_messages))
+        self.assertTrue(
+            any(
+                record.get("event") == "final"
+                and record.get("payload", {}).get("content") == "Stopped after user interrupt."
+                for record in records
+            )
+        )
 
     def test_context_compaction_injects_summary_and_open_todos(self) -> None:
         _MessageRecordingClient.messages = []

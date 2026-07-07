@@ -76,6 +76,9 @@ def main(argv: list[str] | None = None) -> int:
     except (ConfigError, LlmError, SessionError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
+    except KeyboardInterrupt:
+        print("\ninterrupted", file=sys.stderr)
+        return 130
 
 
 def _repl(runtime: AgentRuntime) -> int:
