@@ -16,11 +16,12 @@
 - 新配置 `tools.approvalMode` / `tools.approval` 优先于旧顶层 `approval_mode` / `tool_approval`，方便迁移时渐进替换旧字段。
 - 配置级 `prompt` / `deny` 是硬护栏；session allow 不能绕过配置级 `prompt`，但 session reject 可以更保守地拒绝。
 - REPL `/approval allow|prompt|deny|reset TOOL` 会校验工具名，避免输错工具名后“看似成功但实际不生效”。
+- approval prompt 使用 deadline-aware timed stdin；`budget_seconds` 到期会取消等待并返回 tool error，不再无限阻塞在同步 `input()` 上。
 
 后续增强优先级：
 
-1. approval prompt 支持 deadline/abort，避免同步 `input()` 等待耗尽 `budget_seconds`。
-2. 命令级 shell permission intent；第一阶段先按工具名做 session cache key。
+1. 命令级 shell permission intent；第一阶段先按工具名做 session cache key。
+2. 如果后续引入真正的异步 runtime，再把 KeyboardInterrupt / 外部 abort signal 统一传入 approval gate。
 
 ## 目标模型
 
@@ -205,25 +206,26 @@ def reset_session_tool_policy(self, tool: str) -> None: ...
 
 注意：这里是当前进程内存态，不写全局 config。
 
-## 后续增强：approval prompt deadline / abort
+## 已实现：approval prompt deadline / abort
 
 背景：
 
 - OMP 的 `deadline` 是 wall-clock absolute timestamp，等待 permission response 也在同一时间窗口内。
 - OMP 的 ACP permission gate 会把 `requestPermission` 和 abort signal `Promise.race(...)`，deadline 到期可以取消等待。
-- 我们当前 `_interactive_approval_denial_reason()` 使用同步 `input()`，不能被 deadline 主动打断；用户长时间不确认时，可能出现“确认后工具执行成功，但下一次 deadline 检查立刻停止”。
+- 我们的本地 runtime 没有完整异步 abort signal，但已有 `deadline_monotonic` 和 `KeyboardInterrupt` 两条停止路径。
 
-建议实现：
+已实现：
 
-1. 在 `src/local_agent/tools/base.py` 增加 timed stdin helper，可参考 `src/local_agent/tools/interaction.py` 的 `_read_timed_answer()`。
-2. `_interactive_approval_denial_reason()` 根据 `context.deadline_monotonic` 计算剩余秒数。
-3. 如果剩余时间已经小于等于 0，直接返回 “approval cancelled because budget_seconds is exhausted” 之类的拒绝原因。
-4. 如果有剩余时间，用 `select.select([sys.stdin], [], [], timeout)` 等待输入。
-5. 超时无输入时，按取消/拒绝处理，不执行工具。
-6. 保持现有 `y/s/n/d` 行为不变；`s` 写入 `allow_always`，`d` 写入 `reject_always`。
-7. Agent loop 已会把 tool error 回灌；如果 deadline 已过，后续检查会停止并补齐剩余 tool_call。
+1. `src/local_agent/tools/base.py` 的 `_interactive_approval_denial_reason()` 改为调用 `_read_approval_answer()`。
+2. 没有 deadline 时仍保留原来的同步 `input()` 行为。
+3. 有 deadline 时，根据 `context.deadline_monotonic - time.monotonic()` 计算剩余秒数。
+4. 剩余时间小于等于 0 时，不调用 `input()` / `select()`，直接返回 “approval cancelled because budget_seconds is exhausted”。
+5. 剩余时间大于 0 时，用 `select.select([sys.stdin], [], [], remaining)` 等待输入。
+6. 超时无输入时取消工具调用并返回 tool error，不执行工具。
+7. 保持现有 `y/s/n/d` 行为不变；`s` 写入 `allow_always`，`d` 写入 `reject_always`。
+8. `approval_mode=write` 自动允许 write 的行为不受影响；exec 仍会走 deadline-aware approval。
 
-建议测试：
+已补测试：
 
 - `deadline_monotonic` 已过时，write/exec approval 不调用 `input()`，直接拒绝。
 - `select.select` 超时时，approval 返回 tool error。
@@ -254,6 +256,10 @@ def reset_session_tool_policy(self, tool: str) -> None: ...
 - 输入 `s` 后当前 session 后续同工具不再提示。
 - 配置级 `prompt` 不被 session allow 覆盖。
 - 输入 `d` 后当前 session 后续同工具直接拒绝。
+- approval prompt deadline 已过时不调用 `input()` 并返回 tool error。
+- approval prompt 等待超时时返回 tool error。
+- deadline-aware approval 下输入 `y/s/d` 仍保持原行为。
+- `approval_mode="write"` 自动允许 write，exec 仍走 deadline-aware approval。
 
 `tests/test_cli.py`：
 

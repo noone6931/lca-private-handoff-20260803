@@ -89,13 +89,12 @@ OMP 的实现差异在于：deadline 到期会触发 `AbortController`，并把 
 - 不在一组 tool calls 中间随意截断，避免留下不配对的 tool result；
 - 后续补 synthetic tool result 后，可以更精细地处理中断中的 tool calls。
 
-当前差异 / 后续优化：
+当前实现 / 差异：
 
-- 我们当前的终端 approval prompt 使用同步 `input()`；
-- `input()` 等待期间同样消耗 wall-clock budget；
-- 但它不能像 OMP 的 ACP permission gate 那样被 deadline/abort signal 主动取消；
-- 因此用户长时间未确认时，可能出现“确认后工具执行成功，但下一次 deadline 检查立刻停止”的体验；
-- 建议把 approval prompt 改造成带 timeout/abort 的交互：deadline 到期自动拒绝或取消，并补 synthetic tool result。
+- 我们的终端 approval prompt 已使用 `select.select` 按剩余 deadline 等待 stdin；
+- deadline 已过或等待超时时，会取消工具调用并返回 tool error，不执行工具；
+- 用户中断仍走现有 `KeyboardInterrupt` synthetic tool result 路径；
+- 与 OMP 差异：本地 Python MVP 还没有完整异步 abort signal 贯穿 permission gate，先用 wall-clock deadline cancel 覆盖主要问题。
 
 ## Context Compaction
 
@@ -187,7 +186,7 @@ OMP 另有一条 ACP client 权限门：
 - 保留旧的 `--auto-approve-tools`，并兼容映射成 `tool_approval.<tool>=allow`；
 - 交互式终端可以补 `once / session / no`，其中 `session` 写入运行时内存态，不落全局配置；
 - 本地版把 config `prompt` / `deny` 视为硬护栏，session allow 不绕过 config prompt，避免“强制询问”被误关；
-- 终端 approval prompt 后续应支持 deadline timeout / abort，避免同步 `input()` 长时间占满 `budget_seconds`；
+- 终端 approval prompt 已支持 deadline timeout / cancel，避免同步 `input()` 长时间占满 `budget_seconds`；
 - 危险 shell 规则可以比 OMP 更保守：我们本地版可继续硬拒绝明显危险命令，避免 `yolo` 绕过。
 
 ## 病态循环上限

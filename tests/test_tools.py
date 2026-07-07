@@ -18,6 +18,19 @@ from local_agent.tools.shell import run_shell, run_tests
 from local_agent.tools.todo import todo_add, todo_read, todo_update
 
 
+class _FakeStdin:
+    def __init__(self, *lines: str):
+        self._lines = list(lines)
+
+    def isatty(self) -> bool:
+        return True
+
+    def readline(self) -> str:
+        if not self._lines:
+            return ""
+        return self._lines.pop(0)
+
+
 class ToolTests(unittest.TestCase):
     def test_list_files_skips_agent_and_cache_dirs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -458,6 +471,189 @@ class ToolTests(unittest.TestCase):
 
         self.assertTrue(result.is_error)
         self.assertIn("requires approval", result.content)
+
+    def test_approval_deadline_already_exhausted_cancels_without_input(self) -> None:
+        registry = ToolRegistry(
+            [
+                Tool(
+                    name="sample_exec",
+                    description="sample exec",
+                    tier="exec",
+                    input_schema={"type": "object", "properties": {}, "additionalProperties": False},
+                    handler=lambda args, context: type("Result", (), {"content": "ok", "is_error": False})(),
+                )
+            ]
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            context = ToolContext(
+                workspace=Path(tmp).resolve(),
+                approval_mode="always-ask",
+                deadline_monotonic=9.0,
+            )
+            fake_stdin = _FakeStdin("y\n")
+            with (
+                patch("local_agent.tools.base.sys.stdin", fake_stdin),
+                patch("local_agent.tools.base.time.monotonic", return_value=10.0),
+                patch("builtins.input", side_effect=AssertionError("input should not be called")),
+                patch("local_agent.tools.base.select.select", side_effect=AssertionError("select should not be called")),
+            ):
+                result = registry.execute("sample_exec", "{}", context)
+
+        self.assertTrue(result.is_error)
+        self.assertIn("approval cancelled because budget_seconds is exhausted", result.content)
+
+    def test_approval_select_timeout_returns_tool_error(self) -> None:
+        registry = ToolRegistry(
+            [
+                Tool(
+                    name="sample_exec",
+                    description="sample exec",
+                    tier="exec",
+                    input_schema={"type": "object", "properties": {}, "additionalProperties": False},
+                    handler=lambda args, context: type("Result", (), {"content": "ok", "is_error": False})(),
+                )
+            ]
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            context = ToolContext(
+                workspace=Path(tmp).resolve(),
+                approval_mode="always-ask",
+                deadline_monotonic=20.0,
+            )
+            fake_stdin = _FakeStdin("y\n")
+            with (
+                patch("local_agent.tools.base.sys.stdin", fake_stdin),
+                patch("local_agent.tools.base.time.monotonic", return_value=10.0),
+                patch("builtins.print"),
+                patch("local_agent.tools.base.select.select", return_value=([], [], [])) as wait,
+            ):
+                result = registry.execute("sample_exec", "{}", context)
+
+        self.assertTrue(result.is_error)
+        self.assertIn("approval cancelled because budget_seconds is exhausted", result.content)
+        wait.assert_called_once_with([fake_stdin], [], [], 10.0)
+
+    def test_approval_timed_input_y_allows_execution(self) -> None:
+        registry = ToolRegistry(
+            [
+                Tool(
+                    name="sample_exec",
+                    description="sample exec",
+                    tier="exec",
+                    input_schema={"type": "object", "properties": {}, "additionalProperties": False},
+                    handler=lambda args, context: type("Result", (), {"content": "ok", "is_error": False})(),
+                )
+            ]
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            context = ToolContext(
+                workspace=Path(tmp).resolve(),
+                approval_mode="always-ask",
+                deadline_monotonic=20.0,
+            )
+            fake_stdin = _FakeStdin("y\n")
+            with (
+                patch("local_agent.tools.base.sys.stdin", fake_stdin),
+                patch("local_agent.tools.base.time.monotonic", return_value=10.0),
+                patch("builtins.print"),
+                patch("local_agent.tools.base.select.select", return_value=([fake_stdin], [], [])),
+            ):
+                result = registry.execute("sample_exec", "{}", context)
+
+        self.assertFalse(result.is_error)
+        self.assertEqual(result.content, "ok")
+
+    def test_approval_timed_input_session_allow_and_deny_are_preserved(self) -> None:
+        registry = ToolRegistry(
+            [
+                Tool(
+                    name="sample_exec",
+                    description="sample exec",
+                    tier="exec",
+                    input_schema={"type": "object", "properties": {}, "additionalProperties": False},
+                    handler=lambda args, context: type("Result", (), {"content": "ok", "is_error": False})(),
+                )
+            ]
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            allow_policy: dict[str, str] = {}
+            allow_context = ToolContext(
+                workspace=Path(tmp).resolve(),
+                approval_mode="always-ask",
+                session_tool_approval=allow_policy,
+                deadline_monotonic=20.0,
+            )
+            allow_stdin = _FakeStdin("s\n")
+            with (
+                patch("local_agent.tools.base.sys.stdin", allow_stdin),
+                patch("local_agent.tools.base.time.monotonic", return_value=10.0),
+                patch("builtins.print"),
+                patch("local_agent.tools.base.select.select", return_value=([allow_stdin], [], [])),
+            ):
+                allow_result = registry.execute("sample_exec", "{}", allow_context)
+
+            deny_policy: dict[str, str] = {}
+            deny_context = ToolContext(
+                workspace=Path(tmp).resolve(),
+                approval_mode="always-ask",
+                session_tool_approval=deny_policy,
+                deadline_monotonic=20.0,
+            )
+            deny_stdin = _FakeStdin("d\n")
+            with (
+                patch("local_agent.tools.base.sys.stdin", deny_stdin),
+                patch("local_agent.tools.base.time.monotonic", return_value=10.0),
+                patch("builtins.print"),
+                patch("local_agent.tools.base.select.select", return_value=([deny_stdin], [], [])),
+            ):
+                deny_result = registry.execute("sample_exec", "{}", deny_context)
+
+        self.assertFalse(allow_result.is_error)
+        self.assertEqual(allow_policy, {"sample_exec": "allow_always"})
+        self.assertTrue(deny_result.is_error)
+        self.assertIn("denied tool execution for this session", deny_result.content)
+        self.assertEqual(deny_policy, {"sample_exec": "reject_always"})
+
+    def test_write_mode_still_auto_allows_write_and_times_exec_approval(self) -> None:
+        registry = ToolRegistry(
+            [
+                Tool(
+                    name="sample_write",
+                    description="sample write",
+                    tier="write",
+                    input_schema={"type": "object", "properties": {}, "additionalProperties": False},
+                    handler=lambda args, context: type("Result", (), {"content": "write ok", "is_error": False})(),
+                ),
+                Tool(
+                    name="sample_exec",
+                    description="sample exec",
+                    tier="exec",
+                    input_schema={"type": "object", "properties": {}, "additionalProperties": False},
+                    handler=lambda args, context: type("Result", (), {"content": "exec ok", "is_error": False})(),
+                ),
+            ]
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            context = ToolContext(
+                workspace=Path(tmp).resolve(),
+                approval_mode="write",
+                deadline_monotonic=20.0,
+            )
+            fake_stdin = _FakeStdin("y\n")
+            with (
+                patch("local_agent.tools.base.sys.stdin", fake_stdin),
+                patch("local_agent.tools.base.time.monotonic", return_value=10.0),
+                patch("builtins.print"),
+                patch("local_agent.tools.base.select.select", return_value=([], [], [])) as wait,
+            ):
+                write_result = registry.execute("sample_write", "{}", context)
+                exec_result = registry.execute("sample_exec", "{}", context)
+
+        self.assertFalse(write_result.is_error)
+        self.assertEqual(write_result.content, "write ok")
+        self.assertTrue(exec_result.is_error)
+        self.assertIn("approval cancelled because budget_seconds is exhausted", exec_result.content)
+        wait.assert_called_once_with([fake_stdin], [], [], 10.0)
 
     def test_session_deny_answer_blocks_same_tool_without_reprompt(self) -> None:
         registry = ToolRegistry(

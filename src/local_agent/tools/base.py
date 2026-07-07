@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import select
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -119,17 +121,13 @@ def _interactive_approval_denial_reason(
             "Run with an interactive terminal, use --approval-mode write for write-safe tasks, "
             "or use --approval-mode yolo only in a trusted workspace."
         )
+    prompt = _approval_prompt(tool, allow_session_cache=allow_session_cache)
     try:
-        if allow_session_cache:
-            prompt = (
-                f"Allow {tool.tier} tool '{tool.name}'?\n"
-                "[y] once / [s] always this session / [n] reject / [d] reject this session: "
-            )
-        else:
-            prompt = f"Allow {tool.tier} tool '{tool.name}'? [y/N] "
-        answer = input(prompt).strip().lower()
+        answer = _read_approval_answer(prompt, context)
     except EOFError:
         return f"Tool '{tool.name}' requires approval, but stdin closed before a decision."
+    if answer is None:
+        return f"Tool '{tool.name}' approval cancelled because budget_seconds is exhausted."
     if answer in {"y", "yes"}:
         return None
     if allow_session_cache and answer in {"s", "session", "always"}:
@@ -141,6 +139,34 @@ def _interactive_approval_denial_reason(
             context.session_tool_approval[tool.name] = "reject_always"
         return f"User denied tool execution for this session: {tool.name}"
     return f"User denied tool execution: {tool.name}"
+
+
+def _approval_prompt(tool: Tool, *, allow_session_cache: bool) -> str:
+    if allow_session_cache:
+        return (
+            f"Allow {tool.tier} tool '{tool.name}'?\n"
+            "[y] once / [s] always this session / [n] reject / [d] reject this session: "
+        )
+    return f"Allow {tool.tier} tool '{tool.name}'? [y/N] "
+
+
+def _read_approval_answer(prompt: str, context: ToolContext) -> str | None:
+    if context.deadline_monotonic is None:
+        return input(prompt).strip().lower()
+    remaining = context.deadline_monotonic - time.monotonic()
+    if remaining <= 0:
+        return None
+    print(prompt, end="", flush=True)
+    try:
+        ready, _, _ = select.select([sys.stdin], [], [], remaining)
+    except (OSError, ValueError):
+        return None
+    if not ready:
+        return None
+    line = sys.stdin.readline()
+    if line == "":
+        raise EOFError
+    return line.strip().lower()
 
 
 def _approval_mode(raw_mode: str) -> str:

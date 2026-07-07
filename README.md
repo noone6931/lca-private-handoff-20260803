@@ -127,6 +127,8 @@ local-agent "帮我找一下测试失败原因"
 
 `write` 模式会自动允许 `read` / `state` / `interaction` / `write` 工具，`exec` 工具仍会询问。`yolo` 模式默认允许全部工具，但 `tool_approval` 中的 `prompt` / `deny` 仍会生效，危险 shell 命令也仍会被硬拒绝。
 
+需要人工确认的 approval prompt 会受 `--budget-seconds` 约束；如果用户一直没有确认，deadline 到期后会取消该工具调用并把错误结果回传给模型。
+
 REPL 中可以临时调整当前会话的权限：
 
 ```text
