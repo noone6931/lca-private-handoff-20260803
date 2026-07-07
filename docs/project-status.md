@@ -30,7 +30,7 @@
 
 ## 当前进度
 
-当前项目处于 P5 阶段：基础 Agent 能力、项目管理基线、长任务时间预算、todo、ask_user、per-tool approval、最小版本地 context compaction、synthetic tool result 和 patch preview/rollback 都已经具备；正在继续增强恢复安全性。
+当前项目处于 P5 阶段：基础 Agent 能力、项目管理基线、长任务时间预算、todo、ask_user、per-tool approval、最小版本地 context compaction、synthetic tool result 和 patch preview/rollback 都已经具备；正在继续做真实任务压测。
 
 已具备的核心能力：
 
@@ -43,7 +43,7 @@
 - `apply_patch` 已支持 `replace`、`insert_before`、`insert_after`，并兼容 Python 3.12。
 - 非交互审批、LLM 非 JSON 响应、session 恢复坏尾部、search_code 绝对路径泄漏等问题已经修复。
 - 已完成 Agent 自举测试：能够通过百炼模型调用工具读取、修改、测试和查看 diff。
-- 测试基线：64 个测试在正常本地环境通过。
+- 测试基线：67 个测试在正常本地环境通过。
 
 当前已具备：
 
@@ -51,7 +51,7 @@
 - 长任务已有初版 `--budget-seconds` 墙钟预算，默认 600 秒。
 - `max_steps` 默认值为 0，表示不限步；只在用户显式设置时作为安全保险丝。
 - 已有 Agent 可维护的 session 级 todo 工具。
-- 已有 ask_user 工具，需求歧义时可以主动暂停提问。
+- 已有 ask_user 工具，需求歧义时可以主动暂停提问，并支持 `timeout_seconds` / `default_answer`。
 - `ask` 模式已有 `--auto-approve-tools` 白名单，减少重复确认。
 - deadline 到期、用户中断工具执行、模型输出 `length` 截断时，会补齐 synthetic tool result，避免 session 留下未配对 tool_calls。
 - `apply_patch` 支持 `dry_run=true`，可在不写文件的情况下预览 diff。
@@ -102,7 +102,7 @@
 | 预算细粒度检查 | 已完成 | LLM 请求和 shell/run_tests timeout 会按剩余预算夹紧，tool 调用后也会检查 deadline。 |
 | 不限步主循环 | 已完成 | `max_steps=0` 表示不限步，任务主要靠 `budget_seconds` 控制。 |
 | Todo 工具 | 已完成 | `todo_read`、`todo_add`、`todo_update` 维护 session 级任务清单。 |
-| 用户澄清工具 | 已完成 | `ask_user` 可在交互式终端中向用户提问。 |
+| 用户澄清工具 | 已完成 | `ask_user` 可在交互式终端中向用户提问，支持超时、默认答案和 budget 上限。 |
 | Per-tool approval | 已完成 | `--auto-approve-tools` / `AGENT_AUTO_APPROVE_TOOLS` 支持 ask 模式工具白名单。 |
 | OMP 核心架构笔记 | 已完成 | `docs/omp-core-architecture-notes.md` 固化 OMP 主循环、deadline、compaction、stepCounter 结论。 |
 | 本地 Context Compaction | 已完成 | 超过 `context_char_budget` 时折叠早期历史，保留最近消息，并注入未完成 todo。 |
@@ -130,6 +130,7 @@
 | T-015 | 简化一键启动命令 | 已完成 | P1 | 已新增 `./agent`；支持 `.env` token；默认当前目录为 workspace。 |
 | T-016 | 细化 budget deadline 执行检查 | 已完成 | P1 | LLM/tool timeout 使用剩余预算；到期时为未执行工具补 synthetic result。 |
 | T-017 | 处理模型输出截断的 synthetic result | 已完成 | P5 | LLM 层已暴露 `finish_reason`，`length` 截断会补齐 synthetic tool result 并停止。 |
+| T-018 | ask_user timeout / default | 已完成 | P5 | `ask_user` 支持 `timeout_seconds`、`default_answer`，并受当前 budget 剩余时间约束。 |
 
 ## 风险清单
 
@@ -143,7 +144,7 @@
 | R-006 | shell 工具不是安全沙箱 | 开放 | 命令可以越过 workspace 访问系统。 | 文档明确风险；封闭 VM 作为真正边界。 |
 | R-007 | 恶意仓库 prompt injection | 开放 | 文件内容可能诱导模型执行不安全操作。 | 不信任仓库禁用 `yolo`，保留人工审批。 |
 | R-008 | 中断时 tool_call 配对仍可增强 | 已关闭 MVP 版 | 恢复会话时可能遇到兼容性问题。 | deadline、用户中断和输出截断已补齐。 |
-| R-009 | ask_user 会阻塞等待用户 | 开放 | 带预算的长任务如果触发 ask_user，会等待人工输入。 | 长任务需求尽量写清；P4/P5 再评估 ask_user 超时策略。 |
+| R-009 | ask_user 会阻塞等待用户 | 已缓解 | 带预算的长任务如果触发 ask_user，会等待人工输入。 | 已支持 `timeout_seconds` / `default_answer`，并自动受剩余 budget 约束。 |
 
 ## 架构决策
 

@@ -163,7 +163,7 @@ python3 scripts/sync_project_excel.py
 - `todo_read`: 读取当前会话 todo。
 - `todo_add`: 添加当前会话 todo。
 - `todo_update`: 更新当前会话 todo 状态。
-- `ask_user`: 在需求不清时向用户提问。
+- `ask_user`: 在需求不清时向用户提问；支持 `timeout_seconds` 和 `default_answer`，并会受当前任务剩余预算约束。
 - 本地 context compaction: 超过上下文预算时压缩早期历史，并保留未完成 todo。
 
 ## 设计原则
@@ -177,7 +177,7 @@ python3 scripts/sync_project_excel.py
 - `ask` 模式可通过 `--auto-approve-tools` 对明确工具做免确认白名单；
 - 工具参数会在执行前做运行时校验；
 - 多步骤任务可使用 session 级 todo 追踪进度；
-- 需求不清时可使用 `ask_user` 暂停并提问；
+- 需求不清时可使用 `ask_user` 暂停并提问，也可传 `timeout_seconds` / `default_answer` 避免长任务无限等待；
 - 读、搜、写默认限制在 workspace 内；
 - `shell` / `run_tests` 仍然可以执行任意本地命令；危险命令黑名单只是防手滑，不是安全沙箱，真正隔离依赖封闭 VM 和人工审批；
 - 读取文件有大小和行数限制；

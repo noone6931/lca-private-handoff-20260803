@@ -348,6 +348,15 @@ class ToolTests(unittest.TestCase):
         self.assertTrue(result.is_error)
         self.assertIn("stdin is not interactive", result.content)
 
+    def test_ask_user_non_interactive_can_use_default_answer(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            context = ToolContext(workspace=Path(tmp).resolve(), approval_mode="ask")
+            with patch("sys.stdin.isatty", return_value=False):
+                result = ask_user({"question": "Continue?", "default_answer": "skip"}, context)
+
+        self.assertFalse(result.is_error)
+        self.assertEqual(result.content, "skip")
+
     def test_ask_user_returns_answer(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             context = ToolContext(workspace=Path(tmp).resolve(), approval_mode="ask")
@@ -356,6 +365,39 @@ class ToolTests(unittest.TestCase):
 
         self.assertFalse(result.is_error)
         self.assertEqual(result.content, "yes")
+
+    def test_ask_user_timeout_can_use_default_answer(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            context = ToolContext(workspace=Path(tmp).resolve(), approval_mode="ask")
+            with (
+                patch("sys.stdin.isatty", return_value=True),
+                patch("local_agent.tools.interaction._read_timed_answer", return_value=None),
+            ):
+                result = ask_user(
+                    {"question": "Continue?", "timeout_seconds": 1, "default_answer": "continue"},
+                    context,
+                )
+
+        self.assertFalse(result.is_error)
+        self.assertEqual(result.content, "continue")
+
+    def test_ask_user_uses_remaining_budget_as_timeout(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            context = ToolContext(
+                workspace=Path(tmp).resolve(),
+                approval_mode="ask",
+                deadline_monotonic=105.0,
+            )
+            with (
+                patch("sys.stdin.isatty", return_value=True),
+                patch("local_agent.tools.interaction.time.monotonic", return_value=100.0),
+                patch("local_agent.tools.interaction._read_timed_answer", return_value="yes") as read_answer,
+            ):
+                result = ask_user({"question": "Continue?"}, context)
+
+        self.assertFalse(result.is_error)
+        self.assertEqual(result.content, "yes")
+        self.assertEqual(read_answer.call_args.args[1], 5)
 
     def test_git_diff_explains_untracked_files_when_diff_is_empty(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
