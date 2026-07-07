@@ -15,15 +15,15 @@ python3 scripts/sync_project_excel.py
 | 字段 | 当前值 | 说明 |
 |---|---|---|
 | 最终目标 | 个人本地编程助手 Agent | 本地优先、封闭 VM 可用、只访问指定 AI API，能读代码、搜代码、改代码、跑测试、生成 diff、沉淀项目记忆。 |
-| 当前阶段 | P5：安全与恢复增强进行中 | 最小版本地 context compaction、patch preview 和 rollback 已完成；正在继续增强 synthetic tool result 和恢复能力。 |
+| 当前阶段 | P5：安全与恢复增强进行中 | 最小版本地 context compaction、synthetic tool result、patch preview 和 rollback 已完成；正在继续做真实任务压测。 |
 | 推荐入口 | `./agent "阅读当前项目"` | 自动设置 `PYTHONPATH=src`，默认当前目录为 workspace。 |
 | Token 配置 | `.env` 或环境变量 | `.env` 可写 `DASHSCOPE_API_KEY=...`，该文件已被 `.gitignore` 忽略。 |
-| 测试数 | 62 | 完整 unittest 通过；compileall 通过。 |
+| 测试数 | 64 | 完整 unittest 通过；compileall 通过。 |
 | 默认 budget_seconds | 600 | 单次任务默认 10 分钟墙钟预算；`--budget-seconds 0` 可关闭。 |
 | 默认 max_steps | 0 | 表示不限步；仅在用户显式设置时作为防失控保险丝。 |
 | 预算执行 | 细粒度 | LLM 请求和 shell/run_tests timeout 会按剩余预算夹紧；deadline 到期会补齐未执行工具结果。 |
 | Context compaction | 本地确定性 | 超过约 60000 字符时折叠早期历史，保留最近消息，并注入未完成 todo。 |
-| Synthetic tool result | 部分完成 | deadline 到期和用户中断工具执行时会补齐剩余 tool_call 的 tool result。 |
+| Synthetic tool result | 已完成 MVP 版 | deadline 到期、用户中断和 `finish_reason=length` 时会补齐剩余 tool_call 的 tool result。 |
 | Patch preview | 已完成 | `apply_patch dry_run=true` 只校验并返回 diff，不写文件。 |
 | Patch rollback | 已完成 MVP 版 | `rollback_patch` 只回滚本 session 的 patch 记录，且要求当前文件仍匹配 after tag。 |
 | OMP 核心判断 | 已固化 | 见 `docs/omp-core-architecture-notes.md`。 |
@@ -37,7 +37,7 @@ python3 scripts/sync_project_excel.py
 | P2 | 项目管理与可见性 | 项目状态、路线图、todo、决策记录一目了然 | 已完成 | 100% | Excel + Markdown 项目状态已建立。 |
 | P3 | 长任务运行基础 | budget_seconds、max_steps 不限步、todo、ask_user、per-tool approval、一键启动 | 已完成 | 100% | 已具备真实需求的基础运行体验。 |
 | P4 | 上下文治理 | 简单 summary/compaction，工具输出折叠，支持长需求文件 | 已完成 MVP 版 | 100% | 后续可评估 LLM summary 和 token 级阈值。 |
-| P5 | 安全与恢复增强 | synthetic tool result、patch preview、rollback | 进行中 | 65% | 已覆盖 deadline、用户中断、patch preview 和 rollback；下一步处理 length 截断。 |
+| P5 | 安全与恢复增强 | synthetic tool result、patch preview、rollback | 进行中 | 80% | 已覆盖 deadline、用户中断、length 截断、patch preview 和 rollback；下一步真实任务压测。 |
 | P6 | 高级工程能力 | LSP、TUI、subagents、reviewer、AST edit、DAP | 暂缓 | 0% | 日用闭环稳定后再评估。 |
 
 ## 已完成功能
@@ -69,10 +69,10 @@ python3 scripts/sync_project_excel.py
 | `.env` 加载 | 已完成 | workspace `.env` | 可放 `DASHSCOPE_API_KEY`，被 gitignore | 避免重复 export |
 | OMP 核心架构笔记 | 已完成 | `docs/omp-core-architecture-notes.md` | 固化主循环、deadline、compaction 结论 | 后续设计依据 |
 | 本地 Context Compaction | 已完成 | `context_char_budget` / `context_recent_messages` | 折叠早期历史，保留最近消息，注入未完成 todo | 后续评估 LLM summary |
-| Synthetic tool result | 部分完成 | deadline 到期和用户中断工具执行时补齐 tool result | 避免 session 留下未配对 tool_calls | 后续处理 `finish_reason=length` |
+| Synthetic tool result | 已完成 MVP 版 | deadline 到期、用户中断和 `finish_reason=length` 时补齐 tool result | 避免 session 留下未配对 tool_calls | 继续真实任务验证 |
 | Patch preview | 已完成 | `apply_patch dry_run=true` | 复用 anchored 校验并返回 diff，不写文件 | 后续评估 rollback |
 | Patch rollback | 已完成 MVP 版 | `rollback_patch` | 校验当前文件 hash 后恢复 patch 前内容 | 继续真实任务验证 |
-| 测试覆盖 | 已完成 | 当前 62 个测试通过 | unittest + compileall 通过 | 继续补 P5 边界 |
+| 测试覆盖 | 已完成 | 当前 64 个测试通过 | unittest + compileall 通过 | 继续补 P5 边界 |
 
 ## 下一步 Todo
 
@@ -88,14 +88,14 @@ python3 scripts/sync_project_excel.py
 | T-008 | P0 | P3 | 增加 per-tool approval policy | 已完成 | Agent | 减少重复敲 y | `--auto-approve-tools` 可用 |
 | T-009 | P1 | P2 | 更新 README 安全工作流 | 已完成 | Agent | 说明预算、审批和 shell 边界 | README 已更新 |
 | T-010 | P1 | P4 | 简单上下文 summary | 已完成 | Agent | 长任务会被全量历史拖垮 | 已实现本地 deterministic compaction，并注入未完成 todo |
-| T-011 | P1 | P5 | 补 synthetic tool result | 部分完成 | Agent | 中断/异常时避免 orphan tool_calls | deadline 到期和用户中断已补齐；模型输出截断待评估 |
+| T-011 | P1 | P5 | 补 synthetic tool result | 已完成 MVP 版 | Agent | 中断/异常时避免 orphan tool_calls | deadline 到期、用户中断和 length 截断已补齐 |
 | T-012 | P1 | P5 | Patch preview/rollback 设计 | 已完成 MVP 版 | Agent | 进一步降低改错风险 | 已完成 dry_run 预览和 session 级 hash 校验 rollback |
 | T-013 | P2 | P6 | 评估 LSP/TUI/subagents/AST edit | 暂缓 | User + Agent | 高级能力强但复杂 | P4/P5 稳定后再取舍 |
 | T-014 | P0 | P3 | 提交 P3 变更 | 已完成 | User + Agent | 把本轮 P3 工作固化为第二个 commit | 提交 `304fbdf` 已创建 |
 | T-015 | P0 | P2 | Markdown 模板同步 Excel | 已完成 | Agent | 避免手工同步 Excel 出错 | `scripts/sync_project_excel.py` 可从本文件生成 Excel |
 | T-016 | P0 | P3 | 细化 budget deadline 执行检查 | 已完成 | Agent | 让时间预算从软闸变成实际主控 | LLM/tool timeout 按剩余预算夹紧；未执行工具有 synthetic result |
 | T-017 | P0 | P4 | 提交 P4 compaction 变更 | 已完成 | Agent | 把上下文治理节点固化为 commit | 提交 `4beb487` 已创建 |
-| T-018 | P1 | P5 | 处理模型输出截断 synthetic result | 未开始 | Agent | `finish_reason=length` 可能产生不完整工具参数 | LLM 层暴露 finish_reason 并补可恢复提示 |
+| T-018 | P1 | P5 | 处理模型输出截断 synthetic result | 已完成 | Agent | `finish_reason=length` 可能产生不完整工具参数 | LLM 层已暴露 finish_reason，并补可恢复提示 |
 | T-019 | P1 | P5 | 实现 patch dry-run preview | 已完成 | Agent | 写入前先看 diff，减少误改风险 | `apply_patch dry_run=true` 不写文件并返回 diff |
 | T-020 | P1 | P5 | 实现 session 级 patch rollback | 已完成 | Agent | 写错后可以在安全条件下恢复 | `rollback_patch` 校验 after tag 后恢复 before_text |
 
@@ -106,7 +106,7 @@ python3 scripts/sync_project_excel.py
 | 风险 | R-001 | 高 | 长任务上下文膨胀 | 已缓解 | 已做本地 compaction；后续评估 token 级阈值和 LLM summary | OMP 用 token 估算触发 compaction，保留 recent 和输出 reserve；我们短期用字符阈值，后续补 token 估算和 LLM summary。 |
 | 风险 | R-002 | 高 | 没有 todo 工具 | 已关闭 | 已增加 session 级 todo 工具 | OMP 把 todo 作为会话状态在 UI、session 和 reminder 中同步；我们保留轻量 `todo_read/add/update`，先满足长任务追踪。 |
 | 风险 | R-003 | 中 | ask 模式确认过多 | 已缓解 | 已增加 per-tool approval 白名单 | OMP 用 tool approval tier、approvalMode 和 per-tool policy 控制确认；我们保留白名单，危险 shell 仍强制确认。 |
-| 风险 | R-004 | 中 | 中断时 tool_calls 配对仍可增强 | 已缓解 | deadline 和用户中断已补齐；输出截断场景后续处理 | OMP 在 abort、error、skipped、截断时补 synthetic tool result；我们按 call_id 补齐未执行工具，`finish_reason=length` 单独处理。 |
+| 风险 | R-004 | 中 | 中断时 tool_calls 配对仍可增强 | 已关闭 MVP 版 | deadline、用户中断和输出截断已补齐 | OMP 在 abort、error、skipped、截断时补 synthetic tool result；我们按 call_id 补齐未执行工具，并已处理 `finish_reason=length`。 |
 | 风险 | R-005 | 中 | 没有初始 git commit | 已关闭 | 已创建初始 commit | OMP 依赖 session、diff 和工作区状态追踪修改，但不替代 VCS 基线；我们继续用 git commit 作为回滚锚点。 |
 | 风险 | R-006 | 低 | 高级能力过早引入 | 受控 | P6 暂缓，先稳定日用闭环 | OMP 将 LSP、subagents、AST edit、TUI 等做成可组合高级能力；我们 P6 后置，先稳定单 Agent 闭环。 |
 | 风险 | R-007 | 中 | Prompt injection | 开放 | 文档提示；不信任仓库禁用 yolo | OMP 将仓库 context 视为 advisory，并靠 approval/yolo 策略限制工具权限；我们默认不信任仓库内容，危险工具需确认。 |

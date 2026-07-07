@@ -84,6 +84,9 @@ class AgentRuntime:
             self._session.append("assistant", message)
 
             tool_calls = message.get("tool_calls") or []
+            if getattr(response, "finish_reason", None) == "length":
+                self._append_synthetic_tool_results(tool_calls, self._length_stop_tool_message())
+                return self._stop_for_length()
             if not tool_calls:
                 content = message.get("content") or ""
                 self._session.append("final", {"content": content})
@@ -213,6 +216,20 @@ class AgentRuntime:
 
     def _stop_for_interrupt(self) -> str:
         content = "Stopped after user interrupt."
+        self._session.append("final", {"content": content})
+        return content
+
+    def _length_stop_tool_message(self) -> str:
+        return (
+            "the assistant hit its output token limit before the tool call could be trusted. "
+            "Retry with a smaller request or ask to continue in smaller steps."
+        )
+
+    def _stop_for_length(self) -> str:
+        content = (
+            "Stopped because the LLM response hit finish_reason=length. "
+            "Retry with a smaller request or continue in smaller steps."
+        )
         self._session.append("final", {"content": content})
         return content
 

@@ -30,7 +30,7 @@
 
 ## 当前进度
 
-当前项目处于 P5 阶段：基础 Agent 能力、项目管理基线、长任务时间预算、todo、ask_user、per-tool approval、最小版本地 context compaction 和 patch preview/rollback 都已经具备；正在继续增强恢复安全性。
+当前项目处于 P5 阶段：基础 Agent 能力、项目管理基线、长任务时间预算、todo、ask_user、per-tool approval、最小版本地 context compaction、synthetic tool result 和 patch preview/rollback 都已经具备；正在继续增强恢复安全性。
 
 已具备的核心能力：
 
@@ -43,7 +43,7 @@
 - `apply_patch` 已支持 `replace`、`insert_before`、`insert_after`，并兼容 Python 3.12。
 - 非交互审批、LLM 非 JSON 响应、session 恢复坏尾部、search_code 绝对路径泄漏等问题已经修复。
 - 已完成 Agent 自举测试：能够通过百炼模型调用工具读取、修改、测试和查看 diff。
-- 测试基线：62 个测试在正常本地环境通过。
+- 测试基线：64 个测试在正常本地环境通过。
 
 当前已具备：
 
@@ -53,7 +53,7 @@
 - 已有 Agent 可维护的 session 级 todo 工具。
 - 已有 ask_user 工具，需求歧义时可以主动暂停提问。
 - `ask` 模式已有 `--auto-approve-tools` 白名单，减少重复确认。
-- deadline 到期和用户中断工具执行时，会补齐 synthetic tool result，避免 session 留下未配对 tool_calls。
+- deadline 到期、用户中断工具执行、模型输出 `length` 截断时，会补齐 synthetic tool result，避免 session 留下未配对 tool_calls。
 - `apply_patch` 支持 `dry_run=true`，可在不写文件的情况下预览 diff。
 - `rollback_patch` 可回滚当前 session 中由 `apply_patch` 写入的补丁，并在回滚前校验当前文件 hash。
 
@@ -61,7 +61,7 @@
 
 - 当前 compaction 是本地确定性摘要，不调用 LLM 做语义总结。
 - 还没有基于模型 context window 的 token 级阈值。
-- 模型输出 `length` 截断、provider 异常等更细分场景的 synthetic result 还未完整覆盖。
+- provider 请求失败发生在 assistant tool_call 之前，当前会以 `LlmError` 停止；后续可继续优化用户提示。
 
 ## 阶段路线图
 
@@ -106,7 +106,7 @@
 | Per-tool approval | 已完成 | `--auto-approve-tools` / `AGENT_AUTO_APPROVE_TOOLS` 支持 ask 模式工具白名单。 |
 | OMP 核心架构笔记 | 已完成 | `docs/omp-core-architecture-notes.md` 固化 OMP 主循环、deadline、compaction、stepCounter 结论。 |
 | 本地 Context Compaction | 已完成 | 超过 `context_char_budget` 时折叠早期历史，保留最近消息，并注入未完成 todo。 |
-| Synthetic Tool Result | 部分完成 | deadline 到期和用户中断工具执行时会补齐剩余 tool_call 的 tool result。 |
+| Synthetic Tool Result | 已完成 MVP 版 | deadline 到期、用户中断、`finish_reason=length` 时会补齐剩余 tool_call 的 tool result。 |
 | 测试基线 | 已完成 | 本地正常环境下测试通过。 |
 
 ## 下一步 Todo
@@ -123,13 +123,13 @@
 | T-008 | 增加 per-tool approval policy | 已完成 | P2 | 已支持 ask 模式下按工具名免确认。 |
 | T-009 | 更新 README 安全工作流 | 已完成 | P2 | 已明确 shell 不是沙箱，并补充预算和审批白名单说明。 |
 | T-010 | 初版 context summary / compaction | 已完成 | P3 | 已实现本地确定性 compaction；超过字符预算时折叠早期历史并注入未完成 todo。 |
-| T-011 | synthetic tool result | 部分完成 | P3 | deadline 到期和用户中断已补齐 tool_call 配对；模型 `length` 截断等场景待评估。 |
+| T-011 | synthetic tool result | 已完成 MVP 版 | P3 | deadline 到期、用户中断和模型 `length` 截断已补齐 tool_call 配对。 |
 | T-012 | patch preview / rollback | 已完成 MVP 版 | P4 | 已完成 `dry_run` 预览和 session 级 hash 校验 rollback。 |
 | T-013 | 评估 LSP / TUI / subagents / AST edit | 暂缓 | P5 | 高级能力，不进入第一阶段 MVP。 |
 | T-014 | 固化 OMP 核心架构笔记 | 已完成 | P1 | 已新增 `docs/omp-core-architecture-notes.md`，避免重复翻 OMP 源码。 |
 | T-015 | 简化一键启动命令 | 已完成 | P1 | 已新增 `./agent`；支持 `.env` token；默认当前目录为 workspace。 |
 | T-016 | 细化 budget deadline 执行检查 | 已完成 | P1 | LLM/tool timeout 使用剩余预算；到期时为未执行工具补 synthetic result。 |
-| T-017 | 处理模型输出截断的 synthetic result | 未开始 | P5 | 需要先在 LLM 层暴露 `finish_reason`，再为 `length` 截断补齐可恢复提示。 |
+| T-017 | 处理模型输出截断的 synthetic result | 已完成 | P5 | LLM 层已暴露 `finish_reason`，`length` 截断会补齐 synthetic tool result 并停止。 |
 
 ## 风险清单
 
@@ -142,7 +142,7 @@
 | R-005 | ask 模式确认次数多 | 已缓解 | 日用体验偏慢。 | 已增加 per-tool approval 白名单；默认仍保持谨慎。 |
 | R-006 | shell 工具不是安全沙箱 | 开放 | 命令可以越过 workspace 访问系统。 | 文档明确风险；封闭 VM 作为真正边界。 |
 | R-007 | 恶意仓库 prompt injection | 开放 | 文件内容可能诱导模型执行不安全操作。 | 不信任仓库禁用 `yolo`，保留人工审批。 |
-| R-008 | 中断时 tool_call 配对仍可增强 | 已缓解 | 恢复会话时可能遇到兼容性问题。 | deadline 和用户中断已补齐；输出截断场景后续处理。 |
+| R-008 | 中断时 tool_call 配对仍可增强 | 已关闭 MVP 版 | 恢复会话时可能遇到兼容性问题。 | deadline、用户中断和输出截断已补齐。 |
 | R-009 | ask_user 会阻塞等待用户 | 开放 | 带预算的长任务如果触发 ask_user，会等待人工输入。 | 长任务需求尽量写清；P4/P5 再评估 ask_user 超时策略。 |
 
 ## 架构决策
@@ -190,6 +190,6 @@
 
 用户确认本文件后，建议按以下顺序继续：
 
-1. 在 LLM 层暴露 `finish_reason`，处理 `length` 截断时的 synthetic tool result。
-2. 评估是否需要 LLM summary 或 token 级 compaction 阈值。
-3. 继续用真实需求压测 todo、compaction、preview、rollback 的协同体验。
+1. 评估是否需要 LLM summary 或 token 级 compaction 阈值。
+2. 继续用真实需求压测 todo、compaction、preview、rollback 的协同体验。
+3. 根据日用反馈决定是否进入 P6 高级工程能力评估。

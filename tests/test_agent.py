@@ -76,12 +76,49 @@ class _TwoToolClient:
         )()
 
 
+class _LengthToolClient:
+    def __init__(self, config: AgentConfig):
+        self.config = config
+
+    def chat(self, messages, tools, *, timeout=None):
+        return type(
+            "Response",
+            (),
+            {
+                "finish_reason": "length",
+                "message": {
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {"name": "shell", "arguments": "{\"command\":\"unterminated"},
+                        },
+                        {
+                            "id": "call_2",
+                            "type": "function",
+                            "function": {"name": "run_tests", "arguments": "{}"},
+                        },
+                    ],
+                },
+            },
+        )()
+
+
 class _InterruptingRegistry:
     def schemas(self):
         return []
 
     def execute(self, name, raw_arguments, context):
         raise KeyboardInterrupt
+
+
+class _UnexpectedRegistry:
+    def schemas(self):
+        return []
+
+    def execute(self, name, raw_arguments, context):
+        raise AssertionError("Tool should not execute after finish_reason=length")
 
 
 class AgentRuntimeTests(unittest.TestCase):
@@ -174,6 +211,30 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertEqual(result, "Stopped after reaching budget_seconds=1.")
         self.assertEqual([message["tool_call_id"] for message in tool_messages], ["call_1", "call_2"])
         self.assertIn("Tool call was not executed", tool_messages[1]["content"])
+
+    def test_length_finish_reason_synthesizes_tool_results_without_execution(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=Path(tmp).resolve(),
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+            )
+            with (
+                patch("local_agent.agent.OpenAICompatibleClient", _LengthToolClient),
+                patch("local_agent.agent.create_default_registry", return_value=_UnexpectedRegistry()),
+            ):
+                runtime = AgentRuntime(config, show_tool_logs=False)
+                result = runtime.run("hello")
+
+        tool_messages = [message for message in runtime._messages if message.get("role") == "tool"]
+        self.assertIn("finish_reason=length", result)
+        self.assertEqual([message["tool_call_id"] for message in tool_messages], ["call_1", "call_2"])
+        self.assertTrue(all("output token limit" in message["content"] for message in tool_messages))
 
     def test_keyboard_interrupt_synthesizes_remaining_tool_results(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

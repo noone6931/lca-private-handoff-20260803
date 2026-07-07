@@ -16,6 +16,7 @@ class LlmError(RuntimeError):
 @dataclass(frozen=True)
 class ChatResponse:
     message: dict[str, Any]
+    finish_reason: str | None = None
 
 
 class OpenAICompatibleClient:
@@ -65,7 +66,12 @@ class OpenAICompatibleClient:
         choices = data.get("choices")
         if not choices:
             raise LlmError(f"LLM API returned no choices: {data}")
-        message = choices[0].get("message")
+        choice = choices[0]
+        message = choice.get("message")
         if not isinstance(message, dict):
             raise LlmError(f"LLM API returned malformed message: {data}")
-        return ChatResponse(message=message)
+        finish_reason = choice.get("finish_reason")
+        return ChatResponse(
+            message=message,
+            finish_reason=finish_reason if isinstance(finish_reason, str) else None,
+        )
