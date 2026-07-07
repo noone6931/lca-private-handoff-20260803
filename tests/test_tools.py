@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 from local_agent.patch.anchored import hash_text
 from local_agent.tools.base import Tool, ToolContext, ToolRegistry
-from local_agent.tools.files import patch_file, read_file, rollback_patch, write_file
+from local_agent.tools.files import file_tools, patch_file, read_file, rollback_patch, write_file
 from local_agent.tools.git import git_diff
 from local_agent.tools.interaction import ask_user
 from local_agent.tools.search import list_files
@@ -122,6 +122,13 @@ class ToolTests(unittest.TestCase):
 
         self.assertTrue(result.is_error)
         self.assertIn("Refusing to overwrite", result.content)
+
+    def test_write_file_schema_description_matches_create_only_behavior(self) -> None:
+        write_tool = next(tool for tool in file_tools() if tool.name == "write_file")
+
+        self.assertIn("Create a new text file", write_tool.description)
+        self.assertIn("Refuses to overwrite existing files", write_tool.description)
+        self.assertNotIn("fully overwrite", write_tool.description)
 
     def test_patch_file_dry_run_previews_without_writing(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

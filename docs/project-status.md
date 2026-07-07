@@ -30,7 +30,7 @@
 
 ## 当前进度
 
-当前项目处于 P5 阶段：基础 Agent 能力、项目管理基线、长任务时间预算、todo、ask_user、per-tool approval、最小版本地 context compaction、synthetic tool result、patch preview/rollback、approval prompt deadline cancel 和 OMP 风格 approval model 都已经具备；首轮百炼只读 compaction 压测已通过，下一步做真实小改任务压测。
+当前项目处于 P5 阶段：基础 Agent 能力、项目管理基线、长任务时间预算、todo、ask_user、per-tool approval、最小版本地 context compaction、synthetic tool result、patch preview/rollback、approval prompt deadline cancel 和 OMP 风格 approval model 都已经具备；首轮百炼只读 compaction 压测已通过，首轮真实小改压测发现并修复了 `write_file` schema 描述误导问题，下一步复测真实小改任务。
 
 已具备的核心能力：
 
@@ -43,7 +43,7 @@
 - `apply_patch` 已支持 `replace`、`insert_before`、`insert_after`，并兼容 Python 3.12。
 - 非交互审批、LLM 非 JSON 响应、session 恢复坏尾部、search_code 绝对路径泄漏等问题已经修复。
 - 已完成 Agent 自举测试：能够通过百炼模型调用工具读取、修改、测试和查看 diff。
-- 测试基线：89 个测试在正常本地环境通过。
+- 测试基线：90 个测试在正常本地环境通过。
 
 当前已具备：
 
@@ -62,6 +62,7 @@
 
 - 当前 compaction 是本地确定性摘要，不调用 LLM 做语义总结；摘要会合并进首个 system prompt，避免额外 system 消息，并会显式保留当前用户请求。
 - 百炼真实只读压测会话 `20260707T093557800154Z` 已验证：在 `context_char_budget=2500` 的强压缩场景下，模型完成指定 5 个工具调用后停止探索，并按要求输出三句话总结。
+- 百炼真实小改压测会话 `20260707T093733679947Z` 已验证 dry_run、apply_patch、run_tests、git_diff 主链路可跑通，同时暴露 `write_file` 工具描述与实现不一致；已修正工具 schema 并待复测。
 - 还没有基于模型 context window 的 token 预算、输出 reserve 和 LLM summary。
 - provider 请求失败发生在 assistant tool_call 之前，当前会以 `LlmError` 停止；后续可继续优化用户提示。
 
@@ -109,7 +110,7 @@
 | OMP 核心架构笔记 | 已完成 | `docs/omp-core-architecture-notes.md` 固化 OMP 主循环、deadline、compaction、stepCounter 结论。 |
 | 本地 Context Compaction | 已完成 | 超过 `context_char_budget` 时折叠早期历史，保留最近消息和当前用户请求，注入未完成 todo，截断发送给模型的超大 tool 输出，并保持单 system 消息。 |
 | Synthetic Tool Result | 已完成 MVP 版 | deadline 到期、用户中断、`finish_reason=length` 时会补齐剩余 tool_call 的 tool result。 |
-| 测试基线 | 已完成 | 本地正常环境下测试通过。 |
+| 测试基线 | 已完成 | 本地正常环境下 90 个测试通过。 |
 
 ## 下一步 Todo
 
@@ -141,14 +142,16 @@
 | T-024 | compaction 保持单 system 消息 | 已完成 | P5 | 压缩摘要合并进首个 system prompt，降低 OpenAI-compatible provider 对多 system 消息的兼容风险。 |
 | T-025 | 百炼只读压测后的目标漂移修复 | 已完成 | P5 | 真实百炼压测确认 provider 接受 compaction，但极小上下文预算下模型会被续读提示带偏；已强保留当前用户请求并弱化 read_file 续读提示。 |
 | T-026 | 复测百炼只读 compaction 压测 | 已完成 | P5 | 会话 `20260707T093557800154Z` 严格完成 5 个指定工具调用后输出三句话总结，未继续额外读文件。 |
-| T-027 | 真实小改任务压测 | 未开始 | P5 | 用百炼执行一个小 README/测试改动，要求 dry_run、apply_patch、run_tests、git_diff，验证写入链路协同。 |
+| T-027 | 真实小改任务压测 | 首轮发现问题，待复测 | P5 | 会话 `20260707T093733679947Z` 跑通 dry_run、apply_patch、run_tests、git_diff，但因 `write_file` schema 描述错误导致 README 被改成不符合实现的说法。 |
+| T-028 | 修正 `write_file` schema 描述误导 | 已完成 | P5 | `write_file` 描述已改为 create-only，并新增测试确保描述不再宣称 `fully overwrite`。 |
 
 ## 风险清单
 
 | ID | 风险 | 状态 | 影响 | 应对 |
 |---|---|---|---|---|
 | R-001 | 仓库没有初始 commit | 已关闭 | 后续修改缺少稳定回滚基线。 | 已创建初始 commit。 |
-| R-002 | 长任务上下文持续膨胀 | 已进一步缓解，继续增强 | 多轮工具调用后 token 成本和失败率上升。 | 已增加本地 context compaction、当前用户请求保留、超大 tool 输出截断和单 system 摘要合并；首轮百炼只读压测已通过，继续真实小改压测后再评估 token 预算、输出 reserve 和可选 LLM summary。 |
+| R-002 | 长任务上下文持续膨胀 | 已进一步缓解，继续增强 | 多轮工具调用后 token 成本和失败率上升。 | 已增加本地 context compaction、当前用户请求保留、超大 tool 输出截断和单 system 摘要合并；首轮百炼只读压测已通过，继续真实小改复测后再评估 token 预算、输出 reserve 和可选 LLM summary。 |
+| R-011 | 工具 schema 描述与实现不一致 | 已关闭首例，持续关注 | 模型会相信工具描述并据此修改文档或代码，错误 schema 会直接造成错误结果。 | 已修正 `write_file` 描述并新增测试；后续压测继续关注 schema/实现一致性。 |
 | R-003 | 没有 todo 工具 | 已关闭 | 长需求中不容易追踪完成项和遗漏项。 | 已增加 session 级 todo 工具。 |
 | R-004 | 没有 ask_user 工具 | 已关闭 | 遇到歧义时模型只能猜。 | 已增加 ask_user 工具。 |
 | R-005 | ask 模式确认次数多 | 已缓解 | 日用体验偏慢。 | 已增加 per-tool approval 白名单和 allow / prompt / deny 策略；默认仍保持谨慎。 |
@@ -205,7 +208,7 @@
 
 用户确认本文件后，建议按以下顺序继续：
 
-1. 继续用真实小改任务压测 todo、compaction、preview、rollback、approval mode 的协同体验。
+1. 复测真实小改任务，继续压测 todo、compaction、preview、rollback、approval mode 的协同体验。
 2. 记录真实任务中 approval deadline cancel 的体验问题。
 3. 真实压测后再决定是否做 token 预算、输出 reserve、LLM summary。
 4. 根据日用反馈决定是否进入 P6 高级工程能力评估。

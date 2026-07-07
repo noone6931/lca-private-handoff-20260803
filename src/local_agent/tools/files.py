@@ -77,7 +77,7 @@ def file_tools() -> list[Tool]:
         ),
         Tool(
             name="write_file",
-            description="Create or fully overwrite a text file inside the workspace.",
+            description="Create a new text file inside the workspace. Refuses to overwrite existing files; use apply_patch for existing files.",
             tier="write",
             input_schema={
                 "type": "object",
