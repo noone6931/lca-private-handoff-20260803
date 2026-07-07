@@ -60,7 +60,7 @@
 
 真实缺口：
 
-- 当前 compaction 是本地确定性摘要，不调用 LLM 做语义总结。
+- 当前 compaction 是本地确定性摘要，不调用 LLM 做语义总结；摘要会合并进首个 system prompt，避免额外 system 消息。
 - 还没有基于模型 context window 的 token 预算、输出 reserve 和 LLM summary。
 - provider 请求失败发生在 assistant tool_call 之前，当前会以 `LlmError` 停止；后续可继续优化用户提示。
 
@@ -106,7 +106,7 @@
 | 用户澄清工具 | 已完成 | `ask_user` 可在交互式终端中向用户提问，支持超时、默认答案和 budget 上限；显式 timeout 也会被剩余 budget 夹紧。 |
 | Per-tool approval | 已完成 | 支持 `always-ask` / `write` / `yolo`、`--tool-approval`、旧白名单兼容映射、config prompt/deny 硬护栏、REPL 工具名校验和 approval deadline cancel。 |
 | OMP 核心架构笔记 | 已完成 | `docs/omp-core-architecture-notes.md` 固化 OMP 主循环、deadline、compaction、stepCounter 结论。 |
-| 本地 Context Compaction | 已完成 | 超过 `context_char_budget` 时折叠早期历史，保留最近消息，注入未完成 todo，并截断发送给模型的超大 tool 输出。 |
+| 本地 Context Compaction | 已完成 | 超过 `context_char_budget` 时折叠早期历史，保留最近消息，注入未完成 todo，截断发送给模型的超大 tool 输出，并保持单 system 消息。 |
 | Synthetic Tool Result | 已完成 MVP 版 | deadline 到期、用户中断、`finish_reason=length` 时会补齐剩余 tool_call 的 tool result。 |
 | 测试基线 | 已完成 | 本地正常环境下测试通过。 |
 
@@ -137,13 +137,14 @@
 | T-021 | approval prompt deadline / abort | 已完成 MVP 版 | P5 | approval prompt 使用 deadline-aware timed stdin；deadline 已过或等待超时会取消工具调用，保留 `y/s/n/d` 和 session allow/reject。 |
 | T-022 | approval 优先级和工具名校验修复 | 已完成 | P5 | 新 `tools.*` 配置优先于旧顶层字段；config prompt/deny 不被 session allow 绕过；REPL 未知工具名会报错。 |
 | T-023 | ask_user timeout clamp / compaction tool truncation | 已完成 | P5 | 显式 `timeout_seconds` 会被剩余 budget 夹紧；recent tool 输出只在发送模型副本中截断，session 原文保留。 |
+| T-024 | compaction 保持单 system 消息 | 已完成 | P5 | 压缩摘要合并进首个 system prompt，降低 OpenAI-compatible provider 对多 system 消息的兼容风险。 |
 
 ## 风险清单
 
 | ID | 风险 | 状态 | 影响 | 应对 |
 |---|---|---|---|---|
 | R-001 | 仓库没有初始 commit | 已关闭 | 后续修改缺少稳定回滚基线。 | 已创建初始 commit。 |
-| R-002 | 长任务上下文持续膨胀 | 已进一步缓解，继续增强 | 多轮工具调用后 token 成本和失败率上升。 | 已增加本地 context compaction，并截断发送给模型的超大 tool 输出；真实压测后再评估 token 预算、输出 reserve 和可选 LLM summary。 |
+| R-002 | 长任务上下文持续膨胀 | 已进一步缓解，继续增强 | 多轮工具调用后 token 成本和失败率上升。 | 已增加本地 context compaction、超大 tool 输出截断和单 system 摘要合并；真实压测后再评估 token 预算、输出 reserve 和可选 LLM summary。 |
 | R-003 | 没有 todo 工具 | 已关闭 | 长需求中不容易追踪完成项和遗漏项。 | 已增加 session 级 todo 工具。 |
 | R-004 | 没有 ask_user 工具 | 已关闭 | 遇到歧义时模型只能猜。 | 已增加 ask_user 工具。 |
 | R-005 | ask 模式确认次数多 | 已缓解 | 日用体验偏慢。 | 已增加 per-tool approval 白名单和 allow / prompt / deny 策略；默认仍保持谨慎。 |

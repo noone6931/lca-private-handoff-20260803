@@ -183,9 +183,9 @@ class AgentRuntime:
             recent = _truncate_recent_tool_outputs(_valid_recent_messages(non_system[-recent_count:]))
             dropped_count = len(non_system) - recent_count
             dropped = non_system[: max(dropped_count, 0)]
+            compaction_summary = self._build_compaction_summary(dropped)
             compacted = [
-                *system_messages[:1],
-                {"role": "system", "content": self._build_compaction_summary(dropped)},
+                _system_message_with_compaction_summary(system_messages, compaction_summary),
                 *recent,
             ]
             if _estimate_message_chars(compacted) <= self._config.context_char_budget or recent_count <= 6:
@@ -344,6 +344,17 @@ def _truncate_recent_tool_outputs(messages: list[dict[str, Any]]) -> list[dict[s
         else:
             truncated.append(message)
     return truncated
+
+
+def _system_message_with_compaction_summary(
+    system_messages: list[dict[str, Any]],
+    compaction_summary: str,
+) -> dict[str, Any]:
+    base = dict(system_messages[0]) if system_messages else {"role": "system", "content": SYSTEM_PROMPT}
+    base["role"] = "system"
+    content = str(base.get("content") or "")
+    base["content"] = f"{content.rstrip()}\n\n[Local context compaction]\n{compaction_summary}"
+    return base
 
 
 def _truncate_tool_message(message: dict[str, Any], content: str) -> dict[str, Any]:

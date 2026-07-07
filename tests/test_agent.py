@@ -307,7 +307,11 @@ class AgentRuntimeTests(unittest.TestCase):
                 result = runtime.run("new request")
 
         sent = _MessageRecordingClient.messages
+        sent_system_messages = [message for message in sent if message.get("role") == "system"]
         self.assertEqual(result, "done")
+        self.assertEqual(len(sent_system_messages), 1)
+        self.assertIn("You are a local coding agent", sent_system_messages[0].get("content", ""))
+        self.assertIn("[Local context compaction]", sent_system_messages[0].get("content", ""))
         self.assertTrue(any("Earlier conversation was compacted" in m.get("content", "") for m in sent))
         self.assertTrue(any("T1: Finish compaction" in m.get("content", "") for m in sent))
         self.assertFalse(any("T2: Already done" in m.get("content", "") for m in sent))
