@@ -51,6 +51,14 @@ def main(argv: list[str] | None = None) -> int:
         type=int,
         help="Recent messages to keep verbatim when local compaction is active.",
     )
+    parser.add_argument(
+        "--summary-mode",
+        choices=["auto", "local", "llm"],
+        help=(
+            "Compaction summary mode. auto follows the OMP-style policy: no summary for small history, "
+            "LLM summary when compaction triggers, local fallback on failure."
+        ),
+    )
     parser.add_argument("--continue", dest="continue_session", action="store_true", help="Continue the latest session.")
     parser.add_argument("--session", help="Continue a specific session id from .local-agent/sessions.")
     parser.add_argument("--hide-tools", action="store_true", help="Hide tool call logs from stderr.")
@@ -71,6 +79,7 @@ def main(argv: list[str] | None = None) -> int:
             tool_approval=args.tool_approval,
             context_char_budget=args.context_char_budget,
             context_recent_messages=args.context_recent_messages,
+            summary_mode=args.summary_mode,
         )
         runtime = AgentRuntime(
             config,

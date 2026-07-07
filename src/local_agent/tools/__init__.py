@@ -4,6 +4,7 @@ from .base import ToolRegistry
 from .files import file_tools
 from .git import git_tools
 from .interaction import interaction_tools
+from .lsp import lsp_tools
 from .memory import memory_tools
 from .search import search_tools
 from .shell import shell_tools
@@ -19,5 +20,6 @@ def create_default_registry() -> ToolRegistry:
         *memory_tools(),
         *todo_tools(),
         *interaction_tools(),
+        *lsp_tools(),
     ]
     return ToolRegistry(tools)

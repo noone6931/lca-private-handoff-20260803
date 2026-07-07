@@ -16,6 +16,209 @@ OMP 的 Agent 主任务不靠 `max_steps` 终止。它把“任务是否继续�
 - 长任务真正需要的是 context summary / compaction。
 - 只在病态子循环上保留小上限，例如重复失败、暂停空转、强制工具重试。
 
+## OMP 如何让用户不用指定工具顺序
+
+结论：OMP 不是靠用户每次说“先读文件、再搜索、再改、再测试”。它把默认工作流拆成三层：系统上下文告诉模型应该如何工作，工具 schema / description 告诉模型每个工具该何时使用，runtime 在关键位置用 tool choice、todo reminder、permission、synthetic result 等机制纠偏。
+
+### 1. 系统提示内置工程工作流
+
+源码依据：
+
+- `/Users/chengming/mycode/opensource/oh-my-pi/packages/coding-agent/src/prompts/system/system-prompt.md:87`
+- `/Users/chengming/mycode/opensource/oh-my-pi/packages/coding-agent/src/prompts/system/system-prompt.md:105`
+- `/Users/chengming/mycode/opensource/oh-my-pi/packages/coding-agent/src/prompts/system/system-prompt.md:123`
+- `/Users/chengming/mycode/opensource/oh-my-pi/packages/coding-agent/src/prompts/system/system-prompt.md:160`
+
+具体做法：
+
+- `TOOL POLICY` 要求模型在能提升正确性、完整性、grounding 时使用工具，不允许停在第一个看似合理的答案。
+- `Specialized Tools` 明确要求文件/目录读取用 `read`，内容搜索用 `grep` 而不是 shell 里的 `grep/rg/awk`，glob 用 `glob`，精细修改用 `edit`，代码智能用 `lsp`。
+- `Exploration` 要求先定位目标：用 `grep` 找目标、用 `glob` 看结构、用 `read` 的 offset/limit 读必要片段，不鼓励盲读整仓。
+- `EXECUTION WORKFLOW` 固化为 `Scope -> Research Before Editing -> Decompose -> Implement -> Verify -> Cleanup`。其中明确要求多文件工作先研究既有代码和约定，编辑前读取相关内容，非平凡工作交付前必须有测试、E2E 或 QA 证据。
+
+这意味着 OMP 用户可以只说“实现这个需求”，模型会从系统提示里得到默认流程，而不是要求用户在 prompt 里手写工具调用顺序。
+
+### 2. 项目上下文自动注入
+
+源码依据：
+
+- `/Users/chengming/mycode/opensource/oh-my-pi/packages/coding-agent/src/prompts/system/project-prompt.md:9`
+- `/Users/chengming/mycode/opensource/oh-my-pi/packages/coding-agent/src/prompts/system/project-prompt.md:20`
+- `/Users/chengming/mycode/opensource/oh-my-pi/packages/coding-agent/src/prompts/system/project-prompt.md:32`
+- `/Users/chengming/mycode/opensource/oh-my-pi/packages/coding-agent/src/prompts/system/project-prompt.md:46`
+- `/Users/chengming/mycode/opensource/oh-my-pi/packages/coding-agent/src/system-prompt.ts:608`
+- `/Users/chengming/mycode/opensource/oh-my-pi/packages/coding-agent/src/system-prompt.ts:611`
+- `/Users/chengming/mycode/opensource/oh-my-pi/packages/coding-agent/src/system-prompt.ts:631`
+- `/Users/chengming/mycode/opensource/oh-my-pi/packages/coding-agent/src/system-prompt.ts:792`
+
+具体做法：
+
+- `project-prompt.md` 会把 context files 注入为必须遵守的上下文。
+- 目录级规则如 `AGENTS.md` / `CLAUDE.md` / `.cursorrules` 由 prompt 构建阶段预加载；模型不需要自己搜索这些规则文件。
+- 可选 `workspace-tree` 会把当前工作目录的概要结构注入系统上下文，模型不用第一步一定先 `ls` 才知道大概目录。
+- `project-prompt.md` 还写明：每次响应都必须推进任务；当工具或 repo context 能回答时，不要问用户确认；行为变更交付前必须验证。
+- `buildSystemPrompt()` 会并行加载系统 prompt 定制、项目 context files、workspace tree、skills、active repo context，再渲染 `system-prompt.md` 和 `project-prompt.md`。
+
+这层解决的是“用户没说先读哪些项目规则时怎么办”：OMP 在 agent start 前先把项目规则、cwd、workspace tree、日期、环境等放进系统上下文。
+
+### 3. 工具 registry 和工具描述进入模型上下文
+
+源码依据：
+
+- `/Users/chengming/mycode/opensource/oh-my-pi/packages/coding-agent/src/tools/index.ts:443`
+- `/Users/chengming/mycode/opensource/oh-my-pi/packages/coding-agent/src/tools/index.ts:489`
+- `/Users/chengming/mycode/opensource/oh-my-pi/packages/coding-agent/src/sdk.ts:1666`
+- `/Users/chengming/mycode/opensource/oh-my-pi/packages/coding-agent/src/sdk.ts:2217`
+- `/Users/chengming/mycode/opensource/oh-my-pi/packages/coding-agent/src/sdk.ts:2561`
+- `/Users/chengming/mycode/opensource/oh-my-pi/packages/coding-agent/src/system-prompt.ts:701`
+- `/Users/chengming/mycode/opensource/oh-my-pi/packages/coding-agent/src/system-prompt.ts:708`
+- `/Users/chengming/mycode/opensource/oh-my-pi/packages/coding-agent/src/system-prompt.ts:730`
+- `/Users/chengming/mycode/opensource/oh-my-pi/packages/coding-agent/src/system-prompt.ts:788`
+
+具体做法：
+
+- `BUILTIN_TOOLS` 注册 `read`、`bash`、`edit`、`ast_grep`、`ast_edit`、`ask`、`eval`、`glob`、`grep`、`lsp`、`browser`、`todo`、`write`、memory 等工具。
+- `createTools()` 根据设置过滤工具，例如 `bash.enabled`、`grep.enabled`、`lsp.enabled`、`todo.enabled`、`browser.enabled`、`memory.backend`。
+- SDK 启动时先 `createTools()`，再构建 `toolRegistry`，再调用 `buildSystemPrompt()`。
+- `buildSystemPrompt()` 从 active tools 里取 name、wireName、label、description、parameters、examples，生成 `toolRefs` 和 `toolInventory`。
+- 当 provider 使用 native tool calling 时，系统 prompt 可以只列工具名；当需要 inline tool descriptors 时，会把完整工具说明渲染进系统 prompt。两种情况下，模型都会知道有哪些工具以及怎么用。
+
+这层解决的是“模型怎么知道 read/search/edit/test 这些能力存在”：不是用户告诉它，而是 runtime 把工具 catalog 和工具 schema 放进每轮模型上下文。
+
+### 4. 工具描述承担具体使用规范
+
+源码依据：
+
+- `/Users/chengming/mycode/opensource/oh-my-pi/packages/coding-agent/src/prompts/tools/read.md`
+- `/Users/chengming/mycode/opensource/oh-my-pi/packages/coding-agent/src/prompts/tools/grep.md`
+- `/Users/chengming/mycode/opensource/oh-my-pi/packages/coding-agent/src/prompts/tools/glob.md`
+- `/Users/chengming/mycode/opensource/oh-my-pi/packages/coding-agent/src/prompts/tools/patch.md`
+- `/Users/chengming/mycode/opensource/oh-my-pi/packages/coding-agent/src/prompts/tools/write.md`
+- `/Users/chengming/mycode/opensource/oh-my-pi/packages/coding-agent/src/prompts/tools/bash.md`
+- `/Users/chengming/mycode/opensource/oh-my-pi/packages/coding-agent/src/prompts/tools/todo.md`
+- `/Users/chengming/mycode/opensource/oh-my-pi/packages/coding-agent/src/prompts/tools/ask.md`
+
+具体做法：
+
+- `read.md` 定义文件、目录、文档、SQLite、archive、URL、internal URI 的读取方式，并说明代码文件无 selector 时返回结构摘要，footer 指向需要补读的范围。
+- `grep.md` 明确要求内容搜索必须用内置 `grep`，不要通过 bash 调 `grep/rg/ag/awk`；open-ended 多轮搜索应该转 task/explore，而不是无限 chained grep。
+- `glob.md` 定义目录和文件枚举，用 mtime 排序、分组输出，并支持 semicolon 多路径。
+- `patch.md` 把 `edit` 定义为已有文件的 primary edit tool，要求编辑前必须读目标文件，anchor/context 必须原样复制，失败后必须重新读当前内容再生成新 patch，不能重复提交同一个失败 diff。
+- `write.md` 明确写整文件或创建文件时可用，但修改既有文件优先用 `edit`。
+- `bash.md` 把 shell 限定为真实二进制和短事实 pipeline，复杂控制流应转 `eval`，并说明长输出会进入 artifact。
+- `todo.md` 定义什么时候建 todo：3+ 步任务、用户明确要求、多任务清单、新指令中途到达；并要求完成后立即标记。
+- `ask.md` 要求默认行动，只在存在用户必须决定且权衡明显不同的方案时才问。
+
+这层解决的是“模型知道工具名但不知道怎么用”的问题。OMP 把很多我们之前写在用户 prompt 里的要求，沉到了工具说明里。
+
+### 5. Runtime 会主动插入 todo / task 提醒
+
+源码依据：
+
+- `/Users/chengming/mycode/opensource/oh-my-pi/packages/coding-agent/src/prompts/system/eager-todo.md`
+- `/Users/chengming/mycode/opensource/oh-my-pi/packages/coding-agent/src/prompts/system/mid-run-todo-nudge.md`
+- `/Users/chengming/mycode/opensource/oh-my-pi/packages/coding-agent/src/session/agent-session.ts:11085`
+- `/Users/chengming/mycode/opensource/oh-my-pi/packages/coding-agent/src/session/agent-session.ts:11137`
+- `/Users/chengming/mycode/opensource/oh-my-pi/packages/coding-agent/src/session/agent-session.ts:7438`
+- `/Users/chengming/mycode/opensource/oh-my-pi/packages/coding-agent/src/session/agent-session.ts:7461`
+- `/Users/chengming/mycode/opensource/oh-my-pi/packages/coding-agent/src/session/agent-session.ts:11202`
+- `/Users/chengming/mycode/opensource/oh-my-pi/packages/coding-agent/src/session/agent-session.ts:11327`
+
+具体做法：
+
+- `eager-todo.md` 是隐藏 system reminder：任务开始前建议或强制先建 phased todo，要求覆盖 investigation、implementation、verification。
+- `#createEagerTodoPrelude()` 只在合适时机注入，例如首个用户消息、todo enabled、没有已有 todo、不是 plan mode、todo 工具 active。
+- 当 `todo.eager=always` 且模型支持强制 tool choice 时，OMP 不只是提示，还会通过 tool choice 强制下一轮调用 `todo`。
+- `mid-run-todo-nudge.md` 在长任务中提醒模型有未完成 todo；`#takeMidRunTodoNudge()` 会在模型已经做了若干 mutating tool result 但没更新 todo 时注入隐藏提醒。
+- `#checkTodoCompletion()` 在 agent 停下但还有未完成 todo 时，会注入 reminder 并 schedule continuation，让模型继续完成或标记任务。
+
+这层解决的是“用户没说维护 todo，模型也可能忘记”的问题。OMP 用隐藏 reminder 和必要时的 forced tool choice 把 todo 变成 runtime 能力。
+
+### 6. ToolChoiceQueue 和软/硬工具要求纠偏
+
+源码依据：
+
+- `/Users/chengming/mycode/opensource/oh-my-pi/packages/coding-agent/src/session/tool-choice-queue.ts:101`
+- `/Users/chengming/mycode/opensource/oh-my-pi/packages/coding-agent/src/session/tool-choice-queue.ts:128`
+- `/Users/chengming/mycode/opensource/oh-my-pi/packages/coding-agent/src/session/tool-choice-queue.ts:219`
+- `/Users/chengming/mycode/opensource/oh-my-pi/packages/coding-agent/src/session/agent-session.ts:2891`
+- `/Users/chengming/mycode/opensource/oh-my-pi/packages/coding-agent/src/session/agent-session.ts:2902`
+- `/Users/chengming/mycode/opensource/oh-my-pi/packages/coding-agent/src/session/agent-session.ts:2937`
+- `/Users/chengming/mycode/opensource/oh-my-pi/packages/agent/src/agent-loop.ts:811`
+- `/Users/chengming/mycode/opensource/oh-my-pi/packages/agent/src/agent-loop.ts:976`
+- `/Users/chengming/mycode/opensource/oh-my-pi/packages/agent/src/agent-loop.ts:989`
+
+具体做法：
+
+- `ToolChoiceQueue` 可以排入 hard tool choice，例如用户强制某个工具、eager todo 强制 todo。
+- `nextToolChoiceDirective()` 优先取 hard forced choice；如果有 pending preview action，则返回 soft requirement。
+- soft requirement 不是马上强制 provider tool_choice，而是先插入 reminder；如果模型没调用要求的工具，agent-loop 会把模型偏离调用标记为 skipped，不执行副作用工具，然后下一轮升级成 forced tool choice。
+- `MAX_SOFT_TOOL_ESCALATIONS` 防止这个纠偏循环无界。
+
+这层解决的是“模型没按流程调用必要工具怎么办”：OMP runtime 可以先提醒，再强制；偏离工具不会被执行，避免不该发生的副作用。
+
+### 7. Agent-loop 执行并回灌工具结果
+
+源码依据：
+
+- `/Users/chengming/mycode/opensource/oh-my-pi/packages/agent/src/agent-loop.ts:776`
+- `/Users/chengming/mycode/opensource/oh-my-pi/packages/agent/src/agent-loop.ts:806`
+- `/Users/chengming/mycode/opensource/oh-my-pi/packages/agent/src/agent-loop.ts:850`
+- `/Users/chengming/mycode/opensource/oh-my-pi/packages/agent/src/agent-loop.ts:945`
+- `/Users/chengming/mycode/opensource/oh-my-pi/packages/agent/src/agent-loop.ts:1021`
+- `/Users/chengming/mycode/opensource/oh-my-pi/packages/agent/src/agent-loop.ts:1033`
+- `/Users/chengming/mycode/opensource/oh-my-pi/packages/agent/src/agent-loop.ts:1037`
+- `/Users/chengming/mycode/opensource/oh-my-pi/packages/agent/src/agent-loop.ts:1178`
+- `/Users/chengming/mycode/opensource/oh-my-pi/packages/agent/src/agent-loop.ts:1184`
+- `/Users/chengming/mycode/opensource/oh-my-pi/packages/agent/src/agent-loop.ts:1268`
+
+具体做法：
+
+- agent-loop 每轮模型调用前会 `syncContextBeforeModelCall`，确保系统 prompt、active tools、session 状态是最新的。
+- 每轮把 AgentMessage 转成 provider 消息，并带上 normalized tools。
+- 如果 provider 不支持 native tool calling，OMP 还支持 owned / in-band tool dialect，把工具 catalog 放进 prompt，并自己解析工具调用。
+- 模型返回 tool calls 后，agent-loop 执行 `executeToolCalls()`，把 tool results 追加回 conversation，再继续下一轮。
+- 如果输出 `length` 截断、deadline 到期、abort/error 等导致 tool call 不能执行，OMP 会补 synthetic tool result，保证后续 API 看到的 tool_call / tool_result 是配对的。
+
+这层解决的是“工具调用链如何继续直到完成”：用户只给目标，模型和 runtime 多轮协作；模型没有 tool calls 且没有 pending messages 时才停。
+
+## 对我们 LCA 的直接落地方案
+
+我们不需要完整复制 OMP 的复杂度，但应该按同样分层落地：
+
+1. 系统 prompt 固化默认工作流：
+   - 理解任务：先用 `list_files` / `search_code` / `read_file` 获取足够上下文；
+   - 修改前：必须读目标文件；
+   - 修改时：已有文件用 `apply_patch`，写入前优先 `dry_run=true`；
+   - 修改后：根据项目类型运行合适测试，并调用 `git_diff`；
+   - 复杂任务：维护 todo；
+   - 不确定且工具/源码不能回答时才 `ask_user`。
+2. 工具 description 对齐真实能力：
+   - `read_file` 说明支持行范围和 hash tag；
+   - `search_code` 说明用于内容搜索，结果路径相对 workspace；
+   - `apply_patch` 明确是修改已有文件主路径，要求 tag / old_text / mode / dry_run；
+   - `write_file` 明确只创建新文件，避免再误导模型覆盖既有文件；
+   - `shell` 明确不是文件搜索/读取/编辑的首选，并说明安全边界。
+3. Runtime 层做最小纠偏：
+   - 对复杂任务可注入一次 hidden todo reminder，但不强制所有任务都 todo；
+   - 对 `apply_patch dry_run=true` 可以作为 prompt 规范，暂不做强制 gate；
+   - 对工具失败后的重试规则写进 prompt：失败后必须重新读当前文件，不要重复同一 patch；
+   - 继续保留 approval、deadline、compaction、synthetic tool result 这些硬边界。
+4. 用户日用命令应简化：
+
+```bash
+./agent --provider bailian --cwd /path/to/project "根据需求实现，改完跑测试并总结 diff"
+```
+
+如果需求文档在另一个目录，下一步应做 multi-root workspace：
+
+```bash
+./agent --provider bailian \
+  --cwd /path/to/code-project \
+  --allow-dir /path/to/requirements \
+  "读取需求文档并在代码项目中实现"
+```
+
 ## OMP 主循环
 
 源码依据：`/Users/chengming/mycode/opensource/oh-my-pi/packages/agent/src/agent-loop.ts`
@@ -126,6 +329,75 @@ OMP 使用 compaction 处理长上下文，而不是靠减少 step 数。
 - 为下一轮 prompt 和模型输出预留 reserve；
 - recent messages 继续保留原文，早期历史压成 summary / compaction entries；
 - 优先支持 LLM summary，失败时回退 deterministic summary。
+
+## Memory / Skills / Autolearn
+
+源码与文档依据：
+
+- `/Users/chengming/mycode/opensource/oh-my-pi/packages/coding-agent/src/memory-backend/resolve.ts`
+- `/Users/chengming/mycode/opensource/oh-my-pi/packages/coding-agent/src/memory-backend/types.ts`
+- `/Users/chengming/mycode/opensource/oh-my-pi/packages/coding-agent/src/memory-backend/local-backend.ts`
+- `/Users/chengming/mycode/opensource/oh-my-pi/packages/coding-agent/src/tools/memory-recall.ts`
+- `/Users/chengming/mycode/opensource/oh-my-pi/packages/coding-agent/src/tools/memory-retain.ts`
+- `/Users/chengming/mycode/opensource/oh-my-pi/packages/coding-agent/src/tools/learn.ts`
+- `/Users/chengming/mycode/opensource/oh-my-pi/packages/coding-agent/src/tools/manage-skill.ts`
+- `/Users/chengming/mycode/opensource/oh-my-pi/packages/coding-agent/src/autolearn/managed-skills.ts`
+- `/Users/chengming/mycode/opensource/oh-my-pi/packages/coding-agent/src/extensibility/skills.ts`
+- `/Users/chengming/mycode/opensource/oh-my-pi/docs/memory.md`
+- `/Users/chengming/mycode/opensource/oh-my-pi/docs/skills.md`
+
+OMP 的 memory 是 backend selector，而不是单一文件：
+
+```text
+memory.backend = off | local | hindsight | mnemopi
+```
+
+具体语义：
+
+- `off` 是默认值；
+- `local` 是本地 rollout-summary pipeline，会从历史 session 提炼长期项目知识，写出 `MEMORY.md`、`memory_summary.md` 和 `skills/`；
+- `hindsight` 是远端长期记忆，提供 recall / retain / reflect；
+- `mnemopi` 是本地 SQLite 记忆，提供 recall / retain / reflect / edit；
+- memory backend 需要非阻塞：启动、搜索、保存、清理失败都不能破坏主 agent loop。
+
+OMP 的 local memory 会在后续 session 注入 Memory Guidance：
+
+- 注入内容来自 `memory_summary.md` 和 `learned.md`；
+- memory 被标成 heuristic / advisory，不能覆盖当前 repo state 和用户最新指令；
+- 注入有 token 上限；
+- consolidation 输出会做 secret redaction；
+- generated memory playbooks 可通过 `memory://root/skills/<name>/SKILL.md` 读取。
+
+OMP 的 skills 也分层：
+
+- authored skills：用户或项目手写的 `<skills-root>/<name>/SKILL.md`；
+- managed skills：auto-learn 生成的 `~/.omp/agent/managed-skills/<name>/SKILL.md`；
+- system prompt 只列 name / description，正文按需读取；
+- managed skills 优先级最低，永远不能覆盖 authored skills；
+- `manage_skill` 工具受 `autolearn.enabled` 控制；
+- `learn` 工具在 `autolearn.enabled` 且 memory backend 为 `local` / `hindsight` / `mnemopi` 时可用，可以同时写 lesson 和 managed skill。
+
+我们项目当前状态：
+
+- 已有手动 Markdown memory：`.local-agent/memory/project.md`、`decisions.md`、`conventions.md`；
+- 这些 memory 目前不会自动进入新 session system prompt；
+- 尚无 `learn` 工具、skills discovery、managed skills、autolearn；
+- 已新增详细方案：`docs/memory-skills-implementation-plan.md`。
+
+建议落地顺序：
+
+1. 先做 Markdown memory 启动注入，明确 advisory、source path 和注入预算；
+2. 再做 `learn` 工具，把可复用经验写到 `.local-agent/memory/learned.md`；
+3. 再做 authored skills discovery，只注入 name / description，不注入全文；
+4. 最后做 managed skills，默认关闭，generated skills 与 authored skills 隔离；
+5. 暂不做 Hindsight、Mnemopi、向量检索和 stop 后自动学习。
+
+与 LLM summary 的边界：
+
+- LLM summary 解决当前 session 内的上下文压缩；
+- memory 解决跨 session 的长期项目背景；
+- skills 解决可复用工作流；
+- 三者都可以进入 system prompt，但必须分别标注来源和权威级别。
 
 ## Tool Call 配对
 

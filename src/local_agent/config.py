@@ -16,6 +16,7 @@ DEFAULT_CONTEXT_CHAR_BUDGET = 60000
 DEFAULT_CONTEXT_RECENT_MESSAGES = 40
 TOOL_APPROVAL_POLICIES = {"allow", "prompt", "deny"}
 APPROVAL_MODES = {"always-ask", "write", "yolo"}
+SUMMARY_MODES = {"auto", "local", "llm"}
 
 
 @dataclass(frozen=True)
@@ -33,6 +34,7 @@ class AgentConfig:
     tool_approval: dict[str, str] | None = None
     context_char_budget: int = DEFAULT_CONTEXT_CHAR_BUDGET
     context_recent_messages: int = DEFAULT_CONTEXT_RECENT_MESSAGES
+    summary_mode: str = "auto"
 
 
 def load_config(
@@ -50,6 +52,7 @@ def load_config(
     tool_approval: object | None = None,
     context_char_budget: int | None = None,
     context_recent_messages: int | None = None,
+    summary_mode: str | None = None,
 ) -> AgentConfig:
     file_config = _load_json_config(config_path)
     workspace = Path(cwd or file_config.get("workspace") or os.getcwd()).expanduser().resolve()
@@ -136,6 +139,13 @@ def load_config(
         if raw_context_recent_messages is not None
         else DEFAULT_CONTEXT_RECENT_MESSAGES,
     )
+    raw_summary_mode = (
+        summary_mode
+        or file_config.get("summary_mode")
+        or os.environ.get("AGENT_SUMMARY_MODE")
+        or "auto"
+    )
+    resolved_summary_mode = _summary_mode(raw_summary_mode)
 
     if not resolved_api_base_url:
         raise ConfigError("Missing AI_API_BASE_URL.")
@@ -157,6 +167,7 @@ def load_config(
         tool_approval=resolved_tool_approval,
         context_char_budget=resolved_context_char_budget,
         context_recent_messages=resolved_context_recent_messages,
+        summary_mode=resolved_summary_mode,
     )
 
 
@@ -195,6 +206,15 @@ def normalize_approval_mode(raw_mode: object) -> str:
     if resolved not in APPROVAL_MODES:
         raise ConfigError("approval_mode must be one of: always-ask, write, yolo.")
     return resolved
+
+
+def _summary_mode(raw_mode: object) -> str:
+    if not isinstance(raw_mode, str):
+        raise ConfigError("summary_mode must be a string.")
+    mode = raw_mode.strip().lower()
+    if mode not in SUMMARY_MODES:
+        raise ConfigError("summary_mode must be one of: auto, local, llm.")
+    return mode
 
 
 def _load_dotenv(path: Path) -> None:

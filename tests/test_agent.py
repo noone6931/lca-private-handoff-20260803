@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from local_agent.agent import AgentRuntime
+from local_agent.agent import _resolve_compaction_threshold_chars
 from local_agent.config import AgentConfig
 
 
@@ -45,6 +46,19 @@ class _MessageRecordingClient:
 
     def chat(self, messages, tools, *, timeout=None):
         type(self).messages = messages
+        return type("Response", (), {"message": {"content": "done"}})()
+
+
+class _SummaryThenFinalClient:
+    calls: list[dict] = []
+
+    def __init__(self, config: AgentConfig):
+        self.config = config
+
+    def chat(self, messages, tools, *, timeout=None):
+        self.calls.append({"messages": messages, "tools": tools, "timeout": timeout})
+        if not tools:
+            return type("Response", (), {"message": {"content": "LLM kept the important earlier facts."}})()
         return type("Response", (), {"message": {"content": "done"}})()
 
 
@@ -283,6 +297,7 @@ class AgentRuntimeTests(unittest.TestCase):
                 approval_mode="yolo",
                 context_char_budget=1200,
                 context_recent_messages=4,
+                summary_mode="local",
             )
             with patch("local_agent.agent.OpenAICompatibleClient", _MessageRecordingClient):
                 runtime = AgentRuntime(config, show_tool_logs=False)
@@ -334,6 +349,7 @@ class AgentRuntimeTests(unittest.TestCase):
                 approval_mode="yolo",
                 context_char_budget=3000,
                 context_recent_messages=4,
+                summary_mode="local",
             )
             with patch("local_agent.agent.OpenAICompatibleClient", _MessageRecordingClient):
                 runtime = AgentRuntime(config, show_tool_logs=False)
@@ -367,6 +383,116 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertIn("...<truncated", sent_tool_messages[0]["content"])
         self.assertLess(len(sent_tool_messages[0]["content"]), len(large_tool_output))
         self.assertEqual(stored_tool_messages[0]["content"], large_tool_output)
+
+    def test_llm_summary_mode_summarizes_dropped_history_before_main_call(self) -> None:
+        _SummaryThenFinalClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=workspace,
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+                context_char_budget=1200,
+                context_recent_messages=1,
+                summary_mode="llm",
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _SummaryThenFinalClient):
+                runtime = AgentRuntime(config, show_tool_logs=False)
+                runtime._messages.extend(
+                    [
+                        {"role": "user", "content": "old request " + ("x" * 1000)},
+                        {"role": "assistant", "content": "old answer " + ("y" * 1000)},
+                    ]
+                )
+                result = runtime.run("update the code")
+
+        self.assertEqual(result, "done")
+        self.assertGreaterEqual(len(_SummaryThenFinalClient.calls), 2)
+        self.assertEqual(_SummaryThenFinalClient.calls[0]["tools"], [])
+        main_system = _SummaryThenFinalClient.calls[-1]["messages"][0]["content"]
+        self.assertIn("summarized by the configured LLM", main_system)
+        self.assertIn("LLM kept the important earlier facts", main_system)
+
+    def test_auto_summary_mode_uses_llm_when_compaction_triggers(self) -> None:
+        _SummaryThenFinalClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=workspace,
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+                context_char_budget=1200,
+                context_recent_messages=1,
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _SummaryThenFinalClient):
+                runtime = AgentRuntime(config, show_tool_logs=False)
+                runtime._messages.extend(
+                    [
+                        {"role": "user", "content": "old request " + ("x" * 1000)},
+                        {"role": "assistant", "content": "old answer " + ("y" * 1000)},
+                    ]
+                )
+                result = runtime.run("update the code")
+
+        self.assertEqual(result, "done")
+        self.assertGreaterEqual(len(_SummaryThenFinalClient.calls), 2)
+        self.assertEqual(_SummaryThenFinalClient.calls[0]["tools"], [])
+
+    def test_compaction_threshold_reserves_at_least_fifteen_percent(self) -> None:
+        self.assertEqual(_resolve_compaction_threshold_chars(1200), 1020)
+        self.assertEqual(_resolve_compaction_threshold_chars(100000), 34464)
+
+    def test_workflow_nudge_is_added_for_coding_tasks(self) -> None:
+        _MessageRecordingClient.messages = []
+        with tempfile.TemporaryDirectory() as tmp:
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=Path(tmp).resolve(),
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _MessageRecordingClient):
+                runtime = AgentRuntime(config, show_tool_logs=False)
+                result = runtime.run("修改 README 里的说明")
+
+        self.assertEqual(result, "done")
+        user_messages = [message for message in _MessageRecordingClient.messages if message.get("role") == "user"]
+        self.assertIn("[Runtime workflow reminder]", user_messages[-1]["content"])
+
+    def test_workflow_nudge_is_not_added_for_short_non_coding_prompt(self) -> None:
+        _MessageRecordingClient.messages = []
+        with tempfile.TemporaryDirectory() as tmp:
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=Path(tmp).resolve(),
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _MessageRecordingClient):
+                runtime = AgentRuntime(config, show_tool_logs=False)
+                result = runtime.run("只回答 OK")
+
+        self.assertEqual(result, "done")
+        user_messages = [message for message in _MessageRecordingClient.messages if message.get("role") == "user"]
+        self.assertNotIn("[Runtime workflow reminder]", user_messages[-1]["content"])
 
     def test_session_tool_policy_rejects_unknown_tool_name(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

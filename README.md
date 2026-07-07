@@ -55,7 +55,8 @@ export AGENT_APPROVAL_MODE="always-ask"   # always-ask | write | yolo; ask/auto-
 export AGENT_BUDGET_SECONDS="300"  # optional wall-clock budget per run
 export AGENT_AUTO_APPROVE_TOOLS="run_tests,git_diff"  # optional ask-mode allowlist
 export AGENT_TOOL_APPROVAL="shell=deny,run_tests=allow"  # optional per-tool allow/prompt/deny
-export AGENT_CONTEXT_CHAR_BUDGET="60000"  # optional local compaction trigger
+export AGENT_CONTEXT_CHAR_BUDGET="60000"  # optional approximate compaction window
+export AGENT_SUMMARY_MODE="auto"  # auto | local | llm
 ```
 
 ## 本地运行
@@ -103,7 +104,9 @@ local-agent "帮我找一下测试失败原因"
 
 `--max-steps` 默认是 0，表示不限步；它只作为显式防失控保险丝。日常限制任务时优先使用 `--budget-seconds`。
 
-长会话默认启用本地上下文压缩：当消息历史超过约 `60000` 字符时，会把早期历史折叠成系统摘要，保留最近消息，注入未完成 todo，并截断发送给模型的超大 tool 输出。可用 `--context-char-budget 0` 关闭。
+长会话默认启用 OMP 风格上下文压缩策略：`--context-char-budget` 近似表示上下文窗口，runtime 会至少预留 15% 给下一轮 prompt/输出；超过阈值后压缩早期历史，保留最近消息和未完成 todo，并截断发送给模型的超大 tool 输出。默认 `--summary-mode auto`：小历史不摘要，触发 compaction 时自动调用当前配置的 AI API 生成语义摘要，失败回退本地确定性摘要。可用 `--summary-mode local` 强制只用本地摘要，`--summary-mode llm` 强制在 compaction 时尝试 LLM 摘要，`--context-char-budget 0` 关闭压缩。
+
+普通代码任务不需要每次手写“先 list_files、再 read_file、再 dry_run、再 run_tests、再 git_diff”。系统提示和 runtime reminder 已固化默认工作流：Agent 会按任务需要自行探索、维护 todo、修改前读取文件、用 anchored patch 写入、修改后验证并总结 diff。
 
 如果 `always-ask` 模式下某些工具你已经确认安全，可以只对白名单工具免确认：
 
@@ -144,7 +147,7 @@ local-agent "帮我找一下测试失败原因"
   --tool-approval shell=deny,run_tests=allow,write_file=deny,memory_write=deny,rollback_patch=prompt \
   --budget-seconds 600 \
   --context-char-budget 60000 \
-  "先 todo，再读文件，写入前 apply_patch dry_run=true，写入后 run_tests 和 git_diff"
+  "修复 README 里的一个小问题并验证"
 ```
 
 如果希望 `apply_patch` 出现 `y/s/n/d` 并可用 `s` 记住当前 session，不要把 `apply_patch` 写成 `tool_approval=prompt`。显式 `prompt` 是配置级硬护栏，会每次询问。
@@ -213,7 +216,11 @@ python3 scripts/sync_project_excel.py
 - `todo_add`: 添加当前会话 todo。
 - `todo_update`: 更新当前会话 todo 状态。
 - `ask_user`: 在需求不清时向用户提问；支持 `timeout_seconds` 和 `default_answer`，显式 timeout 也会被当前任务剩余预算夹紧。
-- 本地 context compaction: 超过上下文预算时压缩早期历史、保留当前用户请求和未完成 todo，并截断发送给模型的超大 tool 输出。
+- `lsp_symbols`: 列出 Python、Java、JavaScript、TypeScript、Vue 的轻量符号。
+- `lsp_definition`: 查找 Python、Java、JavaScript、TypeScript、Vue 的轻量符号定义。
+- `lsp_references`: 查找这些语言中的标识符引用。
+- `lsp_diagnostics`: 运行轻量诊断；Python 使用 `compile()`，Java/JS/TS/Vue 使用本地括号/分隔符检查。
+- context compaction: 按 OMP 风格 reserve 阈值压缩早期历史、保留当前用户请求和未完成 todo，并截断发送给模型的超大 tool 输出；默认 `--summary-mode auto` 会在触发压缩时尝试 LLM 摘要并失败回退 local。
 
 ## 设计原则
 
@@ -234,7 +241,9 @@ python3 scripts/sync_project_excel.py
 - patch 必须可校验；
 - patch 会尽量保留原文件 BOM 和 CRLF/LF 换行风格；
 - `--budget-seconds` 用墙钟时间限制单次任务，`--max-steps` 默认不限步，只作为显式安全兜底；
-- 长上下文先用本地确定性 compaction，后续再评估 LLM summary；
+- 默认工作流已沉到 system prompt 和 runtime reminder，用户可以直接用自然语言描述任务；
+- 长上下文默认使用 OMP 风格 auto compaction：超过阈值才尝试 LLM summary，失败回退本地确定性摘要；
+- LSP 能力先做封闭 VM 友好的多语言静态导航工具，覆盖 Python、Java、JavaScript、TypeScript、Vue，不启动外部语言服务器；
 - memory 先用 Markdown。
 
 OMP 核心设计判断沉淀在 `docs/omp-core-architecture-notes.md`，后续不再重复翻源码确认主循环、deadline、compaction 和 step counter 的基本结论。

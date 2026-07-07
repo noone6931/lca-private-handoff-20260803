@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import replace
 import sys
@@ -8,6 +9,7 @@ from typing import Any
 
 from .config import AgentConfig
 from .config import normalize_approval_mode
+from .llm import LlmError
 from .llm import OpenAICompatibleClient
 from .session.jsonl_store import JsonlSessionStore
 from .tools import create_default_registry
@@ -16,17 +18,56 @@ from .tools.base import ToolContext
 
 SYSTEM_PROMPT = """You are a local coding agent running inside a user's workspace.
 
-Work carefully and prefer local evidence over guesses.
-Use tools to inspect files before editing them.
-For multi-step tasks, maintain a concise todo list.
-If a requirement is ambiguous and guessing would affect the result, use ask_user.
-When editing, prefer apply_patch with the hash tag returned by read_file.
-For insertions, use apply_patch with mode=insert_before or mode=insert_after instead of empty replacements.
-Do not claim a command or test passed unless you ran it.
-Keep final answers concise and include changed files and verification.
+Default working style:
+- Work from local evidence, not guesses. Choose the tools yourself; the user should not need to spell out tool order.
+- For repo understanding, start with list_files/search_code/read_file as needed. For code navigation in Python, Java, JavaScript, TypeScript, or Vue, prefer lsp_symbols/lsp_definition/lsp_references/lsp_diagnostics before broad text search when helpful. Read the exact file or range before editing it.
+- For multi-step or ambiguous work, maintain a concise todo list with todo_add/todo_update/todo_read.
+- If a requirement is ambiguous and guessing would affect the result, use ask_user. If local evidence is enough, continue without asking.
+- For read-only tasks, do not modify files, run commands, or write memory unless the user asks.
+- For edits to existing files, use read_file first, then apply_patch with the hash tag returned by read_file. Preview meaningful edits with dry_run=true before writing unless the user explicitly says to skip preview.
+- For insertions, use apply_patch with mode=insert_before or mode=insert_after instead of empty replacements.
+- After changes, run the most relevant tests or checks available in the workspace. If you cannot run them, say why.
+- Inspect git_diff after writing so the final answer can summarize exactly what changed.
+- Do not claim a command, test, or diff passed unless you actually ran the relevant tool.
+- Keep final answers concise and include changed files, verification, and any remaining risk.
 """
 
 COMPACTION_TOOL_CONTENT_CHAR_LIMIT = 6000
+SUMMARY_INPUT_CHAR_LIMIT = 12000
+SUMMARY_OUTPUT_CHAR_LIMIT = 4000
+SUMMARY_REQUEST_TIMEOUT = 30.0
+DEFAULT_RESERVE_CHARS = 16384 * 4
+MIN_RESERVE_RATIO = 0.15
+
+WORKFLOW_NUDGE = (
+    "For this coding task, infer the tool sequence yourself. "
+    "Use local inspection and lsp_* code navigation before editing; use todo for multi-step work; use ask_user only when ambiguity affects the outcome; "
+    "preview meaningful existing-file edits with apply_patch dry_run=true; verify changes with tests/checks and git_diff."
+)
+
+WORKFLOW_NUDGE_KEYWORDS = {
+    "agent",
+    "bug",
+    "change",
+    "code",
+    "diff",
+    "fix",
+    "implement",
+    "patch",
+    "readme",
+    "refactor",
+    "review",
+    "test",
+    "update",
+    "代码",
+    "修改",
+    "实现",
+    "修复",
+    "测试",
+    "需求",
+    "项目",
+    "文档",
+}
 
 
 class AgentRuntime:
@@ -43,6 +84,7 @@ class AgentRuntime:
         self._client = OpenAICompatibleClient(config)
         self._registry = create_default_registry()
         self._session_tool_approval: dict[str, str] = {}
+        self._summary_cache: dict[str, str] = {}
         self._session = JsonlSessionStore(
             config.workspace,
             session_id=session_id,
@@ -69,8 +111,11 @@ class AgentRuntime:
             if self._config.budget_seconds is not None
             else None
         )
-        self._messages.append({"role": "user", "content": prompt})
+        model_prompt = _with_workflow_nudge(prompt)
+        self._messages.append({"role": "user", "content": model_prompt})
         self._session.append("user", {"content": prompt})
+        if model_prompt != prompt:
+            self._session.append("workflow_nudge", {"content": WORKFLOW_NUDGE})
         tool_context = replace(self._tool_context, deadline_monotonic=deadline)
 
         step = 1
@@ -79,7 +124,7 @@ class AgentRuntime:
                 return self._stop_for_budget()
 
             self._session.append("llm_request", {"step": step})
-            messages_for_model = self._messages_for_model()
+            messages_for_model = self._messages_for_model(deadline)
             response = self._client.chat(
                 messages_for_model,
                 self._registry.schemas(),
@@ -169,10 +214,11 @@ class AgentRuntime:
             raise ValueError(f"unknown tool: {normalized}. Known tools: {known}")
         return normalized
 
-    def _messages_for_model(self) -> list[dict[str, Any]]:
+    def _messages_for_model(self, deadline: float | None = None) -> list[dict[str, Any]]:
         if self._config.context_char_budget <= 0:
             return self._messages
-        if _estimate_message_chars(self._messages) <= self._config.context_char_budget:
+        threshold = _resolve_compaction_threshold_chars(self._config.context_char_budget)
+        if _estimate_message_chars(self._messages) <= threshold:
             return self._messages
 
         system_messages = [message for message in self._messages if message.get("role") == "system"]
@@ -184,7 +230,7 @@ class AgentRuntime:
             recent = _truncate_recent_tool_outputs(_valid_recent_messages(non_system[-recent_count:]))
             dropped_count = len(non_system) - recent_count
             dropped = non_system[: max(dropped_count, 0)]
-            compaction_summary = self._build_compaction_summary(dropped, current_user_request)
+            compaction_summary = self._build_compaction_summary(dropped, current_user_request, deadline)
             compacted = [
                 _system_message_with_compaction_summary(system_messages, compaction_summary),
                 *recent,
@@ -196,13 +242,32 @@ class AgentRuntime:
                         "original_messages": len(self._messages),
                         "sent_messages": len(compacted),
                         "dropped_messages": len(dropped),
+                        "threshold_chars": threshold,
                     },
                 )
                 return compacted
             recent_count = max(6, recent_count // 2)
         return self._messages
 
-    def _build_compaction_summary(self, dropped: list[dict[str, Any]], current_user_request: str | None) -> str:
+    def _build_compaction_summary(
+        self,
+        dropped: list[dict[str, Any]],
+        current_user_request: str | None,
+        deadline: float | None,
+    ) -> str:
+        todo_summary = self._open_todo_summary()
+        if self._config.summary_mode in {"auto", "llm"}:
+            llm_summary = self._llm_compaction_summary(dropped, current_user_request, todo_summary, deadline)
+            if llm_summary:
+                return llm_summary
+        return self._local_compaction_summary(dropped, current_user_request, todo_summary)
+
+    def _local_compaction_summary(
+        self,
+        dropped: list[dict[str, Any]],
+        current_user_request: str | None,
+        todo_summary: list[str],
+    ) -> str:
         lines = [
             "Earlier conversation was compacted locally to stay within the context budget.",
             "Preserve these facts while continuing the current task.",
@@ -218,7 +283,6 @@ class AgentRuntime:
                     "- After completing explicitly requested tool calls, answer the requested final response instead of exploring further unless more information is truly necessary.",
                 ]
             )
-        todo_summary = self._open_todo_summary()
         if todo_summary:
             lines.extend(["", "Open todos:", *todo_summary])
         user_items = _snippets_for_role(dropped, "user", limit=6)
@@ -231,6 +295,66 @@ class AgentRuntime:
         if tool_items:
             lines.extend(["", "Earlier tool results:", *tool_items])
         return "\n".join(lines)
+
+    def _llm_compaction_summary(
+        self,
+        dropped: list[dict[str, Any]],
+        current_user_request: str | None,
+        todo_summary: list[str],
+        deadline: float | None,
+    ) -> str | None:
+        if not dropped or self._deadline_exceeded(deadline):
+            return None
+        transcript = _messages_to_summary_transcript(dropped, max_chars=SUMMARY_INPUT_CHAR_LIMIT)
+        if not transcript.strip():
+            return None
+        cache_key = _summary_cache_key(transcript, current_user_request, todo_summary)
+        cached = self._summary_cache.get(cache_key)
+        if cached:
+            return cached
+
+        remaining_timeout = self._remaining_timeout(deadline)
+        timeout = min(remaining_timeout, SUMMARY_REQUEST_TIMEOUT)
+        if timeout < 1:
+            return None
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "Summarize earlier messages for a local coding agent. "
+                    "Keep durable facts, completed work, failed attempts, user constraints, file paths, decisions, and unresolved todos. "
+                    "Do not invent facts. Keep it concise."
+                ),
+            },
+            {
+                "role": "user",
+                "content": _summary_request_content(transcript, current_user_request, todo_summary),
+            },
+        ]
+        try:
+            response = self._client.chat(messages, [], timeout=timeout)
+        except LlmError as exc:
+            self._session.append("context_summary_error", {"mode": "llm", "error": str(exc)})
+            return None
+        content = response.message.get("content")
+        if not isinstance(content, str) or not content.strip():
+            self._session.append("context_summary_error", {"mode": "llm", "error": "empty summary"})
+            return None
+        summary = _format_llm_compaction_summary(
+            content.strip()[:SUMMARY_OUTPUT_CHAR_LIMIT],
+            current_user_request,
+            todo_summary,
+        )
+        self._summary_cache[cache_key] = summary
+        self._session.append(
+            "context_summary",
+            {
+                "mode": "llm",
+                "input_chars": len(transcript),
+                "summary_chars": len(summary),
+            },
+        )
+        return summary
 
     def _open_todo_summary(self) -> list[str]:
         path = self._config.workspace / ".local-agent" / "todos" / f"{self._session.session_id}.json"
@@ -336,6 +460,21 @@ class AgentRuntime:
 
 def _estimate_message_chars(messages: list[dict[str, Any]]) -> int:
     return sum(len(json.dumps(message, ensure_ascii=False, default=str)) for message in messages)
+
+
+def _resolve_compaction_threshold_chars(context_window_chars: int) -> int:
+    if context_window_chars <= 1:
+        return 0
+    reserve = _resolve_budget_reserve_chars(context_window_chars)
+    return max(0, min(context_window_chars - 1, context_window_chars - reserve))
+
+
+def _resolve_budget_reserve_chars(context_window_chars: int) -> int:
+    proportional_reserve = max(1, int(context_window_chars * MIN_RESERVE_RATIO))
+    default_reserve = max(proportional_reserve, DEFAULT_RESERVE_CHARS)
+    default_reserve_is_impossible = default_reserve >= context_window_chars - proportional_reserve
+    reserve_exceeds_window = default_reserve >= context_window_chars
+    return proportional_reserve if default_reserve_is_impossible or reserve_exceeds_window else default_reserve
 
 
 def _valid_recent_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -466,7 +605,7 @@ def _latest_user_content(messages: list[dict[str, Any]]) -> str | None:
             continue
         content = message.get("content")
         if isinstance(content, str) and content.strip():
-            return content
+            return _strip_workflow_nudge(content)
     return None
 
 
@@ -475,6 +614,124 @@ def _one_line(content: str, *, max_chars: int = 240) -> str:
     if len(normalized) <= max_chars:
         return normalized
     return normalized[: max_chars - 14] + "...<truncated>"
+
+
+def _with_workflow_nudge(prompt: str) -> str:
+    if not _should_add_workflow_nudge(prompt):
+        return prompt
+    return f"{prompt.rstrip()}\n\n[Runtime workflow reminder]\n{WORKFLOW_NUDGE}"
+
+
+def _strip_workflow_nudge(content: str) -> str:
+    marker = "\n\n[Runtime workflow reminder]\n"
+    if marker not in content:
+        return content
+    return content.split(marker, 1)[0]
+
+
+def _should_add_workflow_nudge(prompt: str) -> bool:
+    lowered = prompt.lower()
+    if len(prompt.strip()) <= 24 and not any(keyword in lowered for keyword in WORKFLOW_NUDGE_KEYWORDS):
+        return False
+    return any(keyword in lowered for keyword in WORKFLOW_NUDGE_KEYWORDS)
+
+
+def _messages_to_summary_transcript(messages: list[dict[str, Any]], *, max_chars: int) -> str:
+    lines: list[str] = []
+    total = 0
+    for message in messages:
+        rendered = _render_summary_transcript_message(message)
+        if not rendered:
+            continue
+        remaining = max_chars - total
+        if remaining <= 0:
+            break
+        if len(rendered) > remaining:
+            rendered = rendered[: max(0, remaining - 14)] + "...<truncated>"
+        lines.append(rendered)
+        total += len(rendered) + 1
+    if total >= max_chars:
+        lines.append("...<transcript truncated for summary request>")
+    return "\n".join(lines)
+
+
+def _render_summary_transcript_message(message: dict[str, Any]) -> str:
+    role = str(message.get("role") or "unknown")
+    if role == "assistant":
+        tool_calls = message.get("tool_calls") or []
+        if isinstance(tool_calls, list) and tool_calls:
+            names: list[str] = []
+            for tool_call in tool_calls:
+                if isinstance(tool_call, dict):
+                    function = tool_call.get("function") or {}
+                    if isinstance(function, dict) and function.get("name"):
+                        names.append(str(function["name"]))
+            if names:
+                return f"assistant tool_calls: {', '.join(names)}"
+    if role == "tool":
+        tool_call_id = message.get("tool_call_id") or "unknown"
+        content = message.get("content")
+        return f"tool[{tool_call_id}]: {_one_line(str(content or ''), max_chars=1200)}"
+    content = message.get("content")
+    if content is None:
+        return ""
+    return f"{role}: {_one_line(str(content), max_chars=1200)}"
+
+
+def _summary_request_content(
+    transcript: str,
+    current_user_request: str | None,
+    todo_summary: list[str],
+) -> str:
+    parts = ["Earlier transcript:", transcript]
+    if current_user_request:
+        parts.extend(["", "Current user request:", current_user_request])
+    if todo_summary:
+        parts.extend(["", "Open todos:", "\n".join(todo_summary)])
+    parts.append(
+        "\nReturn a compact summary for the next model call. "
+        "Preserve constraints and completed actions; omit noise."
+    )
+    return "\n".join(parts)
+
+
+def _format_llm_compaction_summary(
+    summary: str,
+    current_user_request: str | None,
+    todo_summary: list[str],
+) -> str:
+    lines = [
+        "Earlier conversation was summarized by the configured LLM to stay within the context budget.",
+        "Preserve these facts while continuing the current task.",
+        "",
+        "Summary:",
+        summary,
+    ]
+    if current_user_request:
+        lines.extend(
+            [
+                "",
+                "Current user request:",
+                f"- {_one_line(current_user_request, max_chars=1200)}",
+                "- After completing explicitly requested tool calls, answer the requested final response instead of exploring further unless more information is truly necessary.",
+            ]
+        )
+    if todo_summary:
+        lines.extend(["", "Open todos:", *todo_summary])
+    return "\n".join(lines)
+
+
+def _summary_cache_key(transcript: str, current_user_request: str | None, todo_summary: list[str]) -> str:
+    payload = json.dumps(
+        {
+            "transcript": transcript,
+            "current_user_request": current_user_request,
+            "todo_summary": todo_summary,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def _validate_runtime_tool_name(tool: str) -> str:

@@ -34,9 +34,10 @@ class OpenAICompatibleClient:
         payload = {
             "model": self._config.model,
             "messages": messages,
-            "tools": tools,
-            "tool_choice": "auto",
         }
+        if tools:
+            payload["tools"] = tools
+            payload["tool_choice"] = "auto"
         request = urllib.request.Request(
             url,
             data=json.dumps(payload).encode("utf-8"),

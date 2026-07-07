@@ -65,6 +65,30 @@ class LlmClientTests(unittest.TestCase):
         self.assertEqual(response.message["content"], "done")
         self.assertEqual(response.finish_reason, "stop")
 
+    def test_empty_tools_are_omitted_for_plain_summary_calls(self) -> None:
+        captured_payload: dict = {}
+
+        def fake_urlopen(request, timeout):
+            captured_payload.update(json.loads(request.data.decode("utf-8")))
+            body = json.dumps({"choices": [{"message": {"content": "summary"}}]}).encode("utf-8")
+            return _FakeResponse(body)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=Path(tmp).resolve(),
+            )
+            client = OpenAICompatibleClient(config)
+            with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+                response = client.chat([{"role": "user", "content": "summarize"}], [])
+
+        self.assertEqual(response.message["content"], "summary")
+        self.assertNotIn("tools", captured_payload)
+        self.assertNotIn("tool_choice", captured_payload)
+
 
 if __name__ == "__main__":
     unittest.main()

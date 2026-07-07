@@ -12,6 +12,7 @@ from local_agent.tools.base import Tool, ToolContext, ToolRegistry
 from local_agent.tools.files import file_tools, patch_file, read_file, rollback_patch, write_file
 from local_agent.tools.git import git_diff
 from local_agent.tools.interaction import ask_user
+from local_agent.tools.lsp import lsp_definition, lsp_diagnostics, lsp_references, lsp_symbols
 from local_agent.tools.search import list_files
 from local_agent.tools.search import search_code
 from local_agent.tools.shell import run_shell, run_tests
@@ -85,6 +86,150 @@ class ToolTests(unittest.TestCase):
         self.assertNotIn("./", result.content)
         self.assertIn("needle", result.content)
         self.assertIn("... truncated after 1 matches", result.content)
+
+    def test_lsp_symbols_and_definition_use_python_ast(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            source = workspace / "pkg" / "module.py"
+            source.parent.mkdir()
+            source.write_text(
+                "class Service:\n"
+                "    def run(self):\n"
+                "        return helper()\n"
+                "\n"
+                "def helper():\n"
+                "    return 1\n",
+                encoding="utf-8",
+            )
+            context = ToolContext(workspace=workspace, approval_mode="yolo")
+
+            symbols = lsp_symbols({"path": "pkg", "query": "Service"}, context)
+            definition = lsp_definition({"symbol": "helper", "path": "pkg"}, context)
+
+        self.assertFalse(symbols.is_error)
+        self.assertIn("pkg/module.py:1:1: class Service", symbols.content)
+        self.assertFalse(definition.is_error)
+        self.assertIn("pkg/module.py:5:1: function helper", definition.content)
+
+    def test_lsp_references_finds_identifier_occurrences(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            source = workspace / "app.py"
+            source.write_text(
+                "def helper():\n"
+                "    return 1\n"
+                "\n"
+                "value = helper()\n",
+                encoding="utf-8",
+            )
+
+            result = lsp_references(
+                {"symbol": "helper", "path": "."},
+                ToolContext(workspace=workspace, approval_mode="yolo"),
+            )
+
+        self.assertFalse(result.is_error)
+        self.assertIn("app.py:1:5: def helper():", result.content)
+        self.assertIn("app.py:4:9: value = helper()", result.content)
+
+    def test_lsp_diagnostics_reports_python_syntax_errors(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            (workspace / "bad.py").write_text("def broken(:\n    pass\n", encoding="utf-8")
+
+            result = lsp_diagnostics({}, ToolContext(workspace=workspace, approval_mode="yolo"))
+
+        self.assertFalse(result.is_error)
+        self.assertIn("bad.py:1", result.content)
+        self.assertIn("SyntaxError", result.content)
+
+    def test_lsp_supports_java_symbols_definitions_and_diagnostics(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            source = workspace / "src" / "main" / "java" / "UserService.java"
+            source.parent.mkdir(parents=True)
+            source.write_text(
+                "package demo;\n"
+                "\n"
+                "public class UserService {\n"
+                "    public User findUser(String id) {\n"
+                "        return new User(id);\n"
+                "    }\n",
+                encoding="utf-8",
+            )
+            context = ToolContext(workspace=workspace, approval_mode="yolo")
+
+            symbols = lsp_symbols({"path": "src", "query": "UserService"}, context)
+            definition = lsp_definition({"symbol": "findUser", "path": "src"}, context)
+            diagnostics = lsp_diagnostics({"path": "src"}, context)
+
+        self.assertFalse(symbols.is_error)
+        self.assertIn("UserService.java:3:14: class UserService", symbols.content)
+        self.assertFalse(definition.is_error)
+        self.assertIn("UserService.java:4:17: method UserService.findUser", definition.content)
+        self.assertFalse(diagnostics.is_error)
+        self.assertIn("DelimiterError", diagnostics.content)
+
+    def test_lsp_supports_vue_symbols_and_references(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            source = workspace / "src" / "UserCard.vue"
+            source.parent.mkdir()
+            source.write_text(
+                "<template>\n"
+                "  <button @click=\"saveUser\">Save</button>\n"
+                "</template>\n"
+                "<script setup lang=\"ts\">\n"
+                "interface UserCardProps { id: string }\n"
+                "const emitSave = () => saveUser()\n"
+                "function saveUser() {\n"
+                "  console.log('save')\n"
+                "}\n"
+                "</script>\n",
+                encoding="utf-8",
+            )
+            context = ToolContext(workspace=workspace, approval_mode="yolo")
+
+            symbols = lsp_symbols({"path": "src", "query": "saveUser"}, context)
+            references = lsp_references({"symbol": "saveUser", "path": "src"}, context)
+
+        self.assertFalse(symbols.is_error)
+        self.assertIn("UserCard.vue:7:10: function saveUser", symbols.content)
+        self.assertFalse(references.is_error)
+        self.assertIn("UserCard.vue:2:19:", references.content)
+        self.assertIn("UserCard.vue:6:24:", references.content)
+
+    def test_lsp_supports_typescript_symbols(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            source = workspace / "src" / "service.ts"
+            source.parent.mkdir()
+            source.write_text(
+                "export interface User { id: string }\n"
+                "export const loadUser = async (id: string) => ({ id })\n",
+                encoding="utf-8",
+            )
+            context = ToolContext(workspace=workspace, approval_mode="yolo")
+
+            symbols = lsp_symbols({"path": "src"}, context)
+            definition = lsp_definition({"symbol": "loadUser", "path": "src"}, context)
+
+        self.assertFalse(symbols.is_error)
+        self.assertIn("service.ts:1:18: interface User", symbols.content)
+        self.assertIn("service.ts:2:14: function loadUser", symbols.content)
+        self.assertFalse(definition.is_error)
+        self.assertIn("service.ts:2:14: function loadUser", definition.content)
+
+    def test_lsp_tools_reject_path_escape(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            result = lsp_definition(
+                {"symbol": "anything", "path": "../outside"},
+                ToolContext(workspace=workspace, approval_mode="yolo"),
+            )
+
+        self.assertTrue(result.is_error)
+        self.assertIn("Path escapes workspace", result.content)
 
     def test_read_file_rejects_large_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

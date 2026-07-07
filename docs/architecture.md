@@ -13,17 +13,20 @@
 - 本地 git status/diff；
 - 简化 anchored patch；
 - Markdown memory；
+- OMP 风格 auto context compaction；
+- 轻量多语言静态代码导航；
 - JSONL session。
 
 不做：
 
 - Browser；
 - Web search；
-- LSP；
+- 完整外部 LSP server；
 - DAP；
 - MCP；
 - Subagents；
 - 插件市场；
+- 默认自动生成 skills；
 - 自动下载依赖。
 
 ## 执行流程
@@ -35,8 +38,10 @@ flowchart TD
   A --> L["OpenAI-compatible API"]
   L --> A
   A --> T["Tool registry"]
-  T --> F["File/Search/Shell/Git/Patch/Memory"]
+  T --> F["File/Search/Shell/Git/Patch/Memory/LSP"]
   F --> A
+  A --> X["OMP-style auto compaction / LLM summary fallback"]
+  X --> L
   A --> S["JSONL session"]
   A --> U
 ```
