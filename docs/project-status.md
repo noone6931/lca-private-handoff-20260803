@@ -30,7 +30,7 @@
 
 ## 当前进度
 
-当前项目处于 P7 轻量高级能力阶段：P5 的安全与恢复增强 MVP 已收口；P6 默认工作流 MVP 已落地，用户可以用自然语言描述任务，而不是每次手写 `list_files/read_file/dry_run/run_tests/git_diff` 工具顺序。本轮已补 OMP 风格 auto summary、多语言轻量 LSP、multi-root `--allow-dir`、Markdown memory 启动注入、`learn` 工具、可选 session memory consolidation、authored skills discovery、重复工具调用熔断、duplicate-tool forced-final steering、tool result pruning、todo steering、跨项目 `--env-file` / launcher 安装目录 `.env` 加载，以及 OMP 风格用户级 `--state-dir` runtime state 分层。
+当前项目处于 P7 轻量高级能力阶段：P5 的安全与恢复增强 MVP 已收口；P6 默认工作流 MVP 已落地，用户可以用自然语言描述任务，而不是每次手写 `list_files/read_file/dry_run/run_tests/git_diff` 工具顺序。本轮已补 OMP 风格 auto summary、多语言轻量 LSP、multi-root `--allow-dir`、workspace roots 注入、Markdown memory 启动注入、`learn` 工具、可选 session memory consolidation、authored skills discovery、重复工具调用熔断、duplicate-tool forced-final steering、tool result pruning、todo steering、跨项目 `--env-file` / launcher 安装目录 `.env` 加载，以及 OMP 风格用户级 `--state-dir` runtime state 分层。
 
 已具备的核心能力：
 
@@ -43,7 +43,7 @@
 - `apply_patch` 已支持 `replace`、`insert_before`、`insert_after`，并兼容 Python 3.12。
 - 非交互审批、LLM 非 JSON 响应、session 恢复坏尾部、search_code 绝对路径泄漏等问题已经修复。
 - 已完成 Agent 自举测试：能够通过百炼模型调用工具读取、修改、测试和查看 diff。
-- 测试基线：140 个测试在正常本地环境通过。
+- 测试基线：141 个测试在正常本地环境通过。
 
 当前已具备：
 
@@ -61,7 +61,7 @@
 - LCA 默认工作流已沉到 system prompt 和 runtime workflow reminder：自然语言代码任务会默认先理解、必要时 todo、修改前读取、patch 写入、修改后测试和 diff。
 - OMP 风格 auto summary 已落地：默认 `--summary-mode auto`，小历史不摘要，超过 reserve 阈值后调用当前 provider 生成语义摘要，失败回退本地摘要；`local` / `llm` 仍可显式指定。
 - 轻量 LSP 风格工具已落地：`lsp_symbols`、`lsp_workspace_symbols`、`lsp_document_symbols`、`lsp_definition`、`lsp_references`、`lsp_diagnostics`，覆盖 Python、Java、JavaScript、TypeScript、Vue，不启动外部语言服务器；workspace/document symbols 是兼容别名。
-- Multi-root workspace 已落地：`--allow-dir` / `AGENT_ALLOWED_DIRS` 可显式授权额外目录给文件、搜索、LSP 和 patch 工具；shell、git、显式项目 memory/skills 仍锚定 `--cwd`，session/todo/patch logs 和默认 consolidation memory 走 state dir。
+- Multi-root workspace 已落地：`--allow-dir` / `AGENT_ALLOWED_DIRS` 可显式授权额外目录给文件、搜索、LSP 和 patch 工具；system prompt 会列出 primary `--cwd` 和 allowed dirs，避免模型猜目录；shell、git、显式项目 memory/skills 仍锚定 `--cwd`，session/todo/patch logs 和默认 consolidation memory 走 state dir。
 - 跨项目 env-file 已落地：CLI 支持显式 `--env-file`，`./agent` 会自动把 LCA 安装目录 `.env` 作为 env-file 加载，使 token/provider 配置与目标 `--cwd` 解耦。优先级是：真实环境变量 > 显式 env-file > 目标 workspace `.env`。
 - 用户级 / 项目级常驻上下文已落地：新 session 会读取用户级 `AGENTS.md` 和项目级 `.local-agent/AGENTS.md`，作为 advisory context 注入。
 - Sticky rules 已落地：每次发送模型请求前会读取用户级 `RULES.md` 和项目级 `.local-agent/RULES.md`，用于短规则在长会话中保持可见。
@@ -79,7 +79,8 @@
 
 - Path-scoped rules 还未实现，作为下一步候选。
 - Managed skills / autolearn 继续暂缓。
-- 企业项目联网压测：用户已确认可外发给百炼，Codex 执行环境仍拒绝代跑将企业私有代码/需求发送到三方 API；用户本机 session `20260708T062614211387Z` 已跑通真实百炼只读链路，但在 `feePlan` 重复搜索后硬停且未输出最终分析。已按该结果补 duplicate-tool forced-final steering。
+- 企业项目联网压测：用户已确认可外发给百炼，Codex 执行环境仍拒绝代跑将企业私有代码/需求发送到三方 API；用户本机 session `20260708T062614211387Z` 已跑通真实百炼只读链路，但在 `feePlan` 重复搜索后硬停且未输出最终分析，已补 duplicate-tool forced-final steering。复跑 session `20260708T065705459243Z` 已输出最终分析，但没有读取真实 `--allow-dir` 需求目录，已补 workspace roots 注入。
+- 用户确认当前测试项目可能无法完全覆盖需求，尤其“拓展服务费结算”可能需要其他项目配合；后续跨服务需求应把相关项目也作为 `--allow-dir`，或让 Agent 明确输出需要补充的项目/服务。
 - Runtime state 与 workspace 已解耦：`--state-dir` / `AGENT_STATE_DIR` 可指定用户级 state root；默认 `${XDG_STATE_HOME:-~/.local/state}/local-coding-agent/workspaces/<workspace-key>/`；sessions/todos/patch logs 已不再默认写入目标 `--cwd/.local-agent`。显式项目 memory/skills 仍保留在 workspace 中，自动 consolidation 默认写 state dir。
 - 已对 `/Users/chengming/mycode/project/crcl-open/crcl-open` 做本地 state-dir 验证：默认 state dir 为 `/Users/chengming/.local/state/local-coding-agent/workspaces/mycode-project-crcl-open-crcl-open-966d4fe7a33b`，目标仓库当前未发现 `.local-agent`。
 - 百炼真实只读压测会话 `20260707T093557800154Z` 已验证：在 `context_char_budget=2500` 的强压缩场景下，模型完成指定 5 个工具调用后停止探索，并按要求输出三句话总结。
@@ -101,7 +102,7 @@
 | P4 | 上下文治理 | 已完成 MVP 版 | 初版 summary / compaction、工具输出折叠、长需求文件工作流。 |
 | P5 | 安全与恢复增强 | 已完成并收口 | synthetic tool result、patch preview、回滚策略、非信任仓库提示、OMP 风格 approval model、approval prompt deadline cancel；真实小改复测通过。 |
 | P6 | 日用体验与默认工作流固化 | 已完成 MVP 版 | OMP 默认工作流本地化：system prompt、工具描述、轻量 runtime nudge。 |
-| P7 | 高级工程能力轻量版 | 进行中 | 已完成 OMP 风格 auto summary、多语言轻量 LSP、LSP 兼容别名、multi-root、Markdown memory 启动注入、learn、可选 memory consolidation、authored skills discovery、综合压测记录、重复工具调用熔断、duplicate-tool forced-final steering、tool result pruning、todo steering、跨项目 env-file 和用户级 `--state-dir` runtime state 分层；path-scoped rules、DAP、TUI、subagents、reviewer、AST edit、managed skills 继续后置。 |
+| P7 | 高级工程能力轻量版 | 进行中 | 已完成 OMP 风格 auto summary、多语言轻量 LSP、LSP 兼容别名、multi-root workspace roots、Markdown memory 启动注入、learn、可选 memory consolidation、authored skills discovery、综合压测记录、重复工具调用熔断、duplicate-tool forced-final steering、tool result pruning、todo steering、跨项目 env-file 和用户级 `--state-dir` runtime state 分层；path-scoped rules、DAP、TUI、subagents、reviewer、AST edit、managed skills 继续后置。 |
 
 ## 已完成功能
 
@@ -138,7 +139,7 @@
 | OMP 风格 Auto Summary | 已完成 MVP 版 | 默认 `--summary-mode auto`；小历史不摘要，超过 reserve 阈值后调用当前 provider 总结早期历史；失败回退 local summary。 |
 | 默认工作流 | 已完成 MVP 版 | system prompt 固化探索、todo、ask_user、patch preview、验证和 diff；runtime workflow reminder 会注入非平凡代码任务。 |
 | 轻量 LSP 工具 | 已完成 MVP 版 | `lsp_symbols`、`lsp_workspace_symbols`、`lsp_document_symbols`、`lsp_definition`、`lsp_references`、`lsp_diagnostics` 支持 Python、Java、JavaScript、TypeScript、Vue；workspace/document symbols 是兼容别名。 |
-| Multi-root Workspace | 已完成 MVP 版 | `--allow-dir` / `AGENT_ALLOWED_DIRS` 支持显式授权额外目录给文件、搜索、LSP、patch 工具。 |
+| Multi-root Workspace | 已完成 MVP 版 | `--allow-dir` / `AGENT_ALLOWED_DIRS` 支持显式授权额外目录给文件、搜索、LSP、patch 工具；workspace roots 会进入模型上下文。 |
 | Cross-project Env File | 已完成 MVP 版 | `src/local_agent/cli.py` 支持 `--env-file`；`./agent` 自动加载 LCA 安装目录 `.env`，使 provider 凭据与目标 `--cwd` 解耦。 |
 | Runtime State Dir | 已完成 MVP 版 | `--state-dir` / `AGENT_STATE_DIR`；默认写入用户级 state root 下的 workspace-specific 目录。 |
 | Startup Context / Sticky Rules | 已完成 MVP 版 | 用户级和项目级 `AGENTS.md` 启动注入；用户级和项目级 `RULES.md` 每次 provider request 前注入。 |
@@ -210,6 +211,8 @@
 | T-050 | 用户级/项目级 AGENTS 与 sticky RULES | 已完成 MVP 版 | P7 | 支持 `AGENT_CONFIG_DIR` 下的用户级 `AGENTS.md` / `RULES.md`，以及 workspace `.local-agent/AGENTS.md` / `RULES.md`；AGENTS 启动注入，RULES 每次 provider request 前注入。 |
 | T-051 | Session memory consolidation | 已完成并 review | P7 | `memory_consolidation=off|auto|llm` 和 `memory_scope=state|project` 已落地；默认 off，开启后默认追加到 state dir `memory/*.md`，显式 project 才写 `.local-agent/memory/*.md`；测试覆盖默认 state、显式 project、坏 JSON 不写、默认 off 不额外调用 LLM/不写 memory。 |
 | T-052 | 重复工具后强制最终回答 steering | 已完成 MVP 版 | P7 | 用户本机企业压测 session `20260708T062614211387Z` 暴露 `feePlan` 重复搜索后硬停且无最终分析；runtime 现在会在重复工具命中后注入 steering，并让下一次 LLM 请求 `tools=[]`。 |
+| T-053 | allowed-dir workspace roots 注入 | 已完成 MVP 版 | P7 | 用户本机复跑 session `20260708T065705459243Z` 暴露模型不知道 `--allow-dir` 绝对路径；system prompt/provider-bound context 现在会列出 primary workspace 和 allowed dirs。 |
+| T-054 | 跨项目需求覆盖边界记录 | 已完成记录 | P7 | 用户确认当前测试项目可能无法完全覆盖需求；压测记录已说明单仓库只能输出候选前置能力和缺口，后续需要把相关项目也作为 `--allow-dir`。 |
 
 ## 风险清单
 
@@ -234,6 +237,8 @@
 | R-017 | 只读任务仍在目标 workspace 写 runtime 状态 | 已关闭 MVP 版 | 目标仓库会出现 `.local-agent/sessions`，不利于企业项目零业务落盘压测。 | 已参考 OMP 将 sessions 放在用户 agent dir 的设计，实现 `--state-dir`；sessions/todos/patch logs 与 workspace 解耦。 |
 | R-018 | AGENTS/RULES 长期注入可能与当前任务冲突 | 已缓解，持续关注 | 用户级或项目级规则如果过期，会跨 session 影响模型判断。 | 注入区明确 advisory；system prompt 明确当前用户指令和源码证据优先；RULES 适合短规则，长背景放 AGENTS 或 memory。 |
 | R-019 | 自动 memory consolidation 可能隐式写入陈旧或敏感内容 | 已进一步缓解，持续关注 | session 中的企业信息、临时结论或模型误判如果自动写入 memory，会跨 session 放大。 | 默认 `off`；显式开启后默认写用户级 state dir 的 memory，只有 `memory_scope=project` 才写项目 `.local-agent/memory`；只接受严格 JSON 的四类短条目；坏 JSON、空结果、deadline 耗尽、本轮已显式写 memory 时不写；memory 仍是 advisory。 |
+| R-020 | multi-root allowed dir 没有显式进入模型上下文 | 已关闭 MVP 版 | 模型会猜 `requirements` 等不存在目录，导致未读取真实需求文档就做代码侧反推。 | 参考 OMP 显式注入 cwd/project context 的方式，新增 `[Workspace roots]`，列出 primary `--cwd` 和所有 allowed dirs；file tools 描述同步说明 allowed directory。 |
+| R-021 | 单仓库无法覆盖跨服务需求 | 已记录，持续关注 | 如果需求实际涉及 incentive/settlement/用户中心等其他项目，单仓库分析会误把“当前仓库未命中”当成完整结论。 | 参考 OMP 对 workspace/context 的依赖边界，后续把相关项目也作为 `--allow-dir`，或让 Agent 明确输出“需要补充哪个项目”。 |
 
 ## 架构决策
 
@@ -248,6 +253,7 @@
 | ADR-012 | LSP 第一版做轻量多语言静态工具。 | 满足 Python、Java、JavaScript、TypeScript、Vue 的 symbols/definition/references/diagnostics，不引入外部 language server、npm/pip 依赖或后台进程；完整 LSP/DAP 后置。 |
 | ADR-013 | Memory / skills 按 OMP 思路分阶段本地化。 | Markdown memory 启动注入、显式 `learn` 和 authored skills discovery 已落地；最后才评估 managed skills/autolearn；不引入 Hindsight、Mnemopi、向量库或插件市场。 |
 | ADR-014 | Runtime 问题优先采用 OMP 已验证设计。 | 对 deadline、compaction、permission、synthetic tool result、todo/tool-choice steering、pruning 这类 OMP 已经覆盖的机制，不再为了“自己造一套”而绕开；LCA 不内置“企业数据不能外发”禁令，但必须尊重当前执行宿主或企业环境的策略拦截。 |
+| ADR-017 | 解决 runtime/工具/上下文问题时先查 OMP 做法。 | 用户明确要求后续解决问题都参考 OMP；本项目原则更新为先找 OMP 已验证设计，再按本地个人 Agent、封闭 VM、单 Agent 和无自动下载边界裁剪落地。 |
 | ADR-015 | 人工上下文按 AGENTS/RULES 分层。 | 参照 Claude Code 与 OMP 的上下文文件/Sticky rules 分层：`AGENTS.md` 作为启动背景，`RULES.md` 作为短规则每轮注入；二者不同于长期 memory 和 session summary。 |
 | ADR-016 | Session memory consolidation 默认关闭；开启后默认写 state memory。 | 这一步不同于只发给模型的 context compaction；默认 off 可以保护只读分析，开启后默认写用户级 state dir，只有显式 `memory_scope=project` 才写项目 `.local-agent/memory`。 |
 | ADR-003 | Excel 作为人工视图，Markdown 作为开发协作 Agent 可读事实源。 | 这套文档服务于开发 LCA 的过程；`.xlsx` 是二进制展示产物，不适合作为协作 Agent 的事实源。 |

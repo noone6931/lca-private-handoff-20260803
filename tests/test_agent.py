@@ -241,6 +241,39 @@ class AgentRuntimeTests(unittest.TestCase):
             self.assertFalse((workspace / ".local-agent" / "sessions").exists())
             self.assertFalse((workspace / ".local-agent" / "todos").exists())
 
+    def test_allowed_dirs_are_visible_to_the_model(self) -> None:
+        _MessageRecordingClient.messages = []
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            workspace = root / "workspace"
+            requirements = root / "requirements"
+            workspace.mkdir()
+            requirements.mkdir()
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=workspace,
+                allowed_dirs=(requirements,),
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _MessageRecordingClient):
+                runtime = AgentRuntime(config, show_tool_logs=False)
+                result = runtime.run("read requirements")
+
+        system_content = runtime._messages[0]["content"]
+        sent_system = [message for message in _MessageRecordingClient.messages if message.get("role") == "system"][0]
+        self.assertEqual(result, "done")
+        self.assertIn("[Workspace roots]", system_content)
+        self.assertIn(f"Primary workspace (--cwd): {workspace}", system_content)
+        self.assertIn(str(requirements), system_content)
+        self.assertIn("first list/read the relevant allowed directory by its exact absolute path", system_content)
+        self.assertIn(str(requirements), sent_system["content"])
+        self.assertEqual(sent_system["content"].count("[Workspace roots]"), 1)
+
     def test_budget_seconds_stops_before_next_llm_request(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             config = AgentConfig(

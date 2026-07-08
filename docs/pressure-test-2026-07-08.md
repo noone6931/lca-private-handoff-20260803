@@ -9,7 +9,7 @@
 | 百炼模型连通性 | 通过 | `./agent --provider bailian ... "只回答 OK"` 返回 `OK`，session `20260708T024039368221Z`。 |
 | LCA 自身只读综合压测 | 初次暴露重复工具循环，修复后复测通过 | session `20260708T024203733199Z` 成功调用 `todo_add/list_files/read_file/search_code/lsp_symbols`，随后重复 `search_code` 和 `todo_read`，最终由 `budget_seconds=240` 停止。修复后 session `20260708T025519414693Z` 按要求完成工具调用并输出五句总结。 |
 | 企业项目本地扫描 | 通过 | `/Users/chengming/mycode/project` 下发现 `zqyl-user-center-service` 和 `crcl-open/crcl-open` 两个 Java 企业项目，合计约 7888 个 Java/XML/YAML 文件。 |
-| 企业项目联网 LCA 压测 | 用户本机已跑通链路，但暴露重复搜索收敛问题 | Codex 宿主仍不能代跑企业源码/需求外发；用户在本机允许环境运行 session `20260708T062614211387Z`，成功使用 `list_files/read_file/search_code/lsp_workspace_symbols` 读取 `crcl-open` 与需求目录，未修改文件、未运行 shell、未写 memory；但后半段围绕 `feePlan` 在 `src/main/java/com/yljr/crcl/open/application`、`application/send`、`send/service`、`send/mapper` 等路径反复搜索，最终输出 `Stopped because the assistant repeated identical tool calls too many times`，没有给出最终需求落点分析。 |
+| 企业项目联网 LCA 压测 | 用户本机已跑通链路，重复搜索硬停已改善，但暴露 multi-root 需求读取问题 | Codex 宿主仍不能代跑企业源码/需求外发。用户在本机允许环境运行 session `20260708T062614211387Z`，成功使用多种只读工具，但围绕 `feePlan` 重复搜索后硬停、无最终分析。提交 `d140199` 后复跑 session `20260708T065705459243Z`，已能输出最终分析且未再重复硬停；但它没有读取 `--allow-dir` 需求目录，先猜 `requirements` 目录失败，再基于代码命名反推需求，导致结论只能作为“代码侧线索”，不能作为完整需求落点判断。 |
 | 企业项目本地只读扫描 | 通过 | 已对 `zqyl-user-center-service` 和 `crcl-open/crcl-open` 做本地 `find` / `rg` 扫描，不调用模型、不外发内容。 |
 | 外部需求目录 multi-root 场景 | 本地确认 | `/Users/chengming/mynote/1_projects/0630_YXR-971_平台通用优化` 包含 `HERMES-BORROW.md`、`CODE-HANDOFF.md`、两个需求文档和原型 HTML，适合用 `--allow-dir` 验证需求到代码映射。 |
 
@@ -59,12 +59,18 @@ cd /Users/chengming/mycode/self/local-coding-agent
 
 用户本机真实 LCA + 百炼压测已经观察到模型层面的重复工具循环：链路、权限和只读约束均基本有效，但 runtime 在重复工具探索后需要把模型拉回“基于已有证据回答”，不能只给用户一个重复工具硬停信息。
 
+提交 `d140199` 后的复跑 session `20260708T065705459243Z` 表明重复工具硬停问题已明显改善：Agent 建立 todo、使用 LSP/search/read_file，最终输出了结构化分析。但它没有真正读取 `--allow-dir /Users/chengming/mynote/1_projects/0630_YXR-971_平台通用优化` 下的需求文档，而是尝试 `list_files {"path":"requirements"}` 并失败。这说明 multi-root 工具权限已经具备，runtime 还需要把具体 allowed-dir 路径明确告诉模型。
+
+同时，用户确认当前测试项目可能无法完全覆盖该需求，尤其“拓展服务费结算”可能需要其他服务/项目配合。因此，单仓库压测结论只能说明 `crcl-open` 中的候选前置能力、缺口和跨服务依赖，不能证明完整需求在该仓库内可实现。
+
 ## 问题清单
 
 | ID | 优先级 | 问题 | 证据 | OMP 对应处理 | LCA 措施 |
 |---|---|---|---|---|---|
 | PT-001 | P0 | 模型可能进入重复工具调用循环，最终拿不到总结。 | 初次 LCA 自身压测中重复调用 `search_code summary_mode`、`search_code lsp`、`todo_read`，最终由 `budget_seconds=240` 停止；修复后 session `20260708T025519414693Z` 按要求收尾。用户本机企业压测 session `20260708T062614211387Z` 又在 `feePlan` 搜索上反复探索，触发重复工具硬停且无最终需求落点分析。 | OMP 主循环不靠步数终止，但到处检查 deadline，并用 abort signal、synthetic tool result 保持 tool_call/tool_result 配对；对 soft tool requirement 设置小上限，超过后不继续无限强制同类工具，而是用 runtime steering 收敛；工具结果可标记 `useless`，compaction/pruning 可丢弃无信息或被 supersede 的结果。源码依据：`packages/agent/src/agent-loop.ts`、`packages/agent/src/compaction/pruning.ts`。 | 已在 runtime 层加入“最近窗口内同名同参工具调用熔断”；并补 OMP 风格轻量 pruning：`ToolResult.useless`、空搜索/LSP 结果 useless 标记、provider-bound useless/superseded 工具结果折叠、open todo runtime reminder。根据企业压测新增轻量 forced-final steering：重复工具被跳过后注入 runtime steering，下一次 LLM 请求发送 `tools=[]`，强制模型基于已有证据输出最终回答；保留硬停作为兜底。 |
 | PT-010 | P0 | 企业需求只读压测中 `feePlan` 搜索循环导致无最终回答。 | session `20260708T062614211387Z` 成功读到 `TradeBgSwitchInfoController`、`CrclLimitMainByChangeApplication`、`ChargeFeignApi`、`QueryFeePlanInfoDto`、`LimitIncentivePo`、多个 mapper 和 DTO；但随后在 `feePlan` + `application/send` 等路径重复搜索，并以重复工具硬停结束。 | OMP 的做法不是把主循环步数调小，而是用 tool-choice/soft requirement 的小上限、queued steering、deadline/abort 和 synthetic tool result 让模型从工具探索切回回答；重复探索应成为“收束信号”，不是直接失败。 | 已实现 MVP 版 duplicate-tool final-answer steering，并新增回归测试：同参工具重复到阈值后，runtime 追加 steering 消息，下一轮不给工具 schema，模型必须返回最终内容。下一步让用户用同一企业压测命令复跑修复版。 |
+| PT-011 | P0 | `--allow-dir` 的具体路径没有进入模型上下文，导致模型猜错需求目录。 | session `20260708T065705459243Z` 启动时已经传入 `--allow-dir /Users/chengming/mynote/1_projects/0630_YXR-971_平台通用优化`，但模型先调用 `list_files {"path":"requirements"}` 并得到 path not found，后续未读取真实需求文档。 | OMP 会把 cwd、project context、rules 和工具上下文作为运行时环境显式提供；多 root 场景下，模型不能只知道“有 allowed dir”，必须知道可访问根的具体路径。 | 已修复：system prompt 和 provider-bound context 增加 `[Workspace roots]`，列出 primary `--cwd` 和所有 allowed dirs，并提示多目录任务先用绝对路径 list/read 相关 allowed dir；file tool descriptions 也改为 workspace or allowed directory。 |
+| PT-012 | P1 | 单一企业项目可能无法覆盖跨服务需求，Agent 容易把“本仓库未命中”误读成“需求不存在”。 | 用户确认本次测试项目可能无法完全覆盖需求；`拓展服务费结算` 在 `crcl-open` 里未找到直接 Controller/Application/Mapper，只有 fee plan / incentive feign 等前置线索。 | OMP 依赖明确 workspace/context 和用户提供的项目集合；当需求跨仓库时，应让模型把“缺失证据”和“需要其他项目”作为结论，而不是强行在当前仓库闭环。 | 文档记录该边界；后续真实需求压测应把相关项目也作为 `--allow-dir` 加入，或分轮让 Agent 先输出“当前项目证据 + 需要补充的项目清单”。 |
 | PT-002 | P0 | 企业源码/需求发送到三方 AI API 需要明确数据外发边界。 | 用户已确认可发给百炼；本次 Codex 执行环境策略拒绝代跑该联网压测，因为会把真实企业代码和需求内容发送到三方 AI API。 | OMP 的模型 provider 调用天然会把进入上下文的内容发给已配置 provider；它依靠 provider/config、workspace context、工具审批和 permission gate 控制执行行为，但不是“私有代码不外发”的自动保证，也不是默认禁止外发。 | 不绕过当前 Codex 执行环境策略；改为本地只读扫描。用户在自己的允许环境中运行 LCA 时，可按 provider/permission 策略执行联网只读分析。 |
 | PT-003 | P1 | 跨项目运行时 token 配置不够顺手。 | 原先 `load_config()` 只加载目标 `--cwd/.env`；当 `--cwd` 切到企业项目时，如果 token 只在 LCA 仓库 `.env`，需要手动 source。 | OMP `AgentOptions` 中 `getApiKey(model)`、`model`、`cwd/cwdResolver` 是分离的：凭据/模型是 runtime 配置，cwd 是项目上下文。源码依据：`packages/agent/src/agent.ts` 和 `packages/agent/src/agent-loop.ts`。 | 已新增 `--env-file`；`./agent` 会自动把 LCA 安装目录 `.env` 注入为 env-file，再加载目标 workspace `.env`。优先级：真实环境变量 > env-file > workspace `.env`。 |
 | PT-004 | P1 | LSP 工具命名和用户/模型认知存在缝隙。 | 压测 prompt 提到 `lsp_workspace_symbols` / `lsp_document_symbols`，原先实际工具只有 `lsp_symbols`；模型没有直接调用不存在工具，但反复 `search_code` 查这些字符串。 | OMP 通过 tool registry、tool description、tool discovery、ToolChoiceQueue/soft requirement 让模型看到准确工具集，并在必要时提醒或强制具体工具。 | 已增加只读别名工具 `lsp_workspace_symbols` / `lsp_document_symbols`，均映射到 `lsp_symbols` handler 和 schema；system prompt 已说明 alias 关系。 |
@@ -82,6 +88,7 @@ cd /Users/chengming/mycode/self/local-coding-agent
 | 标准化工具调用签名，JSON 参数不同顺序视为同一次调用 | `src/local_agent/agent.py` | 已完成 |
 | 增加回归测试，模拟同一工具参数无限重复 | `tests/test_agent.py` | 已完成 |
 | 重复工具命中后强制下一轮最终回答 | `src/local_agent/agent.py` / `tests/test_agent.py` | 已完成 |
+| allowed-dir 路径注入模型上下文 | `src/local_agent/agent.py` / `src/local_agent/tools/files.py` / `tests/test_agent.py` | 已完成 |
 | 增加跨项目 env-file | `src/local_agent/config.py` / `src/local_agent/cli.py` / `agent` | 已完成 |
 | 增加 `ToolResult.useless` 标记 | `src/local_agent/tools/base.py` | 已完成 |
 | 空搜索和空 LSP 结果标记为 useless | `src/local_agent/tools/search.py` / `src/local_agent/tools/lsp.py` | 已完成 |
@@ -96,5 +103,5 @@ cd /Users/chengming/mycode/self/local-coding-agent
 | 顺序 | 任务 | 理由 |
 |---:|---|---|
 | 1 | 跑完整测试并同步项目管理 Excel | 本次压测问题已转为代码和文档，需要固化基线。 |
-| 2 | 用户本机用同一企业需求命令复跑修复版 | 本次问题已经从“宿主不能代跑”变成“真实 provider 链路中重复搜索后没有收束”；forced-final steering 需要用相同 session 形态验证是否能产出最终分析。 |
-| 3 | 暂不引入完整 OMP ToolChoiceQueue / soft tool requirement | 已先落地最小 OMP 风格 steering。只有复跑后仍出现“该用某工具但不用/反复偏航/无证据回答”时，再升级为更完整的 ToolChoiceQueue。 |
+| 2 | 用户本机复跑同一企业需求命令，重点看是否先读取 allowed-dir 需求文档 | 新修复会把 allowed dirs 明确暴露给模型；下一次应先 `list_files/read_file` 真实需求目录，而不是猜 `requirements`。 |
+| 3 | 对跨项目需求增加相关代码项目作为 `--allow-dir` | 用户已确认当前项目可能无法完全覆盖需求；应把 incentive/settlement/用户中心等相关项目纳入只读上下文，或让 Agent 明确输出“需要哪个项目”。 |

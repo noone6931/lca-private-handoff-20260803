@@ -130,6 +130,7 @@ class AgentRuntime:
             config.workspace,
             self._user_config_dir,
             state_dir=self._state_dir,
+            allowed_dirs=config.allowed_dirs,
         )
         self._messages: list[dict[str, Any]] = [
             {"role": "system", "content": system_prompt},
@@ -325,7 +326,13 @@ class AgentRuntime:
         todo_summary: list[str],
     ) -> list[dict[str, Any]]:
         return _provider_safe_messages(
-            _messages_with_runtime_context(messages, todo_summary, self._config.workspace, self._user_config_dir)
+            _messages_with_runtime_context(
+                messages,
+                todo_summary,
+                self._config.workspace,
+                self._user_config_dir,
+                self._config.allowed_dirs,
+            )
         )
 
     def _build_compaction_summary(
@@ -716,8 +723,12 @@ def _system_prompt_with_startup_context(
     user_config_dir: Path | None = None,
     *,
     state_dir: Path | None = None,
+    allowed_dirs: tuple[Path, ...] = (),
 ) -> str:
     blocks = [SYSTEM_PROMPT.rstrip()]
+    workspace_roots = _workspace_roots_context(workspace, allowed_dirs)
+    if workspace_roots:
+        blocks.append(workspace_roots)
     startup_context = _load_startup_context_files(
         workspace,
         user_config_dir or default_config_root(),
@@ -748,6 +759,27 @@ def _system_prompt_with_startup_context(
             f"{skills}"
         )
     return "\n\n".join(blocks)
+
+
+def _workspace_roots_context(workspace: Path, allowed_dirs: tuple[Path, ...]) -> str:
+    lines = [
+        "[Workspace roots]",
+        f"Primary workspace (--cwd): {workspace}",
+    ]
+    if allowed_dirs:
+        lines.extend(
+            [
+                "Additional allowed directories for file/search/LSP/patch tools:",
+                *[f"- {path}" for path in allowed_dirs],
+                (
+                    "For multi-root tasks, first list/read the relevant allowed directory by its exact absolute "
+                    "path. Do not invent a requirements directory under --cwd unless it actually appears in "
+                    "list_files output."
+                ),
+                "Shell, git, session, todo, and memory remain anchored to --cwd.",
+            ]
+        )
+    return "\n".join(lines)
 
 
 def _load_startup_context_files(workspace: Path, user_config_dir: Path, *, max_chars: int) -> str:
@@ -1007,12 +1039,28 @@ def _messages_with_runtime_context(
     todo_summary: list[str],
     workspace: Path,
     user_config_dir: Path,
+    allowed_dirs: tuple[Path, ...] = (),
 ) -> list[dict[str, Any]]:
     updated = list(messages)
+    workspace_roots = _workspace_roots_context(workspace, allowed_dirs)
+    if workspace_roots:
+        updated = _messages_with_workspace_roots(updated, workspace_roots)
     sticky_rules = _load_sticky_rules(workspace, user_config_dir, max_chars=STICKY_RULES_CHAR_LIMIT)
     if sticky_rules:
         updated = _messages_with_sticky_rules(updated, sticky_rules)
     return _messages_with_runtime_todo_reminder(updated, todo_summary)
+
+
+def _messages_with_workspace_roots(messages: list[dict[str, Any]], workspace_roots: str) -> list[dict[str, Any]]:
+    system_messages = [message for message in messages if message.get("role") == "system"]
+    non_system = [message for message in messages if message.get("role") != "system"]
+    base = _system_message_with_appended_context(system_messages, workspace_roots)
+    content = str(base.get("content") or "")
+    first_marker = content.find("[Workspace roots]")
+    last_marker = content.rfind("[Workspace roots]")
+    if first_marker != -1 and first_marker != last_marker:
+        base["content"] = content[:last_marker].rstrip()
+    return [base, *non_system]
 
 
 def _messages_with_sticky_rules(messages: list[dict[str, Any]], sticky_rules: str) -> list[dict[str, Any]]:

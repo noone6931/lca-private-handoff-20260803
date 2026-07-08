@@ -22,7 +22,10 @@ def file_tools() -> list[Tool]:
     return [
         Tool(
             name="read_file",
-            description="Read a text file inside the workspace. Returns a hash tag and numbered lines.",
+            description=(
+                "Read a text file inside the workspace or an explicitly allowed directory. "
+                "Returns a hash tag and numbered lines."
+            ),
             tier="read",
             input_schema={
                 "type": "object",
@@ -39,7 +42,7 @@ def file_tools() -> list[Tool]:
         Tool(
             name="apply_patch",
             description=(
-                "Apply a safe anchored patch to a previously read file. "
+                "Apply a safe anchored patch to a previously read workspace or allowed-directory file. "
                 "Use mode=replace to replace the anchored lines, insert_before to insert before them, "
                 "or insert_after to insert after them. old_text must match the anchored lines. "
                 "Set dry_run=true to preview the diff without changing the file."
@@ -81,7 +84,10 @@ def file_tools() -> list[Tool]:
         ),
         Tool(
             name="write_file",
-            description="Create a new text file inside the workspace. Refuses to overwrite existing files; use apply_patch for existing files.",
+            description=(
+                "Create a new text file inside the workspace or an explicitly allowed directory. "
+                "Refuses to overwrite existing files; use apply_patch for existing files."
+            ),
             tier="write",
             input_schema={
                 "type": "object",
