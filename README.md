@@ -125,7 +125,7 @@ local-agent "帮我找一下测试失败原因"
   "读取需求目录里的文档，按要求修改当前代码项目并验证"
 ```
 
-`--allow-dir` 可以传多次。它只扩展文件、搜索、LSP 和 patch 类工具的可访问根目录；shell、git、session、todo 和 memory 仍锚定在 `--cwd`。
+`--allow-dir` 可以传多次。它只扩展文件、搜索、LSP 和 patch 类工具的可访问根目录；shell、git 和显式项目 memory/skills 仍锚定在 `--cwd`，session/todo/patch logs 和默认自动 consolidation memory 走 runtime state dir。
 
 可以放用户级和项目级常驻上下文：
 
@@ -145,7 +145,7 @@ local-agent "帮我找一下测试失败原因"
 
 长会话默认启用 OMP 风格上下文压缩策略：`--context-char-budget` 近似表示上下文窗口，runtime 会至少预留 15% 给下一轮 prompt/输出；超过阈值后压缩早期历史，保留最近消息和未完成 todo，并截断发送给模型的超大 tool 输出。发送给模型的上下文还会折叠空搜索/LSP 这类 useless 结果，以及被新等价读取/搜索 supersede 的旧工具结果；session 日志仍保留原文。默认 `--summary-mode auto`：小历史不摘要，触发 compaction 时自动调用当前配置的 AI API 生成语义摘要，失败回退本地确定性摘要。可用 `--summary-mode local` 强制只用本地摘要，`--summary-mode llm` 强制在 compaction 时尝试 LLM 摘要，`--context-char-budget 0` 关闭压缩。
 
-自动记忆整理默认关闭，避免只读分析时隐式写项目文件。需要时可用 `--memory-consolidation auto` 或 `AGENT_MEMORY_CONSOLIDATION=auto` 开启；每轮结束后会让当前 provider 从本轮 session 中抽取长期可复用的 project/decisions/conventions/learned，并追加到 `.local-agent/memory/*.md`。坏 JSON、空结果、预算耗尽、本轮已经显式调用 `learn` / `memory_write` 时不会写入。`--memory-consolidation llm` 会跳过 auto 的小会话启发式，直接尝试抽取。
+自动记忆整理默认关闭，避免只读分析时隐式写入长期 memory。需要时可用 `--memory-consolidation auto` 或 `AGENT_MEMORY_CONSOLIDATION=auto` 开启；每轮结束后会让当前 provider 从本轮 session 中抽取长期可复用的 project/decisions/conventions/learned。默认 `--memory-scope state` 会追加到 runtime state 目录的 `memory/*.md`，对齐 OMP 的用户 agent dir 思路；只有显式 `--memory-scope project` 或 `AGENT_MEMORY_SCOPE=project` 才写入项目 `.local-agent/memory/*.md`。坏 JSON、空结果、预算耗尽、本轮已经显式调用 `learn` / `memory_write` 时不会写入。`--memory-consolidation llm` 会跳过 auto 的小会话启发式，直接尝试抽取。
 
 项目内可放可复用工作流 skill：
 
@@ -247,7 +247,7 @@ ${XDG_STATE_HOME:-~/.local/state}/local-coding-agent/workspaces/<workspace-key>/
 ./agent --session 20260707T060000000000Z "继续这个会话"
 ```
 
-`todo` 和 `apply_patch` 的回滚记录也写入同一个 runtime state 目录下的 `todos/` 与 `patches/`，用于 `todo_read` 和 `rollback_patch`。项目级 `.local-agent/memory` 和 `.local-agent/skills` 仍保留在 workspace 中，因为它们是项目知识而不是运行转录。
+`todo` 和 `apply_patch` 的回滚记录也写入同一个 runtime state 目录下的 `todos/` 与 `patches/`，用于 `todo_read` 和 `rollback_patch`。显式项目 memory 和项目 skills 仍保留在 workspace 的 `.local-agent/` 中；自动 memory consolidation 默认写 runtime state 的 `memory/`，需要共享到项目时再显式切到 `--memory-scope project`。
 
 ## 本地测试
 
@@ -293,8 +293,8 @@ python3 scripts/sync_project_excel.py
 - context compaction: 按 OMP 风格 reserve 阈值压缩早期历史、保留当前用户请求和未完成 todo，并截断发送给模型的超大 tool 输出；空搜索/LSP 结果会标记 useless，发送给模型的上下文会折叠 useless/superseded 工具结果；默认 `--summary-mode auto` 会在触发压缩时尝试 LLM 摘要并失败回退 local。
 - startup context injection: 新 session 启动时会读取用户级和项目级 `AGENTS.md`，作为 advisory context 注入 system prompt。
 - sticky rules injection: 每次发送模型请求前会读取用户级和项目级 `RULES.md` 并追加到 provider-bound context。
-- startup memory injection: 新 session 启动时会读取 `.local-agent/memory/{project,decisions,conventions,learned}.md` 并作为 advisory context 注入 system prompt；当前用户指令和最新源码证据优先。
-- memory consolidation: 可选 `--memory-consolidation auto|llm`，在一轮结束后用当前 provider 抽取长期经验并写入 `.local-agent/memory/*.md`，默认 `off`。
+- startup memory injection: 新 session 启动时会读取项目 `.local-agent/memory/{project,decisions,conventions,learned}.md` 和 state dir `memory/{project,decisions,conventions,learned}.md`，并作为 advisory context 注入 system prompt；当前用户指令和最新源码证据优先。
+- memory consolidation: 可选 `--memory-consolidation auto|llm`，在一轮结束后用当前 provider 抽取长期经验；默认 `off`，开启后默认写 state dir，`--memory-scope project` 才写项目 `.local-agent/memory/*.md`。
 - authored skills discovery: 新 session 启动时会扫描 `.local-agent/skills/<name>/SKILL.md`，只注入 name、description 和 source path，正文按需读取。
 
 ## 设计原则

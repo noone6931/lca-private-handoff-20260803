@@ -162,12 +162,16 @@ class _LengthToolClient:
 
 class _RepeatingToolClient:
     calls = 0
+    tools_seen: list[int] = []
 
     def __init__(self, config: AgentConfig):
         self.config = config
 
     def chat(self, messages, tools, *, timeout=None):
         type(self).calls += 1
+        type(self).tools_seen.append(len(tools))
+        if not tools:
+            return type("Response", (), {"message": {"content": "final answer from collected evidence"}})()
         arguments = '{"b": 2, "a": 1}' if type(self).calls % 2 else '{"a": 1, "b": 2}'
         return type(
             "Response",
@@ -278,16 +282,23 @@ class AgentRuntimeTests(unittest.TestCase):
 
     def test_startup_memory_is_injected_as_advisory_context(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            workspace = Path(tmp).resolve()
+            root = Path(tmp).resolve()
+            workspace = root / "workspace"
+            state_dir = root / "state"
+            workspace.mkdir()
             memory_dir = workspace / ".local-agent" / "memory"
             memory_dir.mkdir(parents=True)
             (memory_dir / "project.md").write_text("Use pytest for this project.\n", encoding="utf-8")
+            state_memory_dir = state_dir / "memory"
+            state_memory_dir.mkdir(parents=True)
+            (state_memory_dir / "learned.md").write_text("Run focused memory tests first.\n", encoding="utf-8")
             config = AgentConfig(
                 provider="openai-compatible",
                 api_base_url="https://example.invalid/v1",
                 api_key="token",
                 model="model",
                 workspace=workspace,
+                state_dir=state_dir,
                 max_steps=0,
                 budget_seconds=None,
                 approval_mode="yolo",
@@ -296,9 +307,11 @@ class AgentRuntimeTests(unittest.TestCase):
                 runtime = AgentRuntime(config, show_tool_logs=False)
 
         system_content = runtime._messages[0]["content"]
-        self.assertIn("[Project memory]", system_content)
+        self.assertIn("[Memory]", system_content)
         self.assertIn(".local-agent/memory/project.md", system_content)
+        self.assertIn(str(state_memory_dir / "learned.md"), system_content)
         self.assertIn("Use pytest for this project.", system_content)
+        self.assertIn("Run focused memory tests first.", system_content)
         self.assertIn("advisory", system_content)
 
     def test_user_and_project_agents_context_are_injected_at_startup(self) -> None:
@@ -528,8 +541,9 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertEqual([message["tool_call_id"] for message in tool_messages], ["call_1", "call_2"])
         self.assertTrue(all("output token limit" in message["content"] for message in tool_messages))
 
-    def test_repeated_identical_tool_calls_are_guarded_and_stopped(self) -> None:
+    def test_repeated_identical_tool_calls_are_steered_to_final_answer(self) -> None:
         _RepeatingToolClient.calls = 0
+        _RepeatingToolClient.tools_seen = []
         with tempfile.TemporaryDirectory() as tmp:
             config = AgentConfig(
                 provider="openai-compatible",
@@ -547,13 +561,16 @@ class AgentRuntimeTests(unittest.TestCase):
                 result = runtime.run("repeat forever")
 
         tool_messages = [message for message in runtime._messages if message.get("role") == "tool"]
+        steering_messages = [message for message in runtime._messages if "Runtime steering:" in str(message.get("content"))]
         duplicate_messages = [
             message for message in tool_messages if "identical call to 'unknown_repeat'" in message["content"]
         ]
-        self.assertIn("repeated identical tool calls too many times", result)
+        self.assertEqual(result, "final answer from collected evidence")
         self.assertGreaterEqual(len(duplicate_messages), 1)
         self.assertIn("already run 3 times", duplicate_messages[0]["content"])
-        self.assertEqual(_RepeatingToolClient.calls, 11)
+        self.assertEqual(len(steering_messages), 1)
+        self.assertEqual(_RepeatingToolClient.calls, 5)
+        self.assertEqual(_RepeatingToolClient.tools_seen[-1], 0)
 
     def test_keyboard_interrupt_synthesizes_remaining_tool_results(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -908,13 +925,17 @@ class AgentRuntimeTests(unittest.TestCase):
     def test_memory_consolidation_auto_writes_extracted_markdown_memory(self) -> None:
         _MemoryConsolidationClient.calls = []
         with tempfile.TemporaryDirectory() as tmp:
-            workspace = Path(tmp).resolve()
+            root = Path(tmp).resolve()
+            workspace = root / "workspace"
+            state_dir = root / "state"
+            workspace.mkdir()
             config = AgentConfig(
                 provider="openai-compatible",
                 api_base_url="https://example.invalid/v1",
                 api_key="token",
                 model="model",
                 workspace=workspace,
+                state_dir=state_dir,
                 max_steps=0,
                 budget_seconds=None,
                 approval_mode="yolo",
@@ -924,11 +945,13 @@ class AgentRuntimeTests(unittest.TestCase):
                 runtime = AgentRuntime(config, show_tool_logs=False)
                 result = runtime.run("记住这个经验：memory 代码改动后要跑 focused tests")
 
-            conventions = workspace / ".local-agent" / "memory" / "conventions.md"
-            learned = workspace / ".local-agent" / "memory" / "learned.md"
+            conventions = state_dir / "memory" / "conventions.md"
+            learned = state_dir / "memory" / "learned.md"
+            project_memory_dir = workspace / ".local-agent" / "memory"
             records = [json.loads(line) for line in runtime._session.path.read_text(encoding="utf-8").splitlines()]
             conventions_exists = conventions.exists()
             learned_exists = learned.exists()
+            project_memory_exists = project_memory_dir.exists()
             conventions_text = conventions.read_text(encoding="utf-8")
             learned_text = learned.read_text(encoding="utf-8")
 
@@ -938,20 +961,76 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertEqual(_MemoryConsolidationClient.calls[-1]["tools"], [])
         self.assertTrue(conventions_exists)
         self.assertTrue(learned_exists)
+        self.assertFalse(project_memory_exists)
         self.assertIn("focused tests before the full test suite", conventions_text)
         self.assertIn("verify both focused agent tests and config tests", learned_text)
-        self.assertTrue(any(record.get("event") == "memory_consolidation" for record in records))
+        self.assertTrue(
+            any(
+                record.get("event") == "memory_consolidation"
+                and record.get("payload", {}).get("scope") == "state"
+                and record.get("payload", {}).get("memory_root") == str(state_dir / "memory")
+                for record in records
+            )
+        )
 
-    def test_memory_consolidation_default_off_does_not_call_llm_or_write_memory(self) -> None:
+    def test_memory_consolidation_project_scope_writes_project_memory(self) -> None:
         _MemoryConsolidationClient.calls = []
         with tempfile.TemporaryDirectory() as tmp:
-            workspace = Path(tmp).resolve()
+            root = Path(tmp).resolve()
+            workspace = root / "workspace"
+            state_dir = root / "state"
+            workspace.mkdir()
             config = AgentConfig(
                 provider="openai-compatible",
                 api_base_url="https://example.invalid/v1",
                 api_key="token",
                 model="model",
                 workspace=workspace,
+                state_dir=state_dir,
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+                memory_consolidation="auto",
+                memory_scope="project",
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _MemoryConsolidationClient):
+                runtime = AgentRuntime(config, show_tool_logs=False)
+                result = runtime.run("记住这个经验：memory 代码改动后要跑 focused tests")
+
+            conventions = workspace / ".local-agent" / "memory" / "conventions.md"
+            state_memory_dir = state_dir / "memory"
+            records = [json.loads(line) for line in runtime._session.path.read_text(encoding="utf-8").splitlines()]
+            conventions_exists = conventions.exists()
+            state_memory_exists = state_memory_dir.exists()
+            conventions_text = conventions.read_text(encoding="utf-8")
+
+        self.assertEqual(result, "Finished the task and learned a convention.")
+        self.assertTrue(conventions_exists)
+        self.assertFalse(state_memory_exists)
+        self.assertIn("focused tests before the full test suite", conventions_text)
+        self.assertTrue(
+            any(
+                record.get("event") == "memory_consolidation"
+                and record.get("payload", {}).get("scope") == "project"
+                and record.get("payload", {}).get("memory_root") == str(workspace / ".local-agent" / "memory")
+                for record in records
+            )
+        )
+
+    def test_memory_consolidation_default_off_does_not_call_llm_or_write_memory(self) -> None:
+        _MemoryConsolidationClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            workspace = root / "workspace"
+            state_dir = root / "state"
+            workspace.mkdir()
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=workspace,
+                state_dir=state_dir,
                 max_steps=0,
                 budget_seconds=None,
                 approval_mode="yolo",
@@ -963,17 +1042,22 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertEqual(result, "Finished the task and learned a convention.")
         self.assertEqual(len(_MemoryConsolidationClient.calls), 1)
         self.assertFalse((workspace / ".local-agent" / "memory").exists())
+        self.assertFalse((state_dir / "memory").exists())
 
     def test_memory_consolidation_invalid_json_does_not_write_memory(self) -> None:
         _InvalidMemoryConsolidationClient.calls = []
         with tempfile.TemporaryDirectory() as tmp:
-            workspace = Path(tmp).resolve()
+            root = Path(tmp).resolve()
+            workspace = root / "workspace"
+            state_dir = root / "state"
+            workspace.mkdir()
             config = AgentConfig(
                 provider="openai-compatible",
                 api_base_url="https://example.invalid/v1",
                 api_key="token",
                 model="model",
                 workspace=workspace,
+                state_dir=state_dir,
                 max_steps=0,
                 budget_seconds=None,
                 approval_mode="yolo",
@@ -987,6 +1071,7 @@ class AgentRuntimeTests(unittest.TestCase):
 
         self.assertEqual(result, "Finished the task.")
         self.assertFalse((workspace / ".local-agent" / "memory").exists())
+        self.assertFalse((state_dir / "memory").exists())
         self.assertTrue(any(record.get("event") == "memory_consolidation_error" for record in records))
 
     def test_compaction_threshold_reserves_at_least_fifteen_percent(self) -> None:

@@ -31,10 +31,10 @@ OMP 的 skills 也有两条路径：
 
 - 用户级 / 项目级人工上下文：`AGENT_CONFIG_DIR/AGENTS.md` 和 `.local-agent/AGENTS.md` 启动时注入 advisory context。
 - Sticky rules：`AGENT_CONFIG_DIR/RULES.md` 和 `.local-agent/RULES.md` 每次 provider request 前注入，适合短规则。
-- `memory_read` / `memory_write`：写入 `.local-agent/memory/{project,decisions,conventions,learned}.md`。
-- 启动时自动注入 `.local-agent/memory/{project,decisions,conventions,learned}.md`，并标记为 advisory context。
+- `memory_read` / `memory_write`：写入项目 `.local-agent/memory/{project,decisions,conventions,learned}.md`。
+- 启动时自动注入项目 `.local-agent/memory/{project,decisions,conventions,learned}.md` 和 state dir `memory/{project,decisions,conventions,learned}.md`，并标记为 advisory context。
 - `learn` 工具：把可复用 lesson 写入 `.local-agent/memory/learned.md`。
-- 可选 memory consolidation：`memory_consolidation=auto|llm` 时，在一轮结束后从 session 中抽取长期经验并追加到 `.local-agent/memory/*.md`。
+- 可选 memory consolidation：`memory_consolidation=auto|llm` 时，在一轮结束后从 session 中抽取长期经验；默认写 runtime state dir 的 `memory/*.md`，显式 `memory_scope=project` 才追加到 `.local-agent/memory/*.md`。
 - Authored skills discovery：启动时扫描 `.local-agent/skills/<name>/SKILL.md`，只注入 name / description / source path。
 - deterministic context compaction：用于单个 session 内上下文治理，不等同长期 memory。
 - OMP 风格 auto summary 和多语言轻量 LSP 已落地。
@@ -70,21 +70,26 @@ OMP 的 skills 也有两条路径：
 
 状态：已完成 MVP 版。
 
-目标：让 `.local-agent/memory/*.md` 在新 session 启动时进入 system prompt。
+目标：让项目 `.local-agent/memory/*.md` 和 runtime state dir `memory/*.md` 在新 session 启动时进入 system prompt。
 
 当前实现：
 
 - 固定启用，当前无独立开关。
 - 注入预算为 `STARTUP_MEMORY_CHAR_LIMIT = 8000`。
-- 在 `AgentRuntime.__init__` 构建 system prompt 时读取：
+- 在 `AgentRuntime.__init__` 构建 system prompt 时读取项目 memory：
   - `.local-agent/memory/project.md`
   - `.local-agent/memory/decisions.md`
   - `.local-agent/memory/conventions.md`
   - `.local-agent/memory/learned.md`
+- 同时读取 state dir memory：
+  - `<state-dir>/memory/project.md`
+  - `<state-dir>/memory/decisions.md`
+  - `<state-dir>/memory/conventions.md`
+  - `<state-dir>/memory/learned.md`
 - 注入格式：
 
 ```text
-[Project memory]
+[Memory]
 Memory is advisory. Prefer current repo state and current user instructions when they conflict.
 Source: .local-agent/memory/project.md
 ...
@@ -125,15 +130,20 @@ Source: .local-agent/memory/project.md
 
 状态：已完成 MVP 版。
 
-目标：让 session 中的长期经验能定期整理进 `.local-agent/memory`，但默认不隐式写项目文件。
+目标：让 session 中的长期经验能定期整理成长期 memory，但默认不隐式写项目文件。
 
 当前实现：
 
 - 配置项：
   - `memory_consolidation=off|auto|llm`
+  - `memory_scope=state|project`
   - CLI：`--memory-consolidation off|auto|llm`
+  - CLI：`--memory-scope state|project`
   - 环境变量：`AGENT_MEMORY_CONSOLIDATION`
-- 默认 `off`，避免只读任务隐式写 `.local-agent/memory`。
+  - 环境变量：`AGENT_MEMORY_SCOPE`
+- 默认 `off`，避免只读任务隐式写长期 memory。
+- 开启后默认 `memory_scope=state`，写 runtime state dir 的 `memory/*.md`，对齐 OMP local memory 放在用户 agent dir 的边界。
+- 显式 `memory_scope=project` 才写项目 `.local-agent/memory/*.md`，用于团队希望把自动整理结果纳入项目知识时。
 - `auto`：一轮结束后，如果本轮有长期记忆信号，再调用当前 provider 抽取长期内容。
 - `llm`：跳过 auto 的小会话启发式，直接尝试抽取。
 - LLM 必须返回严格 JSON：
@@ -143,7 +153,7 @@ Source: .local-agent/memory/project.md
 ```
 
 - Runtime 只接受四个 bucket，并限制每类条数和单条长度。
-- 追加写入 `.local-agent/memory/{project,decisions,conventions,learned}.md`。
+- 追加写入 `<state-dir>/memory/{project,decisions,conventions,learned}.md`，或在 `memory_scope=project` 时写入 `.local-agent/memory/{project,decisions,conventions,learned}.md`。
 - 每条自动记忆带 `lca-memory:<hash>` 注释，避免重复 consolidation 反复追加同一条。
 - 以下情况不写：
   - 默认 `off`。

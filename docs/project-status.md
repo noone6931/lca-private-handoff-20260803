@@ -30,7 +30,7 @@
 
 ## 当前进度
 
-当前项目处于 P7 轻量高级能力阶段：P5 的安全与恢复增强 MVP 已收口；P6 默认工作流 MVP 已落地，用户可以用自然语言描述任务，而不是每次手写 `list_files/read_file/dry_run/run_tests/git_diff` 工具顺序。本轮已补 OMP 风格 auto summary、多语言轻量 LSP、multi-root `--allow-dir`、Markdown memory 启动注入、`learn` 工具、可选 session memory consolidation、authored skills discovery、重复工具调用熔断、tool result pruning、todo steering、跨项目 `--env-file` / launcher 安装目录 `.env` 加载，以及 OMP 风格用户级 `--state-dir` runtime state 分层。
+当前项目处于 P7 轻量高级能力阶段：P5 的安全与恢复增强 MVP 已收口；P6 默认工作流 MVP 已落地，用户可以用自然语言描述任务，而不是每次手写 `list_files/read_file/dry_run/run_tests/git_diff` 工具顺序。本轮已补 OMP 风格 auto summary、多语言轻量 LSP、multi-root `--allow-dir`、Markdown memory 启动注入、`learn` 工具、可选 session memory consolidation、authored skills discovery、重复工具调用熔断、duplicate-tool forced-final steering、tool result pruning、todo steering、跨项目 `--env-file` / launcher 安装目录 `.env` 加载，以及 OMP 风格用户级 `--state-dir` runtime state 分层。
 
 已具备的核心能力：
 
@@ -43,7 +43,7 @@
 - `apply_patch` 已支持 `replace`、`insert_before`、`insert_after`，并兼容 Python 3.12。
 - 非交互审批、LLM 非 JSON 响应、session 恢复坏尾部、search_code 绝对路径泄漏等问题已经修复。
 - 已完成 Agent 自举测试：能够通过百炼模型调用工具读取、修改、测试和查看 diff。
-- 测试基线：136 个测试在正常本地环境通过。
+- 测试基线：140 个测试在正常本地环境通过。
 
 当前已具备：
 
@@ -61,32 +61,32 @@
 - LCA 默认工作流已沉到 system prompt 和 runtime workflow reminder：自然语言代码任务会默认先理解、必要时 todo、修改前读取、patch 写入、修改后测试和 diff。
 - OMP 风格 auto summary 已落地：默认 `--summary-mode auto`，小历史不摘要，超过 reserve 阈值后调用当前 provider 生成语义摘要，失败回退本地摘要；`local` / `llm` 仍可显式指定。
 - 轻量 LSP 风格工具已落地：`lsp_symbols`、`lsp_workspace_symbols`、`lsp_document_symbols`、`lsp_definition`、`lsp_references`、`lsp_diagnostics`，覆盖 Python、Java、JavaScript、TypeScript、Vue，不启动外部语言服务器；workspace/document symbols 是兼容别名。
-- Multi-root workspace 已落地：`--allow-dir` / `AGENT_ALLOWED_DIRS` 可显式授权额外目录给文件、搜索、LSP 和 patch 工具；shell、git、session、todo、memory 仍锚定 `--cwd`。
+- Multi-root workspace 已落地：`--allow-dir` / `AGENT_ALLOWED_DIRS` 可显式授权额外目录给文件、搜索、LSP 和 patch 工具；shell、git、显式项目 memory/skills 仍锚定 `--cwd`，session/todo/patch logs 和默认 consolidation memory 走 state dir。
 - 跨项目 env-file 已落地：CLI 支持显式 `--env-file`，`./agent` 会自动把 LCA 安装目录 `.env` 作为 env-file 加载，使 token/provider 配置与目标 `--cwd` 解耦。优先级是：真实环境变量 > 显式 env-file > 目标 workspace `.env`。
 - 用户级 / 项目级常驻上下文已落地：新 session 会读取用户级 `AGENTS.md` 和项目级 `.local-agent/AGENTS.md`，作为 advisory context 注入。
 - Sticky rules 已落地：每次发送模型请求前会读取用户级 `RULES.md` 和项目级 `.local-agent/RULES.md`，用于短规则在长会话中保持可见。
-- Markdown memory 启动注入已落地：新 session 会读取 `.local-agent/memory/{project,decisions,conventions,learned}.md` 并作为 advisory context 注入。
+- Markdown memory 启动注入已落地：新 session 会读取项目 `.local-agent/memory/{project,decisions,conventions,learned}.md` 和 state dir `memory/{project,decisions,conventions,learned}.md` 并作为 advisory context 注入。
 - `learn` 工具已落地：可把可复用经验写入 `.local-agent/memory/learned.md`，默认仍按写工具审批。
-- Memory consolidation 已落地 MVP：默认 `off`；显式 `--memory-consolidation auto|llm` 后，一轮结束时从 session 中抽取长期 project/decisions/conventions/learned 并写入 `.local-agent/memory/*.md`。
-- 已完成 memory consolidation review：默认 `off` 不会额外调用 LLM，也不会写 `.local-agent/memory`；已补 runtime 级回归测试覆盖这个只读边界。
+- Memory consolidation 已落地 MVP：默认 `off`；显式 `--memory-consolidation auto|llm` 后，一轮结束时从 session 中抽取长期 project/decisions/conventions/learned；默认 `--memory-scope state` 写 state dir `memory/*.md`，显式 `project` 才写 `.local-agent/memory/*.md`。
+- 已完成 memory consolidation review：默认 `off` 不会额外调用 LLM，也不会写 memory；已补 runtime 级回归测试覆盖默认 off、默认 state scope 和显式 project scope。
 - Authored skills discovery 已落地：新 session 会扫描 `.local-agent/skills/<name>/SKILL.md`，只注入 name、description 和 source path，正文按需读取。
 - OMP memory / skills / autolearn 设计已核实并形成 LCA 裁剪方案：见 `docs/memory-skills-implementation-plan.md`。
 - P7 综合压测记录已落地：见 `docs/pressure-test-2026-07-08.md`。
-- 重复工具调用熔断已落地：最近窗口内同名同参工具调用超过阈值会返回 tool error，连续命中后停止本轮，避免只靠 `budget_seconds` 截断坏循环。
+- 重复工具调用熔断和 forced-final steering 已落地：最近窗口内同名同参工具调用超过阈值会返回 tool error；重复命中后 runtime 会注入 steering，并让下一次 LLM 请求 `tools=[]`，强制模型基于已有证据输出最终回答；连续命中仍有硬停兜底。
 - OMP 风格 tool result pruning / todo steering 已落地：空搜索/LSP 结果会标记 useless；发送给模型的上下文会折叠 useless/superseded 工具结果并注入未完成 todo reminder，session 原文仍保留。
 
 真实缺口：
 
 - Path-scoped rules 还未实现，作为下一步候选。
 - Managed skills / autolearn 继续暂缓。
-- 企业项目联网压测：用户已确认可外发给百炼，但本次 Codex 执行环境策略拒绝代跑将企业私有代码/需求发送到三方 API；提交 `cb7400d` 后复跑仍被同一宿主策略阻断。已改为本地只读扫描并记录结果。LCA 产品设计本身不内置“企业数据不能外发”禁令。
-- Runtime state 与 workspace 已解耦：`--state-dir` / `AGENT_STATE_DIR` 可指定用户级 state root；默认 `${XDG_STATE_HOME:-~/.local/state}/local-coding-agent/workspaces/<workspace-key>/`；sessions/todos/patch logs 已不再默认写入目标 `--cwd/.local-agent`。项目 memory/skills 仍保留在 workspace 中。
+- 企业项目联网压测：用户已确认可外发给百炼，Codex 执行环境仍拒绝代跑将企业私有代码/需求发送到三方 API；用户本机 session `20260708T062614211387Z` 已跑通真实百炼只读链路，但在 `feePlan` 重复搜索后硬停且未输出最终分析。已按该结果补 duplicate-tool forced-final steering。
+- Runtime state 与 workspace 已解耦：`--state-dir` / `AGENT_STATE_DIR` 可指定用户级 state root；默认 `${XDG_STATE_HOME:-~/.local/state}/local-coding-agent/workspaces/<workspace-key>/`；sessions/todos/patch logs 已不再默认写入目标 `--cwd/.local-agent`。显式项目 memory/skills 仍保留在 workspace 中，自动 consolidation 默认写 state dir。
 - 已对 `/Users/chengming/mycode/project/crcl-open/crcl-open` 做本地 state-dir 验证：默认 state dir 为 `/Users/chengming/.local/state/local-coding-agent/workspaces/mycode-project-crcl-open-crcl-open-966d4fe7a33b`，目标仓库当前未发现 `.local-agent`。
 - 百炼真实只读压测会话 `20260707T093557800154Z` 已验证：在 `context_char_budget=2500` 的强压缩场景下，模型完成指定 5 个工具调用后停止探索，并按要求输出三句话总结。
-- LCA 自身综合压测会话 `20260708T024203733199Z` 暴露重复工具调用循环，已用窗口式重复工具熔断缓解；修复后复测会话 `20260708T025519414693Z` 已按要求完成工具调用并输出总结。
+- LCA 自身综合压测会话 `20260708T024203733199Z` 暴露重复工具调用循环，已用窗口式重复工具熔断缓解；修复后复测会话 `20260708T025519414693Z` 已按要求完成工具调用并输出总结。企业压测 session `20260708T062614211387Z` 又暴露“硬停但无最终回答”，因此新增 forced-final steering。
 - 百炼真实小改复测会话 `20260707T094246132064Z` 已验证 todo、dry_run、apply_patch、session allow、rollback、run_tests、git_diff 主链路可跑通；最终仅新增一个测试 docstring。
 - 还没有基于模型 context window 的精确 token 预算；当前用字符窗口近似 OMP reserve 策略。
-- 还没有完整 OMP ToolChoiceQueue / soft tool requirement；当前用 system/tool 描述、runtime reminder、todo reminder、pruning 和重复工具熔断做轻量本地版。
+- 还没有完整 OMP ToolChoiceQueue / soft tool requirement；当前用 system/tool 描述、runtime reminder、todo reminder、pruning、重复工具熔断和 forced-final steering 做轻量本地版。
 - LSP 目前是多语言轻量静态工具，不是完整 LSP server，不支持 rename / code action / DAP。
 - provider 请求失败发生在 assistant tool_call 之前，当前会以 `LlmError` 停止；后续可继续优化用户提示。
 
@@ -101,7 +101,7 @@
 | P4 | 上下文治理 | 已完成 MVP 版 | 初版 summary / compaction、工具输出折叠、长需求文件工作流。 |
 | P5 | 安全与恢复增强 | 已完成并收口 | synthetic tool result、patch preview、回滚策略、非信任仓库提示、OMP 风格 approval model、approval prompt deadline cancel；真实小改复测通过。 |
 | P6 | 日用体验与默认工作流固化 | 已完成 MVP 版 | OMP 默认工作流本地化：system prompt、工具描述、轻量 runtime nudge。 |
-| P7 | 高级工程能力轻量版 | 进行中 | 已完成 OMP 风格 auto summary、多语言轻量 LSP、LSP 兼容别名、multi-root、Markdown memory 启动注入、learn、可选 memory consolidation、authored skills discovery、综合压测记录、重复工具调用熔断、tool result pruning、todo steering、跨项目 env-file 和用户级 `--state-dir` runtime state 分层；path-scoped rules、DAP、TUI、subagents、reviewer、AST edit、managed skills 继续后置。 |
+| P7 | 高级工程能力轻量版 | 进行中 | 已完成 OMP 风格 auto summary、多语言轻量 LSP、LSP 兼容别名、multi-root、Markdown memory 启动注入、learn、可选 memory consolidation、authored skills discovery、综合压测记录、重复工具调用熔断、duplicate-tool forced-final steering、tool result pruning、todo steering、跨项目 env-file 和用户级 `--state-dir` runtime state 分层；path-scoped rules、DAP、TUI、subagents、reviewer、AST edit、managed skills 继续后置。 |
 
 ## 已完成功能
 
@@ -142,17 +142,17 @@
 | Cross-project Env File | 已完成 MVP 版 | `src/local_agent/cli.py` 支持 `--env-file`；`./agent` 自动加载 LCA 安装目录 `.env`，使 provider 凭据与目标 `--cwd` 解耦。 |
 | Runtime State Dir | 已完成 MVP 版 | `--state-dir` / `AGENT_STATE_DIR`；默认写入用户级 state root 下的 workspace-specific 目录。 |
 | Startup Context / Sticky Rules | 已完成 MVP 版 | 用户级和项目级 `AGENTS.md` 启动注入；用户级和项目级 `RULES.md` 每次 provider request 前注入。 |
-| Markdown Memory 启动注入 | 已完成 MVP 版 | `.local-agent/memory/{project,decisions,conventions,learned}.md` 会作为 advisory context 注入 system prompt。 |
+| Markdown Memory 启动注入 | 已完成 MVP 版 | 项目 `.local-agent/memory/{project,decisions,conventions,learned}.md` 和 state dir `memory/*.md` 会作为 advisory context 注入 system prompt。 |
 | Learn 工具 | 已完成 MVP 版 | `learn` 写入 `.local-agent/memory/learned.md`，用于显式沉淀可复用经验。 |
-| Memory Consolidation | 已完成 MVP 版 | `--memory-consolidation auto|llm` 从 session 抽取长期经验并写入 `.local-agent/memory/*.md`；默认 `off`。 |
+| Memory Consolidation | 已完成 MVP 版 | `--memory-consolidation auto|llm` 从 session 抽取长期经验；默认 `off`，开启后默认写 state dir，`--memory-scope project` 才写 `.local-agent/memory/*.md`。 |
 | Authored Skills Discovery | 已完成 MVP 版 | `.local-agent/skills/<name>/SKILL.md` 启动时只注入 name、description、source path，正文按需读取。 |
 | Memory / Skills 方案 | 已完成设计 | `docs/memory-skills-implementation-plan.md` 明确 Markdown memory 注入、`learn`、skills discovery、managed skills/autolearn 的分阶段方案。 |
 | P7 综合压测记录 | 已完成 | `docs/pressure-test-2026-07-08.md` 记录压测证据、OMP 对应机制和 LCA 措施。 |
-| 重复工具调用熔断 | 已完成 MVP 版 | 最近窗口内同名同参工具调用超过阈值时跳过，并在连续命中后停止本轮。 |
+| 重复工具调用熔断 / forced-final steering | 已完成 MVP 版 | 最近窗口内同名同参工具调用超过阈值时跳过；重复命中后下一轮不给工具 schema，强制模型基于已有证据输出最终回答；连续命中仍有硬停兜底。 |
 | Tool Result Pruning | 已完成 MVP 版 | `ToolResult.useless` 支持标记无信息结果；空搜索/LSP 结果标记 useless；发送给模型的上下文会把 useless 和 superseded 工具结果折叠成 notice，session 原文保留。 |
 | Todo Steering | 已完成 MVP 版 | 未完成 todo 会作为 runtime reminder 注入发送给模型的 system context，即使未触发 compaction 也能帮助模型保持方向。 |
 | Synthetic Tool Result | 已完成 MVP 版 | deadline 到期、用户中断、`finish_reason=length` 时会补齐剩余 tool_call 的 tool result。 |
-| 测试基线 | 已完成 | 本地正常环境下 136 个测试通过。 |
+| 测试基线 | 已完成 | 本地正常环境下 140 个测试通过。 |
 
 ## 下一步 Todo
 
@@ -196,7 +196,7 @@
 | T-036 | 实现 OMP 风格 auto summary | 已完成 MVP 版 | P7 | 默认 `summary_mode=auto`，按 reserve 阈值触发 LLM 摘要，空结果或 LLM 错误会回退本地摘要。 |
 | T-037 | 实现轻量 LSP 工具 | 已完成 MVP 版 | P7 | 不启动外部 server，使用 AST/静态扫描提供 Python、Java、JavaScript、TypeScript、Vue 的 symbols/definition/references/diagnostics。 |
 | T-038 | 固化 Memory / Skills 方案 | 已完成 | P7 | 已新增 `docs/memory-skills-implementation-plan.md`，并在 OMP 架构笔记补充 memory backend、learn、managed skills、skills discovery。 |
-| T-039 | Markdown memory 启动注入 | 已完成 MVP 版 | P7 | 读取 `.local-agent/memory/*.md` 并以 advisory block 注入 system prompt，带 source path 和字符预算。 |
+| T-039 | Markdown memory 启动注入 | 已完成 MVP 版 | P7 | 读取项目 `.local-agent/memory/*.md` 和 state dir `memory/*.md`，并以 advisory block 注入 system prompt，带 source path 和字符预算。 |
 | T-040 | 实现 `learn` 工具 | 已完成 MVP 版 | P7 | 把可复用 lesson 写入 `.local-agent/memory/learned.md`，限制长度并清洗会进入 prompt 的字段。 |
 | T-041 | Authored skills discovery | 已完成 MVP 版 | P7 | 先扫 `.local-agent/skills/<name>/SKILL.md`，system prompt 只列 name / description / source path，正文按需读取。 |
 | T-042 | Managed skills / autolearn | 暂缓 | P7 | 默认关闭，后续按 OMP 风格加入 `manage_skill`，generated skills 与 authored skills 隔离且优先级最低。 |
@@ -208,7 +208,8 @@
 | T-048 | LSP workspace/document symbols 兼容别名 | 已完成 MVP 版 | P7 | `lsp_workspace_symbols` / `lsp_document_symbols` 已注册为 `lsp_symbols` 只读别名，减少 OMP/Codex 风格提示迁移摩擦。 |
 | T-049 | OMP 风格 runtime state 与 workspace 解耦 | 已完成 MVP 版 | P7 | `--state-dir` / `AGENT_STATE_DIR` 已落地；默认 sessions/todos/patch logs 使用用户级状态目录，避免只读跨项目分析在目标仓库写 `.local-agent/sessions`。 |
 | T-050 | 用户级/项目级 AGENTS 与 sticky RULES | 已完成 MVP 版 | P7 | 支持 `AGENT_CONFIG_DIR` 下的用户级 `AGENTS.md` / `RULES.md`，以及 workspace `.local-agent/AGENTS.md` / `RULES.md`；AGENTS 启动注入，RULES 每次 provider request 前注入。 |
-| T-051 | Session memory consolidation | 已完成并 review | P7 | `memory_consolidation=off|auto|llm` 已落地；默认 off，显式开启后从本轮 session 抽取长期 project/decisions/conventions/learned，并追加到 `.local-agent/memory/*.md`；测试覆盖成功写入、坏 JSON 不写、默认 off 不额外调用 LLM/不写 memory。 |
+| T-051 | Session memory consolidation | 已完成并 review | P7 | `memory_consolidation=off|auto|llm` 和 `memory_scope=state|project` 已落地；默认 off，开启后默认追加到 state dir `memory/*.md`，显式 project 才写 `.local-agent/memory/*.md`；测试覆盖默认 state、显式 project、坏 JSON 不写、默认 off 不额外调用 LLM/不写 memory。 |
+| T-052 | 重复工具后强制最终回答 steering | 已完成 MVP 版 | P7 | 用户本机企业压测 session `20260708T062614211387Z` 暴露 `feePlan` 重复搜索后硬停且无最终分析；runtime 现在会在重复工具命中后注入 steering，并让下一次 LLM 请求 `tools=[]`。 |
 
 ## 风险清单
 
@@ -227,12 +228,12 @@
 | R-010 | approval prompt 等待耗尽预算 | 已关闭 MVP 版 | 用户长时间不确认工具调用时，确认后工具可能执行成功，但下一次 deadline 检查立刻停止。 | approval prompt 已按剩余 deadline 等待 stdin；deadline 到期直接取消并返回 tool error。 |
 | R-012 | 日用命令仍依赖用户手写工具流程 | 已关闭 MVP 版 | 用户不应每次提示“先 list/read，再 dry_run，再 test/diff”；否则 LCA 更像压测脚本而不是本地编程助手。 | 已采纳 OMP 分层设计：system prompt 固化默认流程，tool descriptions 说明工具规范，runtime nudge 做轻量纠偏。 |
 | R-013 | Memory / skills 注入长期 prompt injection 或陈旧事实 | 已缓解，managed skills 仍暂缓 | memory 和 generated skills 会跨 session 影响模型，错误或恶意内容可能持续放大。 | memory 和 authored skills 注入区已标注 advisory；已设置注入预算并清洗 learned / skill description 字段；managed skills 默认关闭且 authored skills 优先。 |
-| R-014 | 重复工具调用循环导致 budget 耗尽且无最终回答 | 已进一步缓解 | 模型可能在同一工具参数上循环，用户只得到预算停止信息。 | 已补最近窗口重复工具调用熔断、`ToolResult.useless`、空结果标记、provider-bound useless/superseded pruning 和 open todo runtime reminder；等待用户本机真实联网压测输出后再决定是否引入 OMP 风格 ToolChoiceQueue / soft tool requirement。 |
+| R-014 | 重复工具调用循环导致 budget 耗尽且无最终回答 | 已进一步缓解 | 模型可能在同一工具参数上循环，用户只得到预算停止或重复工具硬停信息。 | 已补最近窗口重复工具调用熔断、`ToolResult.useless`、空结果标记、provider-bound useless/superseded pruning、open todo runtime reminder，以及 duplicate-tool forced-final steering；下一步用户复跑企业压测验证是否能产出最终分析。 |
 | R-015 | 企业项目源码和需求可能被发送到三方 AI API | 用户已确认，当前 Codex 环境阻断代跑 | 联网 LCA 压测会把进入上下文的企业代码/需求发给百炼。 | 用户已确认可外发；当前 Codex 执行环境拒绝代跑该联网压测。LCA 自身不内置禁止外发，按 OMP 思路由用户、provider、permission 和运行环境策略决定。 |
 | R-016 | 跨项目运行时 token 配置绑定目标 workspace `.env` | 已关闭 MVP 版 | `--cwd` 切到其他项目后，LCA 仓库 `.env` 不会自动加载。 | 已新增 `--env-file` 和 `./agent` 安装目录 `.env` 自动加载；凭据配置与 `--cwd` 解耦。 |
 | R-017 | 只读任务仍在目标 workspace 写 runtime 状态 | 已关闭 MVP 版 | 目标仓库会出现 `.local-agent/sessions`，不利于企业项目零业务落盘压测。 | 已参考 OMP 将 sessions 放在用户 agent dir 的设计，实现 `--state-dir`；sessions/todos/patch logs 与 workspace 解耦。 |
 | R-018 | AGENTS/RULES 长期注入可能与当前任务冲突 | 已缓解，持续关注 | 用户级或项目级规则如果过期，会跨 session 影响模型判断。 | 注入区明确 advisory；system prompt 明确当前用户指令和源码证据优先；RULES 适合短规则，长背景放 AGENTS 或 memory。 |
-| R-019 | 自动 memory consolidation 可能隐式写入陈旧或敏感内容 | 已缓解，持续关注 | session 中的企业信息、临时结论或模型误判如果自动写入 memory，会跨 session 放大。 | 默认 `off`；显式开启才写；只接受严格 JSON 的四类短条目；坏 JSON、空结果、deadline 耗尽、本轮已显式写 memory 时不写；memory 仍是 advisory。 |
+| R-019 | 自动 memory consolidation 可能隐式写入陈旧或敏感内容 | 已进一步缓解，持续关注 | session 中的企业信息、临时结论或模型误判如果自动写入 memory，会跨 session 放大。 | 默认 `off`；显式开启后默认写用户级 state dir 的 memory，只有 `memory_scope=project` 才写项目 `.local-agent/memory`；只接受严格 JSON 的四类短条目；坏 JSON、空结果、deadline 耗尽、本轮已显式写 memory 时不写；memory 仍是 advisory。 |
 
 ## 架构决策
 
@@ -248,7 +249,7 @@
 | ADR-013 | Memory / skills 按 OMP 思路分阶段本地化。 | Markdown memory 启动注入、显式 `learn` 和 authored skills discovery 已落地；最后才评估 managed skills/autolearn；不引入 Hindsight、Mnemopi、向量库或插件市场。 |
 | ADR-014 | Runtime 问题优先采用 OMP 已验证设计。 | 对 deadline、compaction、permission、synthetic tool result、todo/tool-choice steering、pruning 这类 OMP 已经覆盖的机制，不再为了“自己造一套”而绕开；LCA 不内置“企业数据不能外发”禁令，但必须尊重当前执行宿主或企业环境的策略拦截。 |
 | ADR-015 | 人工上下文按 AGENTS/RULES 分层。 | 参照 Claude Code 与 OMP 的上下文文件/Sticky rules 分层：`AGENTS.md` 作为启动背景，`RULES.md` 作为短规则每轮注入；二者不同于长期 memory 和 session summary。 |
-| ADR-016 | Session memory consolidation 默认关闭，显式开启。 | 这一步会写项目 `.local-agent/memory`，不同于只发给模型的 context compaction；默认 off 可以保护只读分析和企业项目零业务落盘，开启后再用 LLM 抽取长期经验。 |
+| ADR-016 | Session memory consolidation 默认关闭；开启后默认写 state memory。 | 这一步不同于只发给模型的 context compaction；默认 off 可以保护只读分析，开启后默认写用户级 state dir，只有显式 `memory_scope=project` 才写项目 `.local-agent/memory`。 |
 | ADR-003 | Excel 作为人工视图，Markdown 作为开发协作 Agent 可读事实源。 | 这套文档服务于开发 LCA 的过程；`.xlsx` 是二进制展示产物，不适合作为协作 Agent 的事实源。 |
 | ADR-004 | 第一阶段 memory 使用 Markdown。 | Markdown 简单、可审计、封闭 VM 友好；暂不引入 SQLite 或向量库。 |
 | ADR-005 | 第一阶段使用 anchored patch，不做 AST edit。 | hash + old_text + line 校验已经足够支撑 MVP 的可控修改。 |
@@ -260,10 +261,10 @@
 | 项目 | 结论 | 依据 |
 |---|---|---|
 | 主链路 | 通过 | 百炼真实小改复测已跑通 todo、dry_run、apply_patch、session allow、rollback、run_tests、git_diff。 |
-| 测试 | 通过 | P5 收口时 90 个 unittest、compileall、xlsx 检查、diff check 均通过；P7 当前代码已跑通 136 个 unittest、compileall 和 diff check。 |
+| 测试 | 通过 | P5 收口时 90 个 unittest、compileall、xlsx 检查、diff check 均通过；P7 当前代码已跑通 140 个 unittest、compileall 和 diff check。 |
 | 日用入口 | 通过 | README 已补只读分析和小改任务命令模板。 |
 | 开放风险 | 可接受 | shell 仍非沙箱、prompt injection 仍需靠审批和封闭 VM；token budget / output reserve / managed skills 留到后续评估。 |
-| 下一阶段 | P7 轻量高级能力真实压测后续 | 企业项目联网压测已获用户允许，但当前 Codex 环境不能代跑；跨项目 env-file、轻量 pruning / todo steering、memory consolidation 已完成。ToolChoiceQueue / soft tool requirement 暂不引入，等待用户本机真实联网压测是否仍出现工具方向收敛问题。 |
+| 下一阶段 | P7 轻量高级能力真实压测后续 | 企业项目联网压测已获用户允许，用户本机 session `20260708T062614211387Z` 已暴露 `feePlan` 重复搜索无最终回答；跨项目 env-file、轻量 pruning / todo steering、memory consolidation 和 duplicate-tool forced-final steering 已完成。下一步复跑同一企业命令，若仍出现方向收敛问题再引入完整 ToolChoiceQueue / soft tool requirement。 |
 
 ## 推荐工作流
 
@@ -298,7 +299,7 @@
 
 用户确认本文件后，建议按以下顺序继续：
 
-1. 用百炼跑一次真实任务，验证默认工作流是否不再需要用户手写工具顺序。
+1. 用用户本机相同企业压测命令复跑，验证 duplicate-tool forced-final steering 是否能把重复搜索收束成最终分析。
 2. 用默认 `--summary-mode auto --context-char-budget` 跑一次长上下文压测，验证 OMP 风格 auto summary 的真实 provider 兼容性。
 3. 用 `--allow-dir` 跑一次“需求文档目录 + 代码项目目录”的真实工作流。
 4. 让 Agent 在 Python/Java/Vue/TS 项目里主动调用 `lsp_definition` / `lsp_references` / `lsp_diagnostics`，验证轻量多语言 LSP 工具是否能改善定位效率。

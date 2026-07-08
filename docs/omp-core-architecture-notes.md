@@ -379,8 +379,9 @@ OMP 的 skills 也分层：
 
 我们项目当前状态：
 
-- 已有 Markdown memory：`.local-agent/memory/project.md`、`decisions.md`、`conventions.md`、`learned.md`；
-- 这些 memory 会作为 advisory context 进入新 session system prompt；
+- 已有项目 Markdown memory：`.local-agent/memory/project.md`、`decisions.md`、`conventions.md`、`learned.md`；
+- 已有 state dir Markdown memory：`<state-dir>/memory/{project,decisions,conventions,learned}.md`，用于默认 session memory consolidation；
+- 项目 memory 和 state memory 都会作为 advisory context 进入新 session system prompt；
 - 已有 `learn` 工具，可写入 `.local-agent/memory/learned.md`；
 - 已有 authored skills discovery：`.local-agent/skills/<name>/SKILL.md` 启动时只注入 name / description / source path，正文按需读取；
 - 尚无 managed skills / autolearn；
@@ -550,7 +551,7 @@ LCA 已在 T-052 直接采纳这个设计的 MVP 版：
 - 已增加 `--state-dir` / `AGENT_STATE_DIR`；
 - 默认 state root 为 `${XDG_STATE_HOME:-~/.local/state}/local-coding-agent`；
 - sessions/todos/patch logs 默认写入 `state_root/workspaces/<workspace-key>/` 下；
-- `--cwd/.local-agent/memory`、`.local-agent/skills` 继续项目本地，因为它们是项目知识，不是 runtime transcript；
+- 显式项目 memory 和 `.local-agent/skills` 继续项目本地，因为它们是项目知识；自动 memory consolidation 默认写 state dir 的 `memory/`，只有显式 `memory_scope=project` 才回写项目 `.local-agent/memory`；
 - 对“企业项目零业务落盘只读压测”，新 session 不应再在目标仓库创建 `.local-agent/sessions`。
 
 如果明确想设保险丝：

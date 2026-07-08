@@ -21,6 +21,7 @@ TOOL_APPROVAL_POLICIES = {"allow", "prompt", "deny"}
 APPROVAL_MODES = {"always-ask", "write", "yolo"}
 SUMMARY_MODES = {"auto", "local", "llm"}
 MEMORY_CONSOLIDATION_MODES = {"off", "auto", "llm"}
+MEMORY_SCOPES = {"state", "project"}
 
 
 @dataclass(frozen=True)
@@ -42,6 +43,7 @@ class AgentConfig:
     context_recent_messages: int = DEFAULT_CONTEXT_RECENT_MESSAGES
     summary_mode: str = "auto"
     memory_consolidation: str = "off"
+    memory_scope: str = "state"
 
 
 def load_config(
@@ -63,6 +65,7 @@ def load_config(
     context_recent_messages: int | None = None,
     summary_mode: str | None = None,
     memory_consolidation: str | None = None,
+    memory_scope: str | None = None,
     allowed_dirs: object | None = None,
 ) -> AgentConfig:
     file_config = _load_json_config(config_path)
@@ -170,6 +173,13 @@ def load_config(
         or "off"
     )
     resolved_memory_consolidation = _memory_consolidation_mode(raw_memory_consolidation)
+    raw_memory_scope = (
+        memory_scope
+        or file_config.get("memory_scope")
+        or os.environ.get("AGENT_MEMORY_SCOPE")
+        or "state"
+    )
+    resolved_memory_scope = _memory_scope(raw_memory_scope)
     raw_allowed_dirs = (
         allowed_dirs
         if allowed_dirs is not None
@@ -201,6 +211,7 @@ def load_config(
         context_recent_messages=resolved_context_recent_messages,
         summary_mode=resolved_summary_mode,
         memory_consolidation=resolved_memory_consolidation,
+        memory_scope=resolved_memory_scope,
     )
 
 
@@ -274,6 +285,24 @@ def _memory_consolidation_mode(raw_mode: object) -> str:
     resolved = aliases.get(mode, mode)
     if resolved not in MEMORY_CONSOLIDATION_MODES:
         raise ConfigError("memory_consolidation must be one of: off, auto, llm.")
+    return resolved
+
+
+def _memory_scope(raw_scope: object) -> str:
+    if not isinstance(raw_scope, str):
+        raise ConfigError("memory_scope must be a string.")
+    scope = raw_scope.strip().lower()
+    aliases = {
+        "runtime": "state",
+        "state-dir": "state",
+        "statedir": "state",
+        "user": "state",
+        "workspace": "project",
+        "repo": "project",
+    }
+    resolved = aliases.get(scope, scope)
+    if resolved not in MEMORY_SCOPES:
+        raise ConfigError("memory_scope must be one of: state, project.")
     return resolved
 
 

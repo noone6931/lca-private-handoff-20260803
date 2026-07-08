@@ -35,7 +35,7 @@ Default working style:
 - After changes, run the most relevant tests or checks available in the workspace. If you cannot run them, say why.
 - Inspect git_diff after writing so the final answer can summarize exactly what changed.
 - Do not claim a command, test, or diff passed unless you actually ran the relevant tool.
-- Project memory is advisory. Current user instructions and direct repository evidence override memory. Do not write memory or use learn unless the user asks you to remember something or a durable convention is clearly established.
+- Memory is advisory. Current user instructions and direct repository evidence override memory. Do not write memory or use learn unless the user asks you to remember something or a durable convention is clearly established.
 - User/project AGENTS.md context and RULES.md sticky rules are advisory operating guidance. Current user instructions and direct repository evidence still take precedence when they conflict.
 - Keep final answers concise and include changed files, verification, and any remaining risk.
 """
@@ -64,6 +64,7 @@ MAX_SKILL_DESCRIPTION_CHARS = 320
 MAX_IDENTICAL_TOOL_CALLS_IN_RECENT_WINDOW = 3
 REPEAT_TOOL_CALL_WINDOW = 12
 MAX_DUPLICATE_TOOL_GUARD_HITS = 8
+MAX_DUPLICATE_TOOL_FINAL_ANSWER_STEERS = 2
 USELESS_TOOL_RESULT_NOTICE = "[Uneventful tool result elided during local context pruning]"
 SUPERSEDED_TOOL_RESULT_NOTICE = "[Superseded by a newer equivalent tool result during local context pruning]"
 
@@ -115,6 +116,8 @@ class AgentRuntime:
         self._summary_cache: dict[str, str] = {}
         self._recent_tool_call_signatures: list[str] = []
         self._duplicate_tool_guard_hits = 0
+        self._duplicate_tool_final_answer_steers = 0
+        self._force_final_answer_without_tools = False
         self._state_dir = config.state_dir or config.workspace / ".local-agent"
         self._session = JsonlSessionStore(
             config.workspace,
@@ -123,7 +126,11 @@ class AgentRuntime:
             continue_recent=continue_session,
         )
         self._user_config_dir = default_config_root()
-        system_prompt = _system_prompt_with_startup_context(config.workspace)
+        system_prompt = _system_prompt_with_startup_context(
+            config.workspace,
+            self._user_config_dir,
+            state_dir=self._state_dir,
+        )
         self._messages: list[dict[str, Any]] = [
             {"role": "system", "content": system_prompt},
             *self._session.load_messages(),
@@ -162,11 +169,16 @@ class AgentRuntime:
 
             self._session.append("llm_request", {"step": step})
             messages_for_model = self._messages_for_model(deadline)
+            tools_for_model = [] if self._force_final_answer_without_tools else self._registry.schemas()
+            force_final_answer = self._force_final_answer_without_tools
+            self._force_final_answer_without_tools = False
             response = self._client.chat(
                 messages_for_model,
-                self._registry.schemas(),
+                tools_for_model,
                 timeout=self._remaining_timeout(deadline),
             )
+            if force_final_answer:
+                self._session.append("runtime_steering", {"kind": "forced_final_answer", "step": step})
             message = {**response.message, "role": "assistant"}
             self._messages.append(message)
             self._session.append("assistant", message)
@@ -187,6 +199,7 @@ class AgentRuntime:
                 name = function.get("name") or ""
                 arguments = function.get("arguments") or "{}"
                 self._log_tool_start(name, arguments)
+                duplicate_hits_before = self._duplicate_tool_guard_hits
                 try:
                     result = self._execute_tool_with_repeat_guard(name, arguments, tool_context)
                 except KeyboardInterrupt:
@@ -204,6 +217,13 @@ class AgentRuntime:
                     is_error=result.is_error,
                     useless=result.useless,
                 )
+                duplicate_skipped = self._duplicate_tool_guard_hits > duplicate_hits_before
+                if duplicate_skipped and self._steer_after_duplicate_tool_call(name):
+                    self._append_synthetic_tool_results(
+                        tool_calls[index + 1 :],
+                        self._duplicate_tool_stop_message(),
+                    )
+                    break
                 if self._duplicate_tool_guard_hits >= MAX_DUPLICATE_TOOL_GUARD_HITS:
                     self._append_synthetic_tool_results(
                         tool_calls[index + 1 :],
@@ -473,6 +493,29 @@ class AgentRuntime:
             is_error=True,
         )
 
+    def _steer_after_duplicate_tool_call(self, name: str) -> bool:
+        if self._duplicate_tool_final_answer_steers >= MAX_DUPLICATE_TOOL_FINAL_ANSWER_STEERS:
+            return False
+        self._duplicate_tool_final_answer_steers += 1
+        content = (
+            "Runtime steering: repeated identical tool calls are no longer useful. "
+            "Your next response must be a final answer without tool calls. "
+            "Use the evidence already collected, state uncertainty explicitly, and list exact next files or queries "
+            "instead of repeating prior searches."
+        )
+        self._messages.append({"role": "user", "content": content})
+        self._session.append(
+            "runtime_steering",
+            {
+                "kind": "duplicate_tool_final_answer",
+                "tool": name,
+                "duplicate_hits": self._duplicate_tool_guard_hits,
+                "steer_count": self._duplicate_tool_final_answer_steers,
+            },
+        )
+        self._force_final_answer_without_tools = True
+        return True
+
     def _deadline_exceeded(self, deadline: float | None) -> bool:
         return deadline is not None and time.monotonic() >= deadline
 
@@ -519,11 +562,18 @@ class AgentRuntime:
         extracted = self._llm_memory_consolidation(transcript, deadline)
         if not extracted:
             return
-        written = _append_consolidated_memory(self._config.workspace, self._session.session_id, extracted)
+        memory_root = _memory_consolidation_root(
+            self._config.workspace,
+            self._state_dir,
+            self._config.memory_scope,
+        )
+        written = _append_consolidated_memory(memory_root, self._session.session_id, extracted)
         self._session.append(
             "memory_consolidation",
             {
                 "mode": mode,
+                "scope": self._config.memory_scope,
+                "memory_root": str(memory_root),
                 "status": "written" if written else "empty",
                 "written": written,
             },
@@ -661,7 +711,12 @@ def _estimate_message_chars(messages: list[dict[str, Any]]) -> int:
     return sum(len(json.dumps(message, ensure_ascii=False, default=str)) for message in messages)
 
 
-def _system_prompt_with_startup_context(workspace: Path, user_config_dir: Path | None = None) -> str:
+def _system_prompt_with_startup_context(
+    workspace: Path,
+    user_config_dir: Path | None = None,
+    *,
+    state_dir: Path | None = None,
+) -> str:
     blocks = [SYSTEM_PROMPT.rstrip()]
     startup_context = _load_startup_context_files(
         workspace,
@@ -675,11 +730,11 @@ def _system_prompt_with_startup_context(workspace: Path, user_config_dir: Path |
             "Prefer current user instructions and freshly inspected files when they conflict.\n\n"
             f"{startup_context}"
         )
-    memory = _load_startup_memory(workspace, max_chars=STARTUP_MEMORY_CHAR_LIMIT)
+    memory = _load_startup_memory(workspace, state_dir=state_dir, max_chars=STARTUP_MEMORY_CHAR_LIMIT)
     if memory:
         blocks.append(
-            "[Project memory]\n"
-            "The following Markdown memory is advisory project context loaded from .local-agent/memory. "
+            "[Memory]\n"
+            "The following Markdown memory is advisory context loaded from project and state memory. "
             "Prefer current user instructions and freshly inspected files when they conflict.\n\n"
             f"{memory}"
         )
@@ -705,12 +760,28 @@ def _load_startup_context_files(workspace: Path, user_config_dir: Path, *, max_c
     return _load_markdown_blocks(workspace, candidates, max_chars=max_chars, truncation_marker="...<earlier context truncated>\n")
 
 
-def _load_startup_memory(workspace: Path, *, max_chars: int) -> str:
-    memory_dir = workspace / ".local-agent" / "memory"
-    if max_chars <= 0 or not memory_dir.exists():
+def _load_startup_memory(workspace: Path, *, state_dir: Path | None = None, max_chars: int) -> str:
+    if max_chars <= 0:
         return ""
-    paths = [memory_dir / f"{name}.md" for name in STARTUP_MEMORY_NAMES]
+    memory_dirs = _startup_memory_dirs(workspace, state_dir)
+    paths = [memory_dir / f"{name}.md" for memory_dir in memory_dirs for name in STARTUP_MEMORY_NAMES]
     return _load_markdown_blocks(workspace, paths, max_chars=max_chars, truncation_marker="...<earlier memory truncated>\n")
+
+
+def _startup_memory_dirs(workspace: Path, state_dir: Path | None) -> list[Path]:
+    candidates = [workspace / ".local-agent" / "memory"]
+    if state_dir is not None:
+        candidates.append(state_dir / "memory")
+    memory_dirs: list[Path] = []
+    seen: set[Path] = set()
+    for candidate in candidates:
+        resolved = candidate.expanduser().resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        if resolved.exists() and resolved.is_dir():
+            memory_dirs.append(resolved)
+    return memory_dirs
 
 
 def _load_sticky_rules(workspace: Path, user_config_dir: Path, *, max_chars: int) -> str:
@@ -1499,13 +1570,18 @@ def _clean_consolidated_memory_item(item: str) -> str:
     return cleaned
 
 
+def _memory_consolidation_root(workspace: Path, state_dir: Path, scope: str) -> Path:
+    if scope == "project":
+        return workspace / ".local-agent" / "memory"
+    return state_dir / "memory"
+
+
 def _append_consolidated_memory(
-    workspace: Path,
+    memory_dir: Path,
     session_id: str,
     items_by_bucket: dict[str, list[str]],
 ) -> dict[str, int]:
     written: dict[str, int] = {}
-    memory_dir = workspace / ".local-agent" / "memory"
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     for bucket in MEMORY_CONSOLIDATION_BUCKETS:
         items = items_by_bucket.get(bucket) or []
