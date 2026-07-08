@@ -17,10 +17,10 @@ python3 scripts/sync_project_excel.py
 | 字段 | 当前值 | 说明 |
 |---|---|---|
 | 最终目标 | 个人本地编程助手 Agent | 本地优先、封闭 VM 可用、只访问指定 AI API，能读代码、搜代码、改代码、跑测试、生成 diff、沉淀项目记忆。 |
-| 当前阶段 | P7：轻量高级能力与真实压测 | P6 默认工作流 MVP 已落地；P7 已补 OMP 风格 auto summary、多语言轻量 LSP、multi-root、startup context/rules、startup memory、learn、可选 memory consolidation、authored skills discovery，并通过综合压测发现和修复重复工具调用循环，新增 OMP 风格 tool result pruning / todo steering；2026-07-08 已按 OMP 思路完成 runtime state 与 cwd 分层，自动 memory consolidation 默认写 state dir；用户本机企业压测 session `20260708T073252231781Z` 已验证 allowed-dir 需求文档前置读取成功，但暴露同文件连续切片读取漂移，已补 repeated read_file final-answer steering。 |
+| 当前阶段 | P7：轻量高级能力与真实压测 | P6 默认工作流 MVP 已落地；P7 已补 OMP 风格 auto summary、多语言轻量 LSP、multi-root、startup context/rules、startup memory、learn、可选 memory consolidation、authored skills discovery，并通过综合压测发现和修复重复工具调用循环，新增 OMP 风格 tool result pruning / todo steering；2026-07-08 已按 OMP 思路完成 runtime state 与 cwd 分层，自动 memory consolidation 默认写 state dir；用户本机企业压测 session `20260708T074609696125Z` 已验证 allowed-dir 需求文档前置读取持续生效，但暴露“只读压测 + 下一步实现”误关同文件读取 guard 以及最终回答遗忘已读文档，已补显式只读优先和 forced-final 已读文件证据摘要。 |
 | 推荐入口 | `./agent "阅读当前项目"` | 自动设置 `PYTHONPATH=src`，默认当前目录为 workspace。 |
 | Token 配置 | 环境变量 / `--env-file` / `.env` | `./agent` 会自动加载安装目录 `.env`，也可显式传 `--env-file`；真实环境变量优先。 |
-| 测试数 | 146 | 完整 unittest、compileall、diff check、xlsx 检查通过。 |
+| 测试数 | 147 | 完整 unittest、compileall、diff check、xlsx 检查通过。 |
 | 默认 budget_seconds | 600 | 单次任务默认 10 分钟墙钟预算；`--budget-seconds 0` 可关闭。 |
 | 默认 max_steps | 0 | 表示不限步；仅在用户显式设置时作为防失控保险丝。 |
 | 预算执行 | 细粒度 | LLM 请求和 shell/run_tests timeout 会按剩余预算夹紧；deadline 到期会补齐未执行工具结果。 |
@@ -53,7 +53,7 @@ python3 scripts/sync_project_excel.py
 | P4 | 上下文治理 | 简单 summary/compaction，工具输出折叠，支持长需求文件 | 已完成 MVP 版 | 100% | 首轮百炼只读 compaction 压测已通过；当前已补可选 LLM summary，后续再评估 token 预算、输出 reserve 和 recent 保留。 |
 | P5 | 安全与恢复增强 | synthetic tool result、patch preview、rollback、ask_user timeout、per-tool approval | 已完成并收口 | 100% | 主链路已通过真实百炼复测；后续只修日用反馈中的 P0/P1 问题。 |
 | P6 | 日用体验与默认工作流固化 | OMP 默认工作流本地化：system prompt、工具描述、轻量 runtime nudge | 已完成 MVP 版 | 100% | 进入真实任务压测。 |
-| P7 | 高级工程能力轻量版 | OMP 风格 auto summary、轻量 LSP、LSP 兼容别名、multi-root workspace roots、allowed-dir soft tool requirement、startup context/rules、startup memory、learn、memory consolidation、authored skills discovery、重复工具调用熔断、duplicate-tool forced-final steering、同文件切片读取漂移 guard、tool result pruning、todo steering、跨项目 env-file、runtime state dir、真实项目压测记录 | 进行中 | 99% | 企业项目联网压测已获用户允许，Codex 宿主不能代跑；用户本机 session `20260708T073252231781Z` 已先读真实需求 md，但后半段连续读取同一个大文件并偏离最终 5 点输出。已补 repeated read_file final-answer steering；下一步用户复跑同一命令，验证是否能先读需求、再搜索代码、最后按 5 点输出收束。 |
+| P7 | 高级工程能力轻量版 | OMP 风格 auto summary、轻量 LSP、LSP 兼容别名、multi-root workspace roots、allowed-dir soft tool requirement、startup context/rules、startup memory、learn、memory consolidation、authored skills discovery、重复工具调用熔断、duplicate-tool forced-final steering、同文件切片读取漂移 guard、tool result pruning、todo steering、跨项目 env-file、runtime state dir、真实项目压测记录 | 进行中 | 99% | 企业项目联网压测已获用户允许，Codex 宿主不能代跑；用户本机 session `20260708T074609696125Z` 已持续先读真实需求 md，但“只读压测 + 下一步实现”误关 read-file drift guard，最终回答还错误声称 V1.1 未读。已补显式只读优先和 forced-final 已读文件证据摘要；下一步用户复跑同一命令，验证是否能先读需求、再搜索代码、最后按 5 点输出收束。 |
 
 ## 已完成功能
 
@@ -104,7 +104,7 @@ python3 scripts/sync_project_excel.py
 | 重复工具调用熔断 / forced-final steering | 已完成 MVP 版 | `AgentRuntime._execute_tool_with_repeat_guard()` / `_steer_after_duplicate_tool_call()` | 最近窗口内同名同参工具调用超过阈值会返回 tool error；重复命中后注入 runtime steering，下一轮不给工具 schema，强制模型从已有证据输出最终回答；连续命中仍有硬停兜底 | 用户本机复跑企业需求压测；后续视结果评估完整 ToolChoiceQueue / soft tool requirement |
 | Tool result pruning | 已完成 MVP 版 | `ToolResult.useless` + provider-bound context pruning | `search_code` / LSP 空结果标记 useless；重复等价 read/search/LSP 旧结果在发给模型的上下文中替换为 notice，session 原文保留 | 继续真实长任务观察 |
 | Todo steering | 已完成 MVP 版 | provider-bound runtime todo reminder | 未完成 todo 会注入发送给模型的 system context，即使未触发 compaction 也能提醒模型保持任务方向 | 后续评估 OMP 风格 eager todo / mid-run nudge |
-| 测试覆盖 | 已完成 | 当前 140 个测试通过 | unittest、compileall、diff check、xlsx 检查通过 | 日用反馈补测 |
+| 测试覆盖 | 已完成 | 当前 147 个测试通过 | unittest、compileall、diff check、xlsx 检查通过 | 日用反馈补测 |
 
 ## 下一步 Todo
 
@@ -168,7 +168,8 @@ python3 scripts/sync_project_excel.py
 | T-056 | P0 | P7 | 重复工具后强制最终回答 steering | 已完成 MVP 版 | Agent | 用户本机企业压测已证明“重复工具硬停”仍会让真实需求分析没有最终答案 | 重复同参工具超过阈值后，runtime 追加 steering 并让下一次 LLM 请求 `tools=[]`；回归测试确认模型会返回 `final answer from collected evidence` |
 | T-057 | P0 | P7 | allowed-dir workspace roots 注入 | 已完成第三版，待复跑 | Agent | session `20260708T065705459243Z` / `20260708T070722601499Z` / `20260708T072404789287Z` 暴露模型仍不稳定读取 allowed-dir 需求文档，仅提示和工具观察不够 | system prompt/provider-bound context 增加 `[Workspace roots]`；`list_files {}` 根目录输出、path-not-found 和带 allowed-dir 的空搜索会提示 exact allowed dirs；需求/文档类任务创建 soft tool requirement，满足前只暴露 `list_files` / `read_file` 并要求读 allowed-dir 文档；测试覆盖不重复注入、工具观察提示和 soft requirement |
 | T-058 | P1 | P7 | 跨项目需求覆盖边界记录 | 已完成记录 | User + Agent | 用户确认当前测试项目可能无法完全覆盖需求，尤其结算需求可能需要其他项目协同 | 压测记录已说明单仓库只能输出候选前置能力和缺口；后续把相关项目也作为 `--allow-dir`，或让 Agent 先列“需要补充的项目清单” |
-| T-059 | P0 | P7 | 同文件连续切片读取漂移 guard | 已完成，待复跑 | Agent | session `20260708T073252231781Z` 已读需求文档，但后半段连续读取 `HandleCrclServiceApplication.java` 大量相邻范围，最终回答偏离用户要求 | 参考 OMP 病态子循环小上限：只读/分析类任务中，近期同一路径 `read_file` 超阈值后返回 tool error，并注入 final-answer steering；下一轮 `tools=[]`，要求回到原始输出结构；编辑类任务不触发 |
+| T-059 | P0 | P7 | 同文件连续切片读取漂移 guard | 已完成第二版，待复跑 | Agent | session `20260708T073252231781Z` 已读需求文档但连续读大文件漂移；session `20260708T074609696125Z` 又暴露“只读压测 + 下一步实现”误关 guard | 参考 OMP 病态子循环小上限：显式只读/不要修改文件/不要写文件优先于编辑词；只读/分析任务中近期同一路径 `read_file` 超阈值后返回 tool error，并注入 final-answer steering；下一轮 `tools=[]` |
+| T-060 | P0 | P7 | forced-final 已读文件证据摘要 | 已完成，待复跑 | Agent | session `20260708T074609696125Z` 明明已读 V1.1 需求文档，最终回答却称未读 | 参考 OMP runtime context/steering：重复工具 forced-final 消息会列出本轮已成功 `read_file` 的路径，要求模型不要声称这些文件未读，并回到用户原始输出结构 |
 
 ## 风险与决策
 
@@ -195,7 +196,7 @@ python3 scripts/sync_project_excel.py
 | 风险 | R-019 | 中 | memory consolidation 可能隐式写入陈旧或敏感内容 | 已进一步缓解，持续关注 | 默认 off；显式开启后默认写用户级 state dir 的 memory，只有 `memory_scope=project` 才写项目 `.local-agent/memory`；只接受严格 JSON 的短条目；坏 JSON、空结果、deadline 耗尽、本轮已显式写 memory 时不写 | OMP local memory 位于用户 agent dir，项目 `.omp/` 主要承载人工 context/rules/skills；我们按同一边界把自动 consolidation 默认放入 state dir，项目 memory 仍需显式写入。 |
 | 风险 | R-020 | 高 | multi-root allowed dir 没有稳定进入模型操作路径 | 已补第三版，待复跑 | session `20260708T065705459243Z` 和 `20260708T070722601499Z` 中模型尝试 `requirements` 并失败；session `20260708T072404789287Z` 已看到 roots 提示但仍未读需求文档，导致代码侧反推 | OMP 会显式提供 cwd/project context/rules，并通过 ToolChoiceQueue / soft tool requirement 做小上限纠偏；我们新增 `[Workspace roots]`、工具观察 roots 提示，并对需求/文档类任务前置 soft tool requirement。 |
 | 风险 | R-021 | 中 | 单仓库无法覆盖跨服务需求 | 已记录，持续关注 | 用户确认当前测试项目可能不覆盖完整需求；`拓展服务费结算` 可能在 incentive/settlement 等其他项目 | OMP 依赖用户提供完整 workspace/context；我们记录为压测边界，后续用多个 `--allow-dir` 接入相关项目，或者要求 Agent 明确输出“还需要哪个项目”。 |
-| 风险 | R-022 | 高 | 同文件连续切片读取导致任务漂移 | 已补 MVP 版，待复跑 | session `20260708T073252231781Z` 中模型连续读取同一大文件多个相邻区间，最后只总结该文件导出逻辑，没有按原始企业需求分析结构输出 | OMP 对病态子循环设置命名小上限，并通过 steering/pruning/deadline 收束；我们新增只读/分析任务的 repeated read_file guard，触发后强制下一轮无工具最终回答；编辑类任务不触发。 |
+| 风险 | R-022 | 高 | 同文件连续切片读取导致任务漂移 | 已补第二版，待复跑 | session `20260708T073252231781Z` 中模型连续读取同一大文件多个相邻区间；session `20260708T074609696125Z` 中显式只读任务因“下一步实现”措辞误关 guard，最终还遗忘已读需求文档 | OMP 对病态子循环设置命名小上限，并通过 steering/pruning/deadline/runtime context 收束；我们新增显式只读优先级、repeated read_file guard 和 forced-final 已读文件证据摘要，触发后强制下一轮无工具最终回答。 |
 | ADR | ADR-001 | 2026-07-07 | 优先采纳 OMP 成熟设计，按本地目标裁剪 | 已接受 | 好设计可直接采用，复杂度按需收敛 | OMP 是重要参考实现；我们不为了“避免复制”而绕开好设计。采用标准是收益是否大于复杂度，并且不破坏个人本地使用、封闭 VM、无公网依赖和第一阶段 MVP 边界。 |
 | ADR | ADR-002 | 2026-07-07 | max_steps 只作为防失控保险丝 | 已落地 | 默认值已改为 0，不限步 | OMP 的 stepCounter 主要用于 telemetry，终止靠无 tool_calls、deadline、abort；我们把 `max_steps` 仅作为显式保险丝。 |
 | ADR | ADR-003 | 2026-07-07 | todo、ask_user、per-tool approval 是主功能 | 已落地 | P3 已实现 | OMP 将 todo、approval、elicitation 做成可观测会话能力；我们 P3 先做终端轻量版，后续再补 UI 化。 |
@@ -231,13 +232,14 @@ python3 scripts/sync_project_excel.py
 | PT-011 | P0 | 已补第三版，待用户复跑验证 | `--allow-dir` 具体路径进入了提示和工具观察，但模型仍未稳定 `read_file` 真实需求文档。 | OMP 会把 cwd/project context 放进运行上下文，并用 ToolChoiceQueue / soft tool requirement 在模型偏航时限制工具和持续纠偏。 | 已补 allowed-dir soft tool requirement：任务明确提到需求/文档且有 allowed dirs 时，满足前只暴露 `list_files` / `read_file`，要求先 `read_file` allowed-dir 下候选需求文档；下一次同命令应先读需求文档再搜索主代码库。 |
 | PT-012 | P1 | 已记录 | 用户确认当前测试项目可能无法完全覆盖需求，结算需求可能需要其他项目配合。 | OMP 需要完整 workspace/context 才能做跨项目判断；证据缺失时应输出不确定点和需要补充的项目。 | 后续压测把相关项目也作为 `--allow-dir`，或让 Agent 先列出需要补充的项目/服务。 |
 | PT-013 | P0 | 已补 MVP 版，待用户复跑验证 | allowed-dir 需求文档已前置读取，但模型后续连续读取同一个大文件相邻区间，最终偏离原始 5 点输出。 | OMP 对病态工具子循环用小上限和 runtime steering 收束，不靠主步数。 | 已补同文件切片读取漂移 guard；下一次同命令应在证据足够后按 5 点要求输出，而不是继续读同一文件。 |
+| PT-014 | P0 | 已补第二版，待用户复跑验证 | session `20260708T074609696125Z` 已先读两份需求 md，但 prompt 中“如果下一步要实现”误触编辑词排除，导致只读 drift guard 未开启；最终回答还错误声称 V1.1 未读。 | OMP 将当前用户硬约束和 runtime state 持续放入上下文，并用 steering/tool-choice 小上限让模型回到原始任务；显式 readonly/permission 语义不应被后续普通业务词覆盖。 | 已改为显式只读/不要修改文件/不要写文件优先于编辑词；重复工具 forced-final steering 会列出本轮已读文件，要求模型不要声称这些文件未读；新增回归测试覆盖该 prompt 形态。 |
 
 ## P5 收口结论
 
 | 项目 | 结论 | 依据 |
 |---|---|---|
 | 主链路 | 通过 | 百炼真实小改复测已跑通 todo、dry_run、apply_patch、session allow、rollback、run_tests、git_diff。 |
-| 测试 | 通过 | P5 收口时 90 个 unittest、compileall、xlsx 检查、diff check 均通过；P7 当前代码已跑通 140 个 unittest、compileall 和 diff check。 |
+| 测试 | 通过 | P5 收口时 90 个 unittest、compileall、xlsx 检查、diff check 均通过；P7 当前代码已跑通 147 个 unittest、compileall 和 diff check。 |
 | 日用入口 | 通过 | README 已补只读分析和小改任务命令模板。 |
 | 开放风险 | 可接受 | shell 仍非沙箱、prompt injection 仍需靠审批和封闭 VM；token budget / output reserve / managed skills 继续后置评估。 |
 | 下一阶段 | P7 综合真实压测与 token 预算评估 | 验证默认工作流、auto summary、多语言轻量 LSP、multi-root、startup memory、learn 和 authored skills 是否足够日用。 |

@@ -43,7 +43,7 @@
 - `apply_patch` 已支持 `replace`、`insert_before`、`insert_after`，并兼容 Python 3.12。
 - 非交互审批、LLM 非 JSON 响应、session 恢复坏尾部、search_code 绝对路径泄漏等问题已经修复。
 - 已完成 Agent 自举测试：能够通过百炼模型调用工具读取、修改、测试和查看 diff。
-- 测试基线：146 个测试在正常本地环境通过。
+- 测试基线：147 个测试在正常本地环境通过。
 
 当前已具备：
 
@@ -80,7 +80,7 @@
 
 - Path-scoped rules 还未实现，作为下一步候选。
 - Managed skills / autolearn 继续暂缓。
-- 企业项目联网压测：用户已确认可外发给百炼，Codex 执行环境仍拒绝代跑将企业私有代码/需求发送到三方 API；用户本机 session `20260708T073252231781Z` 已先读取真实需求 md，说明 allowed-dir soft tool requirement 生效；但后半段连续读取 `HandleCrclServiceApplication.java` 相邻范围，最终回答偏离原始 5 点输出，已补 repeated read_file final-answer steering。
+- 企业项目联网压测：用户已确认可外发给百炼，Codex 执行环境仍拒绝代跑将企业私有代码/需求发送到三方 API；用户本机 session `20260708T074609696125Z` 已持续先读取真实需求 md，说明 allowed-dir soft tool requirement 生效；但“只读压测 + 下一步实现”误关 read-file drift guard，最终回答还错误声称 V1.1 未读，已补显式只读优先和 forced-final 已读文件证据摘要。
 - 用户确认当前测试项目可能无法完全覆盖需求，尤其“拓展服务费结算”可能需要其他项目配合；后续跨服务需求应把相关项目也作为 `--allow-dir`，或让 Agent 明确输出需要补充的项目/服务。
 - Runtime state 与 workspace 已解耦：`--state-dir` / `AGENT_STATE_DIR` 可指定用户级 state root；默认 `${XDG_STATE_HOME:-~/.local/state}/local-coding-agent/workspaces/<workspace-key>/`；sessions/todos/patch logs 已不再默认写入目标 `--cwd/.local-agent`。显式项目 memory/skills 仍保留在 workspace 中，自动 consolidation 默认写 state dir。
 - 已对 `/Users/chengming/mycode/project/crcl-open/crcl-open` 做本地 state-dir 验证：默认 state dir 为 `/Users/chengming/.local/state/local-coding-agent/workspaces/mycode-project-crcl-open-crcl-open-966d4fe7a33b`，目标仓库当前未发现 `.local-agent`。
@@ -103,7 +103,7 @@
 | P4 | 上下文治理 | 已完成 MVP 版 | 初版 summary / compaction、工具输出折叠、长需求文件工作流。 |
 | P5 | 安全与恢复增强 | 已完成并收口 | synthetic tool result、patch preview、回滚策略、非信任仓库提示、OMP 风格 approval model、approval prompt deadline cancel；真实小改复测通过。 |
 | P6 | 日用体验与默认工作流固化 | 已完成 MVP 版 | OMP 默认工作流本地化：system prompt、工具描述、轻量 runtime nudge。 |
-| P7 | 高级工程能力轻量版 | 进行中 | 已完成 OMP 风格 auto summary、多语言轻量 LSP、LSP 兼容别名、multi-root workspace roots 与工具观察提示、allowed-dir soft tool requirement、Markdown memory 启动注入、learn、可选 memory consolidation、authored skills discovery、综合压测记录、重复工具调用熔断、duplicate-tool forced-final steering、同文件切片读取漂移 guard、tool result pruning、todo steering、跨项目 env-file 和用户级 `--state-dir` runtime state 分层；path-scoped rules、DAP、TUI、subagents、reviewer、AST edit、managed skills 继续后置。 |
+| P7 | 高级工程能力轻量版 | 进行中 | 已完成 OMP 风格 auto summary、多语言轻量 LSP、LSP 兼容别名、multi-root workspace roots 与工具观察提示、allowed-dir soft tool requirement、Markdown memory 启动注入、learn、可选 memory consolidation、authored skills discovery、综合压测记录、重复工具调用熔断、duplicate-tool forced-final steering、同文件切片读取漂移 guard 第二版、tool result pruning、todo steering、跨项目 env-file 和用户级 `--state-dir` runtime state 分层；path-scoped rules、DAP、TUI、subagents、reviewer、AST edit、managed skills 继续后置。 |
 
 ## 已完成功能
 
@@ -154,7 +154,7 @@
 | Tool Result Pruning | 已完成 MVP 版 | `ToolResult.useless` 支持标记无信息结果；空搜索/LSP 结果标记 useless；发送给模型的上下文会把 useless 和 superseded 工具结果折叠成 notice，session 原文保留。 |
 | Todo Steering | 已完成 MVP 版 | 未完成 todo 会作为 runtime reminder 注入发送给模型的 system context，即使未触发 compaction 也能帮助模型保持方向。 |
 | Synthetic Tool Result | 已完成 MVP 版 | deadline 到期、用户中断、`finish_reason=length` 时会补齐剩余 tool_call 的 tool result。 |
-| 测试基线 | 已完成 | 本地正常环境下 140 个测试通过。 |
+| 测试基线 | 已完成 | 本地正常环境下 147 个测试通过。 |
 
 ## 下一步 Todo
 
@@ -240,7 +240,7 @@
 | R-019 | 自动 memory consolidation 可能隐式写入陈旧或敏感内容 | 已进一步缓解，持续关注 | session 中的企业信息、临时结论或模型误判如果自动写入 memory，会跨 session 放大。 | 默认 `off`；显式开启后默认写用户级 state dir 的 memory，只有 `memory_scope=project` 才写项目 `.local-agent/memory`；只接受严格 JSON 的四类短条目；坏 JSON、空结果、deadline 耗尽、本轮已显式写 memory 时不写；memory 仍是 advisory。 |
 | R-020 | multi-root allowed dir 没有稳定进入模型操作路径 | 已补第三版，待复跑 | 模型会猜 `requirements` 等不存在目录，或看到 roots 后仍不读取真实需求文档；session `20260708T072404789287Z` 证明仅提示和工具观察不够。 | 参考 OMP ToolChoiceQueue / soft tool requirement：需求/文档类任务在 allowed-dir 文档读取前只暴露 `list_files` / `read_file`，并要求先读取候选需求文档。 |
 | R-021 | 单仓库无法覆盖跨服务需求 | 已记录，持续关注 | 如果需求实际涉及 incentive/settlement/用户中心等其他项目，单仓库分析会误把“当前仓库未命中”当成完整结论。 | 参考 OMP 对 workspace/context 的依赖边界，后续把相关项目也作为 `--allow-dir`，或让 Agent 明确输出“需要补充哪个项目”。 |
-| R-022 | 同文件连续切片读取导致任务漂移 | 已补 MVP 版，待复跑 | session `20260708T073252231781Z` 中模型连续读取同一大文件多个相邻区间，最后只总结该文件导出逻辑，没有按原始企业需求分析结构输出。 | 参考 OMP 病态子循环小上限和 runtime steering：只读/分析类任务中，近期同一路径 `read_file` 超阈值后强制下一轮无工具最终回答；编辑类任务不触发。 |
+| R-022 | 同文件连续切片读取导致任务漂移 | 已补第二版，待复跑 | session `20260708T073252231781Z` 中模型连续读取同一大文件多个相邻区间；session `20260708T074609696125Z` 中显式只读任务因“下一步实现”措辞误关 guard，最终还遗忘已读需求文档。 | 参考 OMP 病态子循环小上限、runtime steering 和 runtime context：显式只读/不要修改文件/不要写文件优先于编辑词；近期同一路径 `read_file` 超阈值后强制下一轮无工具最终回答，并在 steering 里列出已读文件路径。 |
 
 ## 架构决策
 
@@ -269,7 +269,7 @@
 | 项目 | 结论 | 依据 |
 |---|---|---|
 | 主链路 | 通过 | 百炼真实小改复测已跑通 todo、dry_run、apply_patch、session allow、rollback、run_tests、git_diff。 |
-| 测试 | 通过 | P5 收口时 90 个 unittest、compileall、xlsx 检查、diff check 均通过；P7 当前代码已跑通 140 个 unittest、compileall 和 diff check。 |
+| 测试 | 通过 | P5 收口时 90 个 unittest、compileall、xlsx 检查、diff check 均通过；P7 当前代码已跑通 147 个 unittest、compileall 和 diff check。 |
 | 日用入口 | 通过 | README 已补只读分析和小改任务命令模板。 |
 | 开放风险 | 可接受 | shell 仍非沙箱、prompt injection 仍需靠审批和封闭 VM；token budget / output reserve / managed skills 留到后续评估。 |
 | 下一阶段 | P7 轻量高级能力真实压测后续 | 企业项目联网压测已获用户允许；跨项目 env-file、轻量 pruning / todo steering、memory consolidation、duplicate-tool forced-final steering、allowed-dir soft tool requirement 和 repeated read_file guard 已完成。下一步复跑同一企业命令，验证是否能先读需求、再搜代码、最后按 5 点结构输出。 |

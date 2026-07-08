@@ -779,7 +779,7 @@ class AgentRuntimeTests(unittest.TestCase):
             )
             with patch("local_agent.agent.OpenAICompatibleClient", _RepeatedReadFileRangeClient):
                 runtime = AgentRuntime(config, show_tool_logs=False)
-                result = runtime.run("修改这个大文件里的逻辑")
+                result = runtime.run("修改这个大文件里的逻辑，不要写 memory")
 
         tool_messages = [message for message in runtime._messages if message.get("role") == "tool"]
         repeated_messages = [
@@ -788,6 +788,39 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertEqual(result, "Stopped after reaching max_steps=10.")
         self.assertEqual(repeated_messages, [])
         self.assertNotIn(0, _RepeatedReadFileRangeClient.tools_seen)
+
+    def test_explicit_readonly_keeps_repeated_read_file_guard_with_implementation_wording(self) -> None:
+        _RepeatedReadFileRangeClient.calls = 0
+        _RepeatedReadFileRangeClient.tools_seen = []
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            target = workspace / "large.py"
+            target.write_text("\n".join(f"line {index}" for index in range(1, 80)), encoding="utf-8")
+            _RepeatedReadFileRangeClient.file_path = "large.py"
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=workspace,
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+                context_char_budget=0,
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _RepeatedReadFileRangeClient):
+                runtime = AgentRuntime(config, show_tool_logs=False)
+                result = runtime.run("这是一次只读压测。如果下一步要实现，请列出建议文件。")
+
+        steering_messages = [
+            str(message.get("content"))
+            for message in runtime._messages
+            if "repeated read_file slices from the same file" in str(message.get("content"))
+        ]
+        self.assertEqual(result, "final answer after enough file evidence")
+        self.assertEqual(_RepeatedReadFileRangeClient.tools_seen[-1], 0)
+        self.assertTrue(any("Already read these files in this run" in message for message in steering_messages))
+        self.assertTrue(any("large.py" in message for message in steering_messages))
 
     def test_keyboard_interrupt_synthesizes_remaining_tool_results(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

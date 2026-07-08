@@ -145,6 +145,22 @@ READ_FILE_DRIFT_GUARD_KEYWORDS = {
     "定位",
     "压测",
 }
+READ_FILE_DRIFT_GUARD_STRONG_READONLY_KEYWORDS = {
+    "do not edit files",
+    "do not modify files",
+    "don't edit files",
+    "don't modify files",
+    "no edits",
+    "read-only",
+    "readonly",
+    "不要改文件",
+    "不要修改文件",
+    "不要写文件",
+    "不修改文件",
+    "不写文件",
+    "禁止修改文件",
+    "只读",
+}
 READ_FILE_DRIFT_GUARD_EDIT_KEYWORDS = {
     "apply_patch",
     "change",
@@ -191,6 +207,7 @@ class AgentRuntime:
         self._duplicate_tool_final_answer_steers = 0
         self._repeated_read_file_guard_hits = 0
         self._repeated_read_file_final_answer_steers = 0
+        self._read_file_evidence_paths: list[str] = []
         self._read_file_drift_guard_enabled = False
         self._force_final_answer_without_tools = False
         self._soft_tool_requirement: SoftToolRequirement | None = None
@@ -308,6 +325,7 @@ class AgentRuntime:
                     is_error=result.is_error,
                     useless=result.useless,
                 )
+                self._record_read_file_evidence(name, arguments, result)
                 self._observe_soft_tool_requirement(name, arguments, result)
                 duplicate_skipped = self._duplicate_tool_guard_hits > duplicate_hits_before
                 repeated_read_skipped = self._repeated_read_file_guard_hits > repeated_read_hits_before
@@ -643,11 +661,13 @@ class AgentRuntime:
         if self._duplicate_tool_final_answer_steers >= MAX_DUPLICATE_TOOL_FINAL_ANSWER_STEERS:
             return False
         self._duplicate_tool_final_answer_steers += 1
+        evidence = self._read_file_evidence_summary()
         content = (
             "Runtime steering: repeated identical tool calls are no longer useful. "
             "Your next response must be a final answer without tool calls. "
             "Use the evidence already collected, state uncertainty explicitly, and list exact next files or queries "
             "instead of repeating prior searches."
+            f"{evidence}"
         )
         self._messages.append({"role": "user", "content": content})
         self._session.append(
@@ -666,11 +686,13 @@ class AgentRuntime:
         if self._repeated_read_file_final_answer_steers >= MAX_REPEATED_READ_FILE_FINAL_ANSWER_STEERS:
             return False
         self._repeated_read_file_final_answer_steers += 1
+        evidence = self._read_file_evidence_summary()
         content = (
             "Runtime steering: repeated read_file slices from the same file are no longer useful. "
             "Your next response must be a final answer without tool calls. "
             "Return to the user's original requested output structure, use the evidence already collected, "
             "state uncertainty explicitly, and list exact next files instead of continuing to read adjacent ranges."
+            f"{evidence}"
         )
         self._messages.append({"role": "user", "content": content})
         self._session.append(
@@ -683,6 +705,40 @@ class AgentRuntime:
         )
         self._force_final_answer_without_tools = True
         return True
+
+    def _record_read_file_evidence(self, name: str, arguments: str | dict[str, Any], result: ToolResult) -> None:
+        if name != "read_file" or result.is_error:
+            return
+        try:
+            parsed = arguments if isinstance(arguments, dict) else json.loads(arguments or "{}")
+        except json.JSONDecodeError:
+            return
+        if not isinstance(parsed, dict):
+            return
+        raw_path = parsed.get("path")
+        if not isinstance(raw_path, str) or not raw_path.strip():
+            return
+        display_path = _display_read_file_evidence_path(
+            self._config.workspace,
+            raw_path.strip(),
+            self._config.allowed_dirs,
+        )
+        if display_path in self._read_file_evidence_paths:
+            return
+        self._read_file_evidence_paths.append(display_path)
+        self._read_file_evidence_paths = self._read_file_evidence_paths[-20:]
+
+    def _read_file_evidence_summary(self) -> str:
+        if not self._read_file_evidence_paths:
+            return ""
+        recent_paths = self._read_file_evidence_paths[-12:]
+        lines = [
+            "",
+            "",
+            "Already read these files in this run; do not claim they were unread:",
+            *[f"- {path}" for path in recent_paths],
+        ]
+        return "\n".join(lines)
 
     def _append_soft_tool_requirement_message(self, requirement: SoftToolRequirement) -> None:
         content = _soft_tool_requirement_message(requirement)
@@ -1114,6 +1170,17 @@ def _display_context_path(workspace: Path, path: Path) -> str:
         pass
     try:
         return "~/" + str(path.relative_to(Path.home()))
+    except ValueError:
+        return str(path)
+
+
+def _display_read_file_evidence_path(workspace: Path, raw_path: str, allowed_dirs: tuple[Path, ...]) -> str:
+    try:
+        path = resolve_workspace_path(workspace, raw_path, allowed_dirs)
+    except PatchError:
+        return raw_path
+    try:
+        return str(path.relative_to(workspace))
     except ValueError:
         return str(path)
 
@@ -1583,6 +1650,8 @@ def _should_add_workflow_nudge(prompt: str) -> bool:
 
 def _should_guard_repeated_read_file(prompt: str) -> bool:
     lowered = prompt.lower()
+    if any(keyword in lowered for keyword in READ_FILE_DRIFT_GUARD_STRONG_READONLY_KEYWORDS):
+        return True
     if any(keyword in lowered for keyword in READ_FILE_DRIFT_GUARD_EDIT_KEYWORDS):
         return False
     return any(keyword in lowered for keyword in READ_FILE_DRIFT_GUARD_KEYWORDS)
