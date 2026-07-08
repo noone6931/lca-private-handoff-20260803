@@ -80,7 +80,7 @@
 
 - Path-scoped rules 还未实现，作为下一步候选。
 - Managed skills / autolearn 继续暂缓。
-- 企业项目联网压测：用户已确认可外发给百炼，Codex 执行环境仍拒绝代跑将企业私有代码/需求发送到三方 API；用户本机 session `20260708T074609696125Z` 已持续先读取真实需求 md，说明 allowed-dir soft tool requirement 生效；但“只读压测 + 下一步实现”误关 read-file drift guard，最终回答还错误声称 V1.1 未读，已补显式只读优先和 forced-final 已读文件证据摘要。
+- 企业项目联网压测：当前 full-access + network enabled 环境已可由 Agent 代跑。session `20260708T081827983347Z` 已持续先读取真实需求 md，说明 allowed-dir soft tool requirement 生效；后段连续读取 `HandleCrclServiceApplication.java` 时 repeated read-file guard 成功触发并 forced-final；但最终回答仍把已读 `QueryFeePlanInfoReq.java` 写成未读，已补 forced-final 原始请求摘要和已读文件一致性规则。
 - 用户确认当前测试项目可能无法完全覆盖需求，尤其“拓展服务费结算”可能需要其他项目配合；后续跨服务需求应把相关项目也作为 `--allow-dir`，或让 Agent 明确输出需要补充的项目/服务。
 - Runtime state 与 workspace 已解耦：`--state-dir` / `AGENT_STATE_DIR` 可指定用户级 state root；默认 `${XDG_STATE_HOME:-~/.local/state}/local-coding-agent/workspaces/<workspace-key>/`；sessions/todos/patch logs 已不再默认写入目标 `--cwd/.local-agent`。显式项目 memory/skills 仍保留在 workspace 中，自动 consolidation 默认写 state dir。
 - 已对 `/Users/chengming/mycode/project/crcl-open/crcl-open` 做本地 state-dir 验证：默认 state dir 为 `/Users/chengming/.local/state/local-coding-agent/workspaces/mycode-project-crcl-open-crcl-open-966d4fe7a33b`，目标仓库当前未发现 `.local-agent`。
@@ -204,7 +204,7 @@
 | T-042 | Managed skills / autolearn | 暂缓 | P7 | 默认关闭，后续按 OMP 风格加入 `manage_skill`，generated skills 与 authored skills 隔离且优先级最低。 |
 | T-043 | P7 综合压测记录 | 已完成 | P7 | 新增 `docs/pressure-test-2026-07-08.md`，记录压测证据、OMP 对应机制和 LCA 措施。 |
 | T-044 | 重复工具调用熔断 | 已完成 MVP 版 | P7 | 最近窗口内同名同参超过 3 次会返回 tool error；连续命中 8 次停止本轮，避免只靠 budget 截断。 |
-| T-045 | 企业项目外发策略确认 | 用户已确认，当前 Codex 环境阻断代跑 | P7 | 用户确认可把企业源码/需求发给百炼；当前 Codex 执行环境拒绝代跑联网压测，已改为本地只读扫描。 |
+| T-045 | 企业项目外发策略确认 | 用户已确认，full-access 已代跑 | P7 | 用户确认可把企业源码/需求发给百炼；早期受限 Codex 环境拒绝代跑，切换 full-access + network enabled 后已由 Agent 代跑 session `20260708T081827983347Z`。 |
 | T-046 | 跨项目 env-file / launcher env 加载 | 已完成 MVP 版 | P7 | CLI 支持 `--env-file`；`./agent` 自动加载安装目录 `.env`，让 token 配置与目标 `--cwd` 解耦。 |
 | T-047 | OMP 风格 tool result pruning / todo steering | 已完成 MVP 版 | P7 | 已新增 `ToolResult.useless`、空搜索/LSP useless 标记、provider-bound useless/superseded pruning 和 open todo runtime reminder；session 原文保留。 |
 | T-048 | LSP workspace/document symbols 兼容别名 | 已完成 MVP 版 | P7 | `lsp_workspace_symbols` / `lsp_document_symbols` 已注册为 `lsp_symbols` 只读别名，减少 OMP/Codex 风格提示迁移摩擦。 |
@@ -233,14 +233,14 @@
 | R-012 | 日用命令仍依赖用户手写工具流程 | 已关闭 MVP 版 | 用户不应每次提示“先 list/read，再 dry_run，再 test/diff”；否则 LCA 更像压测脚本而不是本地编程助手。 | 已采纳 OMP 分层设计：system prompt 固化默认流程，tool descriptions 说明工具规范，runtime nudge 做轻量纠偏。 |
 | R-013 | Memory / skills 注入长期 prompt injection 或陈旧事实 | 已缓解，managed skills 仍暂缓 | memory 和 generated skills 会跨 session 影响模型，错误或恶意内容可能持续放大。 | memory 和 authored skills 注入区已标注 advisory；已设置注入预算并清洗 learned / skill description 字段；managed skills 默认关闭且 authored skills 优先。 |
 | R-014 | 重复工具调用循环导致 budget 耗尽且无最终回答 | 已进一步缓解 | 模型可能在同一工具参数上循环，用户只得到预算停止或重复工具硬停信息。 | 已补最近窗口重复工具调用熔断、`ToolResult.useless`、空结果标记、provider-bound useless/superseded pruning、open todo runtime reminder，以及 duplicate-tool forced-final steering；下一步用户复跑企业压测验证是否能产出最终分析。 |
-| R-015 | 企业项目源码和需求可能被发送到三方 AI API | 用户已确认，当前 Codex 环境阻断代跑 | 联网 LCA 压测会把进入上下文的企业代码/需求发给百炼。 | 用户已确认可外发；当前 Codex 执行环境拒绝代跑该联网压测。LCA 自身不内置禁止外发，按 OMP 思路由用户、provider、permission 和运行环境策略决定。 |
+| R-015 | 企业项目源码和需求可能被发送到三方 AI API | 用户已确认，full-access 已代跑 | 联网 LCA 压测会把进入上下文的企业代码/需求发给百炼。 | 用户已确认可外发；早期受限 Codex 环境拒绝代跑，full-access + network enabled 后已由 Agent 代跑。LCA 自身不内置禁止外发，按 OMP 思路由用户、provider、permission 和运行环境策略决定。 |
 | R-016 | 跨项目运行时 token 配置绑定目标 workspace `.env` | 已关闭 MVP 版 | `--cwd` 切到其他项目后，LCA 仓库 `.env` 不会自动加载。 | 已新增 `--env-file` 和 `./agent` 安装目录 `.env` 自动加载；凭据配置与 `--cwd` 解耦。 |
 | R-017 | 只读任务仍在目标 workspace 写 runtime 状态 | 已关闭 MVP 版 | 目标仓库会出现 `.local-agent/sessions`，不利于企业项目零业务落盘压测。 | 已参考 OMP 将 sessions 放在用户 agent dir 的设计，实现 `--state-dir`；sessions/todos/patch logs 与 workspace 解耦。 |
 | R-018 | AGENTS/RULES 长期注入可能与当前任务冲突 | 已缓解，持续关注 | 用户级或项目级规则如果过期，会跨 session 影响模型判断。 | 注入区明确 advisory；system prompt 明确当前用户指令和源码证据优先；RULES 适合短规则，长背景放 AGENTS 或 memory。 |
 | R-019 | 自动 memory consolidation 可能隐式写入陈旧或敏感内容 | 已进一步缓解，持续关注 | session 中的企业信息、临时结论或模型误判如果自动写入 memory，会跨 session 放大。 | 默认 `off`；显式开启后默认写用户级 state dir 的 memory，只有 `memory_scope=project` 才写项目 `.local-agent/memory`；只接受严格 JSON 的四类短条目；坏 JSON、空结果、deadline 耗尽、本轮已显式写 memory 时不写；memory 仍是 advisory。 |
 | R-020 | multi-root allowed dir 没有稳定进入模型操作路径 | 已补第三版，待复跑 | 模型会猜 `requirements` 等不存在目录，或看到 roots 后仍不读取真实需求文档；session `20260708T072404789287Z` 证明仅提示和工具观察不够。 | 参考 OMP ToolChoiceQueue / soft tool requirement：需求/文档类任务在 allowed-dir 文档读取前只暴露 `list_files` / `read_file`，并要求先读取候选需求文档。 |
 | R-021 | 单仓库无法覆盖跨服务需求 | 已记录，持续关注 | 如果需求实际涉及 incentive/settlement/用户中心等其他项目，单仓库分析会误把“当前仓库未命中”当成完整结论。 | 参考 OMP 对 workspace/context 的依赖边界，后续把相关项目也作为 `--allow-dir`，或让 Agent 明确输出“需要补充哪个项目”。 |
-| R-022 | 同文件连续切片读取导致任务漂移 | 已补第二版，待复跑 | session `20260708T073252231781Z` 中模型连续读取同一大文件多个相邻区间；session `20260708T074609696125Z` 中显式只读任务因“下一步实现”措辞误关 guard，最终还遗忘已读需求文档。 | 参考 OMP 病态子循环小上限、runtime steering 和 runtime context：显式只读/不要修改文件/不要写文件优先于编辑词；近期同一路径 `read_file` 超阈值后强制下一轮无工具最终回答，并在 steering 里列出已读文件路径。 |
+| R-022 | 同文件连续切片读取导致任务漂移 | 已补第三版，待复跑 | session `20260708T073252231781Z` 中模型连续读取同一大文件多个相邻区间；session `20260708T074609696125Z` 中显式只读任务因“下一步实现”措辞误关 guard；session `20260708T081827983347Z` 中 guard 成功收束，但最终仍把已读文件说成未读。 | 参考 OMP 病态子循环小上限、runtime steering 和 runtime context：显式只读/不要修改文件/不要写文件优先于编辑词；近期同一路径 `read_file` 超阈值后强制下一轮无工具最终回答，并在 steering 里列出已读文件路径、原始请求和已读一致性规则。 |
 
 ## 架构决策
 

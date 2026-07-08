@@ -208,6 +208,7 @@ class AgentRuntime:
         self._repeated_read_file_guard_hits = 0
         self._repeated_read_file_final_answer_steers = 0
         self._read_file_evidence_paths: list[str] = []
+        self._current_user_request: str | None = None
         self._read_file_drift_guard_enabled = False
         self._force_final_answer_without_tools = False
         self._soft_tool_requirement: SoftToolRequirement | None = None
@@ -250,6 +251,7 @@ class AgentRuntime:
         )
         run_start_index = len(self._messages)
         model_prompt = _with_workflow_nudge(prompt)
+        self._current_user_request = prompt
         self._messages.append({"role": "user", "content": model_prompt})
         self._session.append("user", {"content": prompt})
         if model_prompt != prompt:
@@ -662,11 +664,13 @@ class AgentRuntime:
             return False
         self._duplicate_tool_final_answer_steers += 1
         evidence = self._read_file_evidence_summary()
+        request_summary = self._final_answer_request_summary()
         content = (
             "Runtime steering: repeated identical tool calls are no longer useful. "
             "Your next response must be a final answer without tool calls. "
             "Use the evidence already collected, state uncertainty explicitly, and list exact next files or queries "
             "instead of repeating prior searches."
+            f"{request_summary}"
             f"{evidence}"
         )
         self._messages.append({"role": "user", "content": content})
@@ -687,11 +691,13 @@ class AgentRuntime:
             return False
         self._repeated_read_file_final_answer_steers += 1
         evidence = self._read_file_evidence_summary()
+        request_summary = self._final_answer_request_summary()
         content = (
             "Runtime steering: repeated read_file slices from the same file are no longer useful. "
             "Your next response must be a final answer without tool calls. "
             "Return to the user's original requested output structure, use the evidence already collected, "
             "state uncertainty explicitly, and list exact next files instead of continuing to read adjacent ranges."
+            f"{request_summary}"
             f"{evidence}"
         )
         self._messages.append({"role": "user", "content": content})
@@ -737,8 +743,17 @@ class AgentRuntime:
             "",
             "Already read these files in this run; do not claim they were unread:",
             *[f"- {path}" for path in recent_paths],
+            "If one of these files still needs deeper implementation review, say it was already read and specify the missing detail.",
         ]
         return "\n".join(lines)
+
+    def _final_answer_request_summary(self) -> str:
+        if not self._current_user_request:
+            return ""
+        return (
+            "\n\nOriginal user request to satisfy now:\n"
+            f"- {_one_line(self._current_user_request, max_chars=1200)}"
+        )
 
     def _append_soft_tool_requirement_message(self, requirement: SoftToolRequirement) -> None:
         content = _soft_tool_requirement_message(requirement)

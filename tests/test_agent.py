@@ -820,6 +820,8 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertEqual(result, "final answer after enough file evidence")
         self.assertEqual(_RepeatedReadFileRangeClient.tools_seen[-1], 0)
         self.assertTrue(any("Already read these files in this run" in message for message in steering_messages))
+        self.assertTrue(any("Original user request to satisfy now" in message for message in steering_messages))
+        self.assertTrue(any("do not claim they were unread" in message for message in steering_messages))
         self.assertTrue(any("large.py" in message for message in steering_messages))
 
     def test_keyboard_interrupt_synthesizes_remaining_tool_results(self) -> None:
