@@ -64,6 +64,9 @@ CURRENT_TASK_CONTRACT_CHAR_LIMIT = 2000
 STARTUP_SKILLS_CHAR_LIMIT = 4000
 MAX_AUTHORED_SKILLS = 40
 MAX_SKILL_DESCRIPTION_CHARS = 320
+EVIDENCE_LEDGER_MAX_RECORDS = 30
+EVIDENCE_LEDGER_CONTEXT_RECORDS = 18
+EVIDENCE_LEDGER_CONTEXT_CHAR_LIMIT = 6000
 MAX_IDENTICAL_TOOL_CALLS_IN_RECENT_WINDOW = 3
 REPEAT_TOOL_CALL_WINDOW = 12
 MAX_DUPLICATE_TOOL_GUARD_HITS = 8
@@ -195,6 +198,17 @@ class SoftToolRequirement:
     satisfied: bool = False
 
 
+@dataclass(frozen=True)
+class EvidenceRecord:
+    tool: str
+    subject: str
+    summary: str
+    status: str = "ok"
+
+    def render(self) -> str:
+        return f"- [{self.status}] {self.tool} {self.subject}: {self.summary}"
+
+
 class AgentRuntime:
     def __init__(
         self,
@@ -223,6 +237,7 @@ class AgentRuntime:
         self._repeated_read_file_guard_hits = 0
         self._repeated_read_file_final_answer_steers = 0
         self._read_file_evidence_paths: list[str] = []
+        self._evidence_records: list[EvidenceRecord] = []
         self._current_user_request: str | None = None
         self._read_file_drift_guard_enabled = False
         self._force_final_answer_without_tools = False
@@ -345,6 +360,7 @@ class AgentRuntime:
                     useless=result.useless,
                 )
                 self._record_read_file_evidence(name, arguments, result)
+                self._record_tool_evidence(name, arguments, result)
                 self._observe_soft_tool_requirement(name, arguments, result)
                 duplicate_skipped = self._duplicate_tool_guard_hits > duplicate_hits_before
                 useless_search_skipped = self._useless_search_pattern_guard_hits > useless_search_hits_before
@@ -505,10 +521,12 @@ class AgentRuntime:
         messages: list[dict[str, Any]],
         todo_summary: list[str],
     ) -> list[dict[str, Any]]:
+        evidence_ledger = self._evidence_ledger_summary()
         return _provider_safe_messages(
             _messages_with_runtime_context(
                 messages,
                 todo_summary,
+                evidence_ledger,
                 self._config.workspace,
                 self._user_config_dir,
                 self._config.allowed_dirs,
@@ -883,6 +901,31 @@ class AgentRuntime:
         self._read_file_evidence_paths.append(display_path)
         self._read_file_evidence_paths = self._read_file_evidence_paths[-20:]
 
+    def _record_tool_evidence(self, name: str, arguments: str | dict[str, Any], result: ToolResult) -> None:
+        record = _build_tool_evidence_record(
+            name,
+            arguments,
+            result,
+            self._config.workspace,
+            self._config.allowed_dirs,
+        )
+        if record is None:
+            return
+        rendered = record.render()
+        if self._evidence_records and self._evidence_records[-1].render() == rendered:
+            return
+        self._evidence_records.append(record)
+        self._evidence_records = self._evidence_records[-EVIDENCE_LEDGER_MAX_RECORDS:]
+        self._session.append(
+            "evidence",
+            {
+                "tool": record.tool,
+                "subject": record.subject,
+                "status": record.status,
+                "summary": record.summary,
+            },
+        )
+
     def _read_file_evidence_summary(self) -> str:
         if not self._read_file_evidence_paths:
             return ""
@@ -895,6 +938,17 @@ class AgentRuntime:
             "If one of these files still needs deeper implementation review, say it was already read and specify the missing detail.",
         ]
         return "\n".join(lines)
+
+    def _evidence_ledger_summary(self) -> str:
+        if not self._evidence_records:
+            return ""
+        lines = [
+            "[Evidence ledger]",
+            "Runtime-collected tool evidence for this run. Use it to distinguish evidence-backed facts from inference.",
+            "In final answers, cite exact paths only when they appear here or in tool results; label guessed files/classes as unverified.",
+        ]
+        lines.extend(record.render() for record in self._evidence_records[-EVIDENCE_LEDGER_CONTEXT_RECORDS:])
+        return _one_line_block("\n".join(lines), max_chars=EVIDENCE_LEDGER_CONTEXT_CHAR_LIMIT)
 
     def _final_answer_request_summary(self) -> str:
         if not self._current_user_request:
@@ -1375,6 +1429,232 @@ def _display_read_file_evidence_path(workspace: Path, raw_path: str, allowed_dir
         return str(path)
 
 
+def _build_tool_evidence_record(
+    name: str,
+    arguments: str | dict[str, Any],
+    result: ToolResult,
+    workspace: Path,
+    allowed_dirs: tuple[Path, ...],
+) -> EvidenceRecord | None:
+    parsed = _parse_tool_arguments(arguments)
+    if result.is_error and name not in {
+        "apply_patch",
+        "git_diff",
+        "git_status",
+        "rollback_patch",
+        "run_tests",
+        "shell",
+        "write_file",
+    }:
+        return None
+    if name == "read_file" and not result.is_error:
+        return _read_file_evidence_record(parsed, result, workspace, allowed_dirs)
+    if name == "search_code" and not result.is_error:
+        return _search_code_evidence_record(parsed, result)
+    if name.startswith("lsp_") and not result.is_error:
+        return _lsp_evidence_record(name, parsed, result)
+    if name in {"apply_patch", "rollback_patch", "write_file"}:
+        return _file_change_evidence_record(name, parsed, result)
+    if name in {"git_diff", "git_status"}:
+        return _git_evidence_record(name, result)
+    if name in {"run_tests", "shell"}:
+        return _command_evidence_record(name, parsed, result)
+    return None
+
+
+def _read_file_evidence_record(
+    parsed: dict[str, Any],
+    result: ToolResult,
+    workspace: Path,
+    allowed_dirs: tuple[Path, ...],
+) -> EvidenceRecord | None:
+    raw_path = parsed.get("path")
+    if not isinstance(raw_path, str) or not raw_path.strip():
+        return None
+    subject = _display_read_file_evidence_path(workspace, raw_path.strip(), allowed_dirs)
+    header = _first_nonempty_line(result.content)
+    start_line = parsed.get("start_line") or 1
+    end_line = parsed.get("end_line")
+    if end_line:
+        line_range = f"lines {start_line}-{end_line}"
+    else:
+        line_range = f"from line {start_line}"
+    summary = f"{_one_line(header, max_chars=180)}; read {line_range}."
+    return EvidenceRecord(tool="read_file", subject=subject, summary=summary)
+
+
+def _search_code_evidence_record(parsed: dict[str, Any], result: ToolResult) -> EvidenceRecord | None:
+    pattern = str(parsed.get("pattern") or "").strip()
+    if not pattern:
+        return None
+    raw_path = str(parsed.get("path") or ".").strip() or "."
+    subject = f"pattern={pattern!r} path={raw_path!r}"
+    if result.useless or result.content.strip().startswith("No matches."):
+        return EvidenceRecord(
+            tool="search_code",
+            subject=subject,
+            summary="No matches returned.",
+            status="no_match",
+        )
+    paths = _first_search_result_paths(result.content, limit=5)
+    if paths:
+        summary = "Matched files: " + ", ".join(paths)
+    else:
+        summary = "Returned matches; inspect the search_code tool result for exact lines."
+    return EvidenceRecord(tool="search_code", subject=subject, summary=summary)
+
+
+def _lsp_evidence_record(name: str, parsed: dict[str, Any], result: ToolResult) -> EvidenceRecord | None:
+    subject = _lsp_subject(parsed)
+    if not subject:
+        subject = "query"
+    if result.useless or result.content.strip().startswith("No "):
+        return EvidenceRecord(
+            tool=name,
+            subject=subject,
+            summary=_one_line(result.content, max_chars=220),
+            status="no_match",
+        )
+    lines = _first_content_lines(result.content, limit=4)
+    summary = " | ".join(_one_line(line, max_chars=160) for line in lines)
+    if not summary:
+        summary = "Returned lightweight code navigation results."
+    return EvidenceRecord(tool=name, subject=subject, summary=summary)
+
+
+def _file_change_evidence_record(name: str, parsed: dict[str, Any], result: ToolResult) -> EvidenceRecord | None:
+    raw_path = parsed.get("path") if isinstance(parsed.get("path"), str) else ""
+    subject = raw_path or name
+    status = "error" if result.is_error else "ok"
+    if name == "apply_patch" and parsed.get("dry_run") and not result.is_error:
+        status = "preview"
+    summary = _one_line(_first_nonempty_line(result.content) or result.content, max_chars=260)
+    changed_files = _diff_changed_files(result.content, limit=4)
+    if changed_files:
+        summary = f"{summary}; diff files: {', '.join(changed_files)}"
+    return EvidenceRecord(tool=name, subject=str(subject), summary=summary, status=status)
+
+
+def _git_evidence_record(name: str, result: ToolResult) -> EvidenceRecord:
+    status = "error" if result.is_error else "ok"
+    if result.content.strip() in {"(empty)", "(empty diff)"}:
+        status = "empty"
+        summary = "No output."
+    else:
+        changed_files = _diff_changed_files(result.content, limit=6)
+        if changed_files:
+            summary = "Changed files: " + ", ".join(changed_files)
+        else:
+            summary = _one_line(result.content, max_chars=260)
+    return EvidenceRecord(tool=name, subject="workspace", summary=summary, status=status)
+
+
+def _command_evidence_record(name: str, parsed: dict[str, Any], result: ToolResult) -> EvidenceRecord:
+    command = str(parsed.get("command") or ("default test command" if name == "run_tests" else "command"))
+    status = "error" if result.is_error else "ok"
+    exit_code = _last_exit_code_line(result.content)
+    first_line = _first_nonempty_line(result.content)
+    summary_parts = []
+    if first_line:
+        summary_parts.append(_one_line(first_line, max_chars=180))
+    if exit_code:
+        summary_parts.append(exit_code)
+    summary = "; ".join(summary_parts) or "Command executed."
+    return EvidenceRecord(tool=name, subject=_one_line(command, max_chars=140), summary=summary, status=status)
+
+
+def _parse_tool_arguments(arguments: str | dict[str, Any]) -> dict[str, Any]:
+    if isinstance(arguments, dict):
+        return arguments
+    try:
+        parsed = json.loads(arguments or "{}")
+    except json.JSONDecodeError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _lsp_subject(parsed: dict[str, Any]) -> str:
+    query = parsed.get("query")
+    symbol = parsed.get("symbol")
+    path = parsed.get("path")
+    parts = []
+    if isinstance(query, str) and query.strip():
+        parts.append(f"query={query.strip()!r}")
+    if isinstance(symbol, str) and symbol.strip():
+        parts.append(f"symbol={symbol.strip()!r}")
+    if isinstance(path, str) and path.strip():
+        parts.append(f"path={path.strip()!r}")
+    return " ".join(parts)
+
+
+def _first_search_result_paths(content: str, *, limit: int) -> list[str]:
+    paths: list[str] = []
+    for line in content.splitlines():
+        if not line or line.startswith("...") or line.startswith("Workspace roots:") or line.startswith("- "):
+            continue
+        path = line.split(":", 1)[0].strip()
+        if not path or path in paths:
+            continue
+        paths.append(path)
+        if len(paths) >= limit:
+            break
+    return paths
+
+
+def _diff_changed_files(content: str, *, limit: int) -> list[str]:
+    files: list[str] = []
+    for line in content.splitlines():
+        path = ""
+        if line.startswith("diff --git "):
+            parts = line.split()
+            if len(parts) >= 4:
+                path = parts[3]
+        elif line.startswith("+++ b/"):
+            path = line[4:]
+        elif line.startswith("--- a/"):
+            path = line[4:]
+        if path.startswith("b/") or path.startswith("a/"):
+            path = path[2:]
+        if path and path != "/dev/null" and path not in files:
+            files.append(path)
+            if len(files) >= limit:
+                break
+    return files
+
+
+def _first_content_lines(content: str, *, limit: int) -> list[str]:
+    lines = []
+    for line in content.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        lines.append(stripped)
+        if len(lines) >= limit:
+            break
+    return lines
+
+
+def _first_nonempty_line(content: str) -> str:
+    lines = _first_content_lines(content, limit=1)
+    return lines[0] if lines else ""
+
+
+def _last_exit_code_line(content: str) -> str:
+    for line in reversed(content.splitlines()):
+        stripped = line.strip()
+        if stripped.startswith("[exit_code]"):
+            return stripped
+    return ""
+
+
+def _one_line_block(content: str, *, max_chars: int) -> str:
+    if len(content) <= max_chars:
+        return content
+    marker = "\n...<evidence ledger truncated>"
+    keep = max(0, max_chars - len(marker))
+    return content[:keep].rstrip() + marker
+
+
 def _clip_memory_text(text: str, *, max_chars: int) -> str:
     return _clip_context_text(text, max_chars=max_chars, marker="...<earlier memory truncated>\n")
 
@@ -1543,6 +1823,7 @@ def _messages_with_runtime_todo_reminder(
 def _messages_with_runtime_context(
     messages: list[dict[str, Any]],
     todo_summary: list[str],
+    evidence_ledger: str,
     workspace: Path,
     user_config_dir: Path,
     allowed_dirs: tuple[Path, ...] = (),
@@ -1554,6 +1835,8 @@ def _messages_with_runtime_context(
         updated = _messages_with_workspace_roots(updated, workspace_roots)
     if current_user_request:
         updated = _messages_with_current_task_contract(updated, current_user_request)
+    if evidence_ledger:
+        updated = _messages_with_evidence_ledger(updated, evidence_ledger)
     sticky_rules = _load_sticky_rules(workspace, user_config_dir, max_chars=STICKY_RULES_CHAR_LIMIT)
     if sticky_rules:
         updated = _messages_with_sticky_rules(updated, sticky_rules)
@@ -1590,6 +1873,18 @@ def _messages_with_current_task_contract(messages: list[dict[str, Any]], current
     content = str(base.get("content") or "")
     first_marker = content.find("[Current task contract]")
     last_marker = content.rfind("[Current task contract]")
+    if first_marker != -1 and first_marker != last_marker:
+        base["content"] = content[:last_marker].rstrip()
+    return [base, *non_system]
+
+
+def _messages_with_evidence_ledger(messages: list[dict[str, Any]], evidence_ledger: str) -> list[dict[str, Any]]:
+    system_messages = [message for message in messages if message.get("role") == "system"]
+    non_system = [message for message in messages if message.get("role") != "system"]
+    base = _system_message_with_appended_context(system_messages, evidence_ledger)
+    content = str(base.get("content") or "")
+    first_marker = content.find("[Evidence ledger]")
+    last_marker = content.rfind("[Evidence ledger]")
     if first_marker != -1 and first_marker != last_marker:
         base["content"] = content[:last_marker].rstrip()
     return [base, *non_system]

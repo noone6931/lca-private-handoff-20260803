@@ -141,7 +141,7 @@ local-agent "帮我找一下测试失败原因"
 .local-agent/RULES.md
 ```
 
-`AGENTS.md` 会在新 session 启动时作为 advisory context 注入；`RULES.md` 会在每次发送模型请求前重新附加，用于“不要自动 commit/push”“总结验证结果”这类短规则。可用 `AGENT_CONFIG_DIR` 改用户级配置目录。当前用户指令和刚读取到的源码证据优先。
+`AGENTS.md` 会在新 session 启动时作为 advisory context 注入；`RULES.md` 会在每次发送模型请求前重新附加，用于“不要自动 commit/push”“总结验证结果”这类短规则。可用 `AGENT_CONFIG_DIR` 改用户级配置目录。当前用户指令与最新读取的源码证据具有最高优先级。
 
 长会话默认启用 OMP 风格上下文压缩策略：`--context-char-budget` 近似表示上下文窗口，runtime 会至少预留 15% 给下一轮 prompt/输出；超过阈值后压缩早期历史，保留最近消息和未完成 todo，并截断发送给模型的超大 tool 输出。发送给模型的上下文还会折叠空搜索/LSP 这类 useless 结果，以及被新等价读取/搜索 supersede 的旧工具结果；session 日志仍保留原文。默认 `--summary-mode auto`：小历史不摘要，触发 compaction 时自动调用当前配置的 AI API 生成语义摘要，失败回退本地确定性摘要。可用 `--summary-mode local` 强制只用本地摘要，`--summary-mode llm` 强制在 compaction 时尝试 LLM 摘要，`--context-char-budget 0` 关闭压缩。
 

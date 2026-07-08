@@ -49,6 +49,37 @@ class _MessageRecordingClient:
         return type("Response", (), {"message": {"content": "done"}})()
 
 
+class _ReadFileThenFinalClient:
+    calls: list[dict] = []
+
+    def __init__(self, config: AgentConfig):
+        self.config = config
+
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
+        if len(type(self).calls) == 1:
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "call_read",
+                                "type": "function",
+                                "function": {
+                                    "name": "read_file",
+                                    "arguments": json.dumps({"path": "README.md"}),
+                                },
+                            }
+                        ],
+                    }
+                },
+            )()
+        return type("Response", (), {"message": {"content": "done with evidence"}})()
+
+
 class _SummaryThenFinalClient:
     calls: list[dict] = []
 
@@ -445,6 +476,42 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertIn("File paths in final answers must be evidence-backed", sent_system["content"])
         self.assertEqual(sent_system["content"].count("[Current task contract]"), 1)
         self.assertNotIn("[Current task contract]", runtime._messages[0]["content"])
+
+    def test_evidence_ledger_is_sent_to_provider_context_after_tool_results(self) -> None:
+        _ReadFileThenFinalClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            (workspace / "README.md").write_text("# Demo\nEvidence matters.\n", encoding="utf-8")
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=workspace,
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+                context_char_budget=0,
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _ReadFileThenFinalClient):
+                runtime = AgentRuntime(config, show_tool_logs=False)
+                result = runtime.run("先读取 README，再回答")
+                evidence_events = [
+                    json.loads(line)
+                    for line in runtime._session.path.read_text(encoding="utf-8").splitlines()
+                    if json.loads(line).get("event") == "evidence"
+                ]
+
+        second_call_messages = _ReadFileThenFinalClient.calls[1]["messages"]
+        sent_system = [message for message in second_call_messages if message.get("role") == "system"][0]
+        self.assertEqual(result, "done with evidence")
+        self.assertIn("[Evidence ledger]", sent_system["content"])
+        self.assertIn("Runtime-collected tool evidence", sent_system["content"])
+        self.assertIn("read_file README.md", sent_system["content"])
+        self.assertIn("[README.md#", sent_system["content"])
+        self.assertNotIn("[Evidence ledger]", runtime._messages[0]["content"])
+        self.assertEqual(len(evidence_events), 1)
+        self.assertEqual(evidence_events[0]["payload"]["tool"], "read_file")
 
     def test_requirement_tasks_must_read_allowed_directory_docs_before_answering(self) -> None:
         _AllowedDirRequirementClient.calls = []

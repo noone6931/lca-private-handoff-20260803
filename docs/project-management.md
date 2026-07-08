@@ -17,10 +17,10 @@ python3 scripts/sync_project_excel.py
 | 字段 | 当前值 | 说明 |
 |---|---|---|
 | 最终目标 | 个人本地编程助手 Agent | 本地优先、封闭 VM 可用、只访问指定 AI API，能读代码、搜代码、改代码、跑测试、生成 diff、沉淀项目记忆。 |
-| 当前阶段 | P7：轻量高级能力与真实压测 | P6 默认工作流 MVP 已落地；P7 已补 OMP 风格 auto summary、多语言轻量 LSP、multi-root、startup context/rules、startup memory、learn、可选 memory consolidation、authored skills discovery，并通过综合压测发现和修复重复工具调用循环，新增 OMP 风格 tool result pruning / todo steering；2026-07-08 已按 OMP 思路完成 runtime state 与 cwd 分层，自动 memory consolidation 默认写 state dir；full-access 后 Agent 已代跑单项目和多项目企业压测，最新 session `20260708T085927874078` 已验证 path escape roots hint、LSP 空 query guard、Current task contract 和证据路径规则，最终按 6 点结构输出。 |
+| 当前阶段 | P7：轻量高级能力与真实压测 | P6 默认工作流 MVP 已落地；P7 已补 OMP 风格 auto summary、多语言轻量 LSP、multi-root、startup context/rules、startup memory、learn、可选 memory consolidation、authored skills discovery，并通过综合压测发现和修复重复工具调用循环，新增 OMP 风格 tool result pruning / todo steering；2026-07-08 已按 OMP 思路完成 runtime state 与 cwd 分层，自动 memory consolidation 默认写 state dir；full-access 后 Agent 已代跑单项目和多项目企业压测，session `20260708T085927874078` 已验证 path escape roots hint、LSP 空 query guard、Current task contract 和证据路径规则，最终按 6 点结构输出；最新小实现压测 session `20260708T092554037057Z` 已验证 Evidence Ledger 不破坏小改闭环，并暴露 `path#tag` 易误填和脏工作区 diff 归因问题。 |
 | 推荐入口 | `./agent "阅读当前项目"` | 自动设置 `PYTHONPATH=src`，默认当前目录为 workspace。 |
 | Token 配置 | 环境变量 / `--env-file` / `.env` | `./agent` 会自动加载安装目录 `.env`，也可显式传 `--env-file`；真实环境变量优先。 |
-| 测试数 | 152 | 完整 unittest、compileall、diff check、xlsx 检查通过。 |
+| 测试数 | 153 | 完整 unittest、compileall、diff check、xlsx 检查通过。 |
 | 默认 budget_seconds | 600 | 单次任务默认 10 分钟墙钟预算；`--budget-seconds 0` 可关闭。 |
 | 默认 max_steps | 0 | 表示不限步；仅在用户显式设置时作为防失控保险丝。 |
 | 预算执行 | 细粒度 | LLM 请求和 shell/run_tests timeout 会按剩余预算夹紧；deadline 到期会补齐未执行工具结果。 |
@@ -40,6 +40,7 @@ python3 scripts/sync_project_excel.py
 | Memory consolidation | 已完成 MVP 版 | 默认 `off`；显式 `--memory-consolidation auto|llm` 后从 session 抽取长期经验；默认写 state dir，`--memory-scope project` 才写 `.local-agent/memory/*.md`。 |
 | Authored skills discovery | 已完成 MVP 版 | 新 session 扫描 `.local-agent/skills/<name>/SKILL.md`，只注入 name、description、source path，正文按需读取。 |
 | Runtime state dir | 已完成 MVP 版 | `--state-dir` / `AGENT_STATE_DIR`；sessions/todos/patch logs 默认写入用户级 state root 下的 workspace-specific 目录。 |
+| Evidence Ledger | 已完成 MVP 版 | Runtime 会从 `read_file`、`search_code`、LSP、patch、run_tests、git 等工具结果提炼短证据账本，作为 provider-bound context 注入，并写入 session JSONL `evidence` 事件。 |
 | Memory / Skills 设计 | 已完成 | 见 `docs/memory-skills-implementation-plan.md`；Markdown memory 注入、`learn`、memory consolidation 和 authored skills discovery 已完成，path-scoped rules / managed skills 后置。 |
 
 ## 阶段路线图
@@ -53,7 +54,7 @@ python3 scripts/sync_project_excel.py
 | P4 | 上下文治理 | 简单 summary/compaction，工具输出折叠，支持长需求文件 | 已完成 MVP 版 | 100% | 首轮百炼只读 compaction 压测已通过；当前已补可选 LLM summary，后续再评估 token 预算、输出 reserve 和 recent 保留。 |
 | P5 | 安全与恢复增强 | synthetic tool result、patch preview、rollback、ask_user timeout、per-tool approval | 已完成并收口 | 100% | 主链路已通过真实百炼复测；后续只修日用反馈中的 P0/P1 问题。 |
 | P6 | 日用体验与默认工作流固化 | OMP 默认工作流本地化：system prompt、工具描述、轻量 runtime nudge | 已完成 MVP 版 | 100% | 进入真实任务压测。 |
-| P7 | 高级工程能力轻量版 | OMP 风格 auto summary、轻量 LSP、LSP 兼容别名、multi-root workspace roots、allowed-dir soft tool requirement、startup context/rules、startup memory、learn、memory consolidation、authored skills discovery、重复工具调用熔断、duplicate-tool forced-final steering、同文件切片读取漂移 guard、空搜索词跨路径 guard、path escape roots hint、LSP 空 query guard、Current task contract、tool result pruning、todo steering、跨项目 env-file、runtime state dir、真实项目压测记录 | 进行中 | 99% | full-access 后 Agent 已代跑单项目和多项目企业项目联网压测；session `20260708T085927874078` 已先读需求、纠正父目录 path escape、定位真实 `limitConstituteAllotImport` 证据，并按 6 点结构输出。下一步继续评估回答准确性和跨项目覆盖边界。 |
+| P7 | 高级工程能力轻量版 | OMP 风格 auto summary、轻量 LSP、LSP 兼容别名、multi-root workspace roots、allowed-dir soft tool requirement、startup context/rules、startup memory、learn、memory consolidation、authored skills discovery、重复工具调用熔断、duplicate-tool forced-final steering、同文件切片读取漂移 guard、空搜索词跨路径 guard、path escape roots hint、LSP 空 query guard、Current task contract、Evidence Ledger、tool result pruning、todo steering、跨项目 env-file、runtime state dir、真实项目压测记录 | 进行中 | 99% | full-access 后 Agent 已代跑单项目和多项目企业项目联网压测；session `20260708T085927874078` 已先读需求、纠正父目录 path escape、定位真实 `limitConstituteAllotImport` 证据，并按 6 点结构输出。小实现压测 `20260708T092554037057Z` 已验证 Evidence Ledger 后小改闭环仍可跑通。下一步继续评估回答准确性、跨项目覆盖边界和工具参数可用性细节。 |
 
 ## 已完成功能
 
@@ -104,7 +105,8 @@ python3 scripts/sync_project_excel.py
 | 重复工具调用熔断 / forced-final steering | 已完成 MVP 版 | `AgentRuntime._execute_tool_with_repeat_guard()` / `_steer_after_duplicate_tool_call()` | 最近窗口内同名同参工具调用超过阈值会返回 tool error；重复命中后注入 runtime steering，下一轮不给工具 schema，强制模型从已有证据输出最终回答；连续命中仍有硬停兜底 | 用户本机复跑企业需求压测；后续视结果评估完整 ToolChoiceQueue / soft tool requirement |
 | Tool result pruning | 已完成 MVP 版 | `ToolResult.useless` + provider-bound context pruning | `search_code` / LSP 空结果标记 useless；重复等价 read/search/LSP 旧结果在发给模型的上下文中替换为 notice，session 原文保留 | 继续真实长任务观察 |
 | Todo steering | 已完成 MVP 版 | provider-bound runtime todo reminder | 未完成 todo 会注入发送给模型的 system context，即使未触发 compaction 也能提醒模型保持任务方向 | 后续评估 OMP 风格 eager todo / mid-run nudge |
-| 测试覆盖 | 已完成 | 当前 152 个测试通过 | unittest、compileall、diff check、xlsx 检查通过 | 日用反馈补测 |
+| Evidence Ledger | 已完成 MVP 版 | `src/local_agent/agent.py` / `tests/test_agent.py` | 工具结果经 runtime 提炼成短证据账本；provider context 中提示模型区分证据事实与推断，session 中追加 `evidence` 事件 | 后续真实任务观察是否需要更结构化引用 |
+| 测试覆盖 | 已完成 | 当前 153 个测试通过 | unittest、compileall、diff check、xlsx 检查通过 | 日用反馈补测 |
 
 ## 下一步 Todo
 
@@ -176,6 +178,9 @@ python3 scripts/sync_project_excel.py
 | T-064 | P0 | P7 | LSP symbol 空 query guard | 已完成并复跑通过 | Agent | session `20260708T084714338485Z` 中模型连续猜不存在的 `CoreEnterpriseBatchImport*` 符号，参数不同但全是低价值空 LSP 查询 | 参考 OMP useless result / pruning / soft escalation：连续一批 LSP symbol query 无结果后跳过并 forced-final；有命中则清空空探索计数 |
 | T-065 | P0 | P7 | Current task contract / evidence-backed path rule | 已完成并复跑通过 | Agent | session `20260708T085426840146Z` 最终只总结最后一份需求文档，没有按 6 点结构输出；回答也有把猜测路径当证据路径的风险 | 参考 OMP runtime context/steering：每次 provider request 注入当前原始用户请求、最终输出结构和证据路径规则；session `20260708T085927874078` 已按 6 点结构输出 |
 | T-066 | P1 | P7 | 多项目企业只读压测 | 已完成首轮 | Agent | 验证 `--cwd crcl-open` + `--allow-dir 需求目录` + `--allow-dir zqyl-user-center-service` 的跨项目链路 | session `20260708T085927874078` 通过：定位主项目批量导入真实链路，并把辅助项目结算行/黑名单导入线索区分为支撑或相似模式；拓展服务费结算仍需补项目或确认新建 |
+| T-067 | P0 | P7 | Evidence Ledger MVP | 已完成并小改压测通过 | Agent | Current task contract 只约束“证据路径必须来自工具结果”，但长工具链后模型仍需要一份短证据账本来区分证据事实和推断 | 参考 OMP runtime context / observation 思路：runtime 从工具结果中央提炼 evidence records，provider-bound 注入 `[Evidence ledger]`，session JSONL 追加 `evidence` 事件；测试覆盖 read_file 后账本注入，小实现压测 `20260708T092554037057Z` 通过 |
+| T-068 | P1 | P7 | apply_patch tag 参数易误填 `path#tag` | 待评估 | Agent | 小实现压测中模型先把 `read_file` header `README.md#3988a904` 整串传给 `tag`，dry_run 连续失败后才自我修正为 `3988a904` | 可参考 OMP 更结构化的工具观察/编辑参数提示：短期可改 `read_file` 输出显式 `tag: 3988a904` 或让 `apply_patch` 兼容 `path#tag` 并给清晰警告；需保持 anchored patch 校验语义 |
+| T-069 | P1 | P7 | git_diff 归因区分已有工作区修改与本轮修改 | 待评估 | Agent | 小实现压测时工作区已有人工实现的 Evidence Ledger diff，模型的 `git_diff` 同时看到 README 小改和 agent.py 大改，虽能识别“非本轮改动”，但依赖推理 | 可参考 OMP task/worktree/session state 思路：后续可在 run start 记录 git status/diff baseline，最终 diff 摘要区分 pre-existing、this-run patch、untracked runtime files |
 
 ## 风险与决策
 
@@ -207,6 +212,8 @@ python3 scripts/sync_project_excel.py
 | 风险 | R-024 | 高 | path escape 纠偏不足会让模型漏读主项目 | 已补并复跑通过 | session `20260708T084322924403Z` 中模型误用父目录后没有恢复，最终只分析辅助项目 | OMP 会把 cwd/project context 和可行动工具观察持续放回上下文；我们把 roots hint 放进公共 path escape 错误，session `20260708T085927874078` 已验证可恢复。 |
 | 风险 | R-025 | 高 | LSP 空 query 扩散导致 token 浪费 | 已补并复跑通过 | session `20260708T084714338485Z` 中模型猜测大量不存在符号名，参数不同绕过同参重复 guard | OMP 会把 useless result/pruning/soft escalation 结合使用；我们新增 LSP symbol 空 query 小上限并 forced-final。 |
 | 风险 | R-026 | 高 | 最终回答结构和证据路径可能漂移 | 已补并复跑通过 | session `20260708T085426840146Z` 最终只总结最后一个需求文档；此前也出现把未验证路径当下一步建议路径的倾向 | OMP 将当前任务、runtime state 和 tool evidence 持续放进 provider context；我们新增 Current task contract 和 evidence-backed path rule。 |
+| 风险 | R-027 | 中 | 模型可能把 `read_file` header 的 `path#tag` 整串误当成 patch tag | 已记录，待评估修复 | 小实现压测 session `20260708T092554037057Z` 中 dry_run 前三次因 `tag=README.md#3988a904` 失败，第四次改成纯 hash 后成功 | OMP 的工具观察和编辑链路更强调结构化参数和 runtime 纠偏；LCA 可短期改 read_file 输出或 apply_patch 参数兼容来减少无效重试。 |
+| 风险 | R-028 | 中 | 脏工作区下最终 diff 摘要可能混入非本轮改动 | 已记录，待评估修复 | 小实现压测 session `20260708T092554037057Z` 的 `git_diff` 同时包含 README 小改和正在开发的 Evidence Ledger 代码 diff；模型能分辨但依赖推理 | OMP 更完整的 task/worktree/session state 能追踪任务边界；LCA 后续可在 run start 记录 baseline，并把本轮 patch records 与 git_diff 对照。 |
 | ADR | ADR-001 | 2026-07-07 | 优先采纳 OMP 成熟设计，按本地目标裁剪 | 已接受 | 好设计可直接采用，复杂度按需收敛 | OMP 是重要参考实现；我们不为了“避免复制”而绕开好设计。采用标准是收益是否大于复杂度，并且不破坏个人本地使用、封闭 VM、无公网依赖和第一阶段 MVP 边界。 |
 | ADR | ADR-002 | 2026-07-07 | max_steps 只作为防失控保险丝 | 已落地 | 默认值已改为 0，不限步 | OMP 的 stepCounter 主要用于 telemetry，终止靠无 tool_calls、deadline、abort；我们把 `max_steps` 仅作为显式保险丝。 |
 | ADR | ADR-003 | 2026-07-07 | todo、ask_user、per-tool approval 是主功能 | 已落地 | P3 已实现 | OMP 将 todo、approval、elicitation 做成可观测会话能力；我们 P3 先做终端轻量版，后续再补 UI 化。 |
@@ -224,6 +231,7 @@ python3 scripts/sync_project_excel.py
 | ADR | ADR-015 | 2026-07-08 | 人工上下文按 AGENTS/RULES 分层 | 已接受并落地 | `AGENTS.md` 适合启动背景，`RULES.md` 适合短 sticky rules；二者不同于长期 memory、skills 和 session summary | 参照 Claude Code 的 CLAUDE.md/rules 与 OMP 的 AGENTS.md/RULES.md 思路；LCA 使用用户级配置目录和项目 `.local-agent` 目录做本地 MVP。 |
 | ADR | ADR-016 | 2026-07-08 | Session memory consolidation 默认关闭，开启后默认写 state memory | 已接受并落地 | 这一步不同于只发给模型的 context compaction；默认 off 保护只读分析，开启后默认写用户级 state dir；只有显式 `memory_scope=project` 才写项目 `.local-agent/memory` | 显式 `auto/llm` 后才用当前 provider 抽取长期记忆；memory 仍是 advisory，当前用户指令和源码证据优先。 |
 | ADR | ADR-017 | 2026-07-08 | 解决 runtime/工具/上下文问题时先查 OMP 做法 | 已接受 | 先找 OMP 已验证设计，再按 LCA 本地个人 Agent、封闭 VM、单 Agent 和无自动下载边界裁剪 | 用户明确要求后续解决问题都参考 OMP；allowed-dir 问题按 OMP 显式提供 cwd/project context 的思路，落地为 `[Workspace roots]` 注入。 |
+| ADR | ADR-018 | 2026-07-08 | Evidence Ledger 作为 provider-bound runtime context，而不是长期 memory | 已接受并落地 | 工具证据是本轮会话事实，应帮助最终回答区分证据与推断，但不应写入项目长期 memory 或替代 session 原文 | 参考 OMP 将 runtime state / tool evidence / steering 持续放进模型上下文的做法；LCA 中 Evidence Ledger 由 runtime 中央观察工具结果生成，短窗口注入 provider context，并写 session `evidence` 事件用于审计。 |
 
 ## P7 综合压测问题
 
@@ -248,13 +256,16 @@ python3 scripts/sync_project_excel.py
 | PT-017 | P0 | 已补并复跑通过 | session `20260708T084322924403Z` 中模型误用父目录 `/Users/chengming/mycode/project/crcl-open`，工具错误未提示正确 primary workspace。 | OMP 通过 cwd/project context 和工具观察提示模型可行动路径。 | 公共 path resolver 已在 path escape 错误中列出 primary workspace/allowed dirs；session `20260708T085927874078` 已恢复到 `.` 主项目。 |
 | PT-018 | P0 | 已补并复跑通过 | session `20260708T084714338485Z` 中模型连续猜不存在的 LSP symbol query。 | OMP 对 useless result 和 soft tool escalation 设小上限。 | 已新增 LSP symbol 空 query guard；session `20260708T085927874078` 未再卡死。 |
 | PT-019 | P0 | 已补并复跑通过 | session `20260708T085426840146Z` 最终回答只总结最后一个需求文档，没有按 6 点结构输出。 | OMP 将当前任务和 runtime evidence 持续注入 provider context。 | 已新增 Current task contract 和 evidence-backed path rule；session `20260708T085927874078` 按 6 点结构输出。 |
+| PT-020 | P0 | 已补并小改压测通过 | Current task contract 能要求 evidence-backed path，但长工具链后模型仍需要一份短证据账本来避免最终回答把推断当事实。 | OMP 会把 runtime state、tool evidence 和 steering 持续放进模型上下文；证据不是长期 memory，而是本轮 provider context。 | 已新增 Evidence Ledger：runtime 中央观察 `read_file`、`search_code`、LSP、patch、run_tests、git 等工具结果，提炼短 evidence records，注入 `[Evidence ledger]` provider context，并写 session `evidence` 事件；小实现压测 `20260708T092554037057Z` 跑通。 |
+| PT-021 | P1 | 已记录，待评估修复 | 小实现压测中模型把 `read_file` header `README.md#3988a904` 整串作为 `apply_patch.tag`，导致 dry_run 连续失败；随后改成纯 hash 才成功。 | OMP 更倾向用结构化工具观察和编辑流程降低模型手工解析参数的机会；工具错误也要给可行动纠偏。 | 短期候选：read_file 输出显式 `tag: 3988a904`；或 apply_patch 接受 `path#tag` 并提取 hash，同时提示模型后续只传 hash。 |
+| PT-022 | P1 | 已记录，待评估修复 | 小实现压测时 `git_diff` 包含 README 小改和正在开发的 Evidence Ledger 代码 diff；模型识别出 agent.py 是既有改动，但这种区分依赖推理。 | OMP 的 task/worktree/session state 更能区分任务边界和已有 WIP；普通 CLI 也应清楚记录 run start baseline。 | 后续候选：run start 记录 git status/diff baseline，最终 diff 摘要按 pre-existing / this-run patch / runtime state 分组。 |
 
 ## P5 收口结论
 
 | 项目 | 结论 | 依据 |
 |---|---|---|
 | 主链路 | 通过 | 百炼真实小改复测已跑通 todo、dry_run、apply_patch、session allow、rollback、run_tests、git_diff。 |
-| 测试 | 通过 | P5 收口时 90 个 unittest、compileall、xlsx 检查、diff check 均通过；P7 当前代码已跑通 152 个 unittest、compileall 和 diff check。 |
+| 测试 | 通过 | P5 收口时 90 个 unittest、compileall、xlsx 检查、diff check 均通过；P7 当前代码已跑通 153 个 unittest、compileall 和 diff check。 |
 | 日用入口 | 通过 | README 已补只读分析和小改任务命令模板。 |
 | 开放风险 | 可接受 | shell 仍非沙箱、prompt injection 仍需靠审批和封闭 VM；token budget / output reserve / managed skills 继续后置评估。 |
 | 下一阶段 | P7 轻量高级能力真实压测后续 | 已验证默认工作流、auto summary、多语言轻量 LSP、multi-root、startup memory、learn、authored skills、runtime state dir 和多项目只读压测主链路；下一步继续做回答准确性评估，尤其是跨项目缺失证据时的措辞和实现前二次验证。 |

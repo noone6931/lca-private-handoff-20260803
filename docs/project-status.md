@@ -30,7 +30,7 @@
 
 ## 当前进度
 
-当前项目处于 P7 轻量高级能力阶段：P5 的安全与恢复增强 MVP 已收口；P6 默认工作流 MVP 已落地，用户可以用自然语言描述任务，而不是每次手写 `list_files/read_file/dry_run/run_tests/git_diff` 工具顺序。本轮已补 OMP 风格 auto summary、多语言轻量 LSP、multi-root `--allow-dir`、workspace roots 注入、Markdown memory 启动注入、`learn` 工具、可选 session memory consolidation、authored skills discovery、重复工具调用熔断、duplicate-tool forced-final steering、tool result pruning、todo steering、跨项目 `--env-file` / launcher 安装目录 `.env` 加载，以及 OMP 风格用户级 `--state-dir` runtime state 分层。
+当前项目处于 P7 轻量高级能力阶段：P5 的安全与恢复增强 MVP 已收口；P6 默认工作流 MVP 已落地，用户可以用自然语言描述任务，而不是每次手写 `list_files/read_file/dry_run/run_tests/git_diff` 工具顺序。本轮已补 OMP 风格 auto summary、多语言轻量 LSP、multi-root `--allow-dir`、workspace roots 注入、Markdown memory 启动注入、`learn` 工具、可选 session memory consolidation、authored skills discovery、重复工具调用熔断、duplicate-tool forced-final steering、tool result pruning、todo steering、跨项目 `--env-file` / launcher 安装目录 `.env` 加载、OMP 风格用户级 `--state-dir` runtime state 分层，以及 Evidence Ledger 证据账本。
 
 已具备的核心能力：
 
@@ -43,7 +43,7 @@
 - `apply_patch` 已支持 `replace`、`insert_before`、`insert_after`，并兼容 Python 3.12。
 - 非交互审批、LLM 非 JSON 响应、session 恢复坏尾部、search_code 绝对路径泄漏等问题已经修复。
 - 已完成 Agent 自举测试：能够通过百炼模型调用工具读取、修改、测试和查看 diff。
-- 测试基线：152 个测试在正常本地环境通过。
+- 测试基线：153 个测试在正常本地环境通过。
 
 当前已具备：
 
@@ -78,12 +78,13 @@
 - Path escape roots hint 已落地：越界路径错误会返回 resolved path、primary workspace 和 allowed dirs；父目录误用时提示使用 `.` 或精确 `--cwd`。
 - LSP symbol 空 query guard 已落地：连续一批 `lsp_symbols` / `lsp_workspace_symbols` / `lsp_document_symbols` 无结果后跳过并 forced-final；有命中则清空该批空探索计数。
 - Current task contract 已落地：每次 provider request 注入当前原始用户请求、最终输出结构约束和 evidence-backed path 规则，防止长工具链后只总结最后一个文件或把猜测路径当证据。
+- Evidence Ledger 已落地：runtime 从工具结果中央提炼本轮短证据账本，provider request 注入 `[Evidence ledger]`，并写入 session JSONL `evidence` 事件，帮助最终回答区分证据事实和推断。
 
 真实缺口：
 
 - Path-scoped rules 还未实现，作为下一步候选。
 - Managed skills / autolearn 继续暂缓。
-- 企业项目联网压测：当前 full-access + network enabled 环境已可由 Agent 代跑。单项目压测 session `20260708T083312934017` 已按 5 点结构收束；多项目压测连续暴露 path escape 父目录误用、LSP 空 query 扩散和最终回答结构漂移，已分别补 path escape roots hint、LSP 空 query guard、Current task contract；最新 session `20260708T085927874078` 已按 6 点结构输出，并定位 `CrclLimitMainBySelectController.limitConstituteAllotImport`、`CrclLimitMainBySelectApplication.limitConstituteAllotImport`、`LimitConstituteAllotImportReq`、`BatchImportConstituteDto` 等真实证据。
+- 企业项目联网压测：当前 full-access + network enabled 环境已可由 Agent 代跑。单项目压测 session `20260708T083312934017` 已按 5 点结构收束；多项目压测连续暴露 path escape 父目录误用、LSP 空 query 扩散和最终回答结构漂移，已分别补 path escape roots hint、LSP 空 query guard、Current task contract；session `20260708T085927874078` 已按 6 点结构输出，并定位 `CrclLimitMainBySelectController.limitConstituteAllotImport`、`CrclLimitMainBySelectApplication.limitConstituteAllotImport`、`LimitConstituteAllotImportReq`、`BatchImportConstituteDto` 等真实证据。最新 LCA 自身小实现压测 session `20260708T092554037057Z` 已验证 Evidence Ledger 后小改闭环仍可跑通，并暴露 `path#tag` 易误填、脏工作区 diff 归因两个后续问题。
 - 用户确认当前测试项目可能无法完全覆盖需求，尤其“拓展服务费结算”可能需要其他项目配合；后续跨服务需求应把相关项目也作为 `--allow-dir`，或让 Agent 明确输出需要补充的项目/服务。
 - Runtime state 与 workspace 已解耦：`--state-dir` / `AGENT_STATE_DIR` 可指定用户级 state root；默认 `${XDG_STATE_HOME:-~/.local/state}/local-coding-agent/workspaces/<workspace-key>/`；sessions/todos/patch logs 已不再默认写入目标 `--cwd/.local-agent`。显式项目 memory/skills 仍保留在 workspace 中，自动 consolidation 默认写 state dir。
 - 已对 `/Users/chengming/mycode/project/crcl-open/crcl-open` 做本地 state-dir 验证：默认 state dir 为 `/Users/chengming/.local/state/local-coding-agent/workspaces/mycode-project-crcl-open-crcl-open-966d4fe7a33b`，目标仓库当前未发现 `.local-agent`。
@@ -106,7 +107,7 @@
 | P4 | 上下文治理 | 已完成 MVP 版 | 初版 summary / compaction、工具输出折叠、长需求文件工作流。 |
 | P5 | 安全与恢复增强 | 已完成并收口 | synthetic tool result、patch preview、回滚策略、非信任仓库提示、OMP 风格 approval model、approval prompt deadline cancel；真实小改复测通过。 |
 | P6 | 日用体验与默认工作流固化 | 已完成 MVP 版 | OMP 默认工作流本地化：system prompt、工具描述、轻量 runtime nudge。 |
-| P7 | 高级工程能力轻量版 | 进行中 | 已完成 OMP 风格 auto summary、多语言轻量 LSP、LSP 兼容别名、multi-root workspace roots 与工具观察提示、allowed-dir soft tool requirement、Markdown memory 启动注入、learn、可选 memory consolidation、authored skills discovery、综合压测记录、重复工具调用熔断、duplicate-tool forced-final steering、同文件切片读取漂移 guard、search_code 空搜索词跨路径 guard、path escape roots hint、LSP 空 query guard、Current task contract、tool result pruning、todo steering、跨项目 env-file 和用户级 `--state-dir` runtime state 分层；path-scoped rules、DAP、TUI、subagents、reviewer、AST edit、managed skills 继续后置。 |
+| P7 | 高级工程能力轻量版 | 进行中 | 已完成 OMP 风格 auto summary、多语言轻量 LSP、LSP 兼容别名、multi-root workspace roots 与工具观察提示、allowed-dir soft tool requirement、Markdown memory 启动注入、learn、可选 memory consolidation、authored skills discovery、综合压测记录、重复工具调用熔断、duplicate-tool forced-final steering、同文件切片读取漂移 guard、search_code 空搜索词跨路径 guard、path escape roots hint、LSP 空 query guard、Current task contract、Evidence Ledger、tool result pruning、todo steering、跨项目 env-file 和用户级 `--state-dir` runtime state 分层；path-scoped rules、DAP、TUI、subagents、reviewer、AST edit、managed skills 继续后置。 |
 
 ## 已完成功能
 
@@ -156,8 +157,9 @@
 | 重复工具调用熔断 / forced-final steering | 已完成 MVP 版 | 最近窗口内同名同参工具调用超过阈值时跳过；重复命中后下一轮不给工具 schema，强制模型基于已有证据输出最终回答；连续命中仍有硬停兜底。 |
 | Tool Result Pruning | 已完成 MVP 版 | `ToolResult.useless` 支持标记无信息结果；空搜索/LSP 结果标记 useless；发送给模型的上下文会把 useless 和 superseded 工具结果折叠成 notice，session 原文保留。 |
 | Todo Steering | 已完成 MVP 版 | 未完成 todo 会作为 runtime reminder 注入发送给模型的 system context，即使未触发 compaction 也能帮助模型保持方向。 |
+| Evidence Ledger | 已完成 MVP 版 | `src/local_agent/agent.py` 从工具结果提炼短证据记录，注入 provider-bound `[Evidence ledger]`，并写 session `evidence` 事件；测试覆盖 read_file 后账本注入。 |
 | Synthetic Tool Result | 已完成 MVP 版 | deadline 到期、用户中断、`finish_reason=length` 时会补齐剩余 tool_call 的 tool result。 |
-| 测试基线 | 已完成 | 本地正常环境下 152 个测试通过。 |
+| 测试基线 | 已完成 | 本地正常环境下 153 个测试通过。 |
 
 ## 下一步 Todo
 
@@ -217,6 +219,9 @@
 | T-052 | 重复工具后强制最终回答 steering | 已完成 MVP 版 | P7 | 用户本机企业压测 session `20260708T062614211387Z` 暴露 `feePlan` 重复搜索后硬停且无最终分析；runtime 现在会在重复工具命中后注入 steering，并让下一次 LLM 请求 `tools=[]`。 |
 | T-053 | allowed-dir workspace roots 注入 | 已完成 MVP 版 | P7 | 用户本机复跑 session `20260708T065705459243Z` 暴露模型不知道 `--allow-dir` 绝对路径；system prompt/provider-bound context 现在会列出 primary workspace 和 allowed dirs。 |
 | T-054 | 跨项目需求覆盖边界记录 | 已完成记录 | P7 | 用户确认当前测试项目可能无法完全覆盖需求；压测记录已说明单仓库只能输出候选前置能力和缺口，后续需要把相关项目也作为 `--allow-dir`。 |
+| T-067 | Evidence Ledger MVP | 已完成并小改压测通过 | P7 | provider-bound `[Evidence ledger]` 已落地；session `20260708T092554037057Z` 验证小改闭环仍可跑通。 |
+| T-068 | apply_patch tag 参数易误填 `path#tag` | 待评估 | P7 | 小实现压测中模型先把 `README.md#3988a904` 传给 `tag`，dry_run 失败后才自我修正；后续考虑 read_file 显式输出 tag 或 apply_patch 兼容 `path#tag`。 |
+| T-069 | git_diff 区分已有修改与本轮修改 | 待评估 | P7 | 脏工作区下 `git_diff` 会混合本轮 patch 和 pre-existing diff；后续可记录 run start baseline 或用 patch records 辅助归因。 |
 
 ## 风险清单
 
@@ -248,6 +253,8 @@
 | R-024 | path escape 纠偏不足会让模型漏读主项目 | 已补并复跑通过 | session `20260708T084322924403Z` 中模型误用父目录后没有恢复，最终只分析辅助项目。 | 参考 OMP cwd/project context 和工具观察：公共 path escape 错误已列出 primary workspace/allowed dirs；session `20260708T085927874078` 已验证可恢复。 |
 | R-025 | LSP 空 query 扩散导致 token 浪费 | 已补并复跑通过 | session `20260708T084714338485Z` 中模型猜测大量不存在符号名，参数不同绕过同参重复 guard。 | 参考 OMP useless result / pruning / soft escalation：新增 LSP symbol 空 query 小上限并 forced-final。 |
 | R-026 | 最终回答结构和证据路径可能漂移 | 已补并复跑通过 | session `20260708T085426840146Z` 最终只总结最后一个需求文档；此前也出现把未验证路径当下一步建议路径的倾向。 | 参考 OMP 当前任务和 runtime evidence 持续注入：新增 Current task contract 和 evidence-backed path rule。 |
+| R-027 | 模型可能把 `path#tag` 整串误当成 patch tag | 已记录，待评估修复 | session `20260708T092554037057Z` 中 `apply_patch dry_run` 因 `tag=README.md#3988a904` 连续失败。 | 参考 OMP 结构化工具观察/编辑参数提示：后续可让 read_file 显式给出 pure tag，或让 apply_patch 兼容 `path#tag` 并提示模型。 |
+| R-028 | 脏工作区下最终 diff 摘要可能混入非本轮改动 | 已记录，待评估修复 | session `20260708T092554037057Z` 的 `git_diff` 同时包含 README 小改和正在开发的 Evidence Ledger 代码 diff。 | 参考 OMP task/worktree/session state：后续可记录 run start baseline，并按 pre-existing / this-run patch / runtime state 分组展示。 |
 
 ## 架构决策
 
@@ -263,6 +270,7 @@
 | ADR-013 | Memory / skills 按 OMP 思路分阶段本地化。 | Markdown memory 启动注入、显式 `learn` 和 authored skills discovery 已落地；最后才评估 managed skills/autolearn；不引入 Hindsight、Mnemopi、向量库或插件市场。 |
 | ADR-014 | Runtime 问题优先采用 OMP 已验证设计。 | 对 deadline、compaction、permission、synthetic tool result、todo/tool-choice steering、pruning 这类 OMP 已经覆盖的机制，不再为了“自己造一套”而绕开；LCA 不内置“企业数据不能外发”禁令，但必须尊重当前执行宿主或企业环境的策略拦截。 |
 | ADR-017 | 解决 runtime/工具/上下文问题时先查 OMP 做法。 | 用户明确要求后续解决问题都参考 OMP；本项目原则更新为先找 OMP 已验证设计，再按本地个人 Agent、封闭 VM、单 Agent 和无自动下载边界裁剪落地。 |
+| ADR-018 | Evidence Ledger 是本轮 provider-bound runtime context，不是长期 memory。 | 工具证据服务于当前会话最终回答和审计，不能替代 session 原文，也不应默认写入项目长期 memory；参考 OMP runtime state / tool evidence / steering 持续入上下文的思路。 |
 | ADR-015 | 人工上下文按 AGENTS/RULES 分层。 | 参照 Claude Code 与 OMP 的上下文文件/Sticky rules 分层：`AGENTS.md` 作为启动背景，`RULES.md` 作为短规则每轮注入；二者不同于长期 memory 和 session summary。 |
 | ADR-016 | Session memory consolidation 默认关闭；开启后默认写 state memory。 | 这一步不同于只发给模型的 context compaction；默认 off 可以保护只读分析，开启后默认写用户级 state dir，只有显式 `memory_scope=project` 才写项目 `.local-agent/memory`。 |
 | ADR-003 | Excel 作为人工视图，Markdown 作为开发协作 Agent 可读事实源。 | 这套文档服务于开发 LCA 的过程；`.xlsx` 是二进制展示产物，不适合作为协作 Agent 的事实源。 |
@@ -276,7 +284,7 @@
 | 项目 | 结论 | 依据 |
 |---|---|---|
 | 主链路 | 通过 | 百炼真实小改复测已跑通 todo、dry_run、apply_patch、session allow、rollback、run_tests、git_diff。 |
-| 测试 | 通过 | P5 收口时 90 个 unittest、compileall、xlsx 检查、diff check 均通过；P7 当前代码已跑通 152 个 unittest、compileall 和 diff check。 |
+| 测试 | 通过 | P5 收口时 90 个 unittest、compileall、xlsx 检查、diff check 均通过；P7 当前代码已跑通 153 个 unittest、compileall 和 diff check。 |
 | 日用入口 | 通过 | README 已补只读分析和小改任务命令模板。 |
 | 开放风险 | 可接受 | shell 仍非沙箱、prompt injection 仍需靠审批和封闭 VM；token budget / output reserve / managed skills 留到后续评估。 |
 | 下一阶段 | P7 轻量高级能力真实压测后续 | 企业项目联网压测已获用户允许并由 Agent 代跑；跨项目 env-file、轻量 pruning / todo steering、memory consolidation、duplicate-tool forced-final steering、allowed-dir soft tool requirement、repeated read_file guard、空搜索词 guard、path escape roots hint、LSP 空 query guard 和 Current task contract 已完成。下一步继续评估回答准确性，尤其是跨项目缺失证据时的措辞和实现前二次验证。 |
