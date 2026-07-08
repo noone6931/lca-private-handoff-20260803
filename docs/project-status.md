@@ -43,7 +43,7 @@
 - `apply_patch` 已支持 `replace`、`insert_before`、`insert_after`，并兼容 Python 3.12。
 - 非交互审批、LLM 非 JSON 响应、session 恢复坏尾部、search_code 绝对路径泄漏等问题已经修复。
 - 已完成 Agent 自举测试：能够通过百炼模型调用工具读取、修改、测试和查看 diff。
-- 测试基线：153 个测试在正常本地环境通过。
+- 测试基线：155 个测试在正常本地环境通过。
 
 当前已具备：
 
@@ -159,7 +159,7 @@
 | Todo Steering | 已完成 MVP 版 | 未完成 todo 会作为 runtime reminder 注入发送给模型的 system context，即使未触发 compaction 也能帮助模型保持方向。 |
 | Evidence Ledger | 已完成 MVP 版 | `src/local_agent/agent.py` 从工具结果提炼短证据记录，注入 provider-bound `[Evidence ledger]`，并写 session `evidence` 事件；测试覆盖 read_file 后账本注入。 |
 | Synthetic Tool Result | 已完成 MVP 版 | deadline 到期、用户中断、`finish_reason=length` 时会补齐剩余 tool_call 的 tool result。 |
-| 测试基线 | 已完成 | 本地正常环境下 153 个测试通过。 |
+| 测试基线 | 已完成 | 本地正常环境下 155 个测试通过。 |
 
 ## 下一步 Todo
 
@@ -220,7 +220,7 @@
 | T-053 | allowed-dir workspace roots 注入 | 已完成 MVP 版 | P7 | 用户本机复跑 session `20260708T065705459243Z` 暴露模型不知道 `--allow-dir` 绝对路径；system prompt/provider-bound context 现在会列出 primary workspace 和 allowed dirs。 |
 | T-054 | 跨项目需求覆盖边界记录 | 已完成记录 | P7 | 用户确认当前测试项目可能无法完全覆盖需求；压测记录已说明单仓库只能输出候选前置能力和缺口，后续需要把相关项目也作为 `--allow-dir`。 |
 | T-067 | Evidence Ledger MVP | 已完成并小改压测通过 | P7 | provider-bound `[Evidence ledger]` 已落地；session `20260708T092554037057Z` 验证小改闭环仍可跑通。 |
-| T-068 | apply_patch tag 参数易误填 `path#tag` | 待评估 | P7 | 小实现压测中模型先把 `README.md#3988a904` 传给 `tag`，dry_run 失败后才自我修正；后续考虑 read_file 显式输出 tag 或 apply_patch 兼容 `path#tag`。 |
+| T-068 | apply_patch tag 参数易误填 `path#tag` | 已完成 | P7 | `read_file` 现在显式输出 `tag: <hash>`；`apply_patch` 兼容误传的 `path#tag` / `[path#tag]` 并提示下次传纯 hash，hash 校验不放宽。 |
 | T-069 | git_diff 区分已有修改与本轮修改 | 待评估 | P7 | 脏工作区下 `git_diff` 会混合本轮 patch 和 pre-existing diff；后续可记录 run start baseline 或用 patch records 辅助归因。 |
 
 ## 风险清单
@@ -253,7 +253,7 @@
 | R-024 | path escape 纠偏不足会让模型漏读主项目 | 已补并复跑通过 | session `20260708T084322924403Z` 中模型误用父目录后没有恢复，最终只分析辅助项目。 | 参考 OMP cwd/project context 和工具观察：公共 path escape 错误已列出 primary workspace/allowed dirs；session `20260708T085927874078` 已验证可恢复。 |
 | R-025 | LSP 空 query 扩散导致 token 浪费 | 已补并复跑通过 | session `20260708T084714338485Z` 中模型猜测大量不存在符号名，参数不同绕过同参重复 guard。 | 参考 OMP useless result / pruning / soft escalation：新增 LSP symbol 空 query 小上限并 forced-final。 |
 | R-026 | 最终回答结构和证据路径可能漂移 | 已补并复跑通过 | session `20260708T085426840146Z` 最终只总结最后一个需求文档；此前也出现把未验证路径当下一步建议路径的倾向。 | 参考 OMP 当前任务和 runtime evidence 持续注入：新增 Current task contract 和 evidence-backed path rule。 |
-| R-027 | 模型可能把 `path#tag` 整串误当成 patch tag | 已记录，待评估修复 | session `20260708T092554037057Z` 中 `apply_patch dry_run` 因 `tag=README.md#3988a904` 连续失败。 | 参考 OMP 结构化工具观察/编辑参数提示：后续可让 read_file 显式给出 pure tag，或让 apply_patch 兼容 `path#tag` 并提示模型。 |
+| R-027 | 模型可能把 `path#tag` 整串误当成 patch tag | 已关闭 | session `20260708T092554037057Z` 中 `apply_patch dry_run` 因 `tag=README.md#3988a904` 连续失败。 | 已参考 OMP 结构化工具观察/编辑参数提示：read_file 显式给出 pure tag，apply_patch 兼容 `path#tag` 并提示模型。 |
 | R-028 | 脏工作区下最终 diff 摘要可能混入非本轮改动 | 已记录，待评估修复 | session `20260708T092554037057Z` 的 `git_diff` 同时包含 README 小改和正在开发的 Evidence Ledger 代码 diff。 | 参考 OMP task/worktree/session state：后续可记录 run start baseline，并按 pre-existing / this-run patch / runtime state 分组展示。 |
 
 ## 架构决策
@@ -284,7 +284,7 @@
 | 项目 | 结论 | 依据 |
 |---|---|---|
 | 主链路 | 通过 | 百炼真实小改复测已跑通 todo、dry_run、apply_patch、session allow、rollback、run_tests、git_diff。 |
-| 测试 | 通过 | P5 收口时 90 个 unittest、compileall、xlsx 检查、diff check 均通过；P7 当前代码已跑通 153 个 unittest、compileall 和 diff check。 |
+| 测试 | 通过 | P5 收口时 90 个 unittest、compileall、xlsx 检查、diff check 均通过；P7 当前代码已跑通 155 个 unittest、compileall 和 diff check。 |
 | 日用入口 | 通过 | README 已补只读分析和小改任务命令模板。 |
 | 开放风险 | 可接受 | shell 仍非沙箱、prompt injection 仍需靠审批和封闭 VM；token budget / output reserve / managed skills 留到后续评估。 |
 | 下一阶段 | P7 轻量高级能力真实压测后续 | 企业项目联网压测已获用户允许并由 Agent 代跑；跨项目 env-file、轻量 pruning / todo steering、memory consolidation、duplicate-tool forced-final steering、allowed-dir soft tool requirement、repeated read_file guard、空搜索词 guard、path escape roots hint、LSP 空 query guard 和 Current task contract 已完成。下一步继续评估回答准确性，尤其是跨项目缺失证据时的措辞和实现前二次验证。 |

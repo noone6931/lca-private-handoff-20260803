@@ -33,7 +33,7 @@ def format_tagged_read(
     rel = display_workspace_path(workspace, path, allowed_roots)
     tag = hash_text(text)
     lines = text.splitlines()
-    rendered = [f"[{rel}#{tag}]"]
+    rendered = [f"[{rel}#{tag}]", f"tag: {tag}"]
     for index, line in enumerate(lines, start=1):
         if index >= start_line:
             rendered.append(f"{index}:{line}")

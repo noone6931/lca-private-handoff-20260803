@@ -305,6 +305,19 @@ class ToolTests(unittest.TestCase):
         self.assertIn(str(target), result.content)
         self.assertIn("outside requirement", result.content)
 
+    def test_read_file_outputs_pure_patch_tag(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            target = workspace / "README.md"
+            original = "hello\n"
+            target.write_text(original, encoding="utf-8")
+
+            result = read_file({"path": "README.md"}, ToolContext(workspace=workspace, approval_mode="yolo"))
+
+        self.assertFalse(result.is_error)
+        self.assertIn(f"[README.md#{hash_text(original)}]", result.content)
+        self.assertIn(f"tag: {hash_text(original)}", result.content)
+
     def test_read_file_rejects_unallowed_absolute_path(self) -> None:
         with tempfile.TemporaryDirectory() as workspace_tmp, tempfile.TemporaryDirectory() as outside_tmp:
             workspace = Path(workspace_tmp).resolve()
@@ -448,6 +461,33 @@ class ToolTests(unittest.TestCase):
 
         self.assertFalse(result.is_error)
         self.assertIn("Patch preview only", result.content)
+        self.assertIn("+new", result.content)
+        self.assertEqual(persisted, original)
+
+    def test_patch_file_accepts_path_hash_tag_from_read_header(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            target = workspace / "README.md"
+            original = "old\n"
+            target.write_text(original, encoding="utf-8")
+
+            result = patch_file(
+                {
+                    "path": "README.md",
+                    "tag": f"[README.md#{hash_text(original)}]",
+                    "start_line": 1,
+                    "end_line": 1,
+                    "old_text": "old",
+                    "new_text": "new",
+                    "dry_run": True,
+                },
+                ToolContext(workspace=workspace, approval_mode="yolo"),
+            )
+            persisted = target.read_text(encoding="utf-8")
+
+        self.assertFalse(result.is_error)
+        self.assertIn("Interpreted tag", result.content)
+        self.assertIn("Pass only the pure hash tag next time", result.content)
         self.assertIn("+new", result.content)
         self.assertEqual(persisted, original)
 

@@ -24,7 +24,7 @@ def file_tools() -> list[Tool]:
             name="read_file",
             description=(
                 "Read a text file inside the workspace or an explicitly allowed directory. "
-                "Returns a hash tag and numbered lines."
+                "Returns the pure hash tag to pass to apply_patch and numbered lines."
             ),
             tier="read",
             input_schema={
@@ -136,7 +136,8 @@ def read_file(args: dict[str, Any], context: ToolContext) -> ToolResult:
 
     lines = text.splitlines()
     rel = display_workspace_path(context.workspace, path, context.allowed_dirs)
-    rendered = [f"[{rel}#{hash_text(text)}]"]
+    tag = hash_text(text)
+    rendered = [f"[{rel}#{tag}]", f"tag: {tag}"]
     for index, line in enumerate(lines, start=1):
         if start_line <= index <= max_line:
             rendered.append(f"{index}:{line}")
@@ -157,10 +158,11 @@ def patch_file(args: dict[str, Any], context: ToolContext) -> ToolResult:
         return ToolResult(f"Target file does not exist: {args['path']}", is_error=True)
     before_text = path.read_bytes().decode("utf-8")
     before_tag = hash_text(before_text)
+    tag, interpreted_from = _normalize_patch_tag(args["tag"])
     result = apply_anchored_patch(
         workspace=context.workspace,
         path=args["path"],
-        tag=args["tag"],
+        tag=tag,
         start_line=int(args["start_line"]),
         end_line=int(args["end_line"]),
         old_text=args["old_text"],
@@ -169,9 +171,11 @@ def patch_file(args: dict[str, Any], context: ToolContext) -> ToolResult:
         dry_run=bool(args.get("dry_run")),
         allowed_roots=context.allowed_dirs,
     )
+    tag_note = _interpreted_tag_note(interpreted_from, tag)
     if args.get("dry_run"):
         return ToolResult(
-            f"Patch preview only. File not changed. New tag after apply would be: {result.new_tag}\n\n{result.diff}"
+            f"{tag_note}Patch preview only. File not changed. "
+            f"New tag after apply would be: {result.new_tag}\n\n{result.diff}"
         )
     patch_id = _record_patch(
         context=context,
@@ -181,7 +185,7 @@ def patch_file(args: dict[str, Any], context: ToolContext) -> ToolResult:
         after_tag=result.new_tag,
         diff=result.diff,
     )
-    return ToolResult(f"Applied patch. Patch id: {patch_id}. New tag: {result.new_tag}\n\n{result.diff}")
+    return ToolResult(f"{tag_note}Applied patch. Patch id: {patch_id}. New tag: {result.new_tag}\n\n{result.diff}")
 
 
 def rollback_patch(args: dict[str, Any], context: ToolContext) -> ToolResult:
@@ -221,6 +225,25 @@ def rollback_patch(args: dict[str, Any], context: ToolContext) -> ToolResult:
         )
     )
     return ToolResult(f"Rolled back patch {record['id']}. Restored tag: {record['before_tag']}\n\n{diff}")
+
+
+def _normalize_patch_tag(value: object) -> tuple[str, str | None]:
+    raw = str(value).strip()
+    cleaned = raw.strip("`").strip()
+    if cleaned.startswith("[") and cleaned.endswith("]"):
+        cleaned = cleaned[1:-1].strip()
+    if "#" not in cleaned:
+        return raw, None
+    candidate = cleaned.rsplit("#", 1)[1].strip().strip("]`")
+    if not candidate:
+        return raw, None
+    return candidate, raw
+
+
+def _interpreted_tag_note(original: str | None, tag: str) -> str:
+    if original is None:
+        return ""
+    return f"Interpreted tag {original!r} as hash {tag!r}. Pass only the pure hash tag next time.\n\n"
 
 
 def write_file(args: dict[str, Any], context: ToolContext) -> ToolResult:

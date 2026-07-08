@@ -25,6 +25,7 @@ class AnchoredPatchTests(unittest.TestCase):
             rendered = format_tagged_read(target, workspace, text)
 
         self.assertIn(f"[app.py#{hash_text(text)}]", rendered)
+        self.assertIn(f"tag: {hash_text(text)}", rendered)
         self.assertIn("1:print('hi')", rendered)
 
     def test_apply_patch_updates_file_and_returns_diff(self) -> None:
