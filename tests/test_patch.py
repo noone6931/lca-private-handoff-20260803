@@ -235,6 +235,33 @@ class AnchoredPatchTests(unittest.TestCase):
             with self.assertRaisesRegex(PatchError, "Path escapes workspace"):
                 resolve_workspace_path(workspace, "../outside.txt")
 
+    def test_path_escape_hint_names_primary_workspace_when_parent_was_requested(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            parent = Path(tmp).resolve()
+            workspace = parent / "repo"
+            workspace.mkdir()
+
+            with self.assertRaises(PatchError) as raised:
+                resolve_workspace_path(workspace, str(parent))
+
+        message = str(raised.exception)
+        self.assertIn(f"Primary workspace (--cwd): {workspace}", message)
+        self.assertIn("requested path is a parent of the primary workspace", message)
+        self.assertIn("Use '.' for the primary workspace", message)
+
+    def test_path_escape_hint_lists_allowed_directories(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace_tmp, tempfile.TemporaryDirectory() as allowed_tmp:
+            workspace = Path(workspace_tmp).resolve()
+            allowed = Path(allowed_tmp).resolve()
+
+            with self.assertRaises(PatchError) as raised:
+                resolve_workspace_path(workspace, "/tmp/outside.txt", (allowed,))
+
+        message = str(raised.exception)
+        self.assertIn("Workspace roots:", message)
+        self.assertIn(f"Primary workspace (--cwd): {workspace}", message)
+        self.assertIn(str(allowed), message)
+
 
 if __name__ == "__main__":
     unittest.main()

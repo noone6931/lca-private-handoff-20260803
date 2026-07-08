@@ -60,6 +60,7 @@ STARTUP_MEMORY_NAMES = ("project", "decisions", "conventions", "learned")
 STARTUP_MEMORY_CHAR_LIMIT = 8000
 STARTUP_CONTEXT_CHAR_LIMIT = 8000
 STICKY_RULES_CHAR_LIMIT = 4000
+CURRENT_TASK_CONTRACT_CHAR_LIMIT = 2000
 STARTUP_SKILLS_CHAR_LIMIT = 4000
 MAX_AUTHORED_SKILLS = 40
 MAX_SKILL_DESCRIPTION_CHARS = 320
@@ -71,6 +72,10 @@ MAX_USELESS_SEARCHES_PER_PATTERN_IN_RECENT_WINDOW = 8
 USELESS_SEARCH_PATTERN_WINDOW = 20
 MAX_USELESS_SEARCH_PATTERN_GUARD_HITS = 4
 MAX_USELESS_SEARCH_PATTERN_FINAL_ANSWER_STEERS = 2
+MAX_USELESS_LSP_SYMBOL_QUERIES_IN_RECENT_WINDOW = 12
+USELESS_LSP_SYMBOL_QUERY_WINDOW = 24
+MAX_USELESS_LSP_SYMBOL_GUARD_HITS = 4
+MAX_USELESS_LSP_SYMBOL_FINAL_ANSWER_STEERS = 2
 MAX_READ_FILE_CALLS_PER_FILE_IN_RECENT_WINDOW = 8
 READ_FILE_PATH_WINDOW = 14
 MAX_REPEATED_READ_FILE_GUARD_HITS = 4
@@ -207,11 +212,14 @@ class AgentRuntime:
         self._summary_cache: dict[str, str] = {}
         self._recent_tool_call_signatures: list[str] = []
         self._recent_useless_search_pattern_keys: list[str] = []
+        self._recent_useless_lsp_symbol_query_keys: list[str] = []
         self._recent_read_file_path_keys: list[str] = []
         self._duplicate_tool_guard_hits = 0
         self._duplicate_tool_final_answer_steers = 0
         self._useless_search_pattern_guard_hits = 0
         self._useless_search_pattern_final_answer_steers = 0
+        self._useless_lsp_symbol_guard_hits = 0
+        self._useless_lsp_symbol_final_answer_steers = 0
         self._repeated_read_file_guard_hits = 0
         self._repeated_read_file_final_answer_steers = 0
         self._read_file_evidence_paths: list[str] = []
@@ -317,6 +325,7 @@ class AgentRuntime:
                 self._log_tool_start(name, arguments)
                 duplicate_hits_before = self._duplicate_tool_guard_hits
                 useless_search_hits_before = self._useless_search_pattern_guard_hits
+                useless_lsp_hits_before = self._useless_lsp_symbol_guard_hits
                 repeated_read_hits_before = self._repeated_read_file_guard_hits
                 try:
                     result = self._execute_tool_with_repeat_guard(name, arguments, tool_context)
@@ -339,6 +348,7 @@ class AgentRuntime:
                 self._observe_soft_tool_requirement(name, arguments, result)
                 duplicate_skipped = self._duplicate_tool_guard_hits > duplicate_hits_before
                 useless_search_skipped = self._useless_search_pattern_guard_hits > useless_search_hits_before
+                useless_lsp_skipped = self._useless_lsp_symbol_guard_hits > useless_lsp_hits_before
                 repeated_read_skipped = self._repeated_read_file_guard_hits > repeated_read_hits_before
                 if repeated_read_skipped and self._steer_after_repeated_read_file():
                     self._append_synthetic_tool_results(
@@ -364,6 +374,18 @@ class AgentRuntime:
                         self._useless_search_pattern_stop_message(),
                     )
                     return self._stop_for_useless_search_pattern(deadline, run_start_index)
+                if useless_lsp_skipped and self._steer_after_useless_lsp_symbol_queries():
+                    self._append_synthetic_tool_results(
+                        tool_calls[index + 1 :],
+                        self._useless_lsp_symbol_stop_message(),
+                    )
+                    break
+                if self._useless_lsp_symbol_guard_hits >= MAX_USELESS_LSP_SYMBOL_GUARD_HITS:
+                    self._append_synthetic_tool_results(
+                        tool_calls[index + 1 :],
+                        self._useless_lsp_symbol_stop_message(),
+                    )
+                    return self._stop_for_useless_lsp_symbol_queries(deadline, run_start_index)
                 if duplicate_skipped and self._steer_after_duplicate_tool_call(name):
                     self._append_synthetic_tool_results(
                         tool_calls[index + 1 :],
@@ -490,6 +512,7 @@ class AgentRuntime:
                 self._config.workspace,
                 self._user_config_dir,
                 self._config.allowed_dirs,
+                self._current_user_request,
             )
         )
 
@@ -663,12 +686,30 @@ class AgentRuntime:
             if recent_useless_count >= MAX_USELESS_SEARCHES_PER_PATTERN_IN_RECENT_WINDOW:
                 self._useless_search_pattern_guard_hits += 1
                 return self._useless_search_pattern_result(search_pattern_key, recent_useless_count)
+        lsp_symbol_query_key = _lsp_symbol_query_key(name, arguments)
+        if (
+            lsp_symbol_query_key is not None
+            and len(self._recent_useless_lsp_symbol_query_keys) >= MAX_USELESS_LSP_SYMBOL_QUERIES_IN_RECENT_WINDOW
+        ):
+            self._useless_lsp_symbol_guard_hits += 1
+            return self._useless_lsp_symbol_result(
+                lsp_symbol_query_key,
+                len(self._recent_useless_lsp_symbol_query_keys),
+            )
         result = self._registry.execute(name, arguments, tool_context)
         if search_pattern_key is not None and result.useless and not result.is_error:
             self._recent_useless_search_pattern_keys.append(search_pattern_key)
             self._recent_useless_search_pattern_keys = self._recent_useless_search_pattern_keys[
                 -USELESS_SEARCH_PATTERN_WINDOW:
             ]
+        if lsp_symbol_query_key is not None and not result.is_error:
+            if result.useless:
+                self._recent_useless_lsp_symbol_query_keys.append(lsp_symbol_query_key)
+                self._recent_useless_lsp_symbol_query_keys = self._recent_useless_lsp_symbol_query_keys[
+                    -USELESS_LSP_SYMBOL_QUERY_WINDOW:
+                ]
+            else:
+                self._recent_useless_lsp_symbol_query_keys = []
         return result
 
     def _repeated_read_file_result(self, path_key: str, prior_count: int) -> ToolResult:
@@ -699,6 +740,16 @@ class AgentRuntime:
                 f"'{pattern_key}' {prior_count} times recently across paths. "
                 "Use the collected evidence and provide the requested final answer, "
                 "or switch to a meaningfully different business term only if new evidence is truly necessary."
+            ),
+            is_error=True,
+        )
+
+    def _useless_lsp_symbol_result(self, query_key: str, prior_count: int) -> ToolResult:
+        return ToolResult(
+            (
+                f"Tool call skipped: lsp symbol queries have returned no matches {prior_count} times recently; "
+                f"latest query was '{query_key}'. Use the collected evidence and provide the requested final answer, "
+                "or switch to search_code with a genuinely different business term only if new evidence is necessary."
             ),
             is_error=True,
         )
@@ -752,6 +803,33 @@ class AgentRuntime:
                 "kind": "useless_search_pattern_final_answer",
                 "guard_hits": self._useless_search_pattern_guard_hits,
                 "steer_count": self._useless_search_pattern_final_answer_steers,
+            },
+        )
+        self._force_final_answer_without_tools = True
+        return True
+
+    def _steer_after_useless_lsp_symbol_queries(self) -> bool:
+        if self._useless_lsp_symbol_final_answer_steers >= MAX_USELESS_LSP_SYMBOL_FINAL_ANSWER_STEERS:
+            return False
+        self._useless_lsp_symbol_final_answer_steers += 1
+        evidence = self._read_file_evidence_summary()
+        request_summary = self._final_answer_request_summary()
+        content = (
+            "Runtime steering: repeated lsp symbol queries with no matches are no longer useful. "
+            "Your next response must be a final answer without tool calls. "
+            "Return to the user's original requested output structure, use the evidence already collected, "
+            "state uncertainty explicitly, and list exact next files or truly different search terms instead of "
+            "continuing to guess symbol names."
+            f"{request_summary}"
+            f"{evidence}"
+        )
+        self._messages.append({"role": "user", "content": content})
+        self._session.append(
+            "runtime_steering",
+            {
+                "kind": "useless_lsp_symbol_final_answer",
+                "guard_hits": self._useless_lsp_symbol_guard_hits,
+                "steer_count": self._useless_lsp_symbol_final_answer_steers,
             },
         )
         self._force_final_answer_without_tools = True
@@ -1044,6 +1122,19 @@ class AgentRuntime:
     def _stop_for_useless_search_pattern(self, deadline: float | None, run_start_index: int) -> str:
         content = (
             "Stopped because the assistant kept searching the same no-match pattern across paths. "
+            "Retry with a narrower request or ask it to answer from the evidence already collected."
+        )
+        return self._finish_run(content, deadline, run_start_index)
+
+    def _useless_lsp_symbol_stop_message(self) -> str:
+        return (
+            "Tool call was not executed because repeated lsp symbol queries with no matches "
+            "were no longer useful. Use the already collected evidence and answer the user's original request."
+        )
+
+    def _stop_for_useless_lsp_symbol_queries(self, deadline: float | None, run_start_index: int) -> str:
+        content = (
+            "Stopped because the assistant kept guessing lsp symbol queries with no matches. "
             "Retry with a narrower request or ask it to answer from the evidence already collected."
         )
         return self._finish_run(content, deadline, run_start_index)
@@ -1455,11 +1546,14 @@ def _messages_with_runtime_context(
     workspace: Path,
     user_config_dir: Path,
     allowed_dirs: tuple[Path, ...] = (),
+    current_user_request: str | None = None,
 ) -> list[dict[str, Any]]:
     updated = list(messages)
     workspace_roots = _workspace_roots_context(workspace, allowed_dirs)
     if workspace_roots:
         updated = _messages_with_workspace_roots(updated, workspace_roots)
+    if current_user_request:
+        updated = _messages_with_current_task_contract(updated, current_user_request)
     sticky_rules = _load_sticky_rules(workspace, user_config_dir, max_chars=STICKY_RULES_CHAR_LIMIT)
     if sticky_rules:
         updated = _messages_with_sticky_rules(updated, sticky_rules)
@@ -1473,6 +1567,29 @@ def _messages_with_workspace_roots(messages: list[dict[str, Any]], workspace_roo
     content = str(base.get("content") or "")
     first_marker = content.find("[Workspace roots]")
     last_marker = content.rfind("[Workspace roots]")
+    if first_marker != -1 and first_marker != last_marker:
+        base["content"] = content[:last_marker].rstrip()
+    return [base, *non_system]
+
+
+def _messages_with_current_task_contract(messages: list[dict[str, Any]], current_user_request: str) -> list[dict[str, Any]]:
+    request = _one_line(current_user_request, max_chars=CURRENT_TASK_CONTRACT_CHAR_LIMIT)
+    block = (
+        "[Current task contract]\n"
+        "This is the original user request for the current run. Preserve its hard constraints and final output "
+        "structure when answering, even after many tool calls or compaction. Do not replace the requested final "
+        "analysis with a summary of the last file you read; if evidence is incomplete, answer in the requested "
+        "structure and state the uncertainty explicitly. File paths in final answers must be evidence-backed by "
+        "tool results; label guessed class/file names as unverified candidates instead of presenting them as "
+        "existing evidence paths.\n"
+        f"- {request}"
+    )
+    system_messages = [message for message in messages if message.get("role") == "system"]
+    non_system = [message for message in messages if message.get("role") != "system"]
+    base = _system_message_with_appended_context(system_messages, block)
+    content = str(base.get("content") or "")
+    first_marker = content.find("[Current task contract]")
+    last_marker = content.rfind("[Current task contract]")
     if first_marker != -1 and first_marker != last_marker:
         base["content"] = content[:last_marker].rstrip()
     return [base, *non_system]
@@ -2208,6 +2325,25 @@ def _search_pattern_key(name: str, arguments: str | dict[str, Any]) -> str | Non
     if not isinstance(pattern, str):
         return None
     normalized = " ".join(pattern.strip().lower().split())
+    return normalized or None
+
+
+def _lsp_symbol_query_key(name: str, arguments: str | dict[str, Any]) -> str | None:
+    if name not in {"lsp_symbols", "lsp_workspace_symbols", "lsp_document_symbols"}:
+        return None
+    if isinstance(arguments, dict):
+        parsed: Any = arguments
+    else:
+        try:
+            parsed = json.loads(arguments or "{}")
+        except json.JSONDecodeError:
+            return None
+    if not isinstance(parsed, dict):
+        return None
+    query = parsed.get("query")
+    if not isinstance(query, str):
+        return None
+    normalized = " ".join(query.strip().lower().split())
     return normalized or None
 
 

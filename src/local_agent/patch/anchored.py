@@ -139,7 +139,7 @@ def resolve_workspace_path(
         candidate = (workspace / candidate).resolve()
     if _is_under_any_root(candidate, _normalized_roots(workspace, allowed_roots)):
         return candidate
-    raise PatchError(f"Path escapes workspace and allowed directories: {raw_path}")
+    raise PatchError(_path_escape_message(workspace, raw_path, candidate, allowed_roots))
 
 
 def display_workspace_path(
@@ -169,6 +169,40 @@ def _normalized_roots(workspace: Path, allowed_roots: tuple[Path, ...]) -> tuple
         if resolved not in roots:
             roots.append(resolved)
     return tuple(roots)
+
+
+def _path_escape_message(
+    workspace: Path,
+    raw_path: str,
+    candidate: Path,
+    allowed_roots: tuple[Path, ...],
+) -> str:
+    roots = _normalized_roots(workspace, allowed_roots)
+    lines = [
+        f"Path escapes workspace and allowed directories: {raw_path}",
+        f"Resolved path: {candidate}",
+        "Workspace roots:",
+        f"- Primary workspace (--cwd): {roots[0]}",
+    ]
+    if len(roots) > 1:
+        lines.append("- Additional allowed directories; use these exact absolute paths for external docs/specs/code:")
+        lines.extend(f"  - {root}" for root in roots[1:])
+    if _is_parent_of(candidate, roots[0]):
+        lines.append(
+            "The requested path is a parent of the primary workspace. "
+            "Use '.' for the primary workspace, or use the exact primary workspace path above."
+        )
+    else:
+        lines.append("Use a relative path inside the primary workspace, or one of the exact allowed roots above.")
+    return "\n".join(lines)
+
+
+def _is_parent_of(parent: Path, child: Path) -> bool:
+    try:
+        child.relative_to(parent)
+        return parent != child
+    except ValueError:
+        return False
 
 
 def _is_under_any_root(path: Path, roots: tuple[Path, ...]) -> bool:

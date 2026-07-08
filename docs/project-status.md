@@ -43,7 +43,7 @@
 - `apply_patch` 已支持 `replace`、`insert_before`、`insert_after`，并兼容 Python 3.12。
 - 非交互审批、LLM 非 JSON 响应、session 恢复坏尾部、search_code 绝对路径泄漏等问题已经修复。
 - 已完成 Agent 自举测试：能够通过百炼模型调用工具读取、修改、测试和查看 diff。
-- 测试基线：148 个测试在正常本地环境通过。
+- 测试基线：152 个测试在正常本地环境通过。
 
 当前已具备：
 
@@ -75,12 +75,15 @@
 - 重复工具调用熔断和 forced-final steering 已落地：最近窗口内同名同参工具调用超过阈值会返回 tool error；重复命中后 runtime 会注入 steering，并让下一次 LLM 请求 `tools=[]`，强制模型基于已有证据输出最终回答；连续命中仍有硬停兜底。
 - 同文件连续切片读取漂移 guard 已落地：只读/分析类任务中，近期同一路径 `read_file` 超阈值后会返回 tool error，并强制下一轮无工具最终回答，避免长任务偏成“只总结最后一个大文件”；编辑类任务不触发。
 - OMP 风格 tool result pruning / todo steering 已落地：空搜索/LSP 结果会标记 useless；发送给模型的上下文会折叠 useless/superseded 工具结果并注入未完成 todo reminder，session 原文仍保留。
+- Path escape roots hint 已落地：越界路径错误会返回 resolved path、primary workspace 和 allowed dirs；父目录误用时提示使用 `.` 或精确 `--cwd`。
+- LSP symbol 空 query guard 已落地：连续一批 `lsp_symbols` / `lsp_workspace_symbols` / `lsp_document_symbols` 无结果后跳过并 forced-final；有命中则清空该批空探索计数。
+- Current task contract 已落地：每次 provider request 注入当前原始用户请求、最终输出结构约束和 evidence-backed path 规则，防止长工具链后只总结最后一个文件或把猜测路径当证据。
 
 真实缺口：
 
 - Path-scoped rules 还未实现，作为下一步候选。
 - Managed skills / autolearn 继续暂缓。
-- 企业项目联网压测：当前 full-access + network enabled 环境已可由 Agent 代跑。session `20260708T082703005777Z` 暴露同一空搜索词跨路径扩散循环，已补 search_code 空搜索词级 guard；最新 session `20260708T083312934017` 已持续先读取真实需求 md，后段 repeated read-file guard 成功触发并 forced-final，最终按用户要求输出 1-5 点结构。
+- 企业项目联网压测：当前 full-access + network enabled 环境已可由 Agent 代跑。单项目压测 session `20260708T083312934017` 已按 5 点结构收束；多项目压测连续暴露 path escape 父目录误用、LSP 空 query 扩散和最终回答结构漂移，已分别补 path escape roots hint、LSP 空 query guard、Current task contract；最新 session `20260708T085927874078` 已按 6 点结构输出，并定位 `CrclLimitMainBySelectController.limitConstituteAllotImport`、`CrclLimitMainBySelectApplication.limitConstituteAllotImport`、`LimitConstituteAllotImportReq`、`BatchImportConstituteDto` 等真实证据。
 - 用户确认当前测试项目可能无法完全覆盖需求，尤其“拓展服务费结算”可能需要其他项目配合；后续跨服务需求应把相关项目也作为 `--allow-dir`，或让 Agent 明确输出需要补充的项目/服务。
 - Runtime state 与 workspace 已解耦：`--state-dir` / `AGENT_STATE_DIR` 可指定用户级 state root；默认 `${XDG_STATE_HOME:-~/.local/state}/local-coding-agent/workspaces/<workspace-key>/`；sessions/todos/patch logs 已不再默认写入目标 `--cwd/.local-agent`。显式项目 memory/skills 仍保留在 workspace 中，自动 consolidation 默认写 state dir。
 - 已对 `/Users/chengming/mycode/project/crcl-open/crcl-open` 做本地 state-dir 验证：默认 state dir 为 `/Users/chengming/.local/state/local-coding-agent/workspaces/mycode-project-crcl-open-crcl-open-966d4fe7a33b`，目标仓库当前未发现 `.local-agent`。
@@ -103,7 +106,7 @@
 | P4 | 上下文治理 | 已完成 MVP 版 | 初版 summary / compaction、工具输出折叠、长需求文件工作流。 |
 | P5 | 安全与恢复增强 | 已完成并收口 | synthetic tool result、patch preview、回滚策略、非信任仓库提示、OMP 风格 approval model、approval prompt deadline cancel；真实小改复测通过。 |
 | P6 | 日用体验与默认工作流固化 | 已完成 MVP 版 | OMP 默认工作流本地化：system prompt、工具描述、轻量 runtime nudge。 |
-| P7 | 高级工程能力轻量版 | 进行中 | 已完成 OMP 风格 auto summary、多语言轻量 LSP、LSP 兼容别名、multi-root workspace roots 与工具观察提示、allowed-dir soft tool requirement、Markdown memory 启动注入、learn、可选 memory consolidation、authored skills discovery、综合压测记录、重复工具调用熔断、duplicate-tool forced-final steering、同文件切片读取漂移 guard、search_code 空搜索词跨路径 guard、tool result pruning、todo steering、跨项目 env-file 和用户级 `--state-dir` runtime state 分层；path-scoped rules、DAP、TUI、subagents、reviewer、AST edit、managed skills 继续后置。 |
+| P7 | 高级工程能力轻量版 | 进行中 | 已完成 OMP 风格 auto summary、多语言轻量 LSP、LSP 兼容别名、multi-root workspace roots 与工具观察提示、allowed-dir soft tool requirement、Markdown memory 启动注入、learn、可选 memory consolidation、authored skills discovery、综合压测记录、重复工具调用熔断、duplicate-tool forced-final steering、同文件切片读取漂移 guard、search_code 空搜索词跨路径 guard、path escape roots hint、LSP 空 query guard、Current task contract、tool result pruning、todo steering、跨项目 env-file 和用户级 `--state-dir` runtime state 分层；path-scoped rules、DAP、TUI、subagents、reviewer、AST edit、managed skills 继续后置。 |
 
 ## 已完成功能
 
@@ -154,7 +157,7 @@
 | Tool Result Pruning | 已完成 MVP 版 | `ToolResult.useless` 支持标记无信息结果；空搜索/LSP 结果标记 useless；发送给模型的上下文会把 useless 和 superseded 工具结果折叠成 notice，session 原文保留。 |
 | Todo Steering | 已完成 MVP 版 | 未完成 todo 会作为 runtime reminder 注入发送给模型的 system context，即使未触发 compaction 也能帮助模型保持方向。 |
 | Synthetic Tool Result | 已完成 MVP 版 | deadline 到期、用户中断、`finish_reason=length` 时会补齐剩余 tool_call 的 tool result。 |
-| 测试基线 | 已完成 | 本地正常环境下 148 个测试通过。 |
+| 测试基线 | 已完成 | 本地正常环境下 152 个测试通过。 |
 
 ## 下一步 Todo
 
@@ -242,6 +245,9 @@
 | R-021 | 单仓库无法覆盖跨服务需求 | 已记录，持续关注 | 如果需求实际涉及 incentive/settlement/用户中心等其他项目，单仓库分析会误把“当前仓库未命中”当成完整结论。 | 参考 OMP 对 workspace/context 的依赖边界，后续把相关项目也作为 `--allow-dir`，或让 Agent 明确输出“需要补充哪个项目”。 |
 | R-022 | 同文件连续切片读取导致任务漂移 | 已补并复跑通过 | session `20260708T073252231781Z` 中模型连续读取同一大文件多个相邻区间；session `20260708T074609696125Z` 中显式只读任务因“下一步实现”措辞误关 guard；session `20260708T083312934017` 中 repeated read-file guard 成功收束并按 5 点结构输出。 | 参考 OMP 病态子循环小上限、runtime steering 和 runtime context：显式只读/不要修改文件/不要写文件优先于编辑词；近期同一路径 `read_file` 超阈值后强制下一轮无工具最终回答，并在 steering 里列出已读文件路径、原始请求和已读一致性规则。 |
 | R-023 | 同一空搜索词跨路径扩散导致 token 浪费 | 已补并复跑通过 | session `20260708T082703005777Z` 中模型对同一无结果关键词反复切换 path 搜索，因参数不同绕过 exact duplicate guard。 | 参考 OMP useless tool result / pruning / soft escalation：按 pattern 而非完整参数统计无结果搜索，多次无结果后 forced-final。 |
+| R-024 | path escape 纠偏不足会让模型漏读主项目 | 已补并复跑通过 | session `20260708T084322924403Z` 中模型误用父目录后没有恢复，最终只分析辅助项目。 | 参考 OMP cwd/project context 和工具观察：公共 path escape 错误已列出 primary workspace/allowed dirs；session `20260708T085927874078` 已验证可恢复。 |
+| R-025 | LSP 空 query 扩散导致 token 浪费 | 已补并复跑通过 | session `20260708T084714338485Z` 中模型猜测大量不存在符号名，参数不同绕过同参重复 guard。 | 参考 OMP useless result / pruning / soft escalation：新增 LSP symbol 空 query 小上限并 forced-final。 |
+| R-026 | 最终回答结构和证据路径可能漂移 | 已补并复跑通过 | session `20260708T085426840146Z` 最终只总结最后一个需求文档；此前也出现把未验证路径当下一步建议路径的倾向。 | 参考 OMP 当前任务和 runtime evidence 持续注入：新增 Current task contract 和 evidence-backed path rule。 |
 
 ## 架构决策
 
@@ -270,10 +276,10 @@
 | 项目 | 结论 | 依据 |
 |---|---|---|
 | 主链路 | 通过 | 百炼真实小改复测已跑通 todo、dry_run、apply_patch、session allow、rollback、run_tests、git_diff。 |
-| 测试 | 通过 | P5 收口时 90 个 unittest、compileall、xlsx 检查、diff check 均通过；P7 当前代码已跑通 148 个 unittest、compileall 和 diff check。 |
+| 测试 | 通过 | P5 收口时 90 个 unittest、compileall、xlsx 检查、diff check 均通过；P7 当前代码已跑通 152 个 unittest、compileall 和 diff check。 |
 | 日用入口 | 通过 | README 已补只读分析和小改任务命令模板。 |
 | 开放风险 | 可接受 | shell 仍非沙箱、prompt injection 仍需靠审批和封闭 VM；token budget / output reserve / managed skills 留到后续评估。 |
-| 下一阶段 | P7 轻量高级能力真实压测后续 | 企业项目联网压测已获用户允许并由 Agent 代跑；跨项目 env-file、轻量 pruning / todo steering、memory consolidation、duplicate-tool forced-final steering、allowed-dir soft tool requirement、repeated read_file guard 和空搜索词 guard 已完成。下一步从运行稳定性转向回答准确性/跨项目覆盖评估。 |
+| 下一阶段 | P7 轻量高级能力真实压测后续 | 企业项目联网压测已获用户允许并由 Agent 代跑；跨项目 env-file、轻量 pruning / todo steering、memory consolidation、duplicate-tool forced-final steering、allowed-dir soft tool requirement、repeated read_file guard、空搜索词 guard、path escape roots hint、LSP 空 query guard 和 Current task contract 已完成。下一步继续评估回答准确性，尤其是跨项目缺失证据时的措辞和实现前二次验证。 |
 
 ## 推荐工作流
 

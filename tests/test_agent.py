@@ -226,6 +226,40 @@ class _UselessSearchPatternClient:
         )()
 
 
+class _UselessLspSymbolClient:
+    calls = 0
+    tools_seen: list[int] = []
+
+    def __init__(self, config: AgentConfig):
+        self.config = config
+
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).calls += 1
+        type(self).tools_seen.append(len(tools))
+        if not tools:
+            return type("Response", (), {"message": {"content": "final answer after empty lsp evidence"}})()
+        query = f"MissingGeneratedSymbol{type(self).calls}"
+        return type(
+            "Response",
+            (),
+            {
+                "message": {
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": f"call_{type(self).calls}",
+                            "type": "function",
+                            "function": {
+                                "name": "lsp_workspace_symbols",
+                                "arguments": json.dumps({"query": query, "path": "."}),
+                            },
+                        }
+                    ],
+                }
+            },
+        )()
+
+
 class _AllowedDirRequirementClient:
     calls: list[dict] = []
     doc_path: str = ""
@@ -384,6 +418,33 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertIn("first list/read the relevant allowed directory by its exact absolute path", system_content)
         self.assertIn(str(requirements), sent_system["content"])
         self.assertEqual(sent_system["content"].count("[Workspace roots]"), 1)
+
+    def test_current_task_contract_is_sent_to_provider_context(self) -> None:
+        _MessageRecordingClient.messages = []
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=workspace,
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _MessageRecordingClient):
+                runtime = AgentRuntime(config, show_tool_logs=False)
+                result = runtime.run("最后必须按以下结构输出：1 项目边界判断；2 证据文件路径")
+
+        sent_system = [message for message in _MessageRecordingClient.messages if message.get("role") == "system"][0]
+        self.assertEqual(result, "done")
+        self.assertIn("[Current task contract]", sent_system["content"])
+        self.assertIn("最后必须按以下结构输出", sent_system["content"])
+        self.assertIn("Do not replace the requested final analysis with a summary of the last file", sent_system["content"])
+        self.assertIn("File paths in final answers must be evidence-backed", sent_system["content"])
+        self.assertEqual(sent_system["content"].count("[Current task contract]"), 1)
+        self.assertNotIn("[Current task contract]", runtime._messages[0]["content"])
 
     def test_requirement_tasks_must_read_allowed_directory_docs_before_answering(self) -> None:
         _AllowedDirRequirementClient.calls = []
@@ -791,6 +852,41 @@ class AgentRuntimeTests(unittest.TestCase):
         ]
         self.assertEqual(result, "final answer after empty search evidence")
         self.assertEqual(_UselessSearchPatternClient.tools_seen[-1], 0)
+        self.assertEqual(len(skipped_messages), 1)
+        self.assertGreaterEqual(len(steering_messages), 1)
+
+    def test_repeated_useless_lsp_symbol_queries_are_steered_to_final_answer(self) -> None:
+        _UselessLspSymbolClient.calls = 0
+        _UselessLspSymbolClient.tools_seen = []
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            (workspace / "Sample.java").write_text("public class Sample {}\n", encoding="utf-8")
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=workspace,
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+                context_char_budget=0,
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _UselessLspSymbolClient):
+                runtime = AgentRuntime(config, show_tool_logs=False)
+                result = runtime.run("只读分析这个项目并最后输出结论")
+
+        tool_messages = [message for message in runtime._messages if message.get("role") == "tool"]
+        skipped_messages = [
+            message for message in tool_messages if "lsp symbol queries have returned no matches" in message["content"]
+        ]
+        steering_messages = [
+            str(message.get("content"))
+            for message in runtime._messages
+            if "repeated lsp symbol queries with no matches" in str(message.get("content"))
+        ]
+        self.assertEqual(result, "final answer after empty lsp evidence")
+        self.assertEqual(_UselessLspSymbolClient.tools_seen[-1], 0)
         self.assertEqual(len(skipped_messages), 1)
         self.assertGreaterEqual(len(steering_messages), 1)
 
