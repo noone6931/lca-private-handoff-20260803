@@ -1186,6 +1186,35 @@ class ToolTests(unittest.TestCase):
         self.assertIn("?? README.md", result.content)
         self.assertIn("git diff does not show untracked files", result.content)
 
+    def test_git_diff_adds_diff_summary_with_counts_and_hunk_snippets(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            subprocess.run(["git", "init"], cwd=workspace, text=True, capture_output=True, check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=workspace, check=True)
+            subprocess.run(["git", "config", "user.name", "Test User"], cwd=workspace, check=True)
+            (workspace / "README.md").write_text(
+                "# local-coding-agent\n\n"
+                "一个个人本地编程助手 Agent 的 MVP。\n",
+                encoding="utf-8",
+            )
+            subprocess.run(["git", "add", "."], cwd=workspace, check=True)
+            subprocess.run(["git", "commit", "-m", "init"], cwd=workspace, text=True, capture_output=True, check=True)
+            (workspace / "README.md").write_text(
+                "# local-coding-agent\n"
+                "# local-coding-agent\n\n"
+                "> smoke test marker\n\n"
+                "一个个人本地编程助手 Agent 的 MVP。\n",
+                encoding="utf-8",
+            )
+
+            result = git_diff({}, ToolContext(workspace=workspace, approval_mode="yolo"))
+
+        self.assertFalse(result.is_error)
+        self.assertIn("[diff summary]", result.content)
+        self.assertIn("Total: 1 file(s), +3 -0, 1 hunk(s).", result.content)
+        self.assertIn("README.md: +3 -0, 1 hunk(s).", result.content)
+        self.assertIn("added: # local-coding-agent | <blank line> | > smoke test marker", result.content)
+
     def test_git_diff_adds_run_attribution_for_baseline_and_session_patches(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp).resolve()

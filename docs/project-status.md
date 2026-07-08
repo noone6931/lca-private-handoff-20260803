@@ -43,7 +43,7 @@
 - `apply_patch` 已支持 `replace`、`insert_before`、`insert_after`，并兼容 Python 3.12。
 - 非交互审批、LLM 非 JSON 响应、session 恢复坏尾部、search_code 绝对路径泄漏等问题已经修复。
 - 已完成 Agent 自举测试：能够通过百炼模型调用工具读取、修改、测试和查看 diff。
-- 测试基线：156 个测试在正常本地环境通过。
+- 测试基线：157 个测试在正常本地环境通过。
 
 当前已具备：
 
@@ -124,7 +124,7 @@
 | 文件工具 | 已完成 | `read_file`、`list_files`、`write_file` 已可用，写文件为 create-only。 |
 | 搜索工具 | 已完成 | `search_code` 使用 `rg`，输出 workspace 相对路径并做总结果截断。 |
 | Shell / Test 工具 | 已完成 | `shell`、`run_tests` 可用，执行类工具需要审批。 |
-| Git 工具 | 已完成 | `git_status`、`git_diff` 可用，空 diff 时提示 untracked 文件。 |
+| Git 工具 | 已完成 | `git_status`、`git_diff` 可用，空 diff 时提示 untracked 文件；`git_diff` 追加 diff summary 和 run attribution。 |
 | Anchored Patch | 已完成 | `apply_patch` 使用 tag、line、old_text 校验，并返回 diff。 |
 | Patch Preview | 已完成 | `apply_patch dry_run=true` 复用 anchored 校验，只返回 diff，不写文件。 |
 | Patch Rollback | 已完成 MVP 版 | `rollback_patch` 只回滚本 session 的 patch 记录，且要求当前文件仍匹配 after tag。 |
@@ -159,7 +159,7 @@
 | Todo Steering | 已完成 MVP 版 | 未完成 todo 会作为 runtime reminder 注入发送给模型的 system context，即使未触发 compaction 也能帮助模型保持方向。 |
 | Evidence Ledger | 已完成 MVP 版 | `src/local_agent/agent.py` 从工具结果提炼短证据记录，注入 provider-bound `[Evidence ledger]`，并写 session `evidence` 事件；测试覆盖 read_file 后账本注入。 |
 | Synthetic Tool Result | 已完成 MVP 版 | deadline 到期、用户中断、`finish_reason=length` 时会补齐剩余 tool_call 的 tool result。 |
-| 测试基线 | 已完成 | 本地正常环境下 156 个测试通过。 |
+| 测试基线 | 已完成 | 本地正常环境下 157 个测试通过。 |
 
 ## 下一步 Todo
 
@@ -222,7 +222,7 @@
 | T-067 | Evidence Ledger MVP | 已完成并小改压测通过 | P7 | provider-bound `[Evidence ledger]` 已落地；session `20260708T092554037057Z` 验证小改闭环仍可跑通。 |
 | T-068 | apply_patch tag 参数易误填 `path#tag` | 已完成 | P7 | `read_file` 现在显式输出 `tag: <hash>`；`apply_patch` 兼容误传的 `path#tag` / `[path#tag]` 并提示下次传纯 hash，hash 校验不放宽。 |
 | T-069 | git_diff 区分已有修改与本轮修改 | 已完成 MVP 版 | P7 | 每轮 run start 捕获 git baseline 并写 session；`git_diff` 追加 attribution 小节，按 pre-existing、this-session apply_patch、mixed、new unattributed 提示模型分开总结。 |
-| T-070 | 最终 diff 细节概括准确性 | 已记录，待评估 | P7 | T-069 复测中 attribution 分类正确，但模型把实际 diff hunk 过度简化；后续可增加 diff stats/hunk summary 或 reviewer 自检。 |
+| T-070 | 最终 diff 细节概括准确性 | 已完成 MVP 版 | P7 | `git_diff` 已追加 `[diff summary]`，按文件输出 `+N/-M`、hunk 数、hunk header 和少量 added/removed 片段；测试覆盖重复标题 + smoke-test 行实际为 `+3 -0`。 |
 
 ## 风险清单
 
@@ -256,7 +256,7 @@
 | R-026 | 最终回答结构和证据路径可能漂移 | 已补并复跑通过 | session `20260708T085426840146Z` 最终只总结最后一个需求文档；此前也出现把未验证路径当下一步建议路径的倾向。 | 参考 OMP 当前任务和 runtime evidence 持续注入：新增 Current task contract 和 evidence-backed path rule。 |
 | R-027 | 模型可能把 `path#tag` 整串误当成 patch tag | 已关闭 | session `20260708T092554037057Z` 中 `apply_patch dry_run` 因 `tag=README.md#3988a904` 连续失败。 | 已参考 OMP 结构化工具观察/编辑参数提示：read_file 显式给出 pure tag，apply_patch 兼容 `path#tag` 并提示模型。 |
 | R-028 | 脏工作区下最终 diff 摘要可能混入非本轮改动 | 已关闭 MVP 版 | session `20260708T092554037057Z` 的 `git_diff` 同时包含 README 小改和正在开发的 Evidence Ledger 代码 diff。 | 参考 OMP task/worktree/session state：已记录 run start baseline，并按 pre-existing / this-run patch / mixed / new unattributed 分组提示。 |
-| R-029 | 最终 diff 细节可能被模型过度简化或说错 | 已记录，待评估修复 | session `20260708T094926471758Z` 中 attribution 分类正确，但模型没有准确描述实际 diff hunk；低价值 README smoke-test 改动已撤回。 | 参考 OMP runtime observation / reviewer 思路：后续可给 `git_diff` 增加 diff stats/hunk summary，并要求 final answer 引用实际 hunk。 |
+| R-029 | 最终 diff 细节可能被模型过度简化或说错 | 已关闭 MVP 版 | session `20260708T094926471758Z` 中 attribution 分类正确，但模型没有准确描述实际 diff hunk；低价值 README smoke-test 改动已撤回。 | 参考 OMP runtime observation 思路：已给 `git_diff` 增加 diff stats/hunk summary，后续观察是否需要 reviewer 自检。 |
 
 ## 架构决策
 
@@ -286,7 +286,7 @@
 | 项目 | 结论 | 依据 |
 |---|---|---|
 | 主链路 | 通过 | 百炼真实小改复测已跑通 todo、dry_run、apply_patch、session allow、rollback、run_tests、git_diff。 |
-| 测试 | 通过 | P5 收口时 90 个 unittest、compileall、xlsx 检查、diff check 均通过；P7 当前代码已跑通 156 个 unittest、compileall 和 diff check。 |
+| 测试 | 通过 | P5 收口时 90 个 unittest、compileall、xlsx 检查、diff check 均通过；P7 当前代码已跑通 157 个 unittest、compileall 和 diff check。 |
 | 日用入口 | 通过 | README 已补只读分析和小改任务命令模板。 |
 | 开放风险 | 可接受 | shell 仍非沙箱、prompt injection 仍需靠审批和封闭 VM；token budget / output reserve / managed skills 留到后续评估。 |
 | 下一阶段 | P7 轻量高级能力真实压测后续 | 企业项目联网压测已获用户允许并由 Agent 代跑；跨项目 env-file、轻量 pruning / todo steering、memory consolidation、duplicate-tool forced-final steering、allowed-dir soft tool requirement、repeated read_file guard、空搜索词 guard、path escape roots hint、LSP 空 query guard 和 Current task contract 已完成。下一步继续评估回答准确性，尤其是跨项目缺失证据时的措辞和实现前二次验证。 |

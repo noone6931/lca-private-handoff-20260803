@@ -17,10 +17,10 @@ python3 scripts/sync_project_excel.py
 | 字段 | 当前值 | 说明 |
 |---|---|---|
 | 最终目标 | 个人本地编程助手 Agent | 本地优先、封闭 VM 可用、只访问指定 AI API，能读代码、搜代码、改代码、跑测试、生成 diff、沉淀项目记忆。 |
-| 当前阶段 | P7：轻量高级能力与真实压测 | P6 默认工作流 MVP 已落地；P7 已补 OMP 风格 auto summary、多语言轻量 LSP、multi-root、startup context/rules、startup memory、learn、可选 memory consolidation、authored skills discovery，并通过综合压测发现和修复重复工具调用循环，新增 OMP 风格 tool result pruning / todo steering；2026-07-08 已按 OMP 思路完成 runtime state 与 cwd 分层，自动 memory consolidation 默认写 state dir；full-access 后 Agent 已代跑单项目和多项目企业压测，session `20260708T085927874078` 已验证 path escape roots hint、LSP 空 query guard、Current task contract 和证据路径规则，最终按 6 点结构输出；最新 T-069 归因复测 session `20260708T094926471758Z` 验证 attribution 能正确区分 pre-existing 与 this-session，同时暴露最终 diff 细节概括仍需增强。 |
+| 当前阶段 | P7：轻量高级能力与真实压测 | P6 默认工作流 MVP 已落地；P7 已补 OMP 风格 auto summary、多语言轻量 LSP、multi-root、startup context/rules、startup memory、learn、可选 memory consolidation、authored skills discovery，并通过综合压测发现和修复重复工具调用循环，新增 OMP 风格 tool result pruning / todo steering；2026-07-08 已按 OMP 思路完成 runtime state 与 cwd 分层，自动 memory consolidation 默认写 state dir；full-access 后 Agent 已代跑单项目和多项目企业压测，session `20260708T085927874078` 已验证 path escape roots hint、LSP 空 query guard、Current task contract 和证据路径规则，最终按 6 点结构输出；T-069/T-070 已补 `git_diff` attribution 与 diff summary，减少脏工作区和 hunk 细节误读。 |
 | 推荐入口 | `./agent "阅读当前项目"` | 自动设置 `PYTHONPATH=src`，默认当前目录为 workspace。 |
 | Token 配置 | 环境变量 / `--env-file` / `.env` | `./agent` 会自动加载安装目录 `.env`，也可显式传 `--env-file`；真实环境变量优先。 |
-| 测试数 | 156 | 完整 unittest、compileall、diff check、xlsx 检查通过。 |
+| 测试数 | 157 | 完整 unittest、compileall、diff check、xlsx 检查通过。 |
 | 默认 budget_seconds | 600 | 单次任务默认 10 分钟墙钟预算；`--budget-seconds 0` 可关闭。 |
 | 默认 max_steps | 0 | 表示不限步；仅在用户显式设置时作为防失控保险丝。 |
 | 预算执行 | 细粒度 | LLM 请求和 shell/run_tests timeout 会按剩余预算夹紧；deadline 到期会补齐未执行工具结果。 |
@@ -69,7 +69,7 @@ python3 scripts/sync_project_excel.py
 | list_files | 已完成 | 跳过 `.git`、`.local-agent`、cache | 相对路径输出 | 保持 |
 | search_code | 已完成 | `rg` 搜索，相对路径输出，总结果截断 | 已修绝对路径泄漏 | 保持 |
 | shell/run_tests | 已完成 | 本地命令和测试执行 | 带审批和超时 | per-tool auto allow 可选 |
-| git_status/git_diff | 已完成 | untracked 时解释空 diff 原因 | 初始 commit 后 diff 更清晰 | 保持 |
+| git_status/git_diff | 已完成 | untracked 时解释空 diff 原因；git_diff 输出 diff summary 和 attribution | 初始 commit 后 diff 更清晰；脏工作区下能区分运行前已有和本轮 patch | 保持 |
 | apply_patch | 已完成 | replace/insert_before/insert_after/dry_run | hash + old_text 校验；dry_run 只预览不写入 | 保持 |
 | rollback_patch | 已完成 MVP 版 | session patch log + after tag 校验 | 只回滚本 session 中 apply_patch 写过且未被后续修改的文件 | 继续真实任务验证 |
 | write_file | 已完成 | 只创建新文件，拒绝覆盖 | 安全保守 | 保持 |
@@ -106,7 +106,7 @@ python3 scripts/sync_project_excel.py
 | Tool result pruning | 已完成 MVP 版 | `ToolResult.useless` + provider-bound context pruning | `search_code` / LSP 空结果标记 useless；重复等价 read/search/LSP 旧结果在发给模型的上下文中替换为 notice，session 原文保留 | 继续真实长任务观察 |
 | Todo steering | 已完成 MVP 版 | provider-bound runtime todo reminder | 未完成 todo 会注入发送给模型的 system context，即使未触发 compaction 也能提醒模型保持任务方向 | 后续评估 OMP 风格 eager todo / mid-run nudge |
 | Evidence Ledger | 已完成 MVP 版 | `src/local_agent/agent.py` / `tests/test_agent.py` | 工具结果经 runtime 提炼成短证据账本；provider context 中提示模型区分证据事实与推断，session 中追加 `evidence` 事件 | 后续真实任务观察是否需要更结构化引用 |
-| 测试覆盖 | 已完成 | 当前 156 个测试通过 | unittest、compileall、diff check、xlsx 检查通过 | 日用反馈补测 |
+| 测试覆盖 | 已完成 | 当前 157 个测试通过 | unittest、compileall、diff check、xlsx 检查通过 | 日用反馈补测 |
 
 ## 下一步 Todo
 
@@ -181,7 +181,7 @@ python3 scripts/sync_project_excel.py
 | T-067 | P0 | P7 | Evidence Ledger MVP | 已完成并小改压测通过 | Agent | Current task contract 只约束“证据路径必须来自工具结果”，但长工具链后模型仍需要一份短证据账本来区分证据事实和推断 | 参考 OMP runtime context / observation 思路：runtime 从工具结果中央提炼 evidence records，provider-bound 注入 `[Evidence ledger]`，session JSONL 追加 `evidence` 事件；测试覆盖 read_file 后账本注入，小实现压测 `20260708T092554037057Z` 通过 |
 | T-068 | P1 | P7 | apply_patch tag 参数易误填 `path#tag` | 已完成 | Agent | 小实现压测中模型先把 `read_file` header `README.md#3988a904` 整串传给 `tag`，dry_run 连续失败后才自我修正为 `3988a904` | 已参考 OMP 结构化工具观察/编辑参数提示：`read_file` 现在显式输出 `tag: <hash>`；`apply_patch` 兼容 `[path#hash]` / `path#hash` 并提示下次传纯 hash，anchored hash 校验不放宽；测试覆盖。 |
 | T-069 | P1 | P7 | git_diff 归因区分已有工作区修改与本轮修改 | 已完成 MVP 版 | Agent | 小实现压测时工作区已有人工实现的 Evidence Ledger diff，模型的 `git_diff` 同时看到 README 小改和 agent.py 大改，虽能识别“非本轮改动”，但依赖推理 | 已参考 OMP task/worktree/session state 思路：每轮 run start 捕获 git baseline 并写 session；`git_diff` 追加 attribution 小节，按 pre-existing dirty files、this-session apply_patch files、mixed files、new unattributed files 提示模型分开总结。 |
-| T-070 | P1 | P7 | 最终 diff 细节概括准确性 | 已记录，待评估 | Agent | T-069 复测 session `20260708T094926471758Z` 中 attribution 分类正确，但模型把“重复标题 + smoke-test 标记”概括为 exactly one insertion，且选择的 README 改动低价值 | 可参考 OMP runtime observation/reviewer 思路：后续可让 `git_diff` 输出轻量 diff stats / hunk summary，或在 final steering 中要求引用实际 hunk 增删行；必要时增加 reviewer 风格自检。 |
+| T-070 | P1 | P7 | 最终 diff 细节概括准确性 | 已完成 MVP 版 | Agent | T-069 复测 session `20260708T094926471758Z` 中 attribution 分类正确，但模型把“重复标题 + smoke-test 标记”概括为 exactly one insertion，且选择的 README 改动低价值 | 已参考 OMP runtime observation 思路：`git_diff` 追加 `[diff summary]`，按文件输出 `+N/-M`、hunk 数、hunk header 和少量 added/removed 片段；回归测试覆盖重复标题 + smoke-test 行实际为 `+3 -0`。 |
 
 ## 风险与决策
 
@@ -215,7 +215,7 @@ python3 scripts/sync_project_excel.py
 | 风险 | R-026 | 高 | 最终回答结构和证据路径可能漂移 | 已补并复跑通过 | session `20260708T085426840146Z` 最终只总结最后一个需求文档；此前也出现把未验证路径当下一步建议路径的倾向 | OMP 将当前任务、runtime state 和 tool evidence 持续放进 provider context；我们新增 Current task contract 和 evidence-backed path rule。 |
 | 风险 | R-027 | 中 | 模型可能把 `read_file` header 的 `path#tag` 整串误当成 patch tag | 已关闭 | 小实现压测 session `20260708T092554037057Z` 中 dry_run 前三次因 `tag=README.md#3988a904` 失败，第四次改成纯 hash 后成功 | 已加双保险：`read_file` 显式输出 pure tag；`apply_patch` 兼容误传的 `path#tag` / `[path#tag]`，但仍用 hash 校验当前文件。 |
 | 风险 | R-028 | 中 | 脏工作区下最终 diff 摘要可能混入非本轮改动 | 已关闭 MVP 版 | 小实现压测 session `20260708T092554037057Z` 的 `git_diff` 同时包含 README 小改和正在开发的 Evidence Ledger 代码 diff；模型能分辨但依赖推理 | 已参考 OMP task/worktree/session state：run start 记录 baseline，`git_diff` 对照本轮 patch records 输出归因提示；同一文件若运行前已 dirty 且本轮又修改，会标成 mixed。 |
-| 风险 | R-029 | 中 | 最终 diff 细节可能被模型过度简化或说错 | 已记录，待评估修复 | T-069 复测 session `20260708T094926471758Z` 中 attribution 分类正确，但模型没有准确描述实际 diff hunk；低价值 README smoke-test 改动已撤回 | OMP 通过更结构化 runtime state/tool observation 和 reviewer/verification 降低最终回答漂移；LCA 后续可给 `git_diff` 增加 diff stats/hunk summary，并在 final steering 中要求按实际 hunk 总结。 |
+| 风险 | R-029 | 中 | 最终 diff 细节可能被模型过度简化或说错 | 已关闭 MVP 版 | T-069 复测 session `20260708T094926471758Z` 中 attribution 分类正确，但模型没有准确描述实际 diff hunk；低价值 README smoke-test 改动已撤回 | 已参考 OMP runtime state/tool observation：`git_diff` 追加结构化 diff summary，直接提供文件级增删统计和 hunk snippets；后续再观察是否需要 reviewer 自检。 |
 | ADR | ADR-001 | 2026-07-07 | 优先采纳 OMP 成熟设计，按本地目标裁剪 | 已接受 | 好设计可直接采用，复杂度按需收敛 | OMP 是重要参考实现；我们不为了“避免复制”而绕开好设计。采用标准是收益是否大于复杂度，并且不破坏个人本地使用、封闭 VM、无公网依赖和第一阶段 MVP 边界。 |
 | ADR | ADR-002 | 2026-07-07 | max_steps 只作为防失控保险丝 | 已落地 | 默认值已改为 0，不限步 | OMP 的 stepCounter 主要用于 telemetry，终止靠无 tool_calls、deadline、abort；我们把 `max_steps` 仅作为显式保险丝。 |
 | ADR | ADR-003 | 2026-07-07 | todo、ask_user、per-tool approval 是主功能 | 已落地 | P3 已实现 | OMP 将 todo、approval、elicitation 做成可观测会话能力；我们 P3 先做终端轻量版，后续再补 UI 化。 |
@@ -261,14 +261,14 @@ python3 scripts/sync_project_excel.py
 | PT-020 | P0 | 已补并小改压测通过 | Current task contract 能要求 evidence-backed path，但长工具链后模型仍需要一份短证据账本来避免最终回答把推断当事实。 | OMP 会把 runtime state、tool evidence 和 steering 持续放进模型上下文；证据不是长期 memory，而是本轮 provider context。 | 已新增 Evidence Ledger：runtime 中央观察 `read_file`、`search_code`、LSP、patch、run_tests、git 等工具结果，提炼短 evidence records，注入 `[Evidence ledger]` provider context，并写 session `evidence` 事件；小实现压测 `20260708T092554037057Z` 跑通。 |
 | PT-021 | P1 | 已关闭 | 小实现压测中模型把 `read_file` header `README.md#3988a904` 整串作为 `apply_patch.tag`，导致 dry_run 连续失败；随后改成纯 hash 才成功。 | OMP 更倾向用结构化工具观察和编辑流程降低模型手工解析参数的机会；工具错误也要给可行动纠偏。 | 已实现：`read_file` 显式输出 `tag: <hash>`；`apply_patch` 接受 `path#tag` / `[path#tag]` 并提取 hash，同时提示模型后续只传纯 hash。 |
 | PT-022 | P1 | 已关闭 MVP 版 | 小实现压测时 `git_diff` 包含 README 小改和正在开发的 Evidence Ledger 代码 diff；模型识别出 agent.py 是既有改动，但这种区分依赖推理。 | OMP 的 task/worktree/session state 更能区分任务边界和已有 WIP；普通 CLI 也应清楚记录 run start baseline。 | 已实现：run start 记录 git status/diff baseline；`git_diff` 读取本 session patch records 并追加 attribution，区分 pre-existing、this-session、mixed、new unattributed。 |
-| PT-023 | P1 | 已记录，待评估修复 | T-069 归因复测中 `[diff attribution]` 正确区分 `review_by_myself.md` 和 `README.md`，但模型把实际 “重复标题 + smoke-test 标记” 概括成 exactly one insertion；临时 README 改动已撤回。 | OMP 倾向把最终回答建立在结构化 runtime observation 上，并通过 reviewer/verification 约束结论。 | 后续候选：`git_diff` 输出 diff stats/hunk summary，final steering 要求引用实际 hunk 增删行，必要时增加 reviewer 自检。 |
+| PT-023 | P1 | 已关闭 MVP 版 | T-069 归因复测中 `[diff attribution]` 正确区分 `review_by_myself.md` 和 `README.md`，但模型把实际 “重复标题 + smoke-test 标记” 概括成 exactly one insertion；临时 README 改动已撤回。 | OMP 倾向把最终回答建立在结构化 runtime observation 上，并通过 reviewer/verification 约束结论。 | 已实现：`git_diff` 输出 `[diff summary]`，包含总文件数、`+N/-M`、hunk 数和少量 added/removed 片段，降低模型粗读 unified diff 的机会。 |
 
 ## P5 收口结论
 
 | 项目 | 结论 | 依据 |
 |---|---|---|
 | 主链路 | 通过 | 百炼真实小改复测已跑通 todo、dry_run、apply_patch、session allow、rollback、run_tests、git_diff。 |
-| 测试 | 通过 | P5 收口时 90 个 unittest、compileall、xlsx 检查、diff check 均通过；P7 当前代码已跑通 156 个 unittest、compileall 和 diff check。 |
+| 测试 | 通过 | P5 收口时 90 个 unittest、compileall、xlsx 检查、diff check 均通过；P7 当前代码已跑通 157 个 unittest、compileall 和 diff check。 |
 | 日用入口 | 通过 | README 已补只读分析和小改任务命令模板。 |
 | 开放风险 | 可接受 | shell 仍非沙箱、prompt injection 仍需靠审批和封闭 VM；token budget / output reserve / managed skills 继续后置评估。 |
 | 下一阶段 | P7 轻量高级能力真实压测后续 | 已验证默认工作流、auto summary、多语言轻量 LSP、multi-root、startup memory、learn、authored skills、runtime state dir 和多项目只读压测主链路；下一步继续做回答准确性评估，尤其是跨项目缺失证据时的措辞和实现前二次验证。 |

@@ -1,12 +1,34 @@
 from __future__ import annotations
 
 import subprocess
+from dataclasses import dataclass, field
 from os import PathLike
 from pathlib import Path
 from typing import Any
 
 from .base import Tool, ToolContext, ToolResult
 from .files import session_patch_records
+
+MAX_DIFF_SUMMARY_FILES = 12
+MAX_DIFF_SUMMARY_HUNKS_PER_FILE = 4
+MAX_DIFF_SUMMARY_LINES_PER_KIND = 3
+MAX_DIFF_SUMMARY_LINE_CHARS = 120
+
+
+@dataclass
+class DiffHunkSummary:
+    header: str
+    additions: list[str] = field(default_factory=list)
+    removals: list[str] = field(default_factory=list)
+
+
+@dataclass
+class DiffFileSummary:
+    path: str
+    additions: int = 0
+    removals: int = 0
+    hunks: list[DiffHunkSummary] = field(default_factory=list)
+    binary: bool = False
 
 
 def git_tools() -> list[Tool]:
@@ -51,6 +73,7 @@ def git_diff(args: dict[str, Any], context: ToolContext) -> ToolResult:
             )
     if result.is_error:
         return result
+    content = _with_diff_summary(content)
     return ToolResult(_with_attribution_note(content, args, context))
 
 
@@ -108,6 +131,112 @@ def _git_raw(workspace: str | PathLike[str], args: list[str]) -> subprocess.Comp
         timeout=30,
         check=False,
     )
+
+
+def _with_diff_summary(content: str) -> str:
+    summaries = _parse_diff_summary(content)
+    if not summaries:
+        return (
+            content.rstrip()
+            + "\n\n[diff summary]\n"
+            + "- No tracked file hunks in git diff output."
+        )
+    lines = ["", "[diff summary]"]
+    total_additions = sum(summary.additions for summary in summaries)
+    total_removals = sum(summary.removals for summary in summaries)
+    total_hunks = sum(len(summary.hunks) for summary in summaries)
+    lines.append(
+        f"- Total: {len(summaries)} file(s), +{total_additions} -{total_removals}, {total_hunks} hunk(s)."
+    )
+    for summary in summaries[:MAX_DIFF_SUMMARY_FILES]:
+        binary_note = " (binary)" if summary.binary else ""
+        lines.append(
+            f"- {summary.path}: +{summary.additions} -{summary.removals}, {len(summary.hunks)} hunk(s){binary_note}."
+        )
+        for hunk in summary.hunks[:MAX_DIFF_SUMMARY_HUNKS_PER_FILE]:
+            lines.append(f"  - {hunk.header}")
+            if hunk.removals:
+                lines.append(f"    removed: {_join_snippets(hunk.removals)}")
+            if hunk.additions:
+                lines.append(f"    added: {_join_snippets(hunk.additions)}")
+        if len(summary.hunks) > MAX_DIFF_SUMMARY_HUNKS_PER_FILE:
+            lines.append(f"  - ... {len(summary.hunks) - MAX_DIFF_SUMMARY_HUNKS_PER_FILE} more hunk(s)")
+    if len(summaries) > MAX_DIFF_SUMMARY_FILES:
+        lines.append(f"- ... {len(summaries) - MAX_DIFF_SUMMARY_FILES} more file(s)")
+    lines.append("- Final answer hint: use these counts and hunk snippets when summarizing git_diff.")
+    return content.rstrip() + "\n\n" + "\n".join(lines)
+
+
+def _parse_diff_summary(content: str) -> list[DiffFileSummary]:
+    summaries: list[DiffFileSummary] = []
+    current_file: DiffFileSummary | None = None
+    current_hunk: DiffHunkSummary | None = None
+    for line in content.splitlines():
+        if line.startswith("diff --git "):
+            current_file = DiffFileSummary(path=_path_from_diff_git_line(line))
+            summaries.append(current_file)
+            current_hunk = None
+            continue
+        if current_file is None:
+            continue
+        if line.startswith("+++ "):
+            path = _path_from_file_marker(line)
+            if path and path != "/dev/null":
+                current_file.path = path
+            continue
+        if line.startswith("Binary files ") or line.startswith("GIT binary patch"):
+            current_file.binary = True
+            continue
+        if line.startswith("@@ "):
+            current_hunk = DiffHunkSummary(header=line)
+            current_file.hunks.append(current_hunk)
+            continue
+        if line.startswith("+++") or line.startswith("---"):
+            continue
+        if line.startswith("+"):
+            current_file.additions += 1
+            if current_hunk is not None and len(current_hunk.additions) < MAX_DIFF_SUMMARY_LINES_PER_KIND:
+                current_hunk.additions.append(_snippet(line[1:]))
+            continue
+        if line.startswith("-"):
+            current_file.removals += 1
+            if current_hunk is not None and len(current_hunk.removals) < MAX_DIFF_SUMMARY_LINES_PER_KIND:
+                current_hunk.removals.append(_snippet(line[1:]))
+            continue
+    return [summary for summary in summaries if summary.hunks or summary.binary or summary.additions or summary.removals]
+
+
+def _path_from_diff_git_line(line: str) -> str:
+    parts = line.split()
+    if len(parts) >= 4:
+        return _strip_diff_prefix(parts[3])
+    return "unknown"
+
+
+def _path_from_file_marker(line: str) -> str:
+    value = line[4:].strip()
+    if "\t" in value:
+        value = value.split("\t", 1)[0]
+    return _strip_diff_prefix(value)
+
+
+def _strip_diff_prefix(path: str) -> str:
+    if path.startswith("a/") or path.startswith("b/"):
+        return path[2:]
+    return path
+
+
+def _join_snippets(lines: list[str]) -> str:
+    return " | ".join(lines)
+
+
+def _snippet(line: str) -> str:
+    compact = line.strip()
+    if not compact:
+        compact = "<blank line>"
+    if len(compact) > MAX_DIFF_SUMMARY_LINE_CHARS:
+        return compact[: MAX_DIFF_SUMMARY_LINE_CHARS - 3] + "..."
+    return compact
 
 
 def _with_attribution_note(content: str, args: dict[str, Any], context: ToolContext) -> str:
