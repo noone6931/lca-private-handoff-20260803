@@ -321,6 +321,10 @@ def _load_patch_records(context: ToolContext) -> list[dict[str, Any]]:
     return records
 
 
+def session_patch_records(context: ToolContext) -> list[dict[str, Any]]:
+    return _load_patch_records(context)
+
+
 def _find_rollback_record(records: list[dict[str, Any]], patch_id: str | None) -> dict[str, Any] | None:
     rolled_back = {
         str(record.get("patch_id"))

@@ -21,6 +21,7 @@ from .tools import create_default_registry
 from .tools.base import ToolContext
 from .tools.base import ToolResult
 from .tools.base import tool_state_dir
+from .tools.git import capture_git_baseline
 
 
 SYSTEM_PROMPT = """You are a local coding agent running inside a user's workspace.
@@ -279,6 +280,8 @@ class AgentRuntime:
             if self._config.budget_seconds is not None
             else None
         )
+        git_baseline = capture_git_baseline(self._config.workspace)
+        self._session.append("git_baseline", git_baseline)
         run_start_index = len(self._messages)
         model_prompt = _with_workflow_nudge(prompt)
         self._current_user_request = prompt
@@ -290,7 +293,7 @@ class AgentRuntime:
         self._soft_tool_requirement = _initial_soft_tool_requirement(prompt, self._config.allowed_dirs)
         if self._soft_tool_requirement is not None:
             self._append_soft_tool_requirement_message(self._soft_tool_requirement)
-        tool_context = replace(self._tool_context, deadline_monotonic=deadline)
+        tool_context = replace(self._tool_context, deadline_monotonic=deadline, git_baseline=git_baseline)
 
         step = 1
         while self._config.max_steps == 0 or step <= self._config.max_steps:

@@ -27,6 +27,7 @@ class ToolContext:
     tool_approval: dict[str, str] | None = None
     session_tool_approval: dict[str, str] | None = None
     deadline_monotonic: float | None = None
+    git_baseline: dict[str, Any] | None = None
 
 
 def tool_state_dir(context: ToolContext) -> Path:

@@ -274,7 +274,7 @@ python3 scripts/sync_project_excel.py
 - `shell`: 运行本地命令，带超时和确认。
 - `run_tests`: 运行测试命令，默认执行 `PYTHONPATH=src python3 -m unittest discover -s tests`。
 - `git_status`: 查看本地 git 状态。
-- `git_diff`: 查看本地 diff。
+- `git_diff`: 查看本地 diff，并在有 run start baseline 时提示 pre-existing、本轮 apply_patch 和未归因变更。
 - `apply_patch`: 简化版 anchored patch，校验文件 hash 与旧文本后写入；支持 `replace`、`insert_before`、`insert_after`，也支持 `dry_run=true` 只预览 diff 不写文件；若误传 `[path#hash]` 会提取 hash 并提示下次传纯 tag。
 - `rollback_patch`: 回滚当前 session 中由 `apply_patch` 写入的补丁；回滚前会校验文件仍然匹配补丁后的 hash。
 - `write_file`: 只创建新文件；修改已有文件必须使用 `apply_patch`。

@@ -10,7 +10,7 @@ from unittest.mock import patch
 from local_agent.patch.anchored import hash_text
 from local_agent.tools.base import Tool, ToolContext, ToolRegistry
 from local_agent.tools.files import file_tools, patch_file, read_file, rollback_patch, write_file
-from local_agent.tools.git import git_diff
+from local_agent.tools.git import capture_git_baseline, git_diff
 from local_agent.tools.interaction import ask_user
 from local_agent.tools.lsp import lsp_definition, lsp_diagnostics, lsp_references, lsp_symbols, lsp_tools
 from local_agent.tools.memory import learn, memory_read
@@ -1185,6 +1185,58 @@ class ToolTests(unittest.TestCase):
         self.assertIn("(empty diff)", result.content)
         self.assertIn("?? README.md", result.content)
         self.assertIn("git diff does not show untracked files", result.content)
+
+    def test_git_diff_adds_run_attribution_for_baseline_and_session_patches(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            subprocess.run(["git", "init"], cwd=workspace, text=True, capture_output=True, check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=workspace, check=True)
+            subprocess.run(["git", "config", "user.name", "Test User"], cwd=workspace, check=True)
+            (workspace / "README.md").write_text("original readme\n", encoding="utf-8")
+            (workspace / "app.py").write_text("print('old')\n", encoding="utf-8")
+            subprocess.run(["git", "add", "."], cwd=workspace, check=True)
+            subprocess.run(["git", "commit", "-m", "init"], cwd=workspace, text=True, capture_output=True, check=True)
+            (workspace / "README.md").write_text("pre-existing readme change\n", encoding="utf-8")
+            baseline = capture_git_baseline(workspace)
+            context = ToolContext(
+                workspace=workspace,
+                approval_mode="yolo",
+                state_dir=workspace / ".agent-state",
+                session_id="session-1",
+                git_baseline=baseline,
+            )
+
+            patch_file(
+                {
+                    "path": "README.md",
+                    "tag": hash_text("pre-existing readme change\n"),
+                    "start_line": 1,
+                    "end_line": 1,
+                    "old_text": "pre-existing readme change\n",
+                    "new_text": "this-session readme change\n",
+                },
+                context,
+            )
+            patch_file(
+                {
+                    "path": "app.py",
+                    "tag": hash_text("print('old')\n"),
+                    "start_line": 1,
+                    "end_line": 1,
+                    "old_text": "print('old')\n",
+                    "new_text": "print('new')\n",
+                },
+                context,
+            )
+
+            result = git_diff({}, context)
+
+        self.assertFalse(result.is_error)
+        self.assertIn("[diff attribution]", result.content)
+        self.assertIn("Pre-existing dirty files at run start: README.md", result.content)
+        self.assertIn("This-session apply_patch files: README.md, app.py", result.content)
+        self.assertIn("Files with both pre-existing and this-session changes: README.md", result.content)
+        self.assertIn("summarize pre-existing and this-session changes separately", result.content)
 
     def test_tool_registry_validates_required_enum_and_extra_args(self) -> None:
         calls: list[dict] = []
