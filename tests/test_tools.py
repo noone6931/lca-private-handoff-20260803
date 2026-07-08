@@ -331,6 +331,41 @@ class ToolTests(unittest.TestCase):
         self.assertFalse(result.is_error)
         self.assertIn(str(target), result.content)
 
+    def test_list_files_root_includes_allowed_directory_hint(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace_tmp, tempfile.TemporaryDirectory() as allowed_tmp:
+            workspace = Path(workspace_tmp).resolve()
+            allowed = Path(allowed_tmp).resolve()
+            (workspace / "src").mkdir()
+            (workspace / "src" / "app.py").write_text("print('hi')\n", encoding="utf-8")
+            (allowed / "requirements.md").write_text("outside requirement\n", encoding="utf-8")
+
+            result = list_files(
+                {},
+                ToolContext(workspace=workspace, approval_mode="yolo", allowed_dirs=(allowed,)),
+            )
+
+        self.assertFalse(result.is_error)
+        self.assertIn("Workspace roots:", result.content)
+        self.assertIn(f"Primary workspace (--cwd): {workspace}", result.content)
+        self.assertIn(str(allowed), result.content)
+        self.assertIn("Files under primary workspace:", result.content)
+        self.assertIn("src/app.py", result.content)
+
+    def test_list_files_missing_path_suggests_allowed_directories(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace_tmp, tempfile.TemporaryDirectory() as allowed_tmp:
+            workspace = Path(workspace_tmp).resolve()
+            allowed = Path(allowed_tmp).resolve()
+
+            result = list_files(
+                {"path": "requirements"},
+                ToolContext(workspace=workspace, approval_mode="yolo", allowed_dirs=(allowed,)),
+            )
+
+        self.assertTrue(result.is_error)
+        self.assertIn("Path not found: requirements", result.content)
+        self.assertIn("Workspace roots:", result.content)
+        self.assertIn(str(allowed), result.content)
+
     def test_patch_file_can_edit_explicitly_allowed_directory(self) -> None:
         with tempfile.TemporaryDirectory() as workspace_tmp, tempfile.TemporaryDirectory() as allowed_tmp:
             workspace = Path(workspace_tmp).resolve()

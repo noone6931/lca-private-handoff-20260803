@@ -62,7 +62,7 @@ def list_files(args: dict[str, Any], context: ToolContext) -> ToolResult:
     except PatchError as exc:
         return ToolResult(str(exc), is_error=True)
     if not root.exists():
-        return ToolResult(f"Path not found: {raw_path}", is_error=True)
+        return ToolResult(_with_workspace_roots_hint(f"Path not found: {raw_path}", context), is_error=True)
     if root.is_file():
         return ToolResult(display_workspace_path(context.workspace, root, context.allowed_dirs))
 
@@ -72,7 +72,10 @@ def list_files(args: dict[str, Any], context: ToolContext) -> ToolResult:
         if len(results) >= max_results:
             results.append(f"... truncated after {max_results} files")
             break
-    return ToolResult("\n".join(results) if results else "(no files)")
+    content = "\n".join(results) if results else "(no files)"
+    if _is_primary_root_listing(raw_path) and context.allowed_dirs:
+        content = f"{_workspace_roots_hint(context)}\n\nFiles under primary workspace:\n{content}"
+    return ToolResult(content)
 
 
 def search_code(args: dict[str, Any], context: ToolContext) -> ToolResult:
@@ -110,9 +113,33 @@ def search_code(args: dict[str, Any], context: ToolContext) -> ToolResult:
         output = completed.stderr or completed.stdout or f"rg failed with exit code {completed.returncode}."
         return ToolResult(output[:20000], is_error=True)
     if not completed.stdout:
-        return ToolResult("No matches.", useless=True)
+        content = "No matches."
+        if _is_primary_root_listing(raw_path) and context.allowed_dirs:
+            content = _with_workspace_roots_hint(content, context)
+        return ToolResult(content, useless=True)
     output = _normalize_search_output_paths(completed.stdout, context.workspace)
     return ToolResult(_truncate_search_output(output, max_results)[:20000])
+
+
+def _is_primary_root_listing(raw_path: Any) -> bool:
+    return str(raw_path or ".").strip() in {"", "."}
+
+
+def _workspace_roots_hint(context: ToolContext) -> str:
+    lines = [
+        "Workspace roots:",
+        f"- Primary workspace (--cwd): {context.workspace}",
+    ]
+    if context.allowed_dirs:
+        lines.append("- Additional allowed directories; use these exact absolute paths for external docs/specs/code:")
+        lines.extend(f"  - {path}" for path in context.allowed_dirs)
+    return "\n".join(lines)
+
+
+def _with_workspace_roots_hint(content: str, context: ToolContext) -> str:
+    if not context.allowed_dirs:
+        return content
+    return f"{content}\n\n{_workspace_roots_hint(context)}"
 
 
 def _walk_files(root: Path):
