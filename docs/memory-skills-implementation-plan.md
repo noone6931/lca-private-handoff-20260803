@@ -32,12 +32,12 @@ OMP 的 skills 也有两条路径：
 - `memory_read` / `memory_write`：写入 `.local-agent/memory/{project,decisions,conventions,learned}.md`。
 - 启动时自动注入 `.local-agent/memory/{project,decisions,conventions,learned}.md`，并标记为 advisory context。
 - `learn` 工具：把可复用 lesson 写入 `.local-agent/memory/learned.md`。
+- Authored skills discovery：启动时扫描 `.local-agent/skills/<name>/SKILL.md`，只注入 name / description / source path。
 - deterministic context compaction：用于单个 session 内上下文治理，不等同长期 memory。
 - OMP 风格 auto summary 和多语言轻量 LSP 已落地。
 
 当前 LCA 还没有：
 
-- skills discovery / skill metadata prompt。
 - managed skills / autolearn。
 - memory backend selector。
 
@@ -136,9 +136,11 @@ Source: .local-agent/memory/project.md
 
 ### M4：Authored Skills Discovery
 
+状态：已完成 MVP 版。
+
 目标：支持用户或项目维护可复用工作流。
 
-建议实现：
+当前实现：
 
 - 先只扫项目内：
   - `.local-agent/skills/<name>/SKILL.md`
@@ -154,10 +156,10 @@ Source: .local-agent/memory/project.md
 Read .local-agent/skills/code-review/SKILL.md before using it.
 ```
 
-- 初版可以让模型用 `read_file` 读取 skill 文件，因为它在 workspace 内。
+- 初版让模型用 `read_file` 读取 skill 文件，因为它在 workspace 内。
 - 后续再加 `skill_read`，用于用户级 skills 或更强路径隔离。
 
-验收标准：
+验收结果：
 
 - 无 skills 时 prompt 不变化。
 - 有 skills 时只列 name / description。
@@ -198,7 +200,7 @@ Read .local-agent/skills/code-review/SKILL.md before using it.
 
 - LLM summary 负责单个 session 的上下文压缩，不负责长期记忆。
 - Memory injection 负责跨 session 的长期项目背景，不替代当前 repo 读取。
-- 轻量 LSP 负责 Python 代码导航，不等于完整 language server，不应在文档里承诺 rename / type-aware reference / 多语言诊断。
+- 轻量 LSP 负责 Python、Java、JavaScript、TypeScript、Vue 的静态代码导航，不等于完整 language server，不应在文档里承诺 rename / type-aware reference / code action。
 - Skills 负责可复用工作流，不是可执行工具；执行副作用仍必须通过普通工具和 approval。
 
 如果大猛已实现 LLM summary / LSP，请先 review：
@@ -209,9 +211,8 @@ Read .local-agent/skills/code-review/SKILL.md before using it.
 
 ## 推荐落地顺序
 
-1. 做 M4 authored skills discovery。
-2. 做 M5 managed skills。
-3. 真实项目压测后再考虑 M3 consolidation 和 autolearn autoContinue。
+1. 做 M5 managed skills。
+2. 真实项目压测后再考虑 M3 consolidation 和 autolearn autoContinue。
 
 ## 主要风险
 

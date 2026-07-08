@@ -379,18 +379,18 @@ OMP 的 skills 也分层：
 
 我们项目当前状态：
 
-- 已有手动 Markdown memory：`.local-agent/memory/project.md`、`decisions.md`、`conventions.md`；
-- 这些 memory 目前不会自动进入新 session system prompt；
-- 尚无 `learn` 工具、skills discovery、managed skills、autolearn；
+- 已有 Markdown memory：`.local-agent/memory/project.md`、`decisions.md`、`conventions.md`、`learned.md`；
+- 这些 memory 会作为 advisory context 进入新 session system prompt；
+- 已有 `learn` 工具，可写入 `.local-agent/memory/learned.md`；
+- 已有 authored skills discovery：`.local-agent/skills/<name>/SKILL.md` 启动时只注入 name / description / source path，正文按需读取；
+- 尚无 managed skills / autolearn；
 - 已新增详细方案：`docs/memory-skills-implementation-plan.md`。
 
-建议落地顺序：
+后续落地顺序：
 
-1. 先做 Markdown memory 启动注入，明确 advisory、source path 和注入预算；
-2. 再做 `learn` 工具，把可复用经验写到 `.local-agent/memory/learned.md`；
-3. 再做 authored skills discovery，只注入 name / description，不注入全文；
-4. 最后做 managed skills，默认关闭，generated skills 与 authored skills 隔离；
-5. 暂不做 Hindsight、Mnemopi、向量检索和 stop 后自动学习。
+1. 用真实项目压测 memory / learn / authored skills 的组合体验；
+2. 再评估 managed skills，默认关闭，generated skills 与 authored skills 隔离；
+3. 暂不做 Hindsight、Mnemopi、向量检索和 stop 后自动学习。
 
 与 LLM summary 的边界：
 

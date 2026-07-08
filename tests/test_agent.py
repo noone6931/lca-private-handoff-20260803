@@ -200,6 +200,84 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertIn("Use pytest for this project.", system_content)
         self.assertIn("advisory", system_content)
 
+    def test_authored_skills_metadata_is_injected_without_body(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            skills_dir = workspace / ".local-agent" / "skills"
+            review_skill = skills_dir / "code-review"
+            hidden_skill = skills_dir / "hidden"
+            review_skill.mkdir(parents=True)
+            hidden_skill.mkdir()
+            (review_skill / "SKILL.md").write_text(
+                "---\n"
+                "name: code-review\n"
+                "description: Use when reviewing a patch before commit.\n"
+                "---\n"
+                "\n"
+                "# Code Review\n"
+                "\n"
+                "SECRET_BODY_SHOULD_NOT_BE_IN_SYSTEM_PROMPT\n",
+                encoding="utf-8",
+            )
+            (hidden_skill / "SKILL.md").write_text(
+                "---\n"
+                "name: hidden\n"
+                "description: Do not show.\n"
+                "hide: true\n"
+                "---\n",
+                encoding="utf-8",
+            )
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=workspace,
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _FinalClient):
+                runtime = AgentRuntime(config, show_tool_logs=False)
+
+        system_content = runtime._messages[0]["content"]
+        self.assertIn("[Available project skills]", system_content)
+        self.assertIn("code-review: Use when reviewing a patch before commit.", system_content)
+        self.assertIn(".local-agent/skills/code-review/SKILL.md", system_content)
+        self.assertIn("read its SKILL.md with read_file", system_content)
+        self.assertNotIn("SECRET_BODY_SHOULD_NOT_BE_IN_SYSTEM_PROMPT", system_content)
+        self.assertNotIn("hidden", system_content)
+
+    def test_authored_skill_without_frontmatter_uses_first_body_line_description(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            skill_dir = workspace / ".local-agent" / "skills" / "release-check"
+            skill_dir.mkdir(parents=True)
+            (skill_dir / "SKILL.md").write_text(
+                "# Release Check\n"
+                "\n"
+                "Use before cutting a local release.\n"
+                "\n"
+                "Full procedure stays out of startup context.\n",
+                encoding="utf-8",
+            )
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=workspace,
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _FinalClient):
+                runtime = AgentRuntime(config, show_tool_logs=False)
+
+        system_content = runtime._messages[0]["content"]
+        self.assertIn("release-check: Use before cutting a local release.", system_content)
+        self.assertNotIn("Full procedure stays out of startup context.", system_content)
+
     def test_llm_timeout_is_clamped_to_remaining_budget(self) -> None:
         _TimeoutRecordingClient.timeouts = []
         with tempfile.TemporaryDirectory() as tmp:

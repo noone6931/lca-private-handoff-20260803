@@ -17,10 +17,10 @@ python3 scripts/sync_project_excel.py
 | 字段 | 当前值 | 说明 |
 |---|---|---|
 | 最终目标 | 个人本地编程助手 Agent | 本地优先、封闭 VM 可用、只访问指定 AI API，能读代码、搜代码、改代码、跑测试、生成 diff、沉淀项目记忆。 |
-| 当前阶段 | P7：轻量高级能力与真实压测 | P6 默认工作流 MVP 已落地；本轮已补 OMP 风格 auto summary、多语言轻量 LSP、multi-root、startup memory 和 learn。 |
+| 当前阶段 | P7：轻量高级能力与真实压测 | P6 默认工作流 MVP 已落地；本轮已补 OMP 风格 auto summary、多语言轻量 LSP、multi-root、startup memory、learn 和 authored skills discovery。 |
 | 推荐入口 | `./agent "阅读当前项目"` | 自动设置 `PYTHONPATH=src`，默认当前目录为 workspace。 |
 | Token 配置 | `.env` 或环境变量 | `.env` 可写 `DASHSCOPE_API_KEY=...`，该文件已被 `.gitignore` 忽略。 |
-| 测试数 | 116 | 完整 unittest、compileall、diff check、xlsx 检查通过。 |
+| 测试数 | 118 | 完整 unittest、compileall、diff check、xlsx 检查通过。 |
 | 默认 budget_seconds | 600 | 单次任务默认 10 分钟墙钟预算；`--budget-seconds 0` 可关闭。 |
 | 默认 max_steps | 0 | 表示不限步；仅在用户显式设置时作为防失控保险丝。 |
 | 预算执行 | 细粒度 | LLM 请求和 shell/run_tests timeout 会按剩余预算夹紧；deadline 到期会补齐未执行工具结果。 |
@@ -36,7 +36,8 @@ python3 scripts/sync_project_excel.py
 | Multi-root workspace | 已完成 MVP 版 | `--allow-dir` / `AGENT_ALLOWED_DIRS` 支持显式授权额外目录给文件、搜索、LSP、patch 工具；shell/git/session/memory 仍锚定 `--cwd`。 |
 | Startup memory | 已完成 MVP 版 | 新 session 自动注入 `.local-agent/memory/{project,decisions,conventions,learned}.md`，作为 advisory context。 |
 | Learn 工具 | 已完成 MVP 版 | `learn` 写入 `.local-agent/memory/learned.md`，用于显式沉淀可复用经验。 |
-| Memory / Skills 设计 | 已完成 | 见 `docs/memory-skills-implementation-plan.md`；Markdown memory 注入和 `learn` 已完成，下一步做 skills discovery，managed skills/autolearn 后置。 |
+| Authored skills discovery | 已完成 MVP 版 | 新 session 扫描 `.local-agent/skills/<name>/SKILL.md`，只注入 name、description、source path，正文按需读取。 |
+| Memory / Skills 设计 | 已完成 | 见 `docs/memory-skills-implementation-plan.md`；Markdown memory 注入、`learn` 和 authored skills discovery 已完成，managed skills/autolearn 后置。 |
 
 ## 阶段路线图
 
@@ -49,7 +50,7 @@ python3 scripts/sync_project_excel.py
 | P4 | 上下文治理 | 简单 summary/compaction，工具输出折叠，支持长需求文件 | 已完成 MVP 版 | 100% | 首轮百炼只读 compaction 压测已通过；当前已补可选 LLM summary，后续再评估 token 预算、输出 reserve 和 recent 保留。 |
 | P5 | 安全与恢复增强 | synthetic tool result、patch preview、rollback、ask_user timeout、per-tool approval | 已完成并收口 | 100% | 主链路已通过真实百炼复测；后续只修日用反馈中的 P0/P1 问题。 |
 | P6 | 日用体验与默认工作流固化 | OMP 默认工作流本地化：system prompt、工具描述、轻量 runtime nudge | 已完成 MVP 版 | 100% | 进入真实任务压测。 |
-| P7 | 高级工程能力轻量版 | OMP 风格 auto summary、轻量 LSP、multi-root、startup memory、learn、skills discovery | 进行中 | 75% | 下一步做真实 multi-root 压测和 authored skills discovery；完整 DAP/TUI/subagents/managed skills 后置。 |
+| P7 | 高级工程能力轻量版 | OMP 风格 auto summary、轻量 LSP、multi-root、startup memory、learn、authored skills discovery | 进行中 | 85% | 下一步做真实综合压测和 token 预算评估；完整 DAP/TUI/subagents/managed skills 后置。 |
 
 ## 已完成功能
 
@@ -87,13 +88,14 @@ python3 scripts/sync_project_excel.py
 | Multi-root workspace | 已完成 MVP 版 | `--allow-dir` / `AGENT_ALLOWED_DIRS` | 支持需求文档目录 + 代码项目目录；文件/search/LSP/patch 可访问 allowed dirs，shell/git/session/memory 仍锚定 `--cwd` | 真实需求压测 |
 | Startup memory | 已完成 MVP 版 | `AgentRuntime` system prompt 构造 | `.local-agent/memory/{project,decisions,conventions,learned}.md` 作为 advisory context 注入 | 真实 session 验证 |
 | Learn 工具 | 已完成 MVP 版 | `learn` | 写入 `.local-agent/memory/learned.md`，默认走写工具审批 | 真实 session 验证 |
-| Memory / Skills 方案 | 已完成设计 | `docs/memory-skills-implementation-plan.md` | 分阶段对齐 OMP：memory 注入、`learn`、authored skills、managed skills/autolearn | 下一步做 authored skills discovery |
+| Authored skills discovery | 已完成 MVP 版 | `AgentRuntime` system prompt 构造 | `.local-agent/skills/<name>/SKILL.md` 只注入 name/description/source，正文按需读取 | 真实 session 验证 |
+| Memory / Skills 方案 | 已完成设计 | `docs/memory-skills-implementation-plan.md` | 分阶段对齐 OMP：memory 注入、`learn`、authored skills、managed skills/autolearn | 下一步真实压测 |
 | Synthetic tool result | 已完成 MVP 版 | deadline 到期、用户中断和 `finish_reason=length` 时补齐 tool result | 避免 session 留下未配对 tool_calls | 继续真实任务验证 |
 | Patch preview | 已完成 | `apply_patch dry_run=true` | 复用 anchored 校验并返回 diff，不写文件 | 后续评估 rollback |
 | Patch rollback | 已完成 MVP 版 | `rollback_patch` | 校验当前文件 hash 后恢复 patch 前内容 | 继续真实任务验证 |
 | ask_user timeout | 已完成 | `timeout_seconds` / `default_answer` / budget 剩余时间 | 长任务无人响应时可以继续或明确失败；显式 timeout 也受 budget 夹紧 | 继续真实任务验证 |
 | Tool approval policy | 已完成 MVP 版 | `tool_approval` + `session_tool_approval` | config deny/prompt 是硬护栏，session allow/reject 可记住当前会话，REPL 会校验工具名，approval prompt 受 deadline 约束 | 日用反馈 |
-| 测试覆盖 | 已完成 | 当前 116 个测试通过 | unittest、compileall、diff check、xlsx 检查通过 | 日用反馈补测 |
+| 测试覆盖 | 已完成 | 当前 118 个测试通过 | unittest、compileall、diff check、xlsx 检查通过 | 日用反馈补测 |
 
 ## 下一步 Todo
 
@@ -142,7 +144,7 @@ python3 scripts/sync_project_excel.py
 | T-041 | P0 | P7 | 固化 Memory / Skills 实现方案 | 已完成 | Agent | OMP memory/autolearn/skills 机制复杂，需先裁剪成 LCA 可执行方案 | 已新增 `docs/memory-skills-implementation-plan.md`，并补充 `docs/omp-core-architecture-notes.md` |
 | T-042 | P1 | P7 | Markdown memory 启动注入 | 已完成 MVP 版 | Agent | 当前 memory 只能手动读写，不能跨 session 自动影响 agent | 读取 `.local-agent/memory/*.md`，以 advisory block 注入 system prompt，带 source path 和预算 |
 | T-043 | P1 | P7 | 实现 `learn` 工具 | 已完成 MVP 版 | Agent | 让 agent 用显式工具沉淀可复用 lesson，而不是混写 project memory | 写入 `.local-agent/memory/learned.md`，限制长度并清洗会进入 prompt 的字段 |
-| T-044 | P2 | P7 | Authored skills discovery | 未开始 | Agent | 支持项目内可复用工作流，降低重复提示成本 | 先扫 `.local-agent/skills/<name>/SKILL.md`，system prompt 只列 name/description，正文按需读取 |
+| T-044 | P2 | P7 | Authored skills discovery | 已完成 MVP 版 | Agent | 支持项目内可复用工作流，降低重复提示成本 | 先扫 `.local-agent/skills/<name>/SKILL.md`，system prompt 只列 name/description/source，正文按需读取 |
 | T-045 | P2 | P7 | Managed skills / autolearn | 暂缓 | User + Agent | 自动生成 skills 有长期污染和 prompt injection 风险 | 默认关闭；后续按 OMP `manage_skill` 思路隔离 generated skills，authored skills 优先 |
 
 ## 风险与决策
@@ -161,7 +163,7 @@ python3 scripts/sync_project_excel.py
 | 风险 | R-009 | 中 | ask_user 会阻塞等待用户 | 已缓解 | 已支持 timeout/default，并自动受剩余 budget 约束；显式 timeout 也会被剩余 budget 夹紧 | OMP 的 approval/elicitation 可以被拒绝或取消并回灌结果；我们给 `ask_user` 加 timeout/default，支持无人值守场景。 |
 | 风险 | R-010 | 中 | approval prompt 等待耗尽预算 | 已关闭 MVP 版 | approval prompt 已使用 deadline-aware timed stdin；deadline 已过或等待超时会取消工具调用 | OMP 的 deadline 是 wall-clock absolute timestamp；ACP permission gate 会把 `requestPermission` 和 abort signal 竞争。我们本地版用 `select.select` 按剩余 deadline 等 stdin，超时即取消。 |
 | 风险 | R-012 | 中 | 日用命令仍依赖用户手写工具流程 | 已关闭 MVP 版 | 已把默认工作流沉到 system prompt 和 runtime nudge；后续靠真实任务验证效果 | OMP 把默认工作流拆到 system prompt、tool descriptions 和 runtime nudge；我们先做本地 MVP 版，不急着引入完整 ToolChoiceQueue。 |
-| 风险 | R-013 | 中 | Memory / skills 注入长期 prompt injection 或陈旧事实 | 已缓解，skills 仍设计中 | memory 和 generated skills 会跨 session 影响模型，错误或恶意内容可能持续放大 | OMP 将 memory 标成 heuristic/advisory，managed skills 隔离且 authored skills 优先；我们已做 advisory 注入、预算限制、learned 字段清洗，managed skills 默认关闭。 |
+| 风险 | R-013 | 中 | Memory / skills 注入长期 prompt injection 或陈旧事实 | 已缓解，managed skills 仍暂缓 | memory 和 generated skills 会跨 session 影响模型，错误或恶意内容可能持续放大 | OMP 将 memory 标成 heuristic/advisory，managed skills 隔离且 authored skills 优先；我们已做 advisory 注入、预算限制、learned 字段和 skill description 清洗，managed skills 默认关闭。 |
 | ADR | ADR-001 | 2026-07-07 | 优先采纳 OMP 成熟设计，按本地目标裁剪 | 已接受 | 好设计可直接采用，复杂度按需收敛 | OMP 是重要参考实现；我们不为了“避免复制”而绕开好设计。采用标准是收益是否大于复杂度，并且不破坏个人本地使用、封闭 VM、无公网依赖和第一阶段 MVP 边界。 |
 | ADR | ADR-002 | 2026-07-07 | max_steps 只作为防失控保险丝 | 已落地 | 默认值已改为 0，不限步 | OMP 的 stepCounter 主要用于 telemetry，终止靠无 tool_calls、deadline、abort；我们把 `max_steps` 仅作为显式保险丝。 |
 | ADR | ADR-003 | 2026-07-07 | todo、ask_user、per-tool approval 是主功能 | 已落地 | P3 已实现 | OMP 将 todo、approval、elicitation 做成可观测会话能力；我们 P3 先做终端轻量版，后续再补 UI 化。 |
@@ -174,17 +176,17 @@ python3 scripts/sync_project_excel.py
 | ADR | ADR-010 | 2026-07-07 | P6 优先实现 OMP 默认工作流的本地 MVP 版 | 已接受并落地 | 已做 system prompt、tool descriptions、轻量 runtime nudge | OMP 的体验来自系统上下文、工具规范和 runtime 纠偏共同作用；我们直接采纳分层设计，但暂不搬入完整 ToolChoiceQueue、subagents 等复杂能力。 |
 | ADR | ADR-011 | 2026-07-07 | 默认采用 OMP 风格 auto summary | 已接受并落地 | `summary_mode=auto` 默认，`local` / `llm` 可选 | 小历史不摘要；超过 reserve 阈值才调用已配置 AI API 做 LLM summary；失败回退 local summary。 |
 | ADR | ADR-012 | 2026-07-07 | LSP 第一版做轻量多语言静态工具 | 已接受并落地 | 不启动外部 language server | 满足 Python、Java、JavaScript、TypeScript、Vue 的 symbols/definition/references/diagnostics，不引入 npm/pip 依赖或后台进程；完整 LSP/DAP 后置。 |
-| ADR | ADR-013 | 2026-07-07 | Memory / skills 按 OMP 思路分阶段本地化 | 已接受并部分落地 | Markdown memory 启动注入和显式 `learn` 已完成 | 后续再做 authored skills discovery，最后才评估 managed skills/autolearn；不引入 Hindsight、Mnemopi、向量库或插件市场。 |
+| ADR | ADR-013 | 2026-07-07 | Memory / skills 按 OMP 思路分阶段本地化 | 已接受并部分落地 | Markdown memory 启动注入、显式 `learn` 和 authored skills discovery 已完成 | 后续最后才评估 managed skills/autolearn；不引入 Hindsight、Mnemopi、向量库或插件市场。 |
 
 ## P5 收口结论
 
 | 项目 | 结论 | 依据 |
 |---|---|---|
 | 主链路 | 通过 | 百炼真实小改复测已跑通 todo、dry_run、apply_patch、session allow、rollback、run_tests、git_diff。 |
-| 测试 | 通过 | P5 收口时 90 个 unittest、compileall、xlsx 检查、diff check 均通过；P7 当前代码已跑通 116 个 unittest 和 compileall。 |
+| 测试 | 通过 | P5 收口时 90 个 unittest、compileall、xlsx 检查、diff check 均通过；P7 当前代码已跑通 118 个 unittest 和 compileall。 |
 | 日用入口 | 通过 | README 已补只读分析和小改任务命令模板。 |
-| 开放风险 | 可接受 | shell 仍非沙箱、prompt injection 仍需靠审批和封闭 VM；token budget / output reserve / authored skills discovery 继续后置评估。 |
-| 下一阶段 | P7 真实压测与 authored skills discovery | 验证默认工作流、auto summary、多语言轻量 LSP、multi-root、startup memory 和 learn 是否足够日用，再做 authored skills discovery。 |
+| 开放风险 | 可接受 | shell 仍非沙箱、prompt injection 仍需靠审批和封闭 VM；token budget / output reserve / managed skills 继续后置评估。 |
+| 下一阶段 | P7 综合真实压测与 token 预算评估 | 验证默认工作流、auto summary、多语言轻量 LSP、multi-root、startup memory、learn 和 authored skills 是否足够日用。 |
 
 ## 推荐工作流
 
@@ -199,5 +201,6 @@ python3 scripts/sync_project_excel.py
 | 7 | 长任务 | 默认维护 todo，再做实现，再验证；默认 `--summary-mode auto` 按阈值触发 LLM summary | 防止漏任务并治理长上下文 | P7+ | Auto summary 需真实 provider 压测 |
 | 8 | 多目录任务 | `./agent --cwd /path/to/code --allow-dir /path/to/requirements "读取需求并修改代码"` | 支持需求文档目录 + 代码项目目录 | P7+ | allowed dir 只扩展文件/search/LSP/patch 工具 |
 | 9 | 项目记忆 | 把长期约定写入 `.local-agent/memory/*.md`，或让 Agent 在明确要求时调用 `learn` | 减少重复交代项目约定 | P7+ | memory 是 advisory，当前用户指令优先 |
-| 10 | 有歧义 | 使用 `ask_user` 中途问用户 | 避免模型瞎猜 | P3+ | 非交互会返回明确错误 |
-| 11 | 同步 Excel | `python3 scripts/sync_project_excel.py` | Excel 是开发展示产物，Markdown 是开发事实源 | P2+ | 无第三方依赖 |
+| 10 | 本地 skills | 将可复用工作流写到 `.local-agent/skills/<name>/SKILL.md`，带 `name` / `description` frontmatter | 降低重复提示成本 | P7+ | 启动只注入 metadata，正文按需 read_file |
+| 11 | 有歧义 | 使用 `ask_user` 中途问用户 | 避免模型瞎猜 | P3+ | 非交互会返回明确错误 |
+| 12 | 同步 Excel | `python3 scripts/sync_project_excel.py` | Excel 是开发展示产物，Markdown 是开发事实源 | P2+ | 无第三方依赖 |

@@ -48,7 +48,7 @@
 | 上下文治理 | `[MVP-已落地]` | OMP 风格 reserve、auto/local/llm summary、recent 保留、tool 输出截断、单 system message。 | `AgentRuntime._messages_for_model()`。 |
 | 轻量代码导航 | `[MVP-已落地]` | Python、Java、JS、TS、Vue 的 symbols/definition/references/diagnostics。 | `src/local_agent/tools/lsp.py`。 |
 | 本地持久化 | `[CORE-已落地]` | JSONL session、patch log、todo、Markdown memory。 | `.local-agent/`。 |
-| Memory / Skills | `[WIP-增强中]` | Markdown memory 启动注入和 learn 已落地；skills discovery 待加入。 | `docs/memory-skills-implementation-plan.md`。 |
+| Memory / Skills | `[WIP-增强中]` | Markdown memory 启动注入、learn 和 authored skills discovery 已落地；managed skills 待评估。 | `docs/memory-skills-implementation-plan.md`。 |
 | 项目管理视图 | `[CORE-已落地]` | Markdown 事实源和 Excel 人工视图。 | `docs/project-management.md`、同步脚本。 |
 
 ## 执行流程
@@ -98,12 +98,12 @@ flowchart TD
 | Light LSP | `[MVP-已落地]` | symbols、definition、references、diagnostics。 | 不启动外部 language server，封闭 VM 友好。 |
 | Markdown memory | `[MVP-已落地]` | `memory_read/write` 读写 project/decisions/conventions/learned；启动时注入 advisory block。 | 当前用户指令和最新源码证据优先。 |
 | Learn | `[MVP-已落地]` | `learn` 将可复用经验写入 `.local-agent/memory/learned.md`。 | tier=`write`，默认需要审批，不自动学习。 |
+| Authored skills discovery | `[MVP-已落地]` | 启动时扫描 `.local-agent/skills/<name>/SKILL.md`。 | 只注入 name、description 和 source path；正文按需用 `read_file` 读取。 |
 
 ## 待加入能力矩阵
 
 | 能力 | 标签 | 建议落点 | 设计要点 | 验收标准 |
 |---|---|---|---|---|
-| Authored skills discovery | `[NEXT-近期待加入]` | Runtime 启动扫描 + read skill 工具。 | 扫 `.local-agent/skills/<name>/SKILL.md`，system prompt 只列 name/description，正文按需读取。 | 用户写一个本地 skill 后，Agent 能发现并按需使用。 |
 | Context token 预算 | `[NEXT-近期待加入]` | Context governance。 | 在字符预算外加入模型相关 token 估算，保留字符 fallback。 | 长上下文压测中 compaction 触发更接近真实 context window。 |
 | Managed skills / autolearn | `[LATER-后续候选]` | Skills 子系统。 | 默认关闭；generated skills 与 authored skills 隔离，优先级最低，需审计。 | 不影响 authored skills，且能清楚区分人工与自动生成来源。 |
 | 完整外部 LSP adapter | `[LATER-后续候选]` | 可选后台进程层。 | 作为 light LSP 的增强，不替换当前静态工具；按语言和依赖可用性启用。 | 支持更准确定义、rename、code action，但无依赖时自动降级。 |
@@ -157,7 +157,7 @@ flowchart TD
 
 近期设计目标：
 
-- 增加 authored skills discovery，只曝光 name/description，正文按需读取。
+- Authored skills discovery 已落地，只曝光 name/description/source，正文按需读取。
 - managed skills / autolearn 默认后置，避免自动生成内容长期污染 prompt。
 
 ### Light LSP
@@ -215,6 +215,7 @@ rollback 只回滚当前 session 的 patch record，并要求当前文件仍匹�
 - Markdown memory。
 - Markdown memory 启动注入。
 - `learn` 工具。
+- Authored skills discovery。
 - Multi-root `--allow-dir`。
 - OMP 风格 auto context compaction。
 - 轻量多语言静态代码导航。
@@ -236,7 +237,6 @@ rollback 只回滚当前 session 的 patch record，并要求当前文件仍匹�
 
 ## 推荐落地顺序
 
-1. 用真实需求验证 multi-root、startup memory、learn、auto summary 和 light LSP 的组合体验。
-2. 做 authored skills discovery，先支持用户手写 skill，不做自动生成 skill。
-3. 做 token 预算，支撑更真实的长需求场景。
-4. 最后再评估 managed skills、外部 LSP adapter、AST edit、reviewer/planner 和 TUI。
+1. 用真实需求验证 multi-root、startup memory、learn、authored skills、auto summary 和 light LSP 的组合体验。
+2. 做 token 预算，支撑更真实的长需求场景。
+3. 最后再评估 managed skills、外部 LSP adapter、AST edit、reviewer/planner 和 TUI。

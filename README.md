@@ -118,6 +118,27 @@ local-agent "帮我找一下测试失败原因"
 
 长会话默认启用 OMP 风格上下文压缩策略：`--context-char-budget` 近似表示上下文窗口，runtime 会至少预留 15% 给下一轮 prompt/输出；超过阈值后压缩早期历史，保留最近消息和未完成 todo，并截断发送给模型的超大 tool 输出。默认 `--summary-mode auto`：小历史不摘要，触发 compaction 时自动调用当前配置的 AI API 生成语义摘要，失败回退本地确定性摘要。可用 `--summary-mode local` 强制只用本地摘要，`--summary-mode llm` 强制在 compaction 时尝试 LLM 摘要，`--context-char-budget 0` 关闭压缩。
 
+项目内可放可复用工作流 skill：
+
+```text
+.local-agent/skills/code-review/SKILL.md
+```
+
+推荐写 frontmatter：
+
+```markdown
+---
+name: code-review
+description: Use when reviewing a patch before commit.
+---
+
+# Code Review
+
+...
+```
+
+启动时只会把 `name`、`description` 和 `SKILL.md` 路径注入 system prompt；不会注入正文。Agent 需要使用某个 skill 时，应先用 `read_file` 读取对应 `SKILL.md`。设置 `hide: true` 可以让某个 skill 不进入启动提示。
+
 普通代码任务不需要每次手写“先 list_files、再 read_file、再 dry_run、再 run_tests、再 git_diff”。系统提示和 runtime reminder 已固化默认工作流：Agent 会按任务需要自行探索、维护 todo、修改前读取文件、用 anchored patch 写入、修改后验证并总结 diff。
 
 如果 `always-ask` 模式下某些工具你已经确认安全，可以只对白名单工具免确认：
@@ -235,6 +256,7 @@ python3 scripts/sync_project_excel.py
 - `lsp_diagnostics`: 运行轻量诊断；Python 使用 `compile()`，Java/JS/TS/Vue 使用本地括号/分隔符检查。
 - context compaction: 按 OMP 风格 reserve 阈值压缩早期历史、保留当前用户请求和未完成 todo，并截断发送给模型的超大 tool 输出；默认 `--summary-mode auto` 会在触发压缩时尝试 LLM 摘要并失败回退 local。
 - startup memory injection: 新 session 启动时会读取 `.local-agent/memory/{project,decisions,conventions,learned}.md` 并作为 advisory context 注入 system prompt；当前用户指令和最新源码证据优先。
+- authored skills discovery: 新 session 启动时会扫描 `.local-agent/skills/<name>/SKILL.md`，只注入 name、description 和 source path，正文按需读取。
 
 ## 设计原则
 
@@ -256,6 +278,7 @@ python3 scripts/sync_project_excel.py
 - patch 会尽量保留原文件 BOM 和 CRLF/LF 换行风格；
 - `--budget-seconds` 用墙钟时间限制单次任务，`--max-steps` 默认不限步，只作为显式安全兜底；
 - 默认工作流已沉到 system prompt 和 runtime reminder，用户可以直接用自然语言描述任务；
+- 项目 authored skills 只把 metadata 注入启动上下文，正文按需读取，避免 prompt 膨胀；
 - 长上下文默认使用 OMP 风格 auto compaction：超过阈值才尝试 LLM summary，失败回退本地确定性摘要；
 - LSP 能力先做封闭 VM 友好的多语言静态导航工具，覆盖 Python、Java、JavaScript、TypeScript、Vue，不启动外部语言服务器；
 - memory 使用 Markdown，启动时作为 advisory context 注入，并可用 `learn` 显式沉淀长期经验。

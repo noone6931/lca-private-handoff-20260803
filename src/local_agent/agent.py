@@ -43,6 +43,9 @@ DEFAULT_RESERVE_CHARS = 16384 * 4
 MIN_RESERVE_RATIO = 0.15
 STARTUP_MEMORY_NAMES = ("project", "decisions", "conventions", "learned")
 STARTUP_MEMORY_CHAR_LIMIT = 8000
+STARTUP_SKILLS_CHAR_LIMIT = 4000
+MAX_AUTHORED_SKILLS = 40
+MAX_SKILL_DESCRIPTION_CHARS = 320
 
 WORKFLOW_NUDGE = (
     "For this coding task, infer the tool sequence yourself. "
@@ -95,7 +98,7 @@ class AgentRuntime:
             session_id=session_id,
             continue_recent=continue_session,
         )
-        system_prompt = _system_prompt_with_startup_memory(config.workspace)
+        system_prompt = _system_prompt_with_startup_context(config.workspace)
         self._messages: list[dict[str, Any]] = [
             {"role": "system", "content": system_prompt},
             *self._session.load_messages(),
@@ -469,17 +472,26 @@ def _estimate_message_chars(messages: list[dict[str, Any]]) -> int:
     return sum(len(json.dumps(message, ensure_ascii=False, default=str)) for message in messages)
 
 
-def _system_prompt_with_startup_memory(workspace: Path) -> str:
+def _system_prompt_with_startup_context(workspace: Path) -> str:
+    blocks = [SYSTEM_PROMPT.rstrip()]
     memory = _load_startup_memory(workspace, max_chars=STARTUP_MEMORY_CHAR_LIMIT)
-    if not memory:
-        return SYSTEM_PROMPT
-    return (
-        f"{SYSTEM_PROMPT.rstrip()}\n\n"
-        "[Project memory]\n"
-        "The following Markdown memory is advisory project context loaded from .local-agent/memory. "
-        "Prefer current user instructions and freshly inspected files when they conflict.\n\n"
-        f"{memory}"
-    )
+    if memory:
+        blocks.append(
+            "[Project memory]\n"
+            "The following Markdown memory is advisory project context loaded from .local-agent/memory. "
+            "Prefer current user instructions and freshly inspected files when they conflict.\n\n"
+            f"{memory}"
+        )
+    skills = _load_authored_skills(workspace, max_chars=STARTUP_SKILLS_CHAR_LIMIT)
+    if skills:
+        blocks.append(
+            "[Available project skills]\n"
+            "The following project-authored skills are advisory workflow documents. "
+            "If a skill is relevant, read its SKILL.md with read_file before using it; "
+            "do not assume the full procedure from this metadata alone.\n\n"
+            f"{skills}"
+        )
+    return "\n\n".join(blocks)
 
 
 def _load_startup_memory(workspace: Path, *, max_chars: int) -> str:
@@ -520,6 +532,125 @@ def _clip_memory_text(text: str, *, max_chars: int) -> str:
     if keep == 0:
         return marker[:max_chars]
     return marker + text[-keep:].lstrip()
+
+
+def _load_authored_skills(workspace: Path, *, max_chars: int) -> str:
+    skills_dir = workspace / ".local-agent" / "skills"
+    if max_chars <= 0 or not skills_dir.exists() or not skills_dir.is_dir():
+        return ""
+    lines: list[str] = []
+    remaining = max_chars
+    for skill_file in _iter_authored_skill_files(skills_dir):
+        metadata = _read_skill_metadata(workspace, skill_file)
+        if metadata is None or metadata.get("hide"):
+            continue
+        name = str(metadata["name"])
+        description = str(metadata["description"])
+        source = str(skill_file.relative_to(workspace))
+        rendered = f"- {name}: {description} Source: {source}"
+        if len(rendered) + 1 > remaining:
+            break
+        lines.append(rendered)
+        remaining -= len(rendered) + 1
+        if len(lines) >= MAX_AUTHORED_SKILLS:
+            break
+    return "\n".join(lines)
+
+
+def _iter_authored_skill_files(skills_dir: Path) -> list[Path]:
+    skill_files: list[Path] = []
+    for child in sorted(skills_dir.iterdir(), key=lambda item: item.name.lower()):
+        if not child.is_dir():
+            continue
+        skill_file = child / "SKILL.md"
+        if skill_file.is_file():
+            skill_files.append(skill_file)
+    return skill_files
+
+
+def _read_skill_metadata(workspace: Path, skill_file: Path) -> dict[str, str | bool] | None:
+    try:
+        skill_file.resolve().relative_to(workspace.resolve())
+    except (OSError, ValueError):
+        return None
+    try:
+        raw = skill_file.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+    frontmatter = _parse_frontmatter(raw)
+    fallback_name = skill_file.parent.name
+    name = _clean_skill_name(str(frontmatter.get("name") or fallback_name))
+    if not name:
+        return None
+    description = _clean_skill_description(str(frontmatter.get("description") or _fallback_skill_description(raw)))
+    if not description:
+        return None
+    hide = _parse_bool(frontmatter.get("hide"))
+    return {"name": name, "description": description, "hide": hide}
+
+
+def _parse_frontmatter(text: str) -> dict[str, str]:
+    lines = text.splitlines()
+    if not lines or lines[0].strip() != "---":
+        return {}
+    data: dict[str, str] = {}
+    for line in lines[1:]:
+        if line.strip() == "---":
+            break
+        if ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        key = key.strip().lower()
+        value = _strip_wrapping_quotes(value.strip())
+        if key in {"name", "description", "hide"}:
+            data[key] = value
+    return data
+
+
+def _fallback_skill_description(text: str) -> str:
+    in_frontmatter = False
+    frontmatter_done = False
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if line == "---" and not frontmatter_done:
+            in_frontmatter = not in_frontmatter
+            if not in_frontmatter:
+                frontmatter_done = True
+            continue
+        if in_frontmatter or not line:
+            continue
+        if line.startswith("#"):
+            continue
+        return line
+    return ""
+
+
+def _strip_wrapping_quotes(value: str) -> str:
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+        return value[1:-1]
+    return value
+
+
+def _clean_skill_name(name: str) -> str:
+    cleaned = name.strip()[:64]
+    if not cleaned or not all(char.isalnum() or char in {"-", "_"} for char in cleaned):
+        return ""
+    return cleaned
+
+
+def _clean_skill_description(description: str) -> str:
+    cleaned = " ".join(description.replace("\x00", "").split())
+    if len(cleaned) > MAX_SKILL_DESCRIPTION_CHARS:
+        cleaned = cleaned[: MAX_SKILL_DESCRIPTION_CHARS - 14].rstrip() + "...<truncated>"
+    return cleaned
+
+
+def _parse_bool(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
 def _resolve_compaction_threshold_chars(context_window_chars: int) -> int:
