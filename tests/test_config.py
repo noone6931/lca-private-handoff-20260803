@@ -36,6 +36,7 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.context_char_budget, 60000)
         self.assertEqual(config.context_recent_messages, 40)
         self.assertEqual(config.summary_mode, "auto")
+        self.assertEqual(config.memory_consolidation, "off")
         self.assertEqual(config.approval_mode, "always-ask")
         self.assertEqual(config.allowed_dirs, ())
 
@@ -556,6 +557,68 @@ class ConfigTests(unittest.TestCase):
                 clear=True,
             ):
                 with self.assertRaisesRegex(RuntimeError, "summary_mode must be one of"):
+                    load_config(
+                        config_path=None,
+                        cwd=tmp,
+                        provider="bailian",
+                        api_base_url=None,
+                        api_key=None,
+                        model=None,
+                        max_steps=None,
+                        budget_seconds=None,
+                        approval_mode=None,
+                    )
+
+    def test_memory_consolidation_can_come_from_env(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.dict(
+                "os.environ",
+                {
+                    "DASHSCOPE_API_KEY": "token",
+                    "AGENT_MEMORY_CONSOLIDATION": "auto",
+                },
+                clear=True,
+            ):
+                config = load_config(
+                    config_path=None,
+                    cwd=tmp,
+                    provider="bailian",
+                    api_base_url=None,
+                    api_key=None,
+                    model=None,
+                    max_steps=None,
+                    budget_seconds=None,
+                    approval_mode=None,
+                )
+
+        self.assertEqual(config.memory_consolidation, "auto")
+
+    def test_memory_consolidation_boolean_aliases_are_supported(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.dict("os.environ", {"DASHSCOPE_API_KEY": "token"}, clear=True):
+                config = load_config(
+                    config_path=None,
+                    cwd=tmp,
+                    provider="bailian",
+                    api_base_url=None,
+                    api_key=None,
+                    model=None,
+                    max_steps=None,
+                    budget_seconds=None,
+                    approval_mode=None,
+                    memory_consolidation="true",
+                )
+
+        self.assertEqual(config.memory_consolidation, "auto")
+
+    def test_memory_consolidation_rejects_unknown_values(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.dict(
+                "os.environ",
+                {"DASHSCOPE_API_KEY": "token", "AGENT_MEMORY_CONSOLIDATION": "sometimes"},
+                clear=True,
+            ):
+                with self.assertRaisesRegex(RuntimeError, "memory_consolidation must be one of"):
                     load_config(
                         config_path=None,
                         cwd=tmp,

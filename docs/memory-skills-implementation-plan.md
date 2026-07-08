@@ -1,6 +1,6 @@
 # Memory 与 Skills 实现方案
 
-更新时间：2026-07-07
+更新时间：2026-07-08
 
 本文是给后续实现者读取的交接方案。它基于已核实的 OMP memory / autolearn / skills 设计，但按 LCA 第一阶段目标裁剪：个人本地使用、封闭 VM 友好、只访问指定 OpenAI-compatible API、可审计、默认不隐藏写入。
 
@@ -34,6 +34,7 @@ OMP 的 skills 也有两条路径：
 - `memory_read` / `memory_write`：写入 `.local-agent/memory/{project,decisions,conventions,learned}.md`。
 - 启动时自动注入 `.local-agent/memory/{project,decisions,conventions,learned}.md`，并标记为 advisory context。
 - `learn` 工具：把可复用 lesson 写入 `.local-agent/memory/learned.md`。
+- 可选 memory consolidation：`memory_consolidation=auto|llm` 时，在一轮结束后从 session 中抽取长期经验并追加到 `.local-agent/memory/*.md`。
 - Authored skills discovery：启动时扫描 `.local-agent/skills/<name>/SKILL.md`，只注入 name / description / source path。
 - deterministic context compaction：用于单个 session 内上下文治理，不等同长期 memory。
 - OMP 风格 auto summary 和多语言轻量 LSP 已落地。
@@ -41,8 +42,9 @@ OMP 的 skills 也有两条路径：
 当前 LCA 还没有：
 
 - managed skills / autolearn。
-- memory backend selector。
 - Claude Code 风格 path-scoped rules。
+- managed skills / autolearn。
+- memory backend selector。
 
 ## 设计目标
 
@@ -51,14 +53,15 @@ OMP 的 skills 也有两条路径：
 1. 让现有 Markdown memory 真正参与后续 session，而不是只能手动 `memory_read`。
 2. 增加显式 `learn`，让 agent 能沉淀可复用经验，但仍然是可见、可控的写入。
 3. 增加轻量 skills discovery，让项目可放可复用工作流。
-4. 最后再做 managed skills，默认关闭，用户明确打开后才允许生成。
+4. 增加可选 memory consolidation，让 session 中的可复用经验能沉淀进 Markdown memory。
+5. 最后再做 managed skills，默认关闭，用户明确打开后才允许生成。
 
 暂不做：
 
 - 远端 Hindsight。
 - SQLite / 向量检索。
 - 插件市场。
-- session stop 自动学习。
+- 默认开启的 session stop 自动学习。
 - 让 generated skill 覆盖用户 authored skill。
 
 ## 分阶段方案
@@ -120,21 +123,39 @@ Source: .local-agent/memory/project.md
 
 ### M3：Memory Consolidation
 
-目标：当 Markdown memory 变长后，用总结文件降低上下文占用。
+状态：已完成 MVP 版。
 
-建议实现：
+目标：让 session 中的长期经验能定期整理进 `.local-agent/memory`，但默认不隐式写项目文件。
 
-- 不做后台自动任务，先做显式命令或工具：
-  - `memory_compact` 或 CLI `--compact-memory`。
-- 输入来自 `project.md`、`decisions.md`、`conventions.md`、`learned.md`。
-- 输出 `.local-agent/memory/summary.md`。
-- 若 LLM summary 可用，用 LLM 总结；失败时保留 deterministic 前 N 条 / 后 N 条摘要。
-- 注入优先级：`summary.md` 优先，原始 memory 作为按需 `memory_read` 的资料。
+当前实现：
+
+- 配置项：
+  - `memory_consolidation=off|auto|llm`
+  - CLI：`--memory-consolidation off|auto|llm`
+  - 环境变量：`AGENT_MEMORY_CONSOLIDATION`
+- 默认 `off`，避免只读任务隐式写 `.local-agent/memory`。
+- `auto`：一轮结束后，如果本轮有长期记忆信号，再调用当前 provider 抽取长期内容。
+- `llm`：跳过 auto 的小会话启发式，直接尝试抽取。
+- LLM 必须返回严格 JSON：
+
+```json
+{"project":[],"decisions":[],"conventions":[],"learned":[]}
+```
+
+- Runtime 只接受四个 bucket，并限制每类条数和单条长度。
+- 追加写入 `.local-agent/memory/{project,decisions,conventions,learned}.md`。
+- 每条自动记忆带 `lca-memory:<hash>` 注释，避免重复 consolidation 反复追加同一条。
+- 以下情况不写：
+  - 默认 `off`。
+  - deadline 已耗尽。
+  - 本轮已经显式调用 `learn` 或 `memory_write`。
+  - LLM 返回空内容、坏 JSON 或空数组。
 
 验收标准：
 
-- LLM 失败不破坏 agent 启动。
-- summary 明确来自 memory，不当作当前事实源。
+- 默认 off 不增加额外 LLM 请求，不隐式写 memory。
+- `auto` 可以把 session 中的长期经验写入 Markdown memory。
+- LLM 失败 / 坏 JSON 不写入，并记录 session event。
 - 不删除原始 memory。
 
 ### M4：Authored Skills Discovery
@@ -214,8 +235,8 @@ Read .local-agent/skills/code-review/SKILL.md before using it.
 
 ## 推荐落地顺序
 
-1. 真实项目压测用户级 / 项目级 `AGENTS.md` 与 `RULES.md` 的注入效果。
-2. 做 M3 memory consolidation。
+1. 真实项目压测用户级 / 项目级 `AGENTS.md`、`RULES.md`、startup memory 与 memory consolidation 的组合效果。
+2. 评估 Claude Code 风格 path-scoped rules。
 3. 最后评估 M5 managed skills 和 autolearn autoContinue。
 
 ## 主要风险

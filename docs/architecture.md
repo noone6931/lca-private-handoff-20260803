@@ -40,7 +40,7 @@
 | 层 | 状态 | 职责 | 当前实现 |
 |---|---|---|---|
 | 用户入口层 | `[CORE-已落地]` | CLI、REPL、一次性 prompt、继续会话。 | `./agent`、`src/local_agent/cli.py`。 |
-| 配置层 | `[CORE-已落地]` | 合并 CLI、环境变量、JSON config、provider preset、approval、summary、预算、allowed dirs。 | `src/local_agent/config.py`。 |
+| 配置层 | `[CORE-已落地]` | 合并 CLI、环境变量、JSON config、provider preset、approval、summary、memory consolidation、预算、allowed dirs。 | `src/local_agent/config.py`。 |
 | Agent Runtime | `[CORE-已落地]` | system prompt、模型循环、工具分发、deadline、synthetic tool result、workflow nudge。 | `src/local_agent/agent.py`。 |
 | Provider 层 | `[CORE-已落地]` | OpenAI-compatible chat completions，对接百炼和通用 endpoint。 | `src/local_agent/llm.py`。 |
 | 工具系统 | `[CORE-已落地]` | 工具注册、schema、tier、approval policy、参数校验、错误包装。 | `src/local_agent/tools/base.py`。 |
@@ -49,7 +49,7 @@
 | Context / Rules | `[MVP-已落地]` | 用户级/项目级 `AGENTS.md` 启动注入，`RULES.md` 每轮 sticky 注入。 | `~/.config/local-coding-agent/`、`.local-agent/`。 |
 | 轻量代码导航 | `[MVP-已落地]` | Python、Java、JS、TS、Vue 的 symbols/definition/references/diagnostics。 | `src/local_agent/tools/lsp.py`。 |
 | 本地持久化 | `[CORE-已落地]` | JSONL session、patch log、todo、Markdown memory。 | runtime state 默认在用户级 state dir；项目 memory/skills 仍在 `.local-agent/`。 |
-| Memory / Skills | `[WIP-增强中]` | Markdown memory 启动注入、learn 和 authored skills discovery 已落地；managed skills 待评估。 | `docs/memory-skills-implementation-plan.md`。 |
+| Memory / Skills | `[MVP-已落地]` | Markdown memory 启动注入、learn、可选 session memory consolidation 和 authored skills discovery 已落地；managed skills 待评估。 | `docs/memory-skills-implementation-plan.md`。 |
 | 项目管理视图 | `[CORE-已落地]` | Markdown 事实源和 Excel 人工视图。 | `docs/project-management.md`、同步脚本。 |
 
 ## 执行流程
@@ -72,9 +72,11 @@ flowchart TD
   RT --> CTFILE["AGENTS.md context"]
   RT --> RULES["RULES.md sticky rules"]
   RT --> MEM["Markdown memory"]
+  RT --> MC["Session memory consolidation"]
   CTFILE --> RT
   RULES --> RT
   MEM --> RT
+  MC --> MEM
   SKILL["Skills directory"] -. "[NEXT] discovery" .-> RT
   RT --> U
 ```
@@ -106,6 +108,7 @@ flowchart TD
 | Light LSP | `[MVP-已落地]` | symbols、definition、references、diagnostics。 | 不启动外部 language server，封闭 VM 友好。 |
 | Markdown memory | `[MVP-已落地]` | `memory_read/write` 读写 project/decisions/conventions/learned；启动时注入 advisory block。 | 当前用户指令和最新源码证据优先。 |
 | Learn | `[MVP-已落地]` | `learn` 将可复用经验写入 `.local-agent/memory/learned.md`。 | tier=`write`，默认需要审批，不自动学习。 |
+| Memory consolidation | `[MVP-已落地]` | `--memory-consolidation auto|llm` 在一轮结束后抽取 session 中的长期经验并写入 `.local-agent/memory/*.md`。 | 默认 `off`；坏 JSON、空结果、预算耗尽或本轮已显式写 memory 时不写入。 |
 | Authored skills discovery | `[MVP-已落地]` | 启动时扫描 `.local-agent/skills/<name>/SKILL.md`。 | 只注入 name、description 和 source path；正文按需用 `read_file` 读取。 |
 
 ## 待加入能力矩阵
@@ -113,6 +116,7 @@ flowchart TD
 | 能力 | 标签 | 建议落点 | 设计要点 | 验收标准 |
 |---|---|---|---|---|
 | Context token 预算 | `[NEXT-近期待加入]` | Context governance。 | 在字符预算外加入模型相关 token 估算，保留字符 fallback。 | 长上下文压测中 compaction 触发更接近真实 context window。 |
+| Path-scoped rules | `[NEXT-近期待加入]` | Context / Rules。 | 支持按路径/glob 生效的规则文件，避免全局 sticky rules 对无关目录造成噪音。 | 编辑匹配路径时规则可见；不匹配路径时不注入或只作为可读取提示。 |
 | Managed skills / autolearn | `[LATER-后续候选]` | Skills 子系统。 | 默认关闭；generated skills 与 authored skills 隔离，优先级最低，需审计。 | 不影响 authored skills，且能清楚区分人工与自动生成来源。 |
 | 完整外部 LSP adapter | `[LATER-后续候选]` | 可选后台进程层。 | 作为 light LSP 的增强，不替换当前静态工具；按语言和依赖可用性启用。 | 支持更准确定义、rename、code action，但无依赖时自动降级。 |
 | AST edit / refactor | `[LATER-后续候选]` | Patch 层增强。 | 先保留 anchored patch 主路径，再评估 Python/TS 局部 AST 修改。 | 能降低大规模重构误改率，同时保留 diff 和回滚。 |
@@ -169,16 +173,18 @@ flowchart TD
 
 ### Memory / Skills
 
-当前 memory 是启动上下文和手动工具：
+当前 memory 是启动上下文、手动工具和可选 session 整理：
 
 - `memory_read` 读取 `.local-agent/memory/{project,decisions,conventions,learned}.md`。
 - `memory_write` 追加结构化时间戳 note。
 - Runtime 初始化时读取这些 Markdown，并以 advisory block 注入 system prompt。
 - `learn` 追加可复用 lesson 到 `.local-agent/memory/learned.md`。
+- 可选 `memory_consolidation=auto|llm` 在一轮结束后让当前 provider 抽取长期 project/decisions/conventions/learned，并追加到 `.local-agent/memory/*.md`；默认关闭，避免只读任务隐式写项目文件。
 
 近期设计目标：
 
 - Authored skills discovery 已落地，只曝光 name/description/source，正文按需读取。
+- Path-scoped rules 作为下一步候选。
 - managed skills / autolearn 默认后置，避免自动生成内容长期污染 prompt。
 
 ### Light LSP
@@ -238,6 +244,7 @@ rollback 只回滚当前 session 的 patch record，并要求当前文件仍匹�
 - 用户级/项目级 `RULES.md` sticky 注入。
 - Markdown memory 启动注入。
 - `learn` 工具。
+- 可选 session memory consolidation。
 - Authored skills discovery。
 - Multi-root `--allow-dir`。
 - OMP 风格 auto context compaction。
@@ -260,6 +267,6 @@ rollback 只回滚当前 session 的 patch record，并要求当前文件仍匹�
 
 ## 推荐落地顺序
 
-1. 用真实需求验证 multi-root、startup context/rules、startup memory、learn、authored skills、auto summary 和 light LSP 的组合体验。
-2. 做 token 预算，支撑更真实的长需求场景。
+1. 用真实需求验证 multi-root、startup context/rules、startup memory、learn、memory consolidation、authored skills、auto summary 和 light LSP 的组合体验。
+2. 做 path-scoped rules 或 token 预算，取决于真实任务里先暴露的是规则噪音还是上下文预算问题。
 3. 最后再评估 managed skills、外部 LSP adapter、AST edit、reviewer/planner 和 TUI。

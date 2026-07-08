@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import datetime, timezone
 from dataclasses import replace
 from pathlib import Path
 import sys
@@ -43,6 +44,14 @@ COMPACTION_TOOL_CONTENT_CHAR_LIMIT = 6000
 SUMMARY_INPUT_CHAR_LIMIT = 12000
 SUMMARY_OUTPUT_CHAR_LIMIT = 4000
 SUMMARY_REQUEST_TIMEOUT = 30.0
+MEMORY_CONSOLIDATION_INPUT_CHAR_LIMIT = 14000
+MEMORY_CONSOLIDATION_OUTPUT_CHAR_LIMIT = 8000
+MEMORY_CONSOLIDATION_REQUEST_TIMEOUT = 30.0
+MEMORY_CONSOLIDATION_MIN_AUTO_CHARS = 500
+MEMORY_CONSOLIDATION_MAX_ITEMS_PER_BUCKET = 5
+MEMORY_CONSOLIDATION_MAX_ITEM_CHARS = 700
+MEMORY_CONSOLIDATION_BUCKETS = ("project", "decisions", "conventions", "learned")
+MEMORY_CONSOLIDATION_WRITE_TOOLS = {"memory_write", "learn"}
 DEFAULT_RESERVE_CHARS = 16384 * 4
 MIN_RESERVE_RATIO = 0.15
 STARTUP_MEMORY_NAMES = ("project", "decisions", "conventions", "learned")
@@ -138,6 +147,7 @@ class AgentRuntime:
             if self._config.budget_seconds is not None
             else None
         )
+        run_start_index = len(self._messages)
         model_prompt = _with_workflow_nudge(prompt)
         self._messages.append({"role": "user", "content": model_prompt})
         self._session.append("user", {"content": prompt})
@@ -148,7 +158,7 @@ class AgentRuntime:
         step = 1
         while self._config.max_steps == 0 or step <= self._config.max_steps:
             if self._deadline_exceeded(deadline):
-                return self._stop_for_budget()
+                return self._stop_for_budget(deadline, run_start_index)
 
             self._session.append("llm_request", {"step": step})
             messages_for_model = self._messages_for_model(deadline)
@@ -164,16 +174,15 @@ class AgentRuntime:
             tool_calls = message.get("tool_calls") or []
             if getattr(response, "finish_reason", None) == "length":
                 self._append_synthetic_tool_results(tool_calls, self._length_stop_tool_message())
-                return self._stop_for_length()
+                return self._stop_for_length(deadline, run_start_index)
             if not tool_calls:
                 content = message.get("content") or ""
-                self._session.append("final", {"content": content})
-                return content
+                return self._finish_run(content, deadline, run_start_index)
 
             for index, tool_call in enumerate(tool_calls):
                 if self._deadline_exceeded(deadline):
                     self._append_synthetic_tool_results(tool_calls[index:], self._budget_stop_message())
-                    return self._stop_for_budget()
+                    return self._stop_for_budget(deadline, run_start_index)
                 function = tool_call.get("function") or {}
                 name = function.get("name") or ""
                 arguments = function.get("arguments") or "{}"
@@ -200,13 +209,13 @@ class AgentRuntime:
                         tool_calls[index + 1 :],
                         self._duplicate_tool_stop_message(),
                     )
-                    return self._stop_for_duplicate_tools()
+                    return self._stop_for_duplicate_tools(deadline, run_start_index)
                 if self._deadline_exceeded(deadline):
                     self._append_synthetic_tool_results(tool_calls[index + 1 :], self._budget_stop_message())
-                    return self._stop_for_budget()
+                    return self._stop_for_budget(deadline, run_start_index)
             step += 1
 
-        return f"Stopped after reaching max_steps={self._config.max_steps}."
+        return self._finish_run(f"Stopped after reaching max_steps={self._config.max_steps}.", deadline, run_start_index)
 
     def approval_summary(self) -> str:
         lines = [
@@ -470,21 +479,113 @@ class AgentRuntime:
     def _budget_stop_message(self) -> str:
         return f"Stopped after reaching budget_seconds={self._config.budget_seconds}."
 
-    def _stop_for_budget(self) -> str:
-        content = self._budget_stop_message()
+    def _finish_run(self, content: str, deadline: float | None, run_start_index: int) -> str:
         self._session.append("final", {"content": content})
+        run_messages = self._messages[run_start_index:]
+        self._maybe_consolidate_session_memory(run_messages, content, deadline)
         return content
+
+    def _maybe_consolidate_session_memory(
+        self,
+        run_messages: list[dict[str, Any]],
+        final_content: str,
+        deadline: float | None,
+    ) -> None:
+        mode = self._config.memory_consolidation
+        if mode == "off":
+            return
+        if self._deadline_exceeded(deadline):
+            self._session.append("memory_consolidation", {"mode": mode, "status": "skipped", "reason": "deadline"})
+            return
+        if _run_used_memory_write_tool(run_messages):
+            self._session.append(
+                "memory_consolidation",
+                {"mode": mode, "status": "skipped", "reason": "memory tool already wrote"},
+            )
+            return
+        transcript = _messages_to_memory_transcript(
+            run_messages,
+            final_content,
+            max_chars=MEMORY_CONSOLIDATION_INPUT_CHAR_LIMIT,
+        )
+        if not transcript.strip():
+            return
+        if mode == "auto" and not _should_auto_consolidate_memory(transcript, run_messages, final_content):
+            self._session.append(
+                "memory_consolidation",
+                {"mode": mode, "status": "skipped", "reason": "no durable signal"},
+            )
+            return
+        extracted = self._llm_memory_consolidation(transcript, deadline)
+        if not extracted:
+            return
+        written = _append_consolidated_memory(self._config.workspace, self._session.session_id, extracted)
+        self._session.append(
+            "memory_consolidation",
+            {
+                "mode": mode,
+                "status": "written" if written else "empty",
+                "written": written,
+            },
+        )
+
+    def _llm_memory_consolidation(self, transcript: str, deadline: float | None) -> dict[str, list[str]] | None:
+        if deadline is None:
+            remaining_timeout = float(self._config.request_timeout)
+        else:
+            remaining_timeout = deadline - time.monotonic()
+        timeout = min(float(self._config.request_timeout), remaining_timeout, MEMORY_CONSOLIDATION_REQUEST_TIMEOUT)
+        if timeout < 1:
+            return None
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "Extract durable project memory for a local coding agent. "
+                    "Return only strict JSON with keys project, decisions, conventions, learned, each an array of strings. "
+                    "Include only reusable facts, accepted decisions, coding conventions, commands, debugging insights, or workflow lessons that will help future sessions. "
+                    "Do not include secrets, credentials, raw source code, one-off todos, temporary user requests, or guesses. "
+                    "If there is no durable memory, return empty arrays."
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    "Session transcript:\n"
+                    f"{transcript}\n\n"
+                    "Return JSON shaped exactly like:\n"
+                    '{"project":[],"decisions":[],"conventions":[],"learned":[]}'
+                )[:MEMORY_CONSOLIDATION_INPUT_CHAR_LIMIT],
+            },
+        ]
+        try:
+            response = self._client.chat(messages, [], timeout=timeout)
+        except LlmError as exc:
+            self._session.append("memory_consolidation_error", {"mode": "llm", "error": str(exc)})
+            return None
+        content = response.message.get("content")
+        if not isinstance(content, str) or not content.strip():
+            self._session.append("memory_consolidation_error", {"mode": "llm", "error": "empty response"})
+            return None
+        parsed = _parse_memory_consolidation_response(content[:MEMORY_CONSOLIDATION_OUTPUT_CHAR_LIMIT])
+        if parsed is None:
+            self._session.append("memory_consolidation_error", {"mode": "llm", "error": "invalid JSON response"})
+            return None
+        return parsed
+
+    def _stop_for_budget(self, deadline: float | None, run_start_index: int) -> str:
+        content = self._budget_stop_message()
+        return self._finish_run(content, deadline, run_start_index)
 
     def _duplicate_tool_stop_message(self) -> str:
         return "the assistant repeated identical tool calls too many times."
 
-    def _stop_for_duplicate_tools(self) -> str:
+    def _stop_for_duplicate_tools(self, deadline: float | None, run_start_index: int) -> str:
         content = (
             "Stopped because the assistant repeated identical tool calls too many times. "
             "Retry with a narrower request or ask it to answer from the evidence already collected."
         )
-        self._session.append("final", {"content": content})
-        return content
+        return self._finish_run(content, deadline, run_start_index)
 
     def _stop_for_interrupt(self) -> str:
         content = "Stopped after user interrupt."
@@ -497,13 +598,12 @@ class AgentRuntime:
             "Retry with a smaller request or ask to continue in smaller steps."
         )
 
-    def _stop_for_length(self) -> str:
+    def _stop_for_length(self, deadline: float | None, run_start_index: int) -> str:
         content = (
             "Stopped because the LLM response hit finish_reason=length. "
             "Retry with a smaller request or continue in smaller steps."
         )
-        self._session.append("final", {"content": content})
-        return content
+        return self._finish_run(content, deadline, run_start_index)
 
     def _append_tool_result(
         self,
@@ -1209,6 +1309,239 @@ def _summary_cache_key(transcript: str, current_user_request: str | None, todo_s
         sort_keys=True,
     )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _messages_to_memory_transcript(
+    messages: list[dict[str, Any]],
+    final_content: str,
+    *,
+    max_chars: int,
+) -> str:
+    lines: list[str] = []
+    total = 0
+    for message in messages:
+        rendered = _render_memory_transcript_message(message)
+        if not rendered:
+            continue
+        remaining = max_chars - total
+        if remaining <= 0:
+            break
+        if len(rendered) > remaining:
+            rendered = rendered[: max(0, remaining - 14)] + "...<truncated>"
+        lines.append(rendered)
+        total += len(rendered) + 1
+    if final_content.strip() and not _last_assistant_content_is(messages, final_content):
+        rendered = f"final: {_one_line(final_content, max_chars=1200)}"
+        remaining = max_chars - total
+        if remaining > 0:
+            if len(rendered) > remaining:
+                rendered = rendered[: max(0, remaining - 14)] + "...<truncated>"
+            lines.append(rendered)
+            total += len(rendered) + 1
+    if total >= max_chars:
+        lines.append("...<transcript truncated for memory consolidation>")
+    return "\n".join(lines)
+
+
+def _render_memory_transcript_message(message: dict[str, Any]) -> str:
+    role = str(message.get("role") or "unknown")
+    if role == "system":
+        return ""
+    if role == "user":
+        content = message.get("content")
+        if not isinstance(content, str) or not content.strip():
+            return ""
+        return f"user: {_one_line(_strip_workflow_nudge(content), max_chars=1200)}"
+    if role == "assistant":
+        tool_names = _assistant_tool_call_names(message)
+        content = message.get("content")
+        if tool_names:
+            prefix = f"assistant tool_calls: {', '.join(tool_names)}"
+            if isinstance(content, str) and content.strip():
+                return f"{prefix}; note: {_one_line(content, max_chars=600)}"
+            return prefix
+        if isinstance(content, str) and content.strip():
+            return f"assistant: {_one_line(content, max_chars=1200)}"
+        return ""
+    if role == "tool":
+        name = str(message.get("_lca_tool_name") or "tool")
+        error = " error" if message.get("_lca_is_error") is True else ""
+        content = message.get("content")
+        return f"{name}{error}: {_one_line(str(content or ''), max_chars=1200)}"
+    content = message.get("content")
+    if content is None:
+        return ""
+    return f"{role}: {_one_line(str(content), max_chars=1200)}"
+
+
+def _assistant_tool_call_names(message: dict[str, Any]) -> list[str]:
+    names: list[str] = []
+    tool_calls = message.get("tool_calls") or []
+    if not isinstance(tool_calls, list):
+        return names
+    for tool_call in tool_calls:
+        if not isinstance(tool_call, dict):
+            continue
+        function = tool_call.get("function") or {}
+        if isinstance(function, dict) and function.get("name"):
+            names.append(str(function["name"]))
+    return names
+
+
+def _last_assistant_content_is(messages: list[dict[str, Any]], final_content: str) -> bool:
+    for message in reversed(messages):
+        if message.get("role") != "assistant":
+            continue
+        content = message.get("content")
+        return isinstance(content, str) and content == final_content
+    return False
+
+
+def _run_used_memory_write_tool(messages: list[dict[str, Any]]) -> bool:
+    for message in messages:
+        if message.get("role") != "assistant":
+            continue
+        if any(name in MEMORY_CONSOLIDATION_WRITE_TOOLS for name in _assistant_tool_call_names(message)):
+            return True
+    return False
+
+
+def _should_auto_consolidate_memory(
+    transcript: str,
+    messages: list[dict[str, Any]],
+    final_content: str,
+) -> bool:
+    lowered = f"{transcript}\n{final_content}".lower()
+    durable_keywords = {
+        "always",
+        "convention",
+        "decision",
+        "learn",
+        "lesson",
+        "memory",
+        "prefer",
+        "remember",
+        "以后",
+        "偏好",
+        "决策",
+        "学到",
+        "惯例",
+        "经验",
+        "记住",
+        "约定",
+    }
+    if any(keyword in lowered for keyword in durable_keywords):
+        return True
+    if len(transcript) < MEMORY_CONSOLIDATION_MIN_AUTO_CHARS:
+        return False
+    has_tool_result = any(message.get("role") == "tool" for message in messages)
+    if has_tool_result:
+        return True
+    return len(final_content.strip()) >= MEMORY_CONSOLIDATION_MIN_AUTO_CHARS
+
+
+def _parse_memory_consolidation_response(content: str) -> dict[str, list[str]] | None:
+    raw = _extract_json_object_text(content)
+    if raw is None:
+        return None
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    parsed: dict[str, list[str]] = {}
+    for bucket in MEMORY_CONSOLIDATION_BUCKETS:
+        value = data.get(bucket, [])
+        if value is None:
+            value = []
+        if not isinstance(value, list):
+            return None
+        items: list[str] = []
+        seen: set[str] = set()
+        for raw_item in value:
+            if not isinstance(raw_item, str):
+                continue
+            item = _clean_consolidated_memory_item(raw_item)
+            if not item:
+                continue
+            key = _normalized_memory_item_key(item)
+            if key in seen:
+                continue
+            seen.add(key)
+            items.append(item)
+            if len(items) >= MEMORY_CONSOLIDATION_MAX_ITEMS_PER_BUCKET:
+                break
+        parsed[bucket] = items
+    return parsed
+
+
+def _extract_json_object_text(content: str) -> str | None:
+    stripped = content.strip()
+    if stripped.startswith("```"):
+        lines = stripped.splitlines()
+        if lines and lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        stripped = "\n".join(lines).strip()
+    start = stripped.find("{")
+    end = stripped.rfind("}")
+    if start < 0 or end < start:
+        return None
+    return stripped[start : end + 1]
+
+
+def _clean_consolidated_memory_item(item: str) -> str:
+    cleaned = " ".join(item.replace("\x00", "").split())
+    if len(cleaned) > MEMORY_CONSOLIDATION_MAX_ITEM_CHARS:
+        cleaned = cleaned[: MEMORY_CONSOLIDATION_MAX_ITEM_CHARS - 14].rstrip() + "...<truncated>"
+    return cleaned
+
+
+def _append_consolidated_memory(
+    workspace: Path,
+    session_id: str,
+    items_by_bucket: dict[str, list[str]],
+) -> dict[str, int]:
+    written: dict[str, int] = {}
+    memory_dir = workspace / ".local-agent" / "memory"
+    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    for bucket in MEMORY_CONSOLIDATION_BUCKETS:
+        items = items_by_bucket.get(bucket) or []
+        if not items:
+            continue
+        path = memory_dir / f"{bucket}.md"
+        existing = ""
+        if path.exists():
+            try:
+                existing = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                existing = ""
+        pending: list[tuple[str, str]] = []
+        for item in items:
+            digest = _memory_item_digest(bucket, item)
+            if f"lca-memory:{digest}" in existing:
+                continue
+            pending.append((digest, item))
+        if not pending:
+            continue
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(f"\n## {stamp} - consolidated from session {session_id}\n\n")
+            for digest, item in pending:
+                handle.write(f"<!-- lca-memory:{digest} -->\n- {item}\n")
+        written[bucket] = len(pending)
+    return written
+
+
+def _memory_item_digest(bucket: str, item: str) -> str:
+    payload = f"{bucket}\0{_normalized_memory_item_key(item)}"
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+
+def _normalized_memory_item_key(item: str) -> str:
+    return " ".join(item.casefold().split())
 
 
 def _tool_call_signature(name: str, arguments: str | dict[str, Any]) -> str:

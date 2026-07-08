@@ -83,6 +83,14 @@ def main(argv: list[str] | None = None) -> int:
             "LLM summary when compaction triggers, local fallback on failure."
         ),
     )
+    parser.add_argument(
+        "--memory-consolidation",
+        choices=["off", "auto", "llm"],
+        help=(
+            "Session memory consolidation. off disables hidden memory writes; auto/llm extract durable "
+            "lessons at the end of a run and append them to .local-agent/memory."
+        ),
+    )
     parser.add_argument("--continue", dest="continue_session", action="store_true", help="Continue the latest session.")
     parser.add_argument("--session", help="Continue a specific session id from .local-agent/sessions.")
     parser.add_argument("--hide-tools", action="store_true", help="Hide tool call logs from stderr.")
@@ -106,6 +114,7 @@ def main(argv: list[str] | None = None) -> int:
             context_char_budget=args.context_char_budget,
             context_recent_messages=args.context_recent_messages,
             summary_mode=args.summary_mode,
+            memory_consolidation=args.memory_consolidation,
             allowed_dirs=args.allowed_dirs,
         )
         runtime = AgentRuntime(

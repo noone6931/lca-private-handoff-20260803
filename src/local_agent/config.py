@@ -20,6 +20,7 @@ DEFAULT_CONTEXT_RECENT_MESSAGES = 40
 TOOL_APPROVAL_POLICIES = {"allow", "prompt", "deny"}
 APPROVAL_MODES = {"always-ask", "write", "yolo"}
 SUMMARY_MODES = {"auto", "local", "llm"}
+MEMORY_CONSOLIDATION_MODES = {"off", "auto", "llm"}
 
 
 @dataclass(frozen=True)
@@ -40,6 +41,7 @@ class AgentConfig:
     context_char_budget: int = DEFAULT_CONTEXT_CHAR_BUDGET
     context_recent_messages: int = DEFAULT_CONTEXT_RECENT_MESSAGES
     summary_mode: str = "auto"
+    memory_consolidation: str = "off"
 
 
 def load_config(
@@ -60,6 +62,7 @@ def load_config(
     context_char_budget: int | None = None,
     context_recent_messages: int | None = None,
     summary_mode: str | None = None,
+    memory_consolidation: str | None = None,
     allowed_dirs: object | None = None,
 ) -> AgentConfig:
     file_config = _load_json_config(config_path)
@@ -160,6 +163,13 @@ def load_config(
         or "auto"
     )
     resolved_summary_mode = _summary_mode(raw_summary_mode)
+    raw_memory_consolidation = (
+        memory_consolidation
+        or file_config.get("memory_consolidation")
+        or os.environ.get("AGENT_MEMORY_CONSOLIDATION")
+        or "off"
+    )
+    resolved_memory_consolidation = _memory_consolidation_mode(raw_memory_consolidation)
     raw_allowed_dirs = (
         allowed_dirs
         if allowed_dirs is not None
@@ -190,6 +200,7 @@ def load_config(
         context_char_budget=resolved_context_char_budget,
         context_recent_messages=resolved_context_recent_messages,
         summary_mode=resolved_summary_mode,
+        memory_consolidation=resolved_memory_consolidation,
     )
 
 
@@ -246,6 +257,24 @@ def _summary_mode(raw_mode: object) -> str:
     if mode not in SUMMARY_MODES:
         raise ConfigError("summary_mode must be one of: auto, local, llm.")
     return mode
+
+
+def _memory_consolidation_mode(raw_mode: object) -> str:
+    if not isinstance(raw_mode, str):
+        raise ConfigError("memory_consolidation must be a string.")
+    mode = raw_mode.strip().lower()
+    aliases = {
+        "false": "off",
+        "no": "off",
+        "0": "off",
+        "true": "auto",
+        "yes": "auto",
+        "1": "auto",
+    }
+    resolved = aliases.get(mode, mode)
+    if resolved not in MEMORY_CONSOLIDATION_MODES:
+        raise ConfigError("memory_consolidation must be one of: off, auto, llm.")
+    return resolved
 
 
 def _load_dotenv(path: Path | None, *, required: bool = False) -> None:

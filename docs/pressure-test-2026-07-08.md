@@ -9,7 +9,7 @@
 | 百炼模型连通性 | 通过 | `./agent --provider bailian ... "只回答 OK"` 返回 `OK`，session `20260708T024039368221Z`。 |
 | LCA 自身只读综合压测 | 初次暴露重复工具循环，修复后复测通过 | session `20260708T024203733199Z` 成功调用 `todo_add/list_files/read_file/search_code/lsp_symbols`，随后重复 `search_code` 和 `todo_read`，最终由 `budget_seconds=240` 停止。修复后 session `20260708T025519414693Z` 按要求完成工具调用并输出五句总结。 |
 | 企业项目本地扫描 | 通过 | `/Users/chengming/mycode/project` 下发现 `zqyl-user-center-service` 和 `crcl-open/crcl-open` 两个 Java 企业项目，合计约 7888 个 Java/XML/YAML 文件。 |
-| 企业项目联网 LCA 压测 | 当前 Codex 环境阻断代跑 | 用户已明确确认可发给百炼；2026-07-08 代跑 `./agent --provider bailian --cwd /Users/chengming/mycode/project/crcl-open/crcl-open --allow-dir /Users/chengming/mynote/1_projects/0630_YXR-971_平台通用优化 ...` 时，sandbox 内先因网络 DNS 失败停止，随后按要求申请外部执行被当前 Codex 执行环境策略拒绝。提交 `cb7400d` 后再次按只读策略复跑，外部执行仍被宿主策略拒绝，理由是会把企业私有源码和需求发往三方 AI API。LCA 产品设计本身不内置“企业数据不能外发”禁令，但开发宿主策略必须尊重。 |
+| 企业项目联网 LCA 压测 | 当前 Codex 环境阻断代跑 | 用户已明确确认可发给百炼；2026-07-08 代跑 `./agent --provider bailian --cwd /Users/chengming/mycode/project/crcl-open/crcl-open --allow-dir /Users/chengming/mynote/1_projects/0630_YXR-971_平台通用优化 ...` 时，sandbox 内先因网络 DNS 失败停止，随后按要求申请外部执行被当前 Codex 执行环境策略拒绝。提交 `cb7400d` 后再次按只读策略复跑，外部执行仍被宿主策略拒绝。memory consolidation 完成后再次以 `--memory-consolidation off` 复跑，sandbox session `20260708T061848330544Z` 因 DNS/网络限制失败，外部执行仍被宿主策略拒绝，理由是会把企业私有源码和需求发往三方 AI API。LCA 产品设计本身不内置“企业数据不能外发”禁令，但开发宿主策略必须尊重。 |
 | 企业项目本地只读扫描 | 通过 | 已对 `zqyl-user-center-service` 和 `crcl-open/crcl-open` 做本地 `find` / `rg` 扫描，不调用模型、不外发内容。 |
 | 外部需求目录 multi-root 场景 | 本地确认 | `/Users/chengming/mynote/1_projects/0630_YXR-971_平台通用优化` 包含 `HERMES-BORROW.md`、`CODE-HANDOFF.md`、两个需求文档和原型 HTML，适合用 `--allow-dir` 验证需求到代码映射。 |
 
@@ -37,6 +37,7 @@ cd /Users/chengming/mycode/self/local-coding-agent
 ./agent --provider bailian \
   --approval-mode yolo \
   --tool-approval shell=deny,run_tests=deny,apply_patch=deny,write_file=deny,memory_write=deny,rollback_patch=deny \
+  --memory-consolidation off \
   --budget-seconds 600 \
   --context-char-budget 60000 \
   --summary-mode auto \
@@ -70,6 +71,7 @@ cd /Users/chengming/mycode/self/local-coding-agent
 | PT-006 | P2 | 大型 Java 企业项目的轻量 LSP 性能和准确度尚未由 Codex 代跑联网实测。 | 本地扫描确认两项目规模约 7893 个 Java/XML/YAML 文件；`crcl-open` 对投资方案/例外核心企业/息费模型更相关，`zqyl-user-center-service` 更像企业基础信息服务。联网 LCA 链路在当前 Codex 执行环境被阻断。 | OMP 更完整地结合工具发现、真实工程工具、subagents/reviewer，以及 compaction/pruning 来承载大仓库任务。 | 用户可在自己的允许环境中运行 LCA 做真实联网只读分析；LCA 已补轻量 pruning / todo steering，后续再评估更完整工程工具，而不是依赖泛关键词搜索。 |
 | PT-007 | P1 | “只读分析”仍会在目标 workspace 写入 `.local-agent/sessions/*.jsonl`。 | 2026-07-08 代跑企业项目只读压测时，虽然工具策略禁止写文件和 shell，但 LCA 启动后在 `/Users/chengming/mycode/project/crcl-open/crcl-open/.local-agent/sessions/20260708T053955405637Z.jsonl` 创建了会话文件；目标仓库 `git status` 因此新增 `?? .local-agent/`。提交 `cb7400d` 后，本地配置解析确认同一 workspace 的默认 state dir 为 `/Users/chengming/.local/state/local-coding-agent/workspaces/mycode-project-crcl-open-crcl-open-966d4fe7a33b`；`git status --short -- .local-agent` 和本地目录检查未发现目标仓库存在 `.local-agent`。 | OMP 将 runtime 状态放在用户 agent 目录下：`~/.omp/agent` 或 profile 目录；session 默认目录由 `getSessionsDir(agentDir)` 加 cwd 编码派生，而不是直接写进目标 repo。项目级 `.omp/` 主要放项目 context/config/rules/skills。源码依据：`packages/coding-agent/src/session/session-paths.ts`、`session-manager.ts`、`docs/config-usage.md`。 | 已完成并本地验证：新增 `--state-dir` / `AGENT_STATE_DIR`，默认把 sessions/todos/patch logs 放到用户级 state root 下的 workspace-specific 目录；项目 memory/skills 继续项目本地。 |
 | PT-008 | P2 | 目标企业仓库本身存在大量既有未提交修改，压测前后难以靠 `git status` 判断 LCA 是否污染业务文件。 | `git status --short` 在 `crcl-open/crcl-open` 输出大量既有 modified 文件；旧版本可确认的新 untracked 是 `.local-agent/`。当前版本已把 runtime state 移出目标仓库，但真实联网压测仍需压测前后快照确认业务文件未变化。 | OMP 的 task/worktree 能力会更重地管理隔离工作区和 WIP，但普通 CLI 也依赖清晰的 cwd/session/working-tree 状态。 | 后续真实企业压测前先做只读快照：记录 `git status --short` 到 LCA 压测记录，压测后对比；不在目标 repo 写快照文件。 |
+| PT-009 | P1 | memory consolidation 可能让只读压测产生隐式项目 memory 写入。 | 小红新增 `--memory-consolidation off|auto|llm` 后，review 确认默认 `off`，写入路径是目标 workspace 的 `.local-agent/memory/*.md`，不属于用户级 runtime state；本轮只读压测命令显式增加 `--memory-consolidation off`。补充回归测试确认默认 off 时即使 prompt 出现“记住”也不会额外调用 LLM 或写 memory。 | OMP/Claude Code 的自动记忆都属于启发式长期上下文，需要与普通 context compaction 区分；默认策略必须避免只读任务隐式写项目文件。 | 已接受该设计：默认 off；显式开启才写；坏 JSON、空结果、deadline 耗尽、本轮已显式写 memory 时不写；新增 runtime 默认 off 回归测试。 |
 
 ## 本次已采取的代码措施
 
@@ -85,6 +87,7 @@ cd /Users/chengming/mycode/self/local-coding-agent
 | 未完成 todo 注入 runtime reminder | `src/local_agent/agent.py` | 已完成 |
 | 增加 pruning / todo steering 回归测试 | `tests/test_agent.py` | 已完成 |
 | 增加 LSP workspace/document symbols 兼容别名 | `src/local_agent/tools/lsp.py` / `src/local_agent/agent.py` / `tests/test_tools.py` | 已完成 |
+| 增加 memory consolidation 默认 off 回归测试 | `tests/test_agent.py` | 已完成 |
 
 ## 后续建议
 
@@ -92,4 +95,4 @@ cd /Users/chengming/mycode/self/local-coding-agent
 |---:|---|---|
 | 1 | 跑完整测试并同步项目管理 Excel | 本次压测问题已转为代码和文档，需要固化基线。 |
 | 2 | 在允许环境中复测企业需求链路 | `--state-dir` 已完成且本地配置解析确认会写入用户级 state root；当前 Codex 执行环境不能代跑真实企业代码/需求外发。用户本机 LCA 可按用户/provider/permission 策略执行，并在压测前后记录目标仓库 `git status --short`。 |
-| 3 | 评估 OMP 风格 ToolChoiceQueue / soft tool requirement | 只有当真实任务仍出现“该用某工具但不用/反复偏航”时再引入更重 runtime steering。 |
+| 3 | 暂不引入 OMP 风格 ToolChoiceQueue / soft tool requirement | 当前阻塞来自 Codex 宿主外发策略，不是 LCA 工具方向收敛失败；只有用户本机真实联网压测仍出现“该用某工具但不用/反复偏航”时，再引入更重 runtime steering。 |

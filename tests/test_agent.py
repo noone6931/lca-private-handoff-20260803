@@ -62,6 +62,47 @@ class _SummaryThenFinalClient:
         return type("Response", (), {"message": {"content": "done"}})()
 
 
+class _MemoryConsolidationClient:
+    calls: list[dict] = []
+
+    def __init__(self, config: AgentConfig):
+        self.config = config
+
+    def chat(self, messages, tools, *, timeout=None):
+        self.calls.append({"messages": messages, "tools": tools, "timeout": timeout})
+        if tools:
+            return type("Response", (), {"message": {"content": "Finished the task and learned a convention."}})()
+        return type(
+            "Response",
+            (),
+            {
+                "message": {
+                    "content": json.dumps(
+                        {
+                            "project": [],
+                            "decisions": [],
+                            "conventions": ["Use focused tests before the full test suite in this project."],
+                            "learned": ["When changing memory code, verify both focused agent tests and config tests."],
+                        }
+                    )
+                }
+            },
+        )()
+
+
+class _InvalidMemoryConsolidationClient:
+    calls: list[dict] = []
+
+    def __init__(self, config: AgentConfig):
+        self.config = config
+
+    def chat(self, messages, tools, *, timeout=None):
+        self.calls.append({"messages": messages, "tools": tools, "timeout": timeout})
+        if tools:
+            return type("Response", (), {"message": {"content": "Finished the task."}})()
+        return type("Response", (), {"message": {"content": "not json"}})()
+
+
 class _TwoToolClient:
     def __init__(self, config: AgentConfig):
         self.config = config
@@ -863,6 +904,90 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertEqual(result, "done")
         self.assertGreaterEqual(len(_SummaryThenFinalClient.calls), 2)
         self.assertEqual(_SummaryThenFinalClient.calls[0]["tools"], [])
+
+    def test_memory_consolidation_auto_writes_extracted_markdown_memory(self) -> None:
+        _MemoryConsolidationClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=workspace,
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+                memory_consolidation="auto",
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _MemoryConsolidationClient):
+                runtime = AgentRuntime(config, show_tool_logs=False)
+                result = runtime.run("记住这个经验：memory 代码改动后要跑 focused tests")
+
+            conventions = workspace / ".local-agent" / "memory" / "conventions.md"
+            learned = workspace / ".local-agent" / "memory" / "learned.md"
+            records = [json.loads(line) for line in runtime._session.path.read_text(encoding="utf-8").splitlines()]
+            conventions_exists = conventions.exists()
+            learned_exists = learned.exists()
+            conventions_text = conventions.read_text(encoding="utf-8")
+            learned_text = learned.read_text(encoding="utf-8")
+
+        self.assertEqual(result, "Finished the task and learned a convention.")
+        self.assertGreaterEqual(len(_MemoryConsolidationClient.calls), 2)
+        self.assertNotEqual(_MemoryConsolidationClient.calls[0]["tools"], [])
+        self.assertEqual(_MemoryConsolidationClient.calls[-1]["tools"], [])
+        self.assertTrue(conventions_exists)
+        self.assertTrue(learned_exists)
+        self.assertIn("focused tests before the full test suite", conventions_text)
+        self.assertIn("verify both focused agent tests and config tests", learned_text)
+        self.assertTrue(any(record.get("event") == "memory_consolidation" for record in records))
+
+    def test_memory_consolidation_default_off_does_not_call_llm_or_write_memory(self) -> None:
+        _MemoryConsolidationClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=workspace,
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _MemoryConsolidationClient):
+                runtime = AgentRuntime(config, show_tool_logs=False)
+                result = runtime.run("记住这个经验：默认关闭时也不要隐式写 memory")
+
+        self.assertEqual(result, "Finished the task and learned a convention.")
+        self.assertEqual(len(_MemoryConsolidationClient.calls), 1)
+        self.assertFalse((workspace / ".local-agent" / "memory").exists())
+
+    def test_memory_consolidation_invalid_json_does_not_write_memory(self) -> None:
+        _InvalidMemoryConsolidationClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=workspace,
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+                memory_consolidation="llm",
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _InvalidMemoryConsolidationClient):
+                runtime = AgentRuntime(config, show_tool_logs=False)
+                result = runtime.run("update the code")
+
+            records = [json.loads(line) for line in runtime._session.path.read_text(encoding="utf-8").splitlines()]
+
+        self.assertEqual(result, "Finished the task.")
+        self.assertFalse((workspace / ".local-agent" / "memory").exists())
+        self.assertTrue(any(record.get("event") == "memory_consolidation_error" for record in records))
 
     def test_compaction_threshold_reserves_at_least_fifteen_percent(self) -> None:
         self.assertEqual(_resolve_compaction_threshold_chars(1200), 1020)
