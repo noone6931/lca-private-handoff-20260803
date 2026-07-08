@@ -24,6 +24,13 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--config", help="Optional JSON config file.")
     parser.add_argument(
+        "--env-file",
+        help=(
+            "Optional dotenv file for runtime/provider settings. "
+            "Loaded before --cwd/.env so credentials can live outside the target workspace."
+        ),
+    )
+    parser.add_argument(
         "--provider",
         choices=["openai-compatible", "bailian", "bailian-intl", "dashscope", "aliyun"],
         help="Provider preset. Use bailian for Alibaba Cloud Model Studio / DashScope.",
@@ -76,6 +83,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         config = load_config(
             config_path=args.config,
+            env_file=args.env_file,
             cwd=args.cwd,
             provider=args.provider,
             api_base_url=args.api_base_url,

@@ -13,6 +13,7 @@ from typing import Any, Callable
 class ToolResult:
     content: str
     is_error: bool = False
+    useless: bool = False
 
 
 @dataclass(frozen=True)

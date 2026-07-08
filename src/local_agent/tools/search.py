@@ -109,7 +109,9 @@ def search_code(args: dict[str, Any], context: ToolContext) -> ToolResult:
     if completed.returncode not in {0, 1}:
         output = completed.stderr or completed.stdout or f"rg failed with exit code {completed.returncode}."
         return ToolResult(output[:20000], is_error=True)
-    output = _normalize_search_output_paths(completed.stdout, context.workspace) if completed.stdout else "No matches."
+    if not completed.stdout:
+        return ToolResult("No matches.", useless=True)
+    output = _normalize_search_output_paths(completed.stdout, context.workspace)
     return ToolResult(_truncate_search_output(output, max_results)[:20000])
 
 

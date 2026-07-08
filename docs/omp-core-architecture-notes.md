@@ -289,8 +289,8 @@ OMP 的实现差异在于：deadline 到期会触发 `AbortController`，并把 
 
 - `--budget-seconds` 转换成运行时 deadline；
 - 每次模型调用前检查；
-- 不在一组 tool calls 中间随意截断，避免留下不配对的 tool result；
-- 后续补 synthetic tool result 后，可以更精细地处理中断中的 tool calls。
+- tool 调用前后检查 deadline，并对未执行的剩余 tool calls 补 synthetic tool result，避免留下不配对历史；
+- approval prompt 也按剩余 deadline 等待，超时会取消工具调用。
 
 当前实现 / 差异：
 
@@ -470,6 +470,14 @@ OMP 有一些小上限，但它们不是主任务步数限制：
 - Harmony 泄漏重试上限；
 - compaction 请求超时 / 重试上限。
 
+OMP 还通过几类 runtime 机制降低工具循环放大：
+
+- deadline 会生成 abort signal，主循环在模型调用、工具处理和 turn 边界反复检查；
+- abort/error/skipped/length 等导致工具不执行时，会补 synthetic tool result，维持 tool_call/tool_result 配对；
+- soft tool requirement 采用“先提醒，再强制，再小上限失败”的策略，`MAX_SOFT_TOOL_ESCALATIONS=3` 防止强制工具子循环无界扩张；
+- 工具结果可以标记 `useless`，compaction/pruning 会优先丢弃无信息或被 supersede 的旧结果，减少“重复无效搜索”继续污染上下文；
+- 未见 OMP 对所有工具做全局“相同 name+arguments 只准 N 次”的硬限制；它更偏向对具体病态子循环设置命名上限，并用 steering/pruning/deadline 组合收敛。
+
 设计含义：
 
 - 主任务不应该被小步数卡住；
@@ -484,8 +492,35 @@ OMP 有一些小上限，但它们不是主任务步数限制：
 - 默认 `budget_seconds=600`，作为日常运行预算；
 - `--budget-seconds 0` 可以关闭时间预算；
 - `--max-steps N` 只作为显式保险丝；
+- P7 综合压测后新增“最近窗口重复工具调用熔断”：最近 12 次工具调用内，同名同参超过 3 次会返回 tool error，连续命中 8 次停止本轮。这不是完整复制 OMP，而是用更轻量的本地兜底处理本轮真实压测暴露的重复工具循环；
+- 已落地 OMP 风格 tool result pruning MVP：`ToolResult.useless` 可标记无信息结果，`search_code` 和轻量 LSP 的空结果会标记 useless；发送给模型的上下文副本会把 useless 工具结果和被更新等价调用 supersede 的旧 `read/search/lsp` 结果折叠成 notice，session 原文保留；
+- 已落地 open todo runtime reminder：未完成 todo 会注入 provider-bound system context，即使未触发 compaction 也会提醒模型保持任务方向；
+- 后续更贴近 OMP 的方向是评估 ToolChoiceQueue / soft tool requirement / eager todo，而不是把主循环重新改回步数限制；
 - 一键启动优先靠当前目录、`.env` 和 provider 默认值；
 - P4 优先做 context summary / compaction。
+
+### 跨项目凭据与工作目录
+
+OMP 把 provider 凭据和当前工作目录拆开处理：
+
+- `/Users/chengming/mycode/opensource/oh-my-pi/packages/agent/src/agent.ts` 的 `AgentOptions` 同时包含 `getApiKey?: (model) => ...`、`cwd?: string` 和 `cwdResolver?: () => string | undefined`；
+- `/Users/chengming/mycode/opensource/oh-my-pi/packages/agent/src/agent-loop.ts` 每次模型调用前先解析 `getApiKey(model) ?? apiKey`，再单独解析 `effectiveCwd = config.getCwd?.() ?? config.cwd`；
+- 设计含义是：模型 provider/token 属于 runtime 配置，`cwd` 属于项目上下文；切换项目不应该要求把 token 复制到目标项目。
+
+LCA 的对应落地：
+
+- CLI 新增 `--env-file`，显式加载 runtime/provider `.env`；
+- `./agent` 启动器会优先把安装目录 `.env` 作为 `--env-file` 传入，再由 CLI 加载目标 `--cwd/.env`；
+- dotenv 使用 `setdefault`，所以优先级是：真实环境变量 > 显式 `--env-file` > 目标 workspace `.env`；
+- 进入模型上下文的代码和文档会发送给已配置 provider；这和 OMP 一样，是 provider 调用的基本语义，不是自动隐私隔离。LCA 不内置“企业数据不能外发”禁令，是否允许由用户、provider、permission 和运行环境策略决定；
+- 跨项目推荐命令：
+
+```bash
+/Users/chengming/mycode/self/local-coding-agent/agent \
+  --cwd /path/to/enterprise-project \
+  --allow-dir /path/to/requirements \
+  "读取需求并分析代码落点"
+```
 
 推荐日用命令：
 

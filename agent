@@ -8,4 +8,8 @@ else
   export PYTHONPATH="$SCRIPT_DIR/src"
 fi
 
+if [ -f "$SCRIPT_DIR/.env" ]; then
+  set -- --env-file "$SCRIPT_DIR/.env" "$@"
+fi
+
 exec python3 -m local_agent.cli "$@"

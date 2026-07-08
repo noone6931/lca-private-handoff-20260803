@@ -119,6 +119,33 @@ class _LengthToolClient:
         )()
 
 
+class _RepeatingToolClient:
+    calls = 0
+
+    def __init__(self, config: AgentConfig):
+        self.config = config
+
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).calls += 1
+        arguments = '{"b": 2, "a": 1}' if type(self).calls % 2 else '{"a": 1, "b": 2}'
+        return type(
+            "Response",
+            (),
+            {
+                "message": {
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": f"call_{type(self).calls}",
+                            "type": "function",
+                            "function": {"name": "unknown_repeat", "arguments": arguments},
+                        }
+                    ],
+                }
+            },
+        )()
+
+
 class _InterruptingRegistry:
     def schemas(self):
         return []
@@ -353,6 +380,33 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertEqual([message["tool_call_id"] for message in tool_messages], ["call_1", "call_2"])
         self.assertTrue(all("output token limit" in message["content"] for message in tool_messages))
 
+    def test_repeated_identical_tool_calls_are_guarded_and_stopped(self) -> None:
+        _RepeatingToolClient.calls = 0
+        with tempfile.TemporaryDirectory() as tmp:
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=Path(tmp).resolve(),
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+                context_char_budget=0,
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _RepeatingToolClient):
+                runtime = AgentRuntime(config, show_tool_logs=False)
+                result = runtime.run("repeat forever")
+
+        tool_messages = [message for message in runtime._messages if message.get("role") == "tool"]
+        duplicate_messages = [
+            message for message in tool_messages if "identical call to 'unknown_repeat'" in message["content"]
+        ]
+        self.assertIn("repeated identical tool calls too many times", result)
+        self.assertGreaterEqual(len(duplicate_messages), 1)
+        self.assertIn("already run 3 times", duplicate_messages[0]["content"])
+        self.assertEqual(_RepeatingToolClient.calls, 11)
+
     def test_keyboard_interrupt_synthesizes_remaining_tool_results(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             config = AgentConfig(
@@ -450,7 +504,7 @@ class AgentRuntimeTests(unittest.TestCase):
                 max_steps=0,
                 budget_seconds=None,
                 approval_mode="yolo",
-                context_char_budget=3000,
+                context_char_budget=16000,
                 context_recent_messages=4,
                 summary_mode="local",
             )
@@ -486,6 +540,158 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertIn("...<truncated", sent_tool_messages[0]["content"])
         self.assertLess(len(sent_tool_messages[0]["content"]), len(large_tool_output))
         self.assertEqual(stored_tool_messages[0]["content"], large_tool_output)
+
+    def test_context_pruning_elides_useless_and_superseded_tool_outputs_for_model_only(self) -> None:
+        _MessageRecordingClient.messages = []
+        read_arguments = json.dumps({"path": "README.md"}, sort_keys=True)
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=workspace,
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+                context_char_budget=16000,
+                context_recent_messages=7,
+                summary_mode="local",
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _MessageRecordingClient):
+                runtime = AgentRuntime(config, show_tool_logs=False)
+                runtime._messages.extend(
+                    [
+                        {"role": "user", "content": "old request " + ("x" * 20000)},
+                        {
+                            "role": "assistant",
+                            "content": None,
+                            "tool_calls": [
+                                {
+                                    "id": "read_old",
+                                    "type": "function",
+                                    "function": {"name": "read_file", "arguments": read_arguments},
+                                }
+                            ],
+                        },
+                        {
+                            "role": "tool",
+                            "tool_call_id": "read_old",
+                            "content": "old read body",
+                            "_lca_tool_name": "read_file",
+                            "_lca_is_error": False,
+                        },
+                        {
+                            "role": "assistant",
+                            "content": None,
+                            "tool_calls": [
+                                {
+                                    "id": "search_empty",
+                                    "type": "function",
+                                    "function": {"name": "search_code", "arguments": '{"pattern":"missing"}'},
+                                }
+                            ],
+                        },
+                        {
+                            "role": "tool",
+                            "tool_call_id": "search_empty",
+                            "content": "No matches.",
+                            "_lca_tool_name": "search_code",
+                            "_lca_is_error": False,
+                            "_lca_useless": True,
+                        },
+                        {
+                            "role": "assistant",
+                            "content": None,
+                            "tool_calls": [
+                                {
+                                    "id": "read_new",
+                                    "type": "function",
+                                    "function": {"name": "read_file", "arguments": read_arguments},
+                                }
+                            ],
+                        },
+                        {
+                            "role": "tool",
+                            "tool_call_id": "read_new",
+                            "content": "new read body",
+                            "_lca_tool_name": "read_file",
+                            "_lca_is_error": False,
+                        },
+                    ]
+                )
+                result = runtime.run("new request")
+
+        sent_tool_messages = {
+            message["tool_call_id"]: message for message in _MessageRecordingClient.messages if message.get("role") == "tool"
+        }
+        stored_tool_messages = {
+            message["tool_call_id"]: message for message in runtime._messages if message.get("role") == "tool"
+        }
+        self.assertEqual(result, "done")
+        self.assertIn("Superseded by a newer equivalent tool result", sent_tool_messages["read_old"]["content"])
+        self.assertIn("Uneventful tool result elided", sent_tool_messages["search_empty"]["content"])
+        self.assertEqual(sent_tool_messages["read_new"]["content"], "new read body")
+        self.assertEqual(stored_tool_messages["read_old"]["content"], "old read body")
+        self.assertEqual(stored_tool_messages["search_empty"]["content"], "No matches.")
+        self.assertFalse(any(any(key.startswith("_lca_") for key in message) for message in _MessageRecordingClient.messages))
+
+    def test_open_todos_are_injected_as_runtime_reminder_without_compaction(self) -> None:
+        _MessageRecordingClient.messages = []
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=workspace,
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+                context_char_budget=0,
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _MessageRecordingClient):
+                runtime = AgentRuntime(config, show_tool_logs=False)
+                runtime._messages.extend(
+                    [
+                        {
+                            "role": "assistant",
+                            "content": None,
+                            "tool_calls": [
+                                {
+                                    "id": "search_empty",
+                                    "type": "function",
+                                    "function": {"name": "search_code", "arguments": '{"pattern":"missing"}'},
+                                }
+                            ],
+                        },
+                        {
+                            "role": "tool",
+                            "tool_call_id": "search_empty",
+                            "content": "No matches.",
+                            "_lca_tool_name": "search_code",
+                            "_lca_is_error": False,
+                            "_lca_useless": True,
+                        },
+                    ]
+                )
+                todo_path = workspace / ".local-agent" / "todos" / f"{runtime._session.session_id}.json"
+                todo_path.parent.mkdir(parents=True)
+                todo_path.write_text(
+                    json.dumps([{"id": "T1", "task": "Keep direction", "status": "todo", "note": ""}]),
+                    encoding="utf-8",
+                )
+                result = runtime.run("continue")
+
+        system_messages = [message for message in _MessageRecordingClient.messages if message.get("role") == "system"]
+        tool_messages = [message for message in _MessageRecordingClient.messages if message.get("role") == "tool"]
+        self.assertEqual(result, "done")
+        self.assertEqual(len(system_messages), 1)
+        self.assertIn("[Runtime todo reminder]", system_messages[0]["content"])
+        self.assertIn("T1: Keep direction", system_messages[0]["content"])
+        self.assertIn("Uneventful tool result elided", tool_messages[0]["content"])
 
     def test_llm_summary_mode_summarizes_dropped_history_before_main_call(self) -> None:
         _SummaryThenFinalClient.calls = []

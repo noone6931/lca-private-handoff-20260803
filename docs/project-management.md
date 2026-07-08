@@ -1,6 +1,6 @@
 # Local Coding Agent 开发项目管理数据源
 
-更新时间：2026-07-07
+更新时间：2026-07-08
 
 本文件是开发 `local-coding-agent` 过程中的项目管理数据源，给参与开发本项目的人和协作 Agent 读取。它不是 LCA 运行时自己的 memory 或用户项目记忆。
 
@@ -17,10 +17,10 @@ python3 scripts/sync_project_excel.py
 | 字段 | 当前值 | 说明 |
 |---|---|---|
 | 最终目标 | 个人本地编程助手 Agent | 本地优先、封闭 VM 可用、只访问指定 AI API，能读代码、搜代码、改代码、跑测试、生成 diff、沉淀项目记忆。 |
-| 当前阶段 | P7：轻量高级能力与真实压测 | P6 默认工作流 MVP 已落地；本轮已补 OMP 风格 auto summary、多语言轻量 LSP、multi-root、startup memory、learn 和 authored skills discovery。 |
+| 当前阶段 | P7：轻量高级能力与真实压测 | P6 默认工作流 MVP 已落地；P7 已补 OMP 风格 auto summary、多语言轻量 LSP、multi-root、startup memory、learn、authored skills discovery，并通过综合压测发现和修复重复工具调用循环，新增 OMP 风格 tool result pruning / todo steering。 |
 | 推荐入口 | `./agent "阅读当前项目"` | 自动设置 `PYTHONPATH=src`，默认当前目录为 workspace。 |
-| Token 配置 | `.env` 或环境变量 | `.env` 可写 `DASHSCOPE_API_KEY=...`，该文件已被 `.gitignore` 忽略。 |
-| 测试数 | 118 | 完整 unittest、compileall、diff check、xlsx 检查通过。 |
+| Token 配置 | 环境变量 / `--env-file` / `.env` | `./agent` 会自动加载安装目录 `.env`，也可显式传 `--env-file`；真实环境变量优先。 |
+| 测试数 | 124 | 完整 unittest、compileall、diff check、xlsx 检查通过。 |
 | 默认 budget_seconds | 600 | 单次任务默认 10 分钟墙钟预算；`--budget-seconds 0` 可关闭。 |
 | 默认 max_steps | 0 | 表示不限步；仅在用户显式设置时作为防失控保险丝。 |
 | 预算执行 | 细粒度 | LLM 请求和 shell/run_tests timeout 会按剩余预算夹紧；deadline 到期会补齐未执行工具结果。 |
@@ -32,7 +32,7 @@ python3 scripts/sync_project_excel.py
 | Per-tool approval | 已完成 | 支持 `always-ask` / `write` / `yolo`、per-tool `allow` / `prompt` / `deny`、session always allow/reject 和 REPL `/approval`。 |
 | OMP 核心判断 | 已固化 | 见 `docs/omp-core-architecture-notes.md`，已补 OMP 如何通过系统提示、工具描述和 runtime 纠偏让用户不用指定工具顺序。 |
 | 默认工作流落地 | 已完成 MVP 版 | system prompt + tool descriptions + runtime workflow reminder 已落地，用户不需要每次手写工具顺序。 |
-| 轻量 LSP | 已完成 MVP 版 | `lsp_symbols` / `lsp_definition` / `lsp_references` / `lsp_diagnostics`，覆盖 Python、Java、JavaScript、TypeScript、Vue。 |
+| 轻量 LSP | 已完成 MVP 版 | `lsp_symbols` / `lsp_workspace_symbols` / `lsp_document_symbols` / `lsp_definition` / `lsp_references` / `lsp_diagnostics`，覆盖 Python、Java、JavaScript、TypeScript、Vue。 |
 | Multi-root workspace | 已完成 MVP 版 | `--allow-dir` / `AGENT_ALLOWED_DIRS` 支持显式授权额外目录给文件、搜索、LSP、patch 工具；shell/git/session/memory 仍锚定 `--cwd`。 |
 | Startup memory | 已完成 MVP 版 | 新 session 自动注入 `.local-agent/memory/{project,decisions,conventions,learned}.md`，作为 advisory context。 |
 | Learn 工具 | 已完成 MVP 版 | `learn` 写入 `.local-agent/memory/learned.md`，用于显式沉淀可复用经验。 |
@@ -50,7 +50,7 @@ python3 scripts/sync_project_excel.py
 | P4 | 上下文治理 | 简单 summary/compaction，工具输出折叠，支持长需求文件 | 已完成 MVP 版 | 100% | 首轮百炼只读 compaction 压测已通过；当前已补可选 LLM summary，后续再评估 token 预算、输出 reserve 和 recent 保留。 |
 | P5 | 安全与恢复增强 | synthetic tool result、patch preview、rollback、ask_user timeout、per-tool approval | 已完成并收口 | 100% | 主链路已通过真实百炼复测；后续只修日用反馈中的 P0/P1 问题。 |
 | P6 | 日用体验与默认工作流固化 | OMP 默认工作流本地化：system prompt、工具描述、轻量 runtime nudge | 已完成 MVP 版 | 100% | 进入真实任务压测。 |
-| P7 | 高级工程能力轻量版 | OMP 风格 auto summary、轻量 LSP、multi-root、startup memory、learn、authored skills discovery | 进行中 | 85% | 下一步做真实综合压测和 token 预算评估；完整 DAP/TUI/subagents/managed skills 后置。 |
+| P7 | 高级工程能力轻量版 | OMP 风格 auto summary、轻量 LSP、LSP 兼容别名、multi-root、startup memory、learn、authored skills discovery、重复工具调用熔断、tool result pruning、todo steering、跨项目 env-file、真实项目压测记录 | 进行中 | 98% | 企业项目联网压测已获用户允许，但本次 Codex 执行环境策略阻断代跑，已改为本地只读扫描；下一步评估 ToolChoiceQueue / soft tool requirement 和精确 token 预算；完整 DAP/TUI/subagents/managed skills 后置。 |
 
 ## 已完成功能
 
@@ -78,13 +78,13 @@ python3 scripts/sync_project_excel.py
 | ask_user | 已完成 | 交互式终端可中途提问，支持 timeout/default | 避免需求歧义时硬猜，也避免长任务无限等待 | 继续真实任务验证 |
 | Per-tool approval | 已完成 | `--auto-approve-tools` + `--tool-approval` + `/approval` | 兼容旧白名单，并支持每个工具 allow / prompt / deny、session always allow/reject | 继续真实任务验证 |
 | 一键启动 | 已完成 | `./agent` | 自动设置 `PYTHONPATH` 并以当前目录为 workspace | 日常入口 |
-| `.env` 加载 | 已完成 | workspace `.env` | 可放 `DASHSCOPE_API_KEY`，被 gitignore | 避免重复 export |
+| `.env` / `--env-file` 加载 | 已完成 | `src/local_agent/config.py` + `./agent` | `./agent` 自动加载安装目录 `.env`；CLI 支持显式 `--env-file`；目标 workspace `.env` 仍可用 | 跨项目 token 与 `--cwd` 解耦 |
 | OMP 核心架构笔记 | 已完成 | `docs/omp-core-architecture-notes.md` | 固化主循环、deadline、compaction、tool approval、默认工作流分层结论 | 后续设计依据 |
 | OMP 默认工作流源码依据 | 已完成 | `docs/omp-core-architecture-notes.md` | 已记录 system prompt、project prompt、tool registry、tool descriptions、todo reminders、ToolChoiceQueue、agent-loop 的具体文件依据 | P6 实现依据 |
 | 本地 Context Compaction | 已完成 MVP 版 | `context_char_budget` / `context_recent_messages` | 折叠早期历史，保留最近消息和当前用户请求，注入未完成 todo，截断发送给模型的超大 tool 输出，并保持单 system 消息 | 下一步补 token 预算、输出 reserve；字符阈值保留兜底 |
 | OMP 风格 Auto Summary | 已完成 MVP 版 | `--summary-mode auto` / `AGENT_SUMMARY_MODE=auto` | 小历史不摘要；超过 reserve 阈值后调用当前 provider 总结早期历史；失败回退 local summary | 需要百炼长上下文实测 |
 | 默认工作流 | 已完成 MVP 版 | `SYSTEM_PROMPT` + runtime workflow reminder | 自然语言代码任务默认探索、todo、patch preview、验证、diff | 需要真实任务实测 |
-| 轻量 LSP 工具 | 已完成 MVP 版 | `lsp_symbols` / `lsp_definition` / `lsp_references` / `lsp_diagnostics` | Python、Java、JavaScript、TypeScript、Vue 静态导航，不启动外部 server | 后续看是否升级完整 LSP |
+| 轻量 LSP 工具 | 已完成 MVP 版 | `lsp_symbols` / `lsp_workspace_symbols` / `lsp_document_symbols` / `lsp_definition` / `lsp_references` / `lsp_diagnostics` | Python、Java、JavaScript、TypeScript、Vue 静态导航，不启动外部 server；workspace/document symbols 是兼容别名 | 后续看是否升级完整 LSP |
 | Multi-root workspace | 已完成 MVP 版 | `--allow-dir` / `AGENT_ALLOWED_DIRS` | 支持需求文档目录 + 代码项目目录；文件/search/LSP/patch 可访问 allowed dirs，shell/git/session/memory 仍锚定 `--cwd` | 真实需求压测 |
 | Startup memory | 已完成 MVP 版 | `AgentRuntime` system prompt 构造 | `.local-agent/memory/{project,decisions,conventions,learned}.md` 作为 advisory context 注入 | 真实 session 验证 |
 | Learn 工具 | 已完成 MVP 版 | `learn` | 写入 `.local-agent/memory/learned.md`，默认走写工具审批 | 真实 session 验证 |
@@ -95,7 +95,10 @@ python3 scripts/sync_project_excel.py
 | Patch rollback | 已完成 MVP 版 | `rollback_patch` | 校验当前文件 hash 后恢复 patch 前内容 | 继续真实任务验证 |
 | ask_user timeout | 已完成 | `timeout_seconds` / `default_answer` / budget 剩余时间 | 长任务无人响应时可以继续或明确失败；显式 timeout 也受 budget 夹紧 | 继续真实任务验证 |
 | Tool approval policy | 已完成 MVP 版 | `tool_approval` + `session_tool_approval` | config deny/prompt 是硬护栏，session allow/reject 可记住当前会话，REPL 会校验工具名，approval prompt 受 deadline 约束 | 日用反馈 |
-| 测试覆盖 | 已完成 | 当前 118 个测试通过 | unittest、compileall、diff check、xlsx 检查通过 | 日用反馈补测 |
+| 重复工具调用熔断 | 已完成 MVP 版 | `AgentRuntime._execute_tool_with_repeat_guard()` | 最近窗口内同名同参工具调用超过阈值会返回 tool error，连续命中后停止本轮，避免只靠 budget 截断坏循环 | 后续评估是否替换为更完整 ToolChoiceQueue / soft tool requirement |
+| Tool result pruning | 已完成 MVP 版 | `ToolResult.useless` + provider-bound context pruning | `search_code` / LSP 空结果标记 useless；重复等价 read/search/LSP 旧结果在发给模型的上下文中替换为 notice，session 原文保留 | 继续真实长任务观察 |
+| Todo steering | 已完成 MVP 版 | provider-bound runtime todo reminder | 未完成 todo 会注入发送给模型的 system context，即使未触发 compaction 也能提醒模型保持任务方向 | 后续评估 OMP 风格 eager todo / mid-run nudge |
+| 测试覆盖 | 已完成 | 当前 124 个测试通过 | unittest、compileall、diff check、xlsx 检查通过 | 日用反馈补测 |
 
 ## 下一步 Todo
 
@@ -146,6 +149,12 @@ python3 scripts/sync_project_excel.py
 | T-043 | P1 | P7 | 实现 `learn` 工具 | 已完成 MVP 版 | Agent | 让 agent 用显式工具沉淀可复用 lesson，而不是混写 project memory | 写入 `.local-agent/memory/learned.md`，限制长度并清洗会进入 prompt 的字段 |
 | T-044 | P2 | P7 | Authored skills discovery | 已完成 MVP 版 | Agent | 支持项目内可复用工作流，降低重复提示成本 | 先扫 `.local-agent/skills/<name>/SKILL.md`，system prompt 只列 name/description/source，正文按需读取 |
 | T-045 | P2 | P7 | Managed skills / autolearn | 暂缓 | User + Agent | 自动生成 skills 有长期污染和 prompt injection 风险 | 默认关闭；后续按 OMP `manage_skill` 思路隔离 generated skills，authored skills 优先 |
+| T-046 | P0 | P7 | P7 综合压测记录 | 已完成 | Agent | 真实压测发现的问题必须沉淀成可追踪事实源 | 新增 `docs/pressure-test-2026-07-08.md`，记录压测证据、OMP 对应机制和 LCA 措施 |
+| T-047 | P0 | P7 | 重复工具调用熔断 | 已完成 MVP 版 | Agent | 防止模型在同一工具参数上循环到 budget 耗尽而无最终回答 | 最近 12 次工具调用内同名同参超过 3 次会跳过；连续命中 8 次停止；测试覆盖 JSON 参数顺序归一化 |
+| T-048 | P1 | P7 | 企业项目外发策略确认 | 用户已确认，当前 Codex 环境阻断代跑 | User + Agent | 企业源码和需求发给百炼属于三方 API 外发，需要明确边界 | LCA 产品设计不内置禁止外发；按 OMP 思路由用户、provider、permission 和运行环境策略决定。本次 Codex 环境无法代跑，已改成本地只读扫描。 |
+| T-049 | P1 | P7 | 跨项目 `--env-file` / launcher env 加载 | 已完成 MVP 版 | Agent | 让 token 配置与目标 `--cwd` 解耦，跨项目一键启动更顺手 | CLI 支持显式 `--env-file`；`./agent` 自动把安装目录 `.env` 注入为 env-file；测试覆盖优先级和缺失文件报错 |
+| T-050 | P1 | P7 | OMP 风格 tool result pruning / todo steering | 已完成 MVP 版 | Agent | compaction 只是装得下上下文，还需要降低无效工具结果和旧结果对模型的污染 | 已新增 `ToolResult.useless`；空搜索/LSP 结果会标记 useless；provider-bound context 会折叠 useless/superseded 工具输出并注入 open todo reminder；session 原文保留 |
+| T-051 | P1 | P7 | LSP workspace/document symbols 兼容别名 | 已完成 MVP 版 | Agent | 减少模型和用户从 OMP/Codex 概念迁移时的工具名摩擦 | `lsp_workspace_symbols` / `lsp_document_symbols` 已注册为 `lsp_symbols` 只读别名；测试覆盖 registry 和执行结果 |
 
 ## 风险与决策
 
@@ -164,6 +173,9 @@ python3 scripts/sync_project_excel.py
 | 风险 | R-010 | 中 | approval prompt 等待耗尽预算 | 已关闭 MVP 版 | approval prompt 已使用 deadline-aware timed stdin；deadline 已过或等待超时会取消工具调用 | OMP 的 deadline 是 wall-clock absolute timestamp；ACP permission gate 会把 `requestPermission` 和 abort signal 竞争。我们本地版用 `select.select` 按剩余 deadline 等 stdin，超时即取消。 |
 | 风险 | R-012 | 中 | 日用命令仍依赖用户手写工具流程 | 已关闭 MVP 版 | 已把默认工作流沉到 system prompt 和 runtime nudge；后续靠真实任务验证效果 | OMP 把默认工作流拆到 system prompt、tool descriptions 和 runtime nudge；我们先做本地 MVP 版，不急着引入完整 ToolChoiceQueue。 |
 | 风险 | R-013 | 中 | Memory / skills 注入长期 prompt injection 或陈旧事实 | 已缓解，managed skills 仍暂缓 | memory 和 generated skills 会跨 session 影响模型，错误或恶意内容可能持续放大 | OMP 将 memory 标成 heuristic/advisory，managed skills 隔离且 authored skills 优先；我们已做 advisory 注入、预算限制、learned 字段和 skill description 清洗，managed skills 默认关闭。 |
+| 风险 | R-014 | 高 | 重复工具调用循环导致 budget 耗尽且无最终回答 | 已进一步缓解 | 已补最近窗口同名同参工具调用熔断、`ToolResult.useless`、空结果标记、provider-bound useless/superseded pruning 和 open todo runtime reminder；后续评估 OMP 风格 ToolChoiceQueue / soft tool requirement | OMP 不靠主步数限制日常任务，而靠 deadline/abort、synthetic tool result、soft tool escalation 小上限、todo/tool-choice steering 和 compaction pruning 共同收敛；我们已落地本地轻量 pruning/steering。 |
+| 风险 | R-015 | 高 | 企业项目源码和需求可能被发送到三方 AI API | 用户已确认，当前 Codex 环境阻断代跑 | 用户已确认可外发给百炼；本次由 Codex 执行环境策略拒绝代跑联网压测，已改为本地只读扫描并记录结果 | OMP 由用户配置 provider 和 permission，但进入模型上下文的内容会发送给 provider；这不是自动隐私隔离，也不是 LCA 内置禁令，需要由用户、provider、permission 和运行环境策略控制。 |
+| 风险 | R-016 | 中 | 跨项目运行时 token 配置绑定目标 workspace `.env` | 已关闭 MVP 版 | 已新增 `--env-file` 和 launcher 安装目录 `.env` 自动加载；凭据与目标 `--cwd` 解耦 | OMP 的 provider/model/apiKey 是 runtime 配置，cwd 是项目上下文；我们采用同一分层。 |
 | ADR | ADR-001 | 2026-07-07 | 优先采纳 OMP 成熟设计，按本地目标裁剪 | 已接受 | 好设计可直接采用，复杂度按需收敛 | OMP 是重要参考实现；我们不为了“避免复制”而绕开好设计。采用标准是收益是否大于复杂度，并且不破坏个人本地使用、封闭 VM、无公网依赖和第一阶段 MVP 边界。 |
 | ADR | ADR-002 | 2026-07-07 | max_steps 只作为防失控保险丝 | 已落地 | 默认值已改为 0，不限步 | OMP 的 stepCounter 主要用于 telemetry，终止靠无 tool_calls、deadline、abort；我们把 `max_steps` 仅作为显式保险丝。 |
 | ADR | ADR-003 | 2026-07-07 | todo、ask_user、per-tool approval 是主功能 | 已落地 | P3 已实现 | OMP 将 todo、approval、elicitation 做成可观测会话能力；我们 P3 先做终端轻量版，后续再补 UI 化。 |
@@ -177,13 +189,25 @@ python3 scripts/sync_project_excel.py
 | ADR | ADR-011 | 2026-07-07 | 默认采用 OMP 风格 auto summary | 已接受并落地 | `summary_mode=auto` 默认，`local` / `llm` 可选 | 小历史不摘要；超过 reserve 阈值才调用已配置 AI API 做 LLM summary；失败回退 local summary。 |
 | ADR | ADR-012 | 2026-07-07 | LSP 第一版做轻量多语言静态工具 | 已接受并落地 | 不启动外部 language server | 满足 Python、Java、JavaScript、TypeScript、Vue 的 symbols/definition/references/diagnostics，不引入 npm/pip 依赖或后台进程；完整 LSP/DAP 后置。 |
 | ADR | ADR-013 | 2026-07-07 | Memory / skills 按 OMP 思路分阶段本地化 | 已接受并部分落地 | Markdown memory 启动注入、显式 `learn` 和 authored skills discovery 已完成 | 后续最后才评估 managed skills/autolearn；不引入 Hindsight、Mnemopi、向量库或插件市场。 |
+| ADR | ADR-014 | 2026-07-08 | Runtime 问题优先采用 OMP 已验证设计 | 已接受 | 直接采纳 OMP 的成熟机制，再按本地/封闭 VM/MVP 边界裁剪 | 对 deadline、compaction、permission、synthetic tool result、todo/tool-choice steering、pruning 这类 OMP 已覆盖的问题，不再为了“自己造一套”而绕开；LCA 不内置“企业数据不能外发”禁令，但必须尊重当前执行宿主或企业环境的策略拦截。 |
+
+## P7 综合压测问题
+
+| ID | 优先级 | 状态 | 现象 | OMP 对应方式 | LCA 措施 |
+|---|---|---|---|---|---|
+| PT-001 | P0 | 已进一步缓解并复测 | LCA 自身只读压测中重复 `search_code` / `todo_read`，最终由 `budget_seconds=240` 截断；修复后 session `20260708T025519414693Z` 按要求收尾。 | OMP 组合使用 deadline/abort、synthetic tool result、soft tool escalation 小上限、todo/tool-choice steering、useless/superseded pruning，而不是主循环步数。 | 已实现最近窗口重复工具调用熔断，并补 `ToolResult.useless`、空搜索/LSP 结果 useless 标记、provider-bound useless/superseded pruning、open todo runtime reminder。 |
+| PT-002 | P0 | 当前 Codex 环境阻断代跑，已改本地扫描 | 用户已确认可外发给百炼；本次 Codex 执行环境策略拒绝代跑把企业私有代码/需求发送到三方 API。 | OMP 由用户配置 provider 和 permission；进入模型上下文的内容会发送给 provider，不是自动隐私隔离，也不是默认禁止外发。 | 不绕过当前执行环境策略；改成本地只读扫描，记录结构、关键词和候选落点。用户在自己的允许环境中运行 LCA 时，可按 provider/permission 策略执行联网只读分析。 |
+| PT-003 | P1 | 已关闭 MVP 版 | `--cwd` 指向企业项目后，LCA 仓库 `.env` 不会自动加载，需要手动 source。 | OMP 的 provider/model/apiKey 属于 runtime 配置，cwd 是项目上下文。 | 已新增 `--env-file`；`./agent` 自动加载安装目录 `.env`，再加载目标 workspace `.env`。 |
+| PT-004 | P1 | 已关闭 MVP 版 | prompt 中出现 `lsp_workspace_symbols` / `lsp_document_symbols` 时，模型会搜索这些旧概念而非直接用 `lsp_symbols`。 | OMP 通过准确工具 schema、tool discovery 和 tool-choice steering 降低工具名漂移。 | 已增加 `lsp_workspace_symbols` / `lsp_document_symbols` 只读兼容别名，均复用 `lsp_symbols` handler 和 schema；system prompt 已说明它们是 alias。 |
+| PT-005 | P1 | 已进一步缓解 | compaction 能让上下文装下，但不自动保证任务收敛。 | OMP 将 compaction 与 todo reminder、tool choice、queued steering、deadline/abort、pruning 组合。 | 已补重复工具熔断、provider-bound useless/superseded pruning 和 open todo runtime reminder；后续评估 ToolChoiceQueue / soft tool requirement。 |
+| PT-006 | P2 | 本地只读扫描完成，联网 LCA 未由 Codex 代跑 | `zqyl-user-center-service` 为 Maven 多模块项目，约 5309 个 Java/XML/YAML 文件；`crcl-open` 约 2584 个 Java/XML/YAML 文件。本地扫描确认需求关键词可定位到投资方案、Charge、TradeBg、结算单枚举等方向，但百炼联网 LCA 在当前 Codex 执行环境被阻断。 | OMP 可组合更完整工程工具、subagents/reviewer 和 compaction/pruning。 | 用户可在自己的允许环境中用 LCA 跑真实联网只读分析；LCA 已补轻量 pruning / steering，后续再评估更完整工程工具。 |
 
 ## P5 收口结论
 
 | 项目 | 结论 | 依据 |
 |---|---|---|
 | 主链路 | 通过 | 百炼真实小改复测已跑通 todo、dry_run、apply_patch、session allow、rollback、run_tests、git_diff。 |
-| 测试 | 通过 | P5 收口时 90 个 unittest、compileall、xlsx 检查、diff check 均通过；P7 当前代码已跑通 118 个 unittest 和 compileall。 |
+| 测试 | 通过 | P5 收口时 90 个 unittest、compileall、xlsx 检查、diff check 均通过；P7 当前代码已跑通 124 个 unittest 和 compileall。 |
 | 日用入口 | 通过 | README 已补只读分析和小改任务命令模板。 |
 | 开放风险 | 可接受 | shell 仍非沙箱、prompt injection 仍需靠审批和封闭 VM；token budget / output reserve / managed skills 继续后置评估。 |
 | 下一阶段 | P7 综合真实压测与 token 预算评估 | 验证默认工作流、auto summary、多语言轻量 LSP、multi-root、startup memory、learn 和 authored skills 是否足够日用。 |
@@ -193,7 +217,7 @@ python3 scripts/sync_project_excel.py
 | 步骤 | 操作 | 建议命令/做法 | 原因 | 适用阶段 | 备注 |
 |---:|---|---|---|---|---|
 | 1 | 确认需求 | 需求复杂时先写到 `docs/requirements/*.md` | 避免长 prompt 挤占上下文 | P2+ | 让 Agent 分段 `read_file` |
-| 2 | 启动 Agent | `./agent "描述当前项目"` | 一键启动，默认当前目录为 workspace | P3+ | token 可来自环境变量或 `.env` |
+| 2 | 启动 Agent | `./agent "描述当前项目"`；跨项目用 `./agent --cwd /path/to/project ...` | 一键启动，默认当前目录为 workspace；跨项目时安装目录 `.env` 会自动作为 `--env-file` 加载 | P3+ | token 可来自环境变量、显式 `--env-file` 或 `.env` |
 | 3 | 权限模式 | 默认 always-ask；写操作可用 write；可信重复工具可 tool-approval allow；信任仓库才 yolo | 平衡安全和效率 | P5+ | `--tool-approval run_tests=allow,shell=prompt,write_file=deny` 可用 |
 | 4 | 修改前 | Agent 默认会按需 `list_files/read_file/search_code/lsp_*` | 减少凭空猜测 | P6+ | 用户不必手写工具顺序 |
 | 5 | 修改时 | 修改已有文件使用 `apply_patch`，写入前优先 `dry_run=true` | 保留 hash/old_text 校验 | P1+ | 已写入默认 prompt 和工具描述 |

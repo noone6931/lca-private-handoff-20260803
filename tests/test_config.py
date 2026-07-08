@@ -178,6 +178,49 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.provider, "bailian")
         self.assertEqual(config.api_key, "token-from-dotenv")
 
+    def test_env_file_can_supply_token_outside_target_workspace(self) -> None:
+        with tempfile.TemporaryDirectory() as install_tmp, tempfile.TemporaryDirectory() as workspace_tmp:
+            install_dir = Path(install_tmp).resolve()
+            workspace = Path(workspace_tmp).resolve()
+            env_file = install_dir / ".env"
+            env_file.write_text('DASHSCOPE_API_KEY="token-from-install-env"\n', encoding="utf-8")
+            (workspace / ".env").write_text('DASHSCOPE_API_KEY="token-from-workspace-env"\n', encoding="utf-8")
+            with patch.dict("os.environ", {}, clear=True):
+                config = load_config(
+                    config_path=None,
+                    env_file=str(env_file),
+                    cwd=str(workspace),
+                    provider=None,
+                    api_base_url=None,
+                    api_key=None,
+                    model=None,
+                    max_steps=None,
+                    budget_seconds=None,
+                    approval_mode=None,
+                )
+
+        self.assertEqual(config.provider, "bailian")
+        self.assertEqual(config.api_key, "token-from-install-env")
+        self.assertEqual(config.workspace, workspace)
+
+    def test_explicit_env_file_must_exist(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            with patch.dict("os.environ", {}, clear=True):
+                with self.assertRaisesRegex(RuntimeError, "Env file not found"):
+                    load_config(
+                        config_path=None,
+                        env_file=str(workspace / "missing.env"),
+                        cwd=str(workspace),
+                        provider="bailian",
+                        api_base_url=None,
+                        api_key=None,
+                        model=None,
+                        max_steps=None,
+                        budget_seconds=None,
+                        approval_mode=None,
+                    )
+
     def test_auto_approve_tools_can_come_from_env(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             with patch.dict(

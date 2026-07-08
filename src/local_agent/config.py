@@ -41,6 +41,7 @@ class AgentConfig:
 def load_config(
     *,
     config_path: str | None,
+    env_file: str | None = None,
     cwd: str | None,
     provider: str | None,
     api_base_url: str | None,
@@ -60,6 +61,7 @@ def load_config(
     workspace = Path(cwd or file_config.get("workspace") or os.getcwd()).expanduser().resolve()
     if not workspace.exists() or not workspace.is_dir():
         raise ConfigError(f"Workspace does not exist or is not a directory: {workspace}")
+    _load_dotenv(_resolve_env_file(env_file, workspace), required=env_file is not None)
     _load_dotenv(workspace / ".env")
 
     resolved_provider = _resolve_provider(provider or file_config.get("provider"))
@@ -193,6 +195,15 @@ def _load_json_config(config_path: str | None) -> dict:
     return data
 
 
+def _resolve_env_file(env_file: str | None, workspace: Path) -> Path | None:
+    if not env_file:
+        return None
+    path = Path(env_file).expanduser()
+    if not path.is_absolute():
+        path = workspace / path
+    return path.resolve()
+
+
 def _tools_config(file_config: dict) -> dict:
     tools = file_config.get("tools") or {}
     if not isinstance(tools, dict):
@@ -226,8 +237,16 @@ def _summary_mode(raw_mode: object) -> str:
     return mode
 
 
-def _load_dotenv(path: Path) -> None:
+def _load_dotenv(path: Path | None, *, required: bool = False) -> None:
+    if path is None:
+        return
     if not path.exists():
+        if required:
+            raise ConfigError(f"Env file not found: {path}")
+        return
+    if not path.is_file():
+        if required:
+            raise ConfigError(f"Env file is not a file: {path}")
         return
     with path.open("r", encoding="utf-8") as handle:
         for line in handle:

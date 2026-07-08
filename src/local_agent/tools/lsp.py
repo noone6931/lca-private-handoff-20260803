@@ -69,6 +69,15 @@ class SymbolRecord:
 
 def lsp_tools() -> list[Tool]:
     languages = "Python, Java, JavaScript, TypeScript, and Vue"
+    symbol_schema = {
+        "type": "object",
+        "properties": {
+            "path": {"type": "string"},
+            "query": {"type": "string"},
+            "max_results": {"type": "integer", "minimum": 1, "maximum": 200},
+        },
+        "additionalProperties": False,
+    }
     return [
         Tool(
             name="lsp_symbols",
@@ -77,15 +86,27 @@ def lsp_tools() -> list[Tool]:
                 "Use this for code navigation before broad text search."
             ),
             tier="read",
-            input_schema={
-                "type": "object",
-                "properties": {
-                    "path": {"type": "string"},
-                    "query": {"type": "string"},
-                    "max_results": {"type": "integer", "minimum": 1, "maximum": 200},
-                },
-                "additionalProperties": False,
-            },
+            input_schema=symbol_schema,
+            handler=lsp_symbols,
+        ),
+        Tool(
+            name="lsp_workspace_symbols",
+            description=(
+                "Compatibility alias for lsp_symbols. "
+                f"List lightweight workspace symbols for {languages} files under the workspace or an explicitly allowed path."
+            ),
+            tier="read",
+            input_schema=symbol_schema,
+            handler=lsp_symbols,
+        ),
+        Tool(
+            name="lsp_document_symbols",
+            description=(
+                "Compatibility alias for lsp_symbols. "
+                f"List lightweight symbols for a specific {languages} file or directory path."
+            ),
+            tier="read",
+            input_schema=symbol_schema,
             handler=lsp_symbols,
         ),
         Tool(
@@ -161,7 +182,9 @@ def lsp_symbols(args: dict[str, Any], context: ToolContext) -> ToolResult:
         if len(results) >= max_results:
             results.append(f"... truncated after {max_results} symbols")
             break
-    return ToolResult("\n".join(results) if results else "No supported code symbols found.")
+    if not results:
+        return ToolResult("No supported code symbols found.", useless=True)
+    return ToolResult("\n".join(results))
 
 
 def lsp_definition(args: dict[str, Any], context: ToolContext) -> ToolResult:
@@ -179,7 +202,9 @@ def lsp_definition(args: dict[str, Any], context: ToolContext) -> ToolResult:
             if len(matches) >= max_results:
                 matches.append(f"... truncated after {max_results} definitions")
                 break
-    return ToolResult("\n".join(matches) if matches else f"No definition found for: {symbol}")
+    if not matches:
+        return ToolResult(f"No definition found for: {symbol}", useless=True)
+    return ToolResult("\n".join(matches))
 
 
 def lsp_references(args: dict[str, Any], context: ToolContext) -> ToolResult:
@@ -208,7 +233,9 @@ def lsp_references(args: dict[str, Any], context: ToolContext) -> ToolResult:
             if len(results) >= max_results:
                 results.append(f"... truncated after {max_results} references")
                 return ToolResult("\n".join(results))
-    return ToolResult("\n".join(results) if results else f"No references found for: {symbol}")
+    if not results:
+        return ToolResult(f"No references found for: {symbol}", useless=True)
+    return ToolResult("\n".join(results))
 
 
 def lsp_diagnostics(args: dict[str, Any], context: ToolContext) -> ToolResult:
@@ -230,7 +257,9 @@ def lsp_diagnostics(args: dict[str, Any], context: ToolContext) -> ToolResult:
             if len(diagnostics) >= max_results:
                 diagnostics.append(f"... truncated after {max_results} diagnostics")
                 break
-    return ToolResult("\n".join(diagnostics) if diagnostics else "No lightweight diagnostics.")
+    if not diagnostics:
+        return ToolResult("No lightweight diagnostics.", useless=True)
+    return ToolResult("\n".join(diagnostics))
 
 
 def _resolve_lsp_root(args: dict[str, Any], context: ToolContext) -> Path | ToolResult:

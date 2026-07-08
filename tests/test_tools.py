@@ -12,7 +12,7 @@ from local_agent.tools.base import Tool, ToolContext, ToolRegistry
 from local_agent.tools.files import file_tools, patch_file, read_file, rollback_patch, write_file
 from local_agent.tools.git import git_diff
 from local_agent.tools.interaction import ask_user
-from local_agent.tools.lsp import lsp_definition, lsp_diagnostics, lsp_references, lsp_symbols
+from local_agent.tools.lsp import lsp_definition, lsp_diagnostics, lsp_references, lsp_symbols, lsp_tools
 from local_agent.tools.memory import learn, memory_read
 from local_agent.tools.search import list_files
 from local_agent.tools.search import search_code
@@ -111,6 +111,37 @@ class ToolTests(unittest.TestCase):
         self.assertIn("pkg/module.py:1:1: class Service", symbols.content)
         self.assertFalse(definition.is_error)
         self.assertIn("pkg/module.py:5:1: function helper", definition.content)
+
+    def test_lsp_symbol_aliases_are_registered_and_match_lsp_symbols(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            source = workspace / "pkg" / "module.py"
+            source.parent.mkdir()
+            source.write_text(
+                "class Service:\n"
+                "    pass\n",
+                encoding="utf-8",
+            )
+            context = ToolContext(workspace=workspace, approval_mode="yolo")
+            registry = ToolRegistry(lsp_tools())
+
+            workspace_symbols = registry.execute(
+                "lsp_workspace_symbols",
+                {"path": "pkg", "query": "Service"},
+                context,
+            )
+            document_symbols = registry.execute(
+                "lsp_document_symbols",
+                {"path": "pkg/module.py", "query": "Service"},
+                context,
+            )
+
+        self.assertIn("lsp_workspace_symbols", registry.tool_names())
+        self.assertIn("lsp_document_symbols", registry.tool_names())
+        self.assertFalse(workspace_symbols.is_error)
+        self.assertFalse(document_symbols.is_error)
+        self.assertIn("pkg/module.py:1:1: class Service", workspace_symbols.content)
+        self.assertIn("pkg/module.py:1:1: class Service", document_symbols.content)
 
     def test_lsp_references_finds_identifier_occurrences(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

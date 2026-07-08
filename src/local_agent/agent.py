@@ -15,13 +15,14 @@ from .llm import OpenAICompatibleClient
 from .session.jsonl_store import JsonlSessionStore
 from .tools import create_default_registry
 from .tools.base import ToolContext
+from .tools.base import ToolResult
 
 
 SYSTEM_PROMPT = """You are a local coding agent running inside a user's workspace.
 
 Default working style:
 - Work from local evidence, not guesses. Choose the tools yourself; the user should not need to spell out tool order.
-- For repo understanding, start with list_files/search_code/read_file as needed. For code navigation in Python, Java, JavaScript, TypeScript, or Vue, prefer lsp_symbols/lsp_definition/lsp_references/lsp_diagnostics before broad text search when helpful. Read the exact file or range before editing it.
+- For repo understanding, start with list_files/search_code/read_file as needed. For code navigation in Python, Java, JavaScript, TypeScript, or Vue, prefer lsp_symbols/lsp_definition/lsp_references/lsp_diagnostics before broad text search when helpful. lsp_workspace_symbols and lsp_document_symbols are compatibility aliases for lsp_symbols. Read the exact file or range before editing it.
 - The primary --cwd is the main workspace. If additional directories are configured, file/search/LSP/patch tools may access those explicit paths; shell, git, session, todo, and memory remain anchored to --cwd.
 - For multi-step or ambiguous work, maintain a concise todo list with todo_add/todo_update/todo_read.
 - If a requirement is ambiguous and guessing would affect the result, use ask_user. If local evidence is enough, continue without asking.
@@ -46,6 +47,11 @@ STARTUP_MEMORY_CHAR_LIMIT = 8000
 STARTUP_SKILLS_CHAR_LIMIT = 4000
 MAX_AUTHORED_SKILLS = 40
 MAX_SKILL_DESCRIPTION_CHARS = 320
+MAX_IDENTICAL_TOOL_CALLS_IN_RECENT_WINDOW = 3
+REPEAT_TOOL_CALL_WINDOW = 12
+MAX_DUPLICATE_TOOL_GUARD_HITS = 8
+USELESS_TOOL_RESULT_NOTICE = "[Uneventful tool result elided during local context pruning]"
+SUPERSEDED_TOOL_RESULT_NOTICE = "[Superseded by a newer equivalent tool result during local context pruning]"
 
 WORKFLOW_NUDGE = (
     "For this coding task, infer the tool sequence yourself. "
@@ -93,6 +99,8 @@ class AgentRuntime:
         self._registry = create_default_registry()
         self._session_tool_approval: dict[str, str] = {}
         self._summary_cache: dict[str, str] = {}
+        self._recent_tool_call_signatures: list[str] = []
+        self._duplicate_tool_guard_hits = 0
         self._session = JsonlSessionStore(
             config.workspace,
             session_id=session_id,
@@ -162,7 +170,7 @@ class AgentRuntime:
                 arguments = function.get("arguments") or "{}"
                 self._log_tool_start(name, arguments)
                 try:
-                    result = self._registry.execute(name, arguments, tool_context)
+                    result = self._execute_tool_with_repeat_guard(name, arguments, tool_context)
                 except KeyboardInterrupt:
                     self._append_synthetic_tool_results(
                         tool_calls[index:],
@@ -171,7 +179,19 @@ class AgentRuntime:
                     self._stop_for_interrupt()
                     raise
                 self._log_tool_end(name, result.is_error, len(result.content))
-                self._append_tool_result(tool_call, name, result.content, is_error=result.is_error)
+                self._append_tool_result(
+                    tool_call,
+                    name,
+                    result.content,
+                    is_error=result.is_error,
+                    useless=result.useless,
+                )
+                if self._duplicate_tool_guard_hits >= MAX_DUPLICATE_TOOL_GUARD_HITS:
+                    self._append_synthetic_tool_results(
+                        tool_calls[index + 1 :],
+                        self._duplicate_tool_stop_message(),
+                    )
+                    return self._stop_for_duplicate_tools()
                 if self._deadline_exceeded(deadline):
                     self._append_synthetic_tool_results(tool_calls[index + 1 :], self._budget_stop_message())
                     return self._stop_for_budget()
@@ -225,14 +245,16 @@ class AgentRuntime:
         return normalized
 
     def _messages_for_model(self, deadline: float | None = None) -> list[dict[str, Any]]:
+        todo_summary = self._open_todo_summary()
+        provider_context = _prune_context_tool_outputs(self._messages)
         if self._config.context_char_budget <= 0:
-            return self._messages
+            return _provider_safe_messages(_messages_with_runtime_todo_reminder(provider_context, todo_summary))
         threshold = _resolve_compaction_threshold_chars(self._config.context_char_budget)
-        if _estimate_message_chars(self._messages) <= threshold:
-            return self._messages
+        if _estimate_message_chars(provider_context) <= threshold:
+            return _provider_safe_messages(_messages_with_runtime_todo_reminder(provider_context, todo_summary))
 
-        system_messages = [message for message in self._messages if message.get("role") == "system"]
-        non_system = [message for message in self._messages if message.get("role") != "system"]
+        system_messages = [message for message in provider_context if message.get("role") == "system"]
+        non_system = [message for message in provider_context if message.get("role") != "system"]
         recent_count = min(self._config.context_recent_messages, len(non_system))
         current_user_request = _latest_user_content(non_system)
 
@@ -255,9 +277,9 @@ class AgentRuntime:
                         "threshold_chars": threshold,
                     },
                 )
-                return compacted
+                return _provider_safe_messages(compacted)
             recent_count = max(6, recent_count // 2)
-        return self._messages
+        return _provider_safe_messages(_messages_with_runtime_todo_reminder(self._messages, todo_summary))
 
     def _build_compaction_summary(
         self,
@@ -398,6 +420,32 @@ class AgentRuntime:
         remaining = deadline - time.monotonic()
         return min(float(self._config.request_timeout), max(1.0, remaining))
 
+    def _execute_tool_with_repeat_guard(
+        self,
+        name: str,
+        arguments: str | dict[str, Any],
+        tool_context: ToolContext,
+    ) -> ToolResult:
+        signature = _tool_call_signature(name, arguments)
+        recent_count = self._recent_tool_call_signatures.count(signature)
+        self._recent_tool_call_signatures.append(signature)
+        self._recent_tool_call_signatures = self._recent_tool_call_signatures[-REPEAT_TOOL_CALL_WINDOW:]
+        if recent_count >= MAX_IDENTICAL_TOOL_CALLS_IN_RECENT_WINDOW:
+            self._duplicate_tool_guard_hits += 1
+            return self._duplicate_tool_result(name, recent_count)
+        return self._registry.execute(name, arguments, tool_context)
+
+    def _duplicate_tool_result(self, name: str, prior_count: int) -> ToolResult:
+        return ToolResult(
+            (
+                f"Tool call skipped: identical call to '{name}' with the same arguments "
+                f"has already run {prior_count} times in this session. "
+                "Use the earlier tool results and provide the requested final answer, "
+                "or call a different tool/arguments only if new evidence is truly necessary."
+            ),
+            is_error=True,
+        )
+
     def _deadline_exceeded(self, deadline: float | None) -> bool:
         return deadline is not None and time.monotonic() >= deadline
 
@@ -406,6 +454,17 @@ class AgentRuntime:
 
     def _stop_for_budget(self) -> str:
         content = self._budget_stop_message()
+        self._session.append("final", {"content": content})
+        return content
+
+    def _duplicate_tool_stop_message(self) -> str:
+        return "the assistant repeated identical tool calls too many times."
+
+    def _stop_for_duplicate_tools(self) -> str:
+        content = (
+            "Stopped because the assistant repeated identical tool calls too many times. "
+            "Retry with a narrower request or ask it to answer from the evidence already collected."
+        )
         self._session.append("final", {"content": content})
         return content
 
@@ -428,7 +487,15 @@ class AgentRuntime:
         self._session.append("final", {"content": content})
         return content
 
-    def _append_tool_result(self, tool_call: dict[str, Any], name: str, content: str, *, is_error: bool) -> None:
+    def _append_tool_result(
+        self,
+        tool_call: dict[str, Any],
+        name: str,
+        content: str,
+        *,
+        is_error: bool,
+        useless: bool = False,
+    ) -> None:
         self._session.append(
             "tool_result",
             {
@@ -436,6 +503,7 @@ class AgentRuntime:
                 "name": name,
                 "is_error": is_error,
                 "content": content,
+                "useless": bool(useless and not is_error),
             },
         )
         self._messages.append(
@@ -443,6 +511,9 @@ class AgentRuntime:
                 "role": "tool",
                 "tool_call_id": tool_call.get("id"),
                 "content": content,
+                "_lca_tool_name": name,
+                "_lca_is_error": is_error,
+                "_lca_useless": bool(useless and not is_error),
             }
         )
 
@@ -668,11 +739,121 @@ def _resolve_budget_reserve_chars(context_window_chars: int) -> int:
     return proportional_reserve if default_reserve_is_impossible or reserve_exceeds_window else default_reserve
 
 
+def _messages_with_runtime_todo_reminder(
+    messages: list[dict[str, Any]],
+    todo_summary: list[str],
+) -> list[dict[str, Any]]:
+    if not todo_summary:
+        return list(messages)
+    reminder = "\n".join(
+        [
+            "[Runtime todo reminder]",
+            "Open todos are active for this session. Use them to stay oriented and update their status before finalizing when the task changes.",
+            *todo_summary,
+        ]
+    )
+    system_messages = [message for message in messages if message.get("role") == "system"]
+    non_system = [message for message in messages if message.get("role") != "system"]
+    return [_system_message_with_appended_context(system_messages, reminder), *non_system]
+
+
+def _system_message_with_appended_context(
+    system_messages: list[dict[str, Any]],
+    context: str,
+) -> dict[str, Any]:
+    base = dict(system_messages[0]) if system_messages else {"role": "system", "content": SYSTEM_PROMPT}
+    base["role"] = "system"
+    content = str(base.get("content") or "")
+    base["content"] = f"{content.rstrip()}\n\n{context}"
+    return base
+
+
 def _valid_recent_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     recent = list(messages)
     while recent and recent[0].get("role") == "tool":
         recent = recent[1:]
     return _drop_trailing_unpaired_tool_calls(recent)
+
+
+def _prune_context_tool_outputs(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    superseded_tool_call_ids = _superseded_tool_call_ids(messages)
+    pruned: list[dict[str, Any]] = []
+    for message in messages:
+        if message.get("role") != "tool":
+            pruned.append(message)
+            continue
+        tool_call_id = message.get("tool_call_id")
+        if isinstance(tool_call_id, str) and tool_call_id in superseded_tool_call_ids:
+            pruned.append(_tool_message_with_notice(message, SUPERSEDED_TOOL_RESULT_NOTICE))
+        elif message.get("_lca_useless") is True and message.get("_lca_is_error") is not True:
+            pruned.append(_tool_message_with_notice(message, USELESS_TOOL_RESULT_NOTICE))
+        else:
+            pruned.append(message)
+    return pruned
+
+
+def _tool_message_with_notice(message: dict[str, Any], notice: str) -> dict[str, Any]:
+    copied = dict(message)
+    copied["content"] = notice
+    return copied
+
+
+def _superseded_tool_call_ids(messages: list[dict[str, Any]]) -> set[str]:
+    tool_calls_by_id = _tool_calls_by_id(messages)
+    latest_by_key: dict[str, str] = {}
+    superseded: set[str] = set()
+    for message in messages:
+        if message.get("role") != "tool":
+            continue
+        tool_call_id = message.get("tool_call_id")
+        if not isinstance(tool_call_id, str):
+            continue
+        if message.get("_lca_is_error") is True:
+            continue
+        tool_call = tool_calls_by_id.get(tool_call_id)
+        if tool_call is None:
+            continue
+        key = _tool_supersede_key(tool_call)
+        if key is None:
+            continue
+        previous = latest_by_key.get(key)
+        if previous is not None:
+            superseded.add(previous)
+        latest_by_key[key] = tool_call_id
+    return superseded
+
+
+def _tool_calls_by_id(messages: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    tool_calls: dict[str, dict[str, Any]] = {}
+    for message in messages:
+        if message.get("role") != "assistant":
+            continue
+        raw_tool_calls = message.get("tool_calls") or []
+        if not isinstance(raw_tool_calls, list):
+            continue
+        for tool_call in raw_tool_calls:
+            if isinstance(tool_call, dict) and isinstance(tool_call.get("id"), str):
+                tool_calls[tool_call["id"]] = tool_call
+    return tool_calls
+
+
+def _tool_supersede_key(tool_call: dict[str, Any]) -> str | None:
+    function = tool_call.get("function") or {}
+    if not isinstance(function, dict):
+        return None
+    name = str(function.get("name") or "")
+    if name not in {
+        "read_file",
+        "search_code",
+        "lsp_workspace_symbols",
+        "lsp_document_symbols",
+        "lsp_symbols",
+        "lsp_definition",
+        "lsp_references",
+        "lsp_diagnostics",
+    }:
+        return None
+    return _tool_call_signature(name, function.get("arguments") or "{}")
 
 
 def _truncate_recent_tool_outputs(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -690,11 +871,17 @@ def _system_message_with_compaction_summary(
     system_messages: list[dict[str, Any]],
     compaction_summary: str,
 ) -> dict[str, Any]:
-    base = dict(system_messages[0]) if system_messages else {"role": "system", "content": SYSTEM_PROMPT}
-    base["role"] = "system"
-    content = str(base.get("content") or "")
-    base["content"] = f"{content.rstrip()}\n\n[Local context compaction]\n{compaction_summary}"
-    return base
+    return _system_message_with_appended_context(
+        system_messages,
+        f"[Local context compaction]\n{compaction_summary}",
+    )
+
+
+def _provider_safe_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    safe: list[dict[str, Any]] = []
+    for message in messages:
+        safe.append({key: value for key, value in message.items() if not key.startswith("_lca_")})
+    return safe
 
 
 def _truncate_tool_message(message: dict[str, Any], content: str) -> dict[str, Any]:
@@ -923,6 +1110,22 @@ def _summary_cache_key(transcript: str, current_user_request: str | None, todo_s
         sort_keys=True,
     )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _tool_call_signature(name: str, arguments: str | dict[str, Any]) -> str:
+    if isinstance(arguments, dict):
+        normalized_arguments: Any = arguments
+    else:
+        try:
+            parsed = json.loads(arguments or "{}")
+        except json.JSONDecodeError:
+            parsed = arguments
+        normalized_arguments = parsed
+    payload = {
+        "name": name,
+        "arguments": normalized_arguments,
+    }
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
 
 
 def _validate_runtime_tool_name(tool: str) -> str:
