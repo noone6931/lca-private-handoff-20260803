@@ -30,7 +30,7 @@
 
 ## 当前进度
 
-当前项目处于 P7 轻量高级能力阶段：P5 的安全与恢复增强 MVP 已收口；P6 默认工作流 MVP 已落地，用户可以用自然语言描述任务，而不是每次手写 `list_files/read_file/dry_run/run_tests/git_diff` 工具顺序。本轮已补 OMP 风格 auto summary、多语言轻量 LSP、multi-root `--allow-dir`、Markdown memory 启动注入、`learn` 工具、authored skills discovery、重复工具调用熔断、tool result pruning、todo steering，以及跨项目 `--env-file` / launcher 安装目录 `.env` 加载。
+当前项目处于 P7 轻量高级能力阶段：P5 的安全与恢复增强 MVP 已收口；P6 默认工作流 MVP 已落地，用户可以用自然语言描述任务，而不是每次手写 `list_files/read_file/dry_run/run_tests/git_diff` 工具顺序。本轮已补 OMP 风格 auto summary、多语言轻量 LSP、multi-root `--allow-dir`、Markdown memory 启动注入、`learn` 工具、authored skills discovery、重复工具调用熔断、tool result pruning、todo steering，以及跨项目 `--env-file` / launcher 安装目录 `.env` 加载。2026-07-08 企业项目只读代跑新增发现：当前 session/todo/patch runtime 状态仍默认写入目标 `--cwd/.local-agent`，下一步按 OMP 思路增加用户级 `--state-dir`。
 
 已具备的核心能力：
 
@@ -75,6 +75,7 @@
 
 - Managed skills / autolearn 继续暂缓。
 - 企业项目联网压测：用户已确认可外发给百炼，但本次 Codex 执行环境策略拒绝代跑将企业私有代码/需求发送到三方 API；已改为本地只读扫描并记录结果。LCA 产品设计本身不内置“企业数据不能外发”禁令。
+- Runtime state 与 workspace 尚未解耦：企业项目只读代跑在目标仓库创建 `.local-agent/sessions/20260708T053955405637Z.jsonl`；下一步增加 `--state-dir` / `AGENT_STATE_DIR`，默认把 sessions/todos/patch logs 放到用户级状态目录。
 - 百炼真实只读压测会话 `20260707T093557800154Z` 已验证：在 `context_char_budget=2500` 的强压缩场景下，模型完成指定 5 个工具调用后停止探索，并按要求输出三句话总结。
 - LCA 自身综合压测会话 `20260708T024203733199Z` 暴露重复工具调用循环，已用窗口式重复工具熔断缓解；修复后复测会话 `20260708T025519414693Z` 已按要求完成工具调用并输出总结。
 - 百炼真实小改复测会话 `20260707T094246132064Z` 已验证 todo、dry_run、apply_patch、session allow、rollback、run_tests、git_diff 主链路可跑通；最终仅新增一个测试 docstring。
@@ -94,7 +95,7 @@
 | P4 | 上下文治理 | 已完成 MVP 版 | 初版 summary / compaction、工具输出折叠、长需求文件工作流。 |
 | P5 | 安全与恢复增强 | 已完成并收口 | synthetic tool result、patch preview、回滚策略、非信任仓库提示、OMP 风格 approval model、approval prompt deadline cancel；真实小改复测通过。 |
 | P6 | 日用体验与默认工作流固化 | 已完成 MVP 版 | OMP 默认工作流本地化：system prompt、工具描述、轻量 runtime nudge。 |
-| P7 | 高级工程能力轻量版 | 进行中 | 已完成 OMP 风格 auto summary、多语言轻量 LSP、LSP 兼容别名、multi-root、Markdown memory 启动注入、learn、authored skills discovery、综合压测记录、重复工具调用熔断、tool result pruning、todo steering 和跨项目 env-file；DAP、TUI、subagents、reviewer、AST edit、managed skills 继续后置。 |
+| P7 | 高级工程能力轻量版 | 进行中 | 已完成 OMP 风格 auto summary、多语言轻量 LSP、LSP 兼容别名、multi-root、Markdown memory 启动注入、learn、authored skills discovery、综合压测记录、重复工具调用熔断、tool result pruning、todo steering 和跨项目 env-file；新增待处理：OMP 风格用户级 `--state-dir`，避免只读跨项目分析污染目标仓库；DAP、TUI、subagents、reviewer、AST edit、managed skills 继续后置。 |
 
 ## 已完成功能
 
@@ -196,6 +197,7 @@
 | T-046 | 跨项目 env-file / launcher env 加载 | 已完成 MVP 版 | P7 | CLI 支持 `--env-file`；`./agent` 自动加载安装目录 `.env`，让 token 配置与目标 `--cwd` 解耦。 |
 | T-047 | OMP 风格 tool result pruning / todo steering | 已完成 MVP 版 | P7 | 已新增 `ToolResult.useless`、空搜索/LSP useless 标记、provider-bound useless/superseded pruning 和 open todo runtime reminder；session 原文保留。 |
 | T-048 | LSP workspace/document symbols 兼容别名 | 已完成 MVP 版 | P7 | `lsp_workspace_symbols` / `lsp_document_symbols` 已注册为 `lsp_symbols` 只读别名，减少 OMP/Codex 风格提示迁移摩擦。 |
+| T-049 | OMP 风格 runtime state 与 workspace 解耦 | 待开始 | P7 | 增加 `--state-dir` / `AGENT_STATE_DIR`，默认 sessions/todos/patch logs 使用用户级状态目录，避免只读跨项目分析在目标仓库写 `.local-agent/sessions`。 |
 
 ## 风险清单
 
@@ -217,6 +219,7 @@
 | R-014 | 重复工具调用循环导致 budget 耗尽且无最终回答 | 已进一步缓解 | 模型可能在同一工具参数上循环，用户只得到预算停止信息。 | 已补最近窗口重复工具调用熔断、`ToolResult.useless`、空结果标记、provider-bound useless/superseded pruning 和 open todo runtime reminder；后续评估 OMP 风格 ToolChoiceQueue / soft tool requirement。 |
 | R-015 | 企业项目源码和需求可能被发送到三方 AI API | 用户已确认，当前 Codex 环境阻断代跑 | 联网 LCA 压测会把进入上下文的企业代码/需求发给百炼。 | 用户已确认可外发；当前 Codex 执行环境拒绝代跑该联网压测。LCA 自身不内置禁止外发，按 OMP 思路由用户、provider、permission 和运行环境策略决定。 |
 | R-016 | 跨项目运行时 token 配置绑定目标 workspace `.env` | 已关闭 MVP 版 | `--cwd` 切到其他项目后，LCA 仓库 `.env` 不会自动加载。 | 已新增 `--env-file` 和 `./agent` 安装目录 `.env` 自动加载；凭据配置与 `--cwd` 解耦。 |
+| R-017 | 只读任务仍在目标 workspace 写 runtime 状态 | 新发现，待处理 | 目标仓库会出现 `.local-agent/sessions`，不利于企业项目零业务落盘压测。 | 参考 OMP 将 sessions 放在用户 agent dir 的设计，下一步实现 `--state-dir`。 |
 
 ## 架构决策
 

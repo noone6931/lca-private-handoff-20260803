@@ -534,6 +534,25 @@ LCA 的对应落地：
 ./agent --budget-seconds 1200 "按 docs/requirements/feature.md 完成需求并跑测试"
 ```
 
+### Session / State 与工作目录分层
+
+2026-07-08 企业项目只读压测暴露了一个 LCA 设计差异：当前 `JsonlSessionStore` 默认把 session 写到 `--cwd/.local-agent/sessions`，所以即使用户要求只读分析，也会在目标企业仓库产生 `.local-agent/` 未跟踪目录。
+
+OMP 的分层更清晰：
+
+- `/Users/chengming/mycode/opensource/oh-my-pi/docs/config-usage.md` 说明 runtime state、sessions、blobs、`agent.db` 属于用户 agent dir：`~/.omp/agent`，profile 下则是 `~/.omp/profiles/<name>/agent`；
+- `/Users/chengming/mycode/opensource/oh-my-pi/packages/coding-agent/src/session/session-paths.ts` 的 `computeDefaultSessionDir(cwd, storage, sessionsRoot = getSessionsDir())` 会把 cwd 编码为 `sessionsRoot/<cwd-encoded>`，而 `sessionsRoot` 来自用户 agent dir；
+- `/Users/chengming/mycode/opensource/oh-my-pi/packages/coding-agent/src/session/session-manager.ts` 的 `SessionManager.create(cwd, sessionDir?)` 默认用 `SessionManager.getDefaultSessionDir(cwd, undefined, storage)`，即“session 按 cwd 归类，但不直接写进 cwd”；
+- 项目级 `.omp/` 主要承载项目 context/config/rules/skills，而不是默认 transcript/session 存储。
+
+LCA 下一步应直接采纳这个设计：
+
+- 增加 `--state-dir` / `AGENT_STATE_DIR`；
+- 默认 state root 放在用户级目录，例如 `~/.local/state/local-coding-agent` 或 `~/.local-coding-agent`；
+- sessions/todos/patch logs 默认写入 `state_root/sessions/<cwd-encoded>` 或同等结构；
+- `--cwd/.local-agent/memory`、`.local-agent/skills` 是否继续项目本地，需要单独定义，因为它们是项目知识，不完全等同 runtime transcript；
+- 对“企业项目零业务落盘只读压测”，应支持不在目标仓库创建 `.local-agent/sessions`。
+
 如果明确想设保险丝：
 
 ```bash
