@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import datetime, timezone
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 import sys
 import time
@@ -13,6 +13,8 @@ from .config import AgentConfig
 from .config import normalize_approval_mode
 from .llm import LlmError
 from .llm import OpenAICompatibleClient
+from .patch.anchored import PatchError
+from .patch.anchored import resolve_workspace_path
 from .session.jsonl_store import JsonlSessionStore
 from .state import default_config_root
 from .tools import create_default_registry
@@ -65,6 +67,7 @@ MAX_IDENTICAL_TOOL_CALLS_IN_RECENT_WINDOW = 3
 REPEAT_TOOL_CALL_WINDOW = 12
 MAX_DUPLICATE_TOOL_GUARD_HITS = 8
 MAX_DUPLICATE_TOOL_FINAL_ANSWER_STEERS = 2
+MAX_SOFT_TOOL_REQUIREMENT_STEERS = 3
 USELESS_TOOL_RESULT_NOTICE = "[Uneventful tool result elided during local context pruning]"
 SUPERSEDED_TOOL_RESULT_NOTICE = "[Superseded by a newer equivalent tool result during local context pruning]"
 
@@ -98,6 +101,41 @@ WORKFLOW_NUDGE_KEYWORDS = {
     "文档",
 }
 
+ALLOWED_DIR_REQUIREMENT_KEYWORDS = {
+    "requirement",
+    "requirements",
+    "spec",
+    "specs",
+    "prd",
+    "需求",
+    "需求目录",
+    "需求文档",
+    "读取需求",
+    "外部需求",
+}
+ALLOWED_DIR_DOC_SUFFIXES = {".md", ".txt", ".rst", ".html", ".htm"}
+ALLOWED_DIR_DOC_NAME_KEYWORDS = {
+    "requirement",
+    "requirements",
+    "spec",
+    "prd",
+    "handoff",
+    "需求",
+    "文档",
+    "说明",
+    "方案",
+}
+MAX_ALLOWED_DIR_DOC_CANDIDATES = 8
+
+
+@dataclass
+class SoftToolRequirement:
+    kind: str
+    allowed_dirs: tuple[Path, ...]
+    candidate_files: tuple[Path, ...] = ()
+    steers: int = 0
+    satisfied: bool = False
+
 
 class AgentRuntime:
     def __init__(
@@ -118,6 +156,7 @@ class AgentRuntime:
         self._duplicate_tool_guard_hits = 0
         self._duplicate_tool_final_answer_steers = 0
         self._force_final_answer_without_tools = False
+        self._soft_tool_requirement: SoftToolRequirement | None = None
         self._state_dir = config.state_dir or config.workspace / ".local-agent"
         self._session = JsonlSessionStore(
             config.workspace,
@@ -161,6 +200,9 @@ class AgentRuntime:
         self._session.append("user", {"content": prompt})
         if model_prompt != prompt:
             self._session.append("workflow_nudge", {"content": WORKFLOW_NUDGE})
+        self._soft_tool_requirement = _initial_soft_tool_requirement(prompt, self._config.allowed_dirs)
+        if self._soft_tool_requirement is not None:
+            self._append_soft_tool_requirement_message(self._soft_tool_requirement)
         tool_context = replace(self._tool_context, deadline_monotonic=deadline)
 
         step = 1
@@ -170,7 +212,7 @@ class AgentRuntime:
 
             self._session.append("llm_request", {"step": step})
             messages_for_model = self._messages_for_model(deadline)
-            tools_for_model = [] if self._force_final_answer_without_tools else self._registry.schemas()
+            tools_for_model = self._tools_for_model()
             force_final_answer = self._force_final_answer_without_tools
             self._force_final_answer_without_tools = False
             response = self._client.chat(
@@ -189,6 +231,15 @@ class AgentRuntime:
                 self._append_synthetic_tool_results(tool_calls, self._length_stop_tool_message())
                 return self._stop_for_length(deadline, run_start_index)
             if not tool_calls:
+                if self._needs_soft_tool_requirement_steer():
+                    if self._steer_for_soft_tool_requirement():
+                        step += 1
+                        continue
+                    return self._finish_run(
+                        self._soft_tool_requirement_stop_message(),
+                        deadline,
+                        run_start_index,
+                    )
                 content = message.get("content") or ""
                 return self._finish_run(content, deadline, run_start_index)
 
@@ -218,6 +269,7 @@ class AgentRuntime:
                     is_error=result.is_error,
                     useless=result.useless,
                 )
+                self._observe_soft_tool_requirement(name, arguments, result)
                 duplicate_skipped = self._duplicate_tool_guard_hits > duplicate_hits_before
                 if duplicate_skipped and self._steer_after_duplicate_tool_call(name):
                     self._append_synthetic_tool_results(
@@ -237,6 +289,19 @@ class AgentRuntime:
             step += 1
 
         return self._finish_run(f"Stopped after reaching max_steps={self._config.max_steps}.", deadline, run_start_index)
+
+    def _tools_for_model(self) -> list[dict[str, Any]]:
+        if self._force_final_answer_without_tools:
+            return []
+        requirement = self._soft_tool_requirement
+        if requirement is not None and not requirement.satisfied:
+            allowed_names = {"list_files", "read_file"}
+            return [
+                schema
+                for schema in self._registry.schemas()
+                if schema.get("function", {}).get("name") in allowed_names
+            ]
+        return self._registry.schemas()
 
     def approval_summary(self) -> str:
         lines = [
@@ -522,6 +587,81 @@ class AgentRuntime:
         )
         self._force_final_answer_without_tools = True
         return True
+
+    def _append_soft_tool_requirement_message(self, requirement: SoftToolRequirement) -> None:
+        content = _soft_tool_requirement_message(requirement)
+        self._messages.append({"role": "user", "content": content})
+        self._session.append(
+            "runtime_steering",
+            {
+                "kind": requirement.kind,
+                "allowed_dirs": [str(path) for path in requirement.allowed_dirs],
+                "candidate_files": [str(path) for path in requirement.candidate_files],
+            },
+        )
+
+    def _needs_soft_tool_requirement_steer(self) -> bool:
+        requirement = self._soft_tool_requirement
+        return requirement is not None and not requirement.satisfied
+
+    def _steer_for_soft_tool_requirement(self) -> bool:
+        requirement = self._soft_tool_requirement
+        if requirement is None or requirement.satisfied:
+            return False
+        if requirement.steers >= MAX_SOFT_TOOL_REQUIREMENT_STEERS:
+            return False
+        requirement.steers += 1
+        content = _soft_tool_requirement_message(requirement)
+        self._messages.append({"role": "user", "content": content})
+        self._session.append(
+            "runtime_steering",
+            {
+                "kind": f"{requirement.kind}_reminder",
+                "steers": requirement.steers,
+            },
+        )
+        return True
+
+    def _soft_tool_requirement_stop_message(self) -> str:
+        requirement = self._soft_tool_requirement
+        if requirement is None:
+            return "Stopped because a required tool step was not completed."
+        return (
+            "Stopped because the task required reading requirement/spec documents from an allowed directory, "
+            "but the assistant did not call read_file on any allowed-directory document after repeated reminders. "
+            "Retry with the same --allow-dir, or explicitly name the requirement file path."
+        )
+
+    def _observe_soft_tool_requirement(self, name: str, arguments: str | dict[str, Any], result: ToolResult) -> None:
+        requirement = self._soft_tool_requirement
+        if requirement is None or requirement.satisfied or result.is_error:
+            return
+        if requirement.kind != "allowed_dir_requirements":
+            return
+        if name != "read_file":
+            return
+        try:
+            parsed = arguments if isinstance(arguments, dict) else json.loads(arguments or "{}")
+        except json.JSONDecodeError:
+            return
+        if not isinstance(parsed, dict):
+            return
+        raw_path = parsed.get("path")
+        if not isinstance(raw_path, str) or not raw_path.strip():
+            return
+        try:
+            path = resolve_workspace_path(self._config.workspace, raw_path, self._config.allowed_dirs)
+        except PatchError:
+            return
+        if _path_is_under_any(path, requirement.allowed_dirs):
+            requirement.satisfied = True
+            self._session.append(
+                "runtime_steering",
+                {
+                    "kind": f"{requirement.kind}_satisfied",
+                    "path": str(path),
+                },
+            )
 
     def _deadline_exceeded(self, deadline: float | None) -> bool:
         return deadline is not None and time.monotonic() >= deadline
@@ -1330,6 +1470,90 @@ def _should_add_workflow_nudge(prompt: str) -> bool:
     if len(prompt.strip()) <= 24 and not any(keyword in lowered for keyword in WORKFLOW_NUDGE_KEYWORDS):
         return False
     return any(keyword in lowered for keyword in WORKFLOW_NUDGE_KEYWORDS)
+
+
+def _initial_soft_tool_requirement(prompt: str, allowed_dirs: tuple[Path, ...]) -> SoftToolRequirement | None:
+    if not allowed_dirs:
+        return None
+    lowered = prompt.lower()
+    if not any(keyword in lowered for keyword in ALLOWED_DIR_REQUIREMENT_KEYWORDS):
+        return None
+    return SoftToolRequirement(
+        kind="allowed_dir_requirements",
+        allowed_dirs=allowed_dirs,
+        candidate_files=_allowed_dir_doc_candidates(allowed_dirs),
+    )
+
+
+def _allowed_dir_doc_candidates(allowed_dirs: tuple[Path, ...]) -> tuple[Path, ...]:
+    candidates: list[Path] = []
+    for root in allowed_dirs:
+        if not root.exists() or not root.is_dir():
+            continue
+        for path in _iter_allowed_dir_files(root):
+            if path.suffix.lower() not in ALLOWED_DIR_DOC_SUFFIXES:
+                continue
+            candidates.append(path)
+    candidates.sort(key=_allowed_dir_doc_sort_key)
+    return tuple(candidates[:MAX_ALLOWED_DIR_DOC_CANDIDATES])
+
+
+def _iter_allowed_dir_files(root: Path):
+    skipped = {".git", ".local-agent", ".venv", "__pycache__", "node_modules", "target", "dist", "build"}
+    for child in sorted(root.iterdir(), key=lambda item: (not item.is_dir(), item.name.lower())):
+        if child.is_dir():
+            if child.name in skipped or child.name.startswith("."):
+                continue
+            yield from _iter_allowed_dir_files(child)
+        elif child.is_file():
+            yield child
+
+
+def _allowed_dir_doc_sort_key(path: Path) -> tuple[int, str]:
+    lowered = path.name.lower()
+    score = 0 if any(keyword in lowered for keyword in ALLOWED_DIR_DOC_NAME_KEYWORDS) else 1
+    return (score, str(path).lower())
+
+
+def _soft_tool_requirement_message(requirement: SoftToolRequirement) -> str:
+    lines = [
+        "[Runtime tool requirement]",
+        (
+            "This task explicitly references external requirements/spec documents. "
+            "Before searching or concluding from the primary code workspace, read evidence from an allowed directory."
+        ),
+        "Use only list_files/read_file until this requirement is satisfied.",
+        "",
+        "Allowed directories:",
+        *[f"- {path}" for path in requirement.allowed_dirs],
+    ]
+    if requirement.candidate_files:
+        lines.extend(
+            [
+                "",
+                "Candidate requirement/spec files; prefer read_file on the most relevant ones first:",
+                *[f"- {path}" for path in requirement.candidate_files],
+            ]
+        )
+    lines.extend(
+        [
+            "",
+            "Required next evidence: call read_file with a path under one of the allowed directories. "
+            "Do not answer or search the primary code workspace until at least one allowed-directory document has been read.",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def _path_is_under_any(path: Path, roots: tuple[Path, ...]) -> bool:
+    resolved = path.resolve()
+    for root in roots:
+        try:
+            resolved.relative_to(root.resolve())
+            return True
+        except ValueError:
+            continue
+    return False
 
 
 def _messages_to_summary_transcript(messages: list[dict[str, Any]], *, max_chars: int) -> str:

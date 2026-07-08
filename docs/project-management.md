@@ -17,10 +17,10 @@ python3 scripts/sync_project_excel.py
 | 字段 | 当前值 | 说明 |
 |---|---|---|
 | 最终目标 | 个人本地编程助手 Agent | 本地优先、封闭 VM 可用、只访问指定 AI API，能读代码、搜代码、改代码、跑测试、生成 diff、沉淀项目记忆。 |
-| 当前阶段 | P7：轻量高级能力与真实压测 | P6 默认工作流 MVP 已落地；P7 已补 OMP 风格 auto summary、多语言轻量 LSP、multi-root、startup context/rules、startup memory、learn、可选 memory consolidation、authored skills discovery，并通过综合压测发现和修复重复工具调用循环，新增 OMP 风格 tool result pruning / todo steering；2026-07-08 已按 OMP 思路完成 runtime state 与 cwd 分层，自动 memory consolidation 默认写 state dir；用户本机企业压测 session `20260708T062614211387Z` 暴露 `feePlan` 重复搜索无最终回答，已补 duplicate-tool forced-final steering；session `20260708T065705459243Z` / `20260708T070722601499Z` 证明硬停改善，但仍未读取 allowed-dir 需求文档，已补 workspace roots 工具观察提示。 |
+| 当前阶段 | P7：轻量高级能力与真实压测 | P6 默认工作流 MVP 已落地；P7 已补 OMP 风格 auto summary、多语言轻量 LSP、multi-root、startup context/rules、startup memory、learn、可选 memory consolidation、authored skills discovery，并通过综合压测发现和修复重复工具调用循环，新增 OMP 风格 tool result pruning / todo steering；2026-07-08 已按 OMP 思路完成 runtime state 与 cwd 分层，自动 memory consolidation 默认写 state dir；用户本机企业压测 session `20260708T062614211387Z` 暴露 `feePlan` 重复搜索无最终回答，已补 duplicate-tool forced-final steering；session `20260708T065705459243Z` / `20260708T070722601499Z` / `20260708T072404789287Z` 证明硬停改善，但仍未读取 allowed-dir 需求文档，已补 OMP 风格 allowed-dir soft tool requirement。 |
 | 推荐入口 | `./agent "阅读当前项目"` | 自动设置 `PYTHONPATH=src`，默认当前目录为 workspace。 |
 | Token 配置 | 环境变量 / `--env-file` / `.env` | `./agent` 会自动加载安装目录 `.env`，也可显式传 `--env-file`；真实环境变量优先。 |
-| 测试数 | 143 | 完整 unittest、compileall、diff check、xlsx 检查通过。 |
+| 测试数 | 144 | 完整 unittest、compileall、diff check、xlsx 检查通过。 |
 | 默认 budget_seconds | 600 | 单次任务默认 10 分钟墙钟预算；`--budget-seconds 0` 可关闭。 |
 | 默认 max_steps | 0 | 表示不限步；仅在用户显式设置时作为防失控保险丝。 |
 | 预算执行 | 细粒度 | LLM 请求和 shell/run_tests timeout 会按剩余预算夹紧；deadline 到期会补齐未执行工具结果。 |
@@ -33,7 +33,7 @@ python3 scripts/sync_project_excel.py
 | OMP 核心判断 | 已固化 | 见 `docs/omp-core-architecture-notes.md`，已补 OMP 如何通过系统提示、工具描述和 runtime 纠偏让用户不用指定工具顺序。 |
 | 默认工作流落地 | 已完成 MVP 版 | system prompt + tool descriptions + runtime workflow reminder 已落地，用户不需要每次手写工具顺序。 |
 | 轻量 LSP | 已完成 MVP 版 | `lsp_symbols` / `lsp_workspace_symbols` / `lsp_document_symbols` / `lsp_definition` / `lsp_references` / `lsp_diagnostics`，覆盖 Python、Java、JavaScript、TypeScript、Vue。 |
-| Multi-root workspace | 已完成 MVP 版 | `--allow-dir` / `AGENT_ALLOWED_DIRS` 支持显式授权额外目录给文件、搜索、LSP、patch 工具；system prompt 和 `list_files`/path-not-found 等工具观察会列出 primary workspace 和 allowed dirs；shell/git/显式项目 memory/skills 仍锚定 `--cwd`，session/todo/patch logs 和默认 consolidation memory 走 state dir。 |
+| Multi-root workspace | 已完成 MVP 版 | `--allow-dir` / `AGENT_ALLOWED_DIRS` 支持显式授权额外目录给文件、搜索、LSP、patch 工具；system prompt 和 `list_files`/path-not-found 等工具观察会列出 primary workspace 和 allowed dirs；需求/文档类任务会先用 soft tool requirement 要求读取 allowed-dir 文档；shell/git/显式项目 memory/skills 仍锚定 `--cwd`，session/todo/patch logs 和默认 consolidation memory 走 state dir。 |
 | Startup context / sticky rules | 已完成 MVP 版 | 用户级和项目级 `AGENTS.md` 启动注入；用户级和项目级 `RULES.md` 每次 provider request 前注入。 |
 | Startup memory | 已完成 MVP 版 | 新 session 自动注入项目 `.local-agent/memory/{project,decisions,conventions,learned}.md` 和 state dir `memory/*.md`，作为 advisory context。 |
 | Learn 工具 | 已完成 MVP 版 | `learn` 写入 `.local-agent/memory/learned.md`，用于显式沉淀可复用经验。 |
@@ -53,7 +53,7 @@ python3 scripts/sync_project_excel.py
 | P4 | 上下文治理 | 简单 summary/compaction，工具输出折叠，支持长需求文件 | 已完成 MVP 版 | 100% | 首轮百炼只读 compaction 压测已通过；当前已补可选 LLM summary，后续再评估 token 预算、输出 reserve 和 recent 保留。 |
 | P5 | 安全与恢复增强 | synthetic tool result、patch preview、rollback、ask_user timeout、per-tool approval | 已完成并收口 | 100% | 主链路已通过真实百炼复测；后续只修日用反馈中的 P0/P1 问题。 |
 | P6 | 日用体验与默认工作流固化 | OMP 默认工作流本地化：system prompt、工具描述、轻量 runtime nudge | 已完成 MVP 版 | 100% | 进入真实任务压测。 |
-| P7 | 高级工程能力轻量版 | OMP 风格 auto summary、轻量 LSP、LSP 兼容别名、multi-root workspace roots、startup context/rules、startup memory、learn、memory consolidation、authored skills discovery、重复工具调用熔断、duplicate-tool forced-final steering、tool result pruning、todo steering、跨项目 env-file、runtime state dir、真实项目压测记录 | 进行中 | 99% | 企业项目联网压测已获用户允许，Codex 宿主不能代跑；用户本机 session `20260708T062614211387Z` 证明真实百炼链路可读企业项目，但在 `feePlan` 重复搜索后硬停；session `20260708T065705459243Z` / `20260708T070722601499Z` 已能最终回答，但没读真实需求目录。已补 allowed-dir roots 的 system prompt 与工具观察双层提示；下一步用户复跑同一命令，验证是否先读取需求文档，并按需把其他相关项目加入 `--allow-dir`。 |
+| P7 | 高级工程能力轻量版 | OMP 风格 auto summary、轻量 LSP、LSP 兼容别名、multi-root workspace roots、allowed-dir soft tool requirement、startup context/rules、startup memory、learn、memory consolidation、authored skills discovery、重复工具调用熔断、duplicate-tool forced-final steering、tool result pruning、todo steering、跨项目 env-file、runtime state dir、真实项目压测记录 | 进行中 | 99% | 企业项目联网压测已获用户允许，Codex 宿主不能代跑；用户本机 session `20260708T062614211387Z` 证明真实百炼链路可读企业项目，但在 `feePlan` 重复搜索后硬停；session `20260708T065705459243Z` / `20260708T070722601499Z` / `20260708T072404789287Z` 已能最终回答，但没读真实需求目录。已补 allowed-dir soft tool requirement；下一步用户复跑同一命令，验证是否先读取需求文档，并按需把其他相关项目加入 `--allow-dir`。 |
 
 ## 已完成功能
 
@@ -90,7 +90,7 @@ python3 scripts/sync_project_excel.py
 | OMP 风格 Auto Summary | 已完成 MVP 版 | `--summary-mode auto` / `AGENT_SUMMARY_MODE=auto` | 小历史不摘要；超过 reserve 阈值后调用当前 provider 总结早期历史；失败回退 local summary | 需要百炼长上下文实测 |
 | 默认工作流 | 已完成 MVP 版 | `SYSTEM_PROMPT` + runtime workflow reminder | 自然语言代码任务默认探索、todo、patch preview、验证、diff | 需要真实任务实测 |
 | 轻量 LSP 工具 | 已完成 MVP 版 | `lsp_symbols` / `lsp_workspace_symbols` / `lsp_document_symbols` / `lsp_definition` / `lsp_references` / `lsp_diagnostics` | Python、Java、JavaScript、TypeScript、Vue 静态导航，不启动外部 server；workspace/document symbols 是兼容别名 | 后续看是否升级完整 LSP |
-| Multi-root workspace | 已完成 MVP 版 | `--allow-dir` / `AGENT_ALLOWED_DIRS` | 支持需求文档目录 + 代码项目目录；system prompt 和工具观察会列出 allowed dirs，文件/search/LSP/patch 可访问 allowed dirs，shell/git/显式项目 memory/skills 仍锚定 `--cwd`，默认 consolidation memory 走 state dir | 真实需求压测 |
+| Multi-root workspace | 已完成 MVP 版 | `--allow-dir` / `AGENT_ALLOWED_DIRS` | 支持需求文档目录 + 代码项目目录；system prompt 和工具观察会列出 allowed dirs；需求/文档类任务先 soft-require `read_file` allowed-dir 文档；文件/search/LSP/patch 可访问 allowed dirs，shell/git/显式项目 memory/skills 仍锚定 `--cwd`，默认 consolidation memory 走 state dir | 真实需求压测 |
 | Startup memory | 已完成 MVP 版 | `AgentRuntime` system prompt 构造 | 项目 `.local-agent/memory/{project,decisions,conventions,learned}.md` 和 state dir `memory/*.md` 作为 advisory context 注入 | 真实 session 验证 |
 | Learn 工具 | 已完成 MVP 版 | `learn` | 写入 `.local-agent/memory/learned.md`，默认走写工具审批 | 真实 session 验证 |
 | Memory consolidation | 已完成 MVP 版 | `memory_consolidation=off|auto|llm` + `memory_scope=state|project` | 默认 off；显式开启后从 session 抽取长期 project/decisions/conventions/learned；默认追加到 state dir `memory/*.md`，显式 project 才写 `.local-agent/memory/*.md` | 真实 session 验证 |
@@ -166,7 +166,7 @@ python3 scripts/sync_project_excel.py
 | T-054 | P1 | P7 | 企业项目真实联网只读压测复跑 | 当前 Codex 环境阻断，用户本机待跑 | User + Agent | 验证 `--cwd` 企业项目 + `--allow-dir` 需求目录 + 百炼 provider + 用户级 state-dir 的真实链路 | memory consolidation 完成后已用 `--memory-consolidation off` 再次尝试；sandbox 因 DNS/网络失败，外部执行仍被 Codex 宿主策略拒绝。目标仓库未发现 `.local-agent`。用户在允许环境中运行后，把 session 输出回贴即可继续分析。 |
 | T-055 | P1 | P7 | Session memory consolidation | 已完成并 review | Agent | 把 session 中的可复用经验定期整理进长期 memory，减少后续重复交代，同时避免默认写项目文件 | `--memory-consolidation auto|llm` 和 `--memory-scope state|project` 已支持；默认 off，开启后默认写 state dir，显式 project 才写 `.local-agent/memory`；测试覆盖默认 state、显式 project、坏 JSON 不写、默认 off 不额外调用 LLM/不写 memory |
 | T-056 | P0 | P7 | 重复工具后强制最终回答 steering | 已完成 MVP 版 | Agent | 用户本机企业压测已证明“重复工具硬停”仍会让真实需求分析没有最终答案 | 重复同参工具超过阈值后，runtime 追加 steering 并让下一次 LLM 请求 `tools=[]`；回归测试确认模型会返回 `final answer from collected evidence` |
-| T-057 | P0 | P7 | allowed-dir workspace roots 注入 | 已完成第二版，待复跑 | Agent | session `20260708T065705459243Z` / `20260708T070722601499Z` 暴露模型仍会误猜 `requirements`，仅 system prompt 注入 roots 不够 | system prompt/provider-bound context 增加 `[Workspace roots]`；`list_files {}` 根目录输出、path-not-found 和带 allowed-dir 的空搜索会提示 exact allowed dirs；file tool descriptions 同步说明 allowed directory；测试覆盖不重复注入和工具观察提示 |
+| T-057 | P0 | P7 | allowed-dir workspace roots 注入 | 已完成第三版，待复跑 | Agent | session `20260708T065705459243Z` / `20260708T070722601499Z` / `20260708T072404789287Z` 暴露模型仍不稳定读取 allowed-dir 需求文档，仅提示和工具观察不够 | system prompt/provider-bound context 增加 `[Workspace roots]`；`list_files {}` 根目录输出、path-not-found 和带 allowed-dir 的空搜索会提示 exact allowed dirs；需求/文档类任务创建 soft tool requirement，满足前只暴露 `list_files` / `read_file` 并要求读 allowed-dir 文档；测试覆盖不重复注入、工具观察提示和 soft requirement |
 | T-058 | P1 | P7 | 跨项目需求覆盖边界记录 | 已完成记录 | User + Agent | 用户确认当前测试项目可能无法完全覆盖需求，尤其结算需求可能需要其他项目协同 | 压测记录已说明单仓库只能输出候选前置能力和缺口；后续把相关项目也作为 `--allow-dir`，或让 Agent 先列“需要补充的项目清单” |
 
 ## 风险与决策
@@ -192,7 +192,7 @@ python3 scripts/sync_project_excel.py
 | 风险 | R-017 | 中 | 只读任务仍在目标 workspace 写 runtime 状态 | 已关闭 MVP 版 | 当前 `JsonlSessionStore`、todo、patch log 曾默认写入 `--cwd/.local-agent`；2026-07-08 企业项目只读代跑创建了 `.local-agent/sessions/*.jsonl` | 已参考 OMP 默认 session 目录在用户 agent dir 的设计，实现 `--state-dir`；sessions/todos/patch logs 与源码目录解耦，项目 memory/skills 仍保留在 workspace。 |
 | 风险 | R-018 | 中 | AGENTS/RULES 长期注入可能与当前任务冲突 | 已缓解，持续关注 | 注入区明确 advisory；system prompt 明确当前用户指令和源码证据优先；RULES 适合短规则，长背景放 AGENTS 或 memory | Claude Code 和 OMP 都把这类上下文作为指导而非硬约束；真正硬限制应靠 permission/hooks。我们先做 advisory 注入，危险动作仍靠 approval。 |
 | 风险 | R-019 | 中 | memory consolidation 可能隐式写入陈旧或敏感内容 | 已进一步缓解，持续关注 | 默认 off；显式开启后默认写用户级 state dir 的 memory，只有 `memory_scope=project` 才写项目 `.local-agent/memory`；只接受严格 JSON 的短条目；坏 JSON、空结果、deadline 耗尽、本轮已显式写 memory 时不写 | OMP local memory 位于用户 agent dir，项目 `.omp/` 主要承载人工 context/rules/skills；我们按同一边界把自动 consolidation 默认放入 state dir，项目 memory 仍需显式写入。 |
-| 风险 | R-020 | 高 | multi-root allowed dir 没有稳定进入模型操作路径 | 已补第二版，待复跑 | session `20260708T065705459243Z` 和 `20260708T070722601499Z` 中模型都尝试 `requirements` 并失败，导致未读需求文档就反推代码 | OMP 会显式提供 cwd/project context/rules，并通过运行时上下文/工具观察持续影响模型；我们新增 `[Workspace roots]`，并让 `list_files` 根目录输出、path-not-found 和带 allowed-dir 的空搜索都提示 exact allowed dirs。 |
+| 风险 | R-020 | 高 | multi-root allowed dir 没有稳定进入模型操作路径 | 已补第三版，待复跑 | session `20260708T065705459243Z` 和 `20260708T070722601499Z` 中模型尝试 `requirements` 并失败；session `20260708T072404789287Z` 已看到 roots 提示但仍未读需求文档，导致代码侧反推 | OMP 会显式提供 cwd/project context/rules，并通过 ToolChoiceQueue / soft tool requirement 做小上限纠偏；我们新增 `[Workspace roots]`、工具观察 roots 提示，并对需求/文档类任务前置 soft tool requirement。 |
 | 风险 | R-021 | 中 | 单仓库无法覆盖跨服务需求 | 已记录，持续关注 | 用户确认当前测试项目可能不覆盖完整需求；`拓展服务费结算` 可能在 incentive/settlement 等其他项目 | OMP 依赖用户提供完整 workspace/context；我们记录为压测边界，后续用多个 `--allow-dir` 接入相关项目，或者要求 Agent 明确输出“还需要哪个项目”。 |
 | ADR | ADR-001 | 2026-07-07 | 优先采纳 OMP 成熟设计，按本地目标裁剪 | 已接受 | 好设计可直接采用，复杂度按需收敛 | OMP 是重要参考实现；我们不为了“避免复制”而绕开好设计。采用标准是收益是否大于复杂度，并且不破坏个人本地使用、封闭 VM、无公网依赖和第一阶段 MVP 边界。 |
 | ADR | ADR-002 | 2026-07-07 | max_steps 只作为防失控保险丝 | 已落地 | 默认值已改为 0，不限步 | OMP 的 stepCounter 主要用于 telemetry，终止靠无 tool_calls、deadline、abort；我们把 `max_steps` 仅作为显式保险丝。 |
@@ -226,7 +226,7 @@ python3 scripts/sync_project_excel.py
 | PT-008 | P2 | 已记录 | `crcl-open/crcl-open` 本身已有大量 modified 文件，压测前后需要快照才能证明 LCA 是否污染业务文件。当前版本已把 runtime state 移出目标仓库，但真实联网压测仍要记录前后 `git status`。 | OMP 的更完整 task/worktree 能力可隔离 WIP；普通 CLI 也需要清楚记录 cwd/worktree 状态。 | 后续企业压测前先记录 `git status --short` 到 LCA 压测记录，压测后对比，不在目标 repo 写快照。 |
 | PT-009 | P1 | 已关闭并补测试 | memory consolidation 可能让只读压测产生隐式项目 memory 写入。 | OMP/Claude Code 的自动记忆是启发式长期上下文，必须与普通 context compaction 区分；OMP local memory 位于用户 agent dir，默认策略要避免只读任务隐式写项目文件。 | 默认 `off`；开启后默认 `--memory-scope state` 写 state dir；只有显式 `project` 才写 `.local-agent/memory`；新增 runtime 回归测试覆盖默认 off、默认 state 写入、显式 project 写入。 |
 | PT-010 | P0 | 已完成 MVP 修复，待用户复跑 | 企业需求只读压测中，模型围绕 `feePlan` 在相近目录重复 `search_code`，最终硬停且无最终需求落点分析。 | OMP 把重复/软强制工具看作 runtime steering 问题：小上限后切回回答或换策略，而不是无限工具探索。 | 已新增 duplicate-tool forced-final steering；下一步用户用 session `20260708T062614211387Z` 的同一命令复跑，验证是否能输出结构化分析。 |
-| PT-011 | P0 | 已补第二版，待用户复跑验证 | `--allow-dir` 具体路径没有稳定进入模型操作路径，模型猜 `requirements` 目录失败后没有读取真实需求文档。 | OMP 会把 cwd/project context 和工具可用范围显式放进运行上下文，并通过工具观察持续纠偏。 | 已补 `[Workspace roots]` 注入、file tool 描述、`list_files` 根目录 roots 输出、path-not-found roots 提示和带 allowed-dir 的空搜索提示；下一次同命令应先 list/read allowed-dir 绝对路径。 |
+| PT-011 | P0 | 已补第三版，待用户复跑验证 | `--allow-dir` 具体路径进入了提示和工具观察，但模型仍未稳定 `read_file` 真实需求文档。 | OMP 会把 cwd/project context 放进运行上下文，并用 ToolChoiceQueue / soft tool requirement 在模型偏航时限制工具和持续纠偏。 | 已补 allowed-dir soft tool requirement：任务明确提到需求/文档且有 allowed dirs 时，满足前只暴露 `list_files` / `read_file`，要求先 `read_file` allowed-dir 下候选需求文档；下一次同命令应先读需求文档再搜索主代码库。 |
 | PT-012 | P1 | 已记录 | 用户确认当前测试项目可能无法完全覆盖需求，结算需求可能需要其他项目配合。 | OMP 需要完整 workspace/context 才能做跨项目判断；证据缺失时应输出不确定点和需要补充的项目。 | 后续压测把相关项目也作为 `--allow-dir`，或让 Agent 先列出需要补充的项目/服务。 |
 
 ## P5 收口结论

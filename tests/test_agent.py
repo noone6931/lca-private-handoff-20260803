@@ -191,6 +191,41 @@ class _RepeatingToolClient:
         )()
 
 
+class _AllowedDirRequirementClient:
+    calls: list[dict] = []
+    doc_path: str = ""
+
+    def __init__(self, config: AgentConfig):
+        self.config = config
+
+    def chat(self, messages, tools, *, timeout=None):
+        tool_names = [schema.get("function", {}).get("name") for schema in tools]
+        type(self).calls.append({"messages": messages, "tool_names": tool_names})
+        if len(type(self).calls) == 1:
+            return type("Response", (), {"message": {"content": "premature answer without reading docs"}})()
+        if len(type(self).calls) == 2:
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "call_read_req",
+                                "type": "function",
+                                "function": {
+                                    "name": "read_file",
+                                    "arguments": json.dumps({"path": type(self).doc_path}),
+                                },
+                            }
+                        ],
+                    }
+                },
+            )()
+        return type("Response", (), {"message": {"content": "done after reading requirement docs"}})()
+
+
 class _InterruptingRegistry:
     def schemas(self):
         return []
@@ -262,7 +297,7 @@ class AgentRuntimeTests(unittest.TestCase):
             )
             with patch("local_agent.agent.OpenAICompatibleClient", _MessageRecordingClient):
                 runtime = AgentRuntime(config, show_tool_logs=False)
-                result = runtime.run("read requirements")
+                result = runtime.run("hello")
 
         system_content = runtime._messages[0]["content"]
         sent_system = [message for message in _MessageRecordingClient.messages if message.get("role") == "system"][0]
@@ -273,6 +308,46 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertIn("first list/read the relevant allowed directory by its exact absolute path", system_content)
         self.assertIn(str(requirements), sent_system["content"])
         self.assertEqual(sent_system["content"].count("[Workspace roots]"), 1)
+
+    def test_requirement_tasks_must_read_allowed_directory_docs_before_answering(self) -> None:
+        _AllowedDirRequirementClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            workspace = root / "workspace"
+            requirements = root / "requirements"
+            workspace.mkdir()
+            requirements.mkdir()
+            doc = requirements / "需求文档-demo.md"
+            doc.write_text("# Requirement\nRead me first.\n", encoding="utf-8")
+            _AllowedDirRequirementClient.doc_path = str(doc)
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=workspace,
+                allowed_dirs=(requirements,),
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _AllowedDirRequirementClient):
+                runtime = AgentRuntime(config, show_tool_logs=False)
+                result = runtime.run("读取需求目录中的需求文档，然后结合源码分析")
+
+        self.assertEqual(result, "done after reading requirement docs")
+        self.assertEqual(set(_AllowedDirRequirementClient.calls[0]["tool_names"]), {"list_files", "read_file"})
+        self.assertEqual(set(_AllowedDirRequirementClient.calls[1]["tool_names"]), {"list_files", "read_file"})
+        self.assertIn("search_code", _AllowedDirRequirementClient.calls[2]["tool_names"])
+        sent_text = "\n".join(
+            str(message.get("content") or "")
+            for call in _AllowedDirRequirementClient.calls[:2]
+            for message in call["messages"]
+        )
+        self.assertIn("[Runtime tool requirement]", sent_text)
+        self.assertIn(str(doc), sent_text)
+        tool_messages = [message for message in runtime._messages if message.get("role") == "tool"]
+        self.assertTrue(any(str(doc) in str(message.get("content") or "") for message in tool_messages))
 
     def test_budget_seconds_stops_before_next_llm_request(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -43,7 +43,7 @@
 - `apply_patch` 已支持 `replace`、`insert_before`、`insert_after`，并兼容 Python 3.12。
 - 非交互审批、LLM 非 JSON 响应、session 恢复坏尾部、search_code 绝对路径泄漏等问题已经修复。
 - 已完成 Agent 自举测试：能够通过百炼模型调用工具读取、修改、测试和查看 diff。
-- 测试基线：143 个测试在正常本地环境通过。
+- 测试基线：144 个测试在正常本地环境通过。
 
 当前已具备：
 
@@ -61,7 +61,7 @@
 - LCA 默认工作流已沉到 system prompt 和 runtime workflow reminder：自然语言代码任务会默认先理解、必要时 todo、修改前读取、patch 写入、修改后测试和 diff。
 - OMP 风格 auto summary 已落地：默认 `--summary-mode auto`，小历史不摘要，超过 reserve 阈值后调用当前 provider 生成语义摘要，失败回退本地摘要；`local` / `llm` 仍可显式指定。
 - 轻量 LSP 风格工具已落地：`lsp_symbols`、`lsp_workspace_symbols`、`lsp_document_symbols`、`lsp_definition`、`lsp_references`、`lsp_diagnostics`，覆盖 Python、Java、JavaScript、TypeScript、Vue，不启动外部语言服务器；workspace/document symbols 是兼容别名。
-- Multi-root workspace 已落地：`--allow-dir` / `AGENT_ALLOWED_DIRS` 可显式授权额外目录给文件、搜索、LSP 和 patch 工具；system prompt、`list_files` 根目录输出、path-not-found 错误和带 allowed-dir 的空搜索会列出 primary `--cwd` 和 allowed dirs，降低模型猜目录概率；shell、git、显式项目 memory/skills 仍锚定 `--cwd`，session/todo/patch logs 和默认 consolidation memory 走 state dir。
+- Multi-root workspace 已落地：`--allow-dir` / `AGENT_ALLOWED_DIRS` 可显式授权额外目录给文件、搜索、LSP 和 patch 工具；system prompt、`list_files` 根目录输出、path-not-found 错误和带 allowed-dir 的空搜索会列出 primary `--cwd` 和 allowed dirs；需求/文档类任务会触发 OMP 风格 soft tool requirement，先要求 `read_file` allowed-dir 文档，再释放完整工具集；shell、git、显式项目 memory/skills 仍锚定 `--cwd`，session/todo/patch logs 和默认 consolidation memory 走 state dir。
 - 跨项目 env-file 已落地：CLI 支持显式 `--env-file`，`./agent` 会自动把 LCA 安装目录 `.env` 作为 env-file 加载，使 token/provider 配置与目标 `--cwd` 解耦。优先级是：真实环境变量 > 显式 env-file > 目标 workspace `.env`。
 - 用户级 / 项目级常驻上下文已落地：新 session 会读取用户级 `AGENTS.md` 和项目级 `.local-agent/AGENTS.md`，作为 advisory context 注入。
 - Sticky rules 已落地：每次发送模型请求前会读取用户级 `RULES.md` 和项目级 `.local-agent/RULES.md`，用于短规则在长会话中保持可见。
@@ -79,7 +79,7 @@
 
 - Path-scoped rules 还未实现，作为下一步候选。
 - Managed skills / autolearn 继续暂缓。
-- 企业项目联网压测：用户已确认可外发给百炼，Codex 执行环境仍拒绝代跑将企业私有代码/需求发送到三方 API；用户本机 session `20260708T062614211387Z` 已跑通真实百炼只读链路，但在 `feePlan` 重复搜索后硬停且未输出最终分析，已补 duplicate-tool forced-final steering。复跑 session `20260708T065705459243Z` / `20260708T070722601499Z` 已输出最终分析，但没有读取真实 `--allow-dir` 需求目录；仅 system prompt roots 不够，已补 `list_files` 根目录输出、path-not-found 和带 allowed-dir 空搜索的 roots 提示。
+- 企业项目联网压测：用户已确认可外发给百炼，Codex 执行环境仍拒绝代跑将企业私有代码/需求发送到三方 API；用户本机 session `20260708T062614211387Z` 已跑通真实百炼只读链路，但在 `feePlan` 重复搜索后硬停且未输出最终分析，已补 duplicate-tool forced-final steering。复跑 session `20260708T065705459243Z` / `20260708T070722601499Z` / `20260708T072404789287Z` 已输出最终分析，但没有读取真实 `--allow-dir` 需求目录；仅 roots 提示和工具观察不够，已补 allowed-dir soft tool requirement。
 - 用户确认当前测试项目可能无法完全覆盖需求，尤其“拓展服务费结算”可能需要其他项目配合；后续跨服务需求应把相关项目也作为 `--allow-dir`，或让 Agent 明确输出需要补充的项目/服务。
 - Runtime state 与 workspace 已解耦：`--state-dir` / `AGENT_STATE_DIR` 可指定用户级 state root；默认 `${XDG_STATE_HOME:-~/.local/state}/local-coding-agent/workspaces/<workspace-key>/`；sessions/todos/patch logs 已不再默认写入目标 `--cwd/.local-agent`。显式项目 memory/skills 仍保留在 workspace 中，自动 consolidation 默认写 state dir。
 - 已对 `/Users/chengming/mycode/project/crcl-open/crcl-open` 做本地 state-dir 验证：默认 state dir 为 `/Users/chengming/.local/state/local-coding-agent/workspaces/mycode-project-crcl-open-crcl-open-966d4fe7a33b`，目标仓库当前未发现 `.local-agent`。
@@ -87,7 +87,7 @@
 - LCA 自身综合压测会话 `20260708T024203733199Z` 暴露重复工具调用循环，已用窗口式重复工具熔断缓解；修复后复测会话 `20260708T025519414693Z` 已按要求完成工具调用并输出总结。企业压测 session `20260708T062614211387Z` 又暴露“硬停但无最终回答”，因此新增 forced-final steering。
 - 百炼真实小改复测会话 `20260707T094246132064Z` 已验证 todo、dry_run、apply_patch、session allow、rollback、run_tests、git_diff 主链路可跑通；最终仅新增一个测试 docstring。
 - 还没有基于模型 context window 的精确 token 预算；当前用字符窗口近似 OMP reserve 策略。
-- 还没有完整 OMP ToolChoiceQueue / soft tool requirement；当前用 system/tool 描述、runtime reminder、todo reminder、pruning、重复工具熔断和 forced-final steering 做轻量本地版。
+- 还没有完整 OMP ToolChoiceQueue；当前只为 allowed-dir 需求文档读取实现了轻量 soft tool requirement，其余场景仍用 system/tool 描述、runtime reminder、todo reminder、pruning、重复工具熔断和 forced-final steering 做本地版。
 - LSP 目前是多语言轻量静态工具，不是完整 LSP server，不支持 rename / code action / DAP。
 - provider 请求失败发生在 assistant tool_call 之前，当前会以 `LlmError` 停止；后续可继续优化用户提示。
 
@@ -102,7 +102,7 @@
 | P4 | 上下文治理 | 已完成 MVP 版 | 初版 summary / compaction、工具输出折叠、长需求文件工作流。 |
 | P5 | 安全与恢复增强 | 已完成并收口 | synthetic tool result、patch preview、回滚策略、非信任仓库提示、OMP 风格 approval model、approval prompt deadline cancel；真实小改复测通过。 |
 | P6 | 日用体验与默认工作流固化 | 已完成 MVP 版 | OMP 默认工作流本地化：system prompt、工具描述、轻量 runtime nudge。 |
-| P7 | 高级工程能力轻量版 | 进行中 | 已完成 OMP 风格 auto summary、多语言轻量 LSP、LSP 兼容别名、multi-root workspace roots 与工具观察提示、Markdown memory 启动注入、learn、可选 memory consolidation、authored skills discovery、综合压测记录、重复工具调用熔断、duplicate-tool forced-final steering、tool result pruning、todo steering、跨项目 env-file 和用户级 `--state-dir` runtime state 分层；path-scoped rules、DAP、TUI、subagents、reviewer、AST edit、managed skills 继续后置。 |
+| P7 | 高级工程能力轻量版 | 进行中 | 已完成 OMP 风格 auto summary、多语言轻量 LSP、LSP 兼容别名、multi-root workspace roots 与工具观察提示、allowed-dir soft tool requirement、Markdown memory 启动注入、learn、可选 memory consolidation、authored skills discovery、综合压测记录、重复工具调用熔断、duplicate-tool forced-final steering、tool result pruning、todo steering、跨项目 env-file 和用户级 `--state-dir` runtime state 分层；path-scoped rules、DAP、TUI、subagents、reviewer、AST edit、managed skills 继续后置。 |
 
 ## 已完成功能
 
@@ -237,7 +237,7 @@
 | R-017 | 只读任务仍在目标 workspace 写 runtime 状态 | 已关闭 MVP 版 | 目标仓库会出现 `.local-agent/sessions`，不利于企业项目零业务落盘压测。 | 已参考 OMP 将 sessions 放在用户 agent dir 的设计，实现 `--state-dir`；sessions/todos/patch logs 与 workspace 解耦。 |
 | R-018 | AGENTS/RULES 长期注入可能与当前任务冲突 | 已缓解，持续关注 | 用户级或项目级规则如果过期，会跨 session 影响模型判断。 | 注入区明确 advisory；system prompt 明确当前用户指令和源码证据优先；RULES 适合短规则，长背景放 AGENTS 或 memory。 |
 | R-019 | 自动 memory consolidation 可能隐式写入陈旧或敏感内容 | 已进一步缓解，持续关注 | session 中的企业信息、临时结论或模型误判如果自动写入 memory，会跨 session 放大。 | 默认 `off`；显式开启后默认写用户级 state dir 的 memory，只有 `memory_scope=project` 才写项目 `.local-agent/memory`；只接受严格 JSON 的四类短条目；坏 JSON、空结果、deadline 耗尽、本轮已显式写 memory 时不写；memory 仍是 advisory。 |
-| R-020 | multi-root allowed dir 没有稳定进入模型操作路径 | 已补第二版，待复跑 | 模型会猜 `requirements` 等不存在目录，导致未读取真实需求文档就做代码侧反推；session `20260708T070722601499Z` 证明仅 system prompt 注入 roots 不够。 | 参考 OMP 显式运行时上下文和工具观察纠偏的方式，新增 `[Workspace roots]`；`list_files` 根目录输出、path-not-found 和带 allowed-dir 的空搜索也会提示 exact allowed dirs。 |
+| R-020 | multi-root allowed dir 没有稳定进入模型操作路径 | 已补第三版，待复跑 | 模型会猜 `requirements` 等不存在目录，或看到 roots 后仍不读取真实需求文档；session `20260708T072404789287Z` 证明仅提示和工具观察不够。 | 参考 OMP ToolChoiceQueue / soft tool requirement：需求/文档类任务在 allowed-dir 文档读取前只暴露 `list_files` / `read_file`，并要求先读取候选需求文档。 |
 | R-021 | 单仓库无法覆盖跨服务需求 | 已记录，持续关注 | 如果需求实际涉及 incentive/settlement/用户中心等其他项目，单仓库分析会误把“当前仓库未命中”当成完整结论。 | 参考 OMP 对 workspace/context 的依赖边界，后续把相关项目也作为 `--allow-dir`，或让 Agent 明确输出“需要补充哪个项目”。 |
 
 ## 架构决策
@@ -270,7 +270,7 @@
 | 测试 | 通过 | P5 收口时 90 个 unittest、compileall、xlsx 检查、diff check 均通过；P7 当前代码已跑通 140 个 unittest、compileall 和 diff check。 |
 | 日用入口 | 通过 | README 已补只读分析和小改任务命令模板。 |
 | 开放风险 | 可接受 | shell 仍非沙箱、prompt injection 仍需靠审批和封闭 VM；token budget / output reserve / managed skills 留到后续评估。 |
-| 下一阶段 | P7 轻量高级能力真实压测后续 | 企业项目联网压测已获用户允许，用户本机 session `20260708T062614211387Z` 已暴露 `feePlan` 重复搜索无最终回答；跨项目 env-file、轻量 pruning / todo steering、memory consolidation 和 duplicate-tool forced-final steering 已完成。下一步复跑同一企业命令，若仍出现方向收敛问题再引入完整 ToolChoiceQueue / soft tool requirement。 |
+| 下一阶段 | P7 轻量高级能力真实压测后续 | 企业项目联网压测已获用户允许，用户本机 session `20260708T062614211387Z` 已暴露 `feePlan` 重复搜索无最终回答；跨项目 env-file、轻量 pruning / todo steering、memory consolidation、duplicate-tool forced-final steering 和 allowed-dir soft tool requirement 已完成。下一步复跑同一企业命令，若仍出现方向收敛问题再评估更完整 ToolChoiceQueue。 |
 
 ## 推荐工作流
 
