@@ -191,6 +191,41 @@ class _RepeatingToolClient:
         )()
 
 
+class _UselessSearchPatternClient:
+    calls = 0
+    tools_seen: list[int] = []
+
+    def __init__(self, config: AgentConfig):
+        self.config = config
+
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).calls += 1
+        type(self).tools_seen.append(len(tools))
+        if not tools:
+            return type("Response", (), {"message": {"content": "final answer after empty search evidence"}})()
+        path = f"dir{type(self).calls % 10}"
+        pattern = "MissingBusinessTerm" if type(self).calls % 2 else "missingbusinessterm"
+        return type(
+            "Response",
+            (),
+            {
+                "message": {
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": f"call_{type(self).calls}",
+                            "type": "function",
+                            "function": {
+                                "name": "search_code",
+                                "arguments": json.dumps({"pattern": pattern, "path": path}),
+                            },
+                        }
+                    ],
+                }
+            },
+        )()
+
+
 class _AllowedDirRequirementClient:
     calls: list[dict] = []
     doc_path: str = ""
@@ -720,6 +755,44 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertEqual(len(steering_messages), 1)
         self.assertEqual(_RepeatingToolClient.calls, 5)
         self.assertEqual(_RepeatingToolClient.tools_seen[-1], 0)
+
+    def test_repeated_useless_search_pattern_is_steered_to_final_answer(self) -> None:
+        _UselessSearchPatternClient.calls = 0
+        _UselessSearchPatternClient.tools_seen = []
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            for index in range(10):
+                directory = workspace / f"dir{index}"
+                directory.mkdir()
+                (directory / "sample.txt").write_text("unrelated content\n", encoding="utf-8")
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=workspace,
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+                context_char_budget=0,
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _UselessSearchPatternClient):
+                runtime = AgentRuntime(config, show_tool_logs=False)
+                result = runtime.run("只读分析这个项目并最后输出结论")
+
+        tool_messages = [message for message in runtime._messages if message.get("role") == "tool"]
+        skipped_messages = [
+            message for message in tool_messages if "search_code has already returned no matches" in message["content"]
+        ]
+        steering_messages = [
+            str(message.get("content"))
+            for message in runtime._messages
+            if "repeated search_code calls with the same no-match pattern" in str(message.get("content"))
+        ]
+        self.assertEqual(result, "final answer after empty search evidence")
+        self.assertEqual(_UselessSearchPatternClient.tools_seen[-1], 0)
+        self.assertEqual(len(skipped_messages), 1)
+        self.assertGreaterEqual(len(steering_messages), 1)
 
     def test_repeated_read_file_ranges_are_steered_to_final_answer(self) -> None:
         _RepeatedReadFileRangeClient.calls = 0

@@ -9,7 +9,7 @@
 | 百炼模型连通性 | 通过 | `./agent --provider bailian ... "只回答 OK"` 返回 `OK`，session `20260708T024039368221Z`。 |
 | LCA 自身只读综合压测 | 初次暴露重复工具循环，修复后复测通过 | session `20260708T024203733199Z` 成功调用 `todo_add/list_files/read_file/search_code/lsp_symbols`，随后重复 `search_code` 和 `todo_read`，最终由 `budget_seconds=240` 停止。修复后 session `20260708T025519414693Z` 按要求完成工具调用并输出五句总结。 |
 | 企业项目本地扫描 | 通过 | `/Users/chengming/mycode/project` 下发现 `zqyl-user-center-service` 和 `crcl-open/crcl-open` 两个 Java 企业项目，合计约 7888 个 Java/XML/YAML 文件。 |
-| 企业项目联网 LCA 压测 | 当前 Codex full-access 环境已可代跑；需求文档前置读取和重复读 guard 已通过，继续收敛最终回答证据一致性 | 早期 Codex 宿主不能代跑企业源码/需求外发，后续用户切到 full-access + network enabled 后，Agent 代跑 session `20260708T081827983347Z` 成功调用百炼。该 session 开头读取两份真实需求 md，后续定位到 `selectFeePlanList` / `IncentiveFeign` / `QueryFeePlanInfo*` 和批量导入链路；连续读取 `HandleCrclServiceApplication.java` 时 repeated read-file guard 触发并成功 forced-final，没有再卡死。但最终回答仍把已读过的 `QueryFeePlanInfoReq.java` 说成“not yet read”，说明 forced-final steering 需要同时带原始用户请求和更硬的“已读文件不得称未读”规则，已补强。 |
+| 企业项目联网 LCA 压测 | 当前 Codex full-access 环境已可代跑；最新复跑已按 5 点结构收束 | 早期 Codex 宿主不能代跑企业源码/需求外发，后续用户切到 full-access + network enabled 后，Agent 代跑 session `20260708T081827983347Z` 成功调用百炼。该 session 验证需求文档前置读取和 repeated read-file guard 生效，但最终回答仍把已读文件说成未读。随后 session `20260708T082703005777Z` 暴露同一空搜索词跨路径扩散循环，已按 OMP useless/pruning + soft escalation 思路补搜索词级 guard。最新 session `20260708T083312934017`：前置读取两份需求 md，定位批量导入和息费/投资方案证据，repeated read-file guard 触发后成功 forced-final，并按用户要求输出 1-5 点结构。 |
 | 企业项目本地只读扫描 | 通过 | 已对 `zqyl-user-center-service` 和 `crcl-open/crcl-open` 做本地 `find` / `rg` 扫描，不调用模型、不外发内容。 |
 | 外部需求目录 multi-root 场景 | 本地确认 | `/Users/chengming/mynote/1_projects/0630_YXR-971_平台通用优化` 包含 `HERMES-BORROW.md`、`CODE-HANDOFF.md`、两个需求文档和原型 HTML，适合用 `--allow-dir` 验证需求到代码映射。 |
 
@@ -71,6 +71,10 @@ cd /Users/chengming/mycode/self/local-coding-agent
 
 提交 `125c4b0` 并切换到 full-access + network enabled 后，Agent 代跑 session `20260708T081827983347Z`：前两步稳定读取两份需求 md；中段通过 LSP/search/read_file 定位到 `CrclLimitMainBySelectController.selectFeePlanList`、`CrclLimitMainBySelectApplication.selectFeePlanList`、`IncentiveFeign.queryFeePlanInfo`、`QueryFeePlanInfoDto/Req`、`HandleCrclController.importBalanceExcel`、`CrclBatchImportReq` 和 `HandleCrclServiceApplication.importBalanceExcel`；后段连续读取 `HandleCrclServiceApplication.java` 相邻范围时 repeated read-file guard 触发，下一轮成功无工具输出最终回答。仍存在一个新问题：最终回答把已经读过的 `QueryFeePlanInfoReq.java` 写成“not yet read”。这说明仅列已读文件还不够，forced-final steering 还需要带原始用户请求摘要，并明确“已读文件不得称未读；若还需深读，只能说明需要补充细节”。已按 OMP runtime context / steering 思路补强。
 
+session `20260708T082703005777Z` 复跑时，模型围绕同一无结果关键词 `exceptionCoreEnterprise` / `ExceptionCoreEnterprise` 在多个子目录之间扩散搜索，绕过了“同参重复”guard。该 run 被中断以避免继续消耗 token。按 OMP 对 useless tool result、pruning 和 soft tool escalation 的处理思路，新增搜索词级 guard：同一搜索词忽略大小写后连续多次 `No matches`，即使路径不同，也会跳过后续搜索并 forced-final。
+
+session `20260708T083312934017` 复跑通过：模型先读两份需求 md，再用组合关键词定位 `HandleCrclServiceApplication.java`、`BatchImportCrclErrorDto.java`、`InvestmentPlanFeignApi.java`、`CrclInvestmentPlanDto.java` 等证据；后续连续读取 `HandleCrclServiceApplication.java` 相邻范围时 repeated read-file guard 触发，最终回答按 5 点结构输出。仍有轻微准确性风险：最终回答中的“Controller 缺失/下一步找 web/controller”需要后续实现前继续用源码验证，但 runtime 收束问题已明显缓解。
+
 同时，用户确认当前测试项目可能无法完全覆盖该需求，尤其“拓展服务费结算”可能需要其他服务/项目配合。因此，单仓库压测结论只能说明 `crcl-open` 中的候选前置能力、缺口和跨服务依赖，不能证明完整需求在该仓库内可实现。
 
 ## 问题清单
@@ -83,6 +87,7 @@ cd /Users/chengming/mycode/self/local-coding-agent
 | PT-013 | P0 | 模型可能在同一个大文件上连续读取相邻范围，最终偏离原始任务输出。 | session `20260708T073252231781Z` 已正确读取需求文档，但后半段连续读取 `HandleCrclServiceApplication.java` 大量相邻区间，最终回答只总结该文件里的两个导出方法，没有按用户要求输出项目结构、两个需求落点、证据、不确定点和下一步文件。 | OMP 对病态子循环设置小上限，并用 runtime steering/pruning/deadline 收束，而不是让工具探索无限延伸。工具结果可以被 supersede/prune，重复探索应切回最终回答。 | 已补同文件切片读取漂移 guard：近期同一路径 `read_file` 超过阈值后返回 tool error，注入 final-answer steering，下一轮 `tools=[]`，要求回到原始输出结构并基于已收集证据回答。 |
 | PT-014 | P0 | 显式只读任务可能因“下一步实现建议”等措辞误关同文件读取 guard，且最终回答遗忘已读需求文档。 | session `20260708T074609696125Z` 开头已读取两份 allowed-dir 需求 md，但后续重复探索 DTO/大文件；最终回答错误写出“Requirement doc V1.1 unread”。根因是只读 prompt 中包含“如果下一步要实现”，触发编辑类排除词，导致 read-file drift guard 未开启。 | OMP 的做法是把用户当前硬约束和 runtime state 放在持续上下文里，并用 steering/tool-choice 小上限让模型回到原始任务；显式 permission/readonly 语义不应被后续普通业务词覆盖。 | 已改为显式只读/不要修改文件/不要写文件等文件级只读词优先于编辑词；同时 forced-final steering 会列出本轮已成功读取的文件路径，要求模型不要声称这些文件未读。新增回归测试覆盖“只读压测 + 下一步实现”场景。 |
 | PT-015 | P0 | forced-final 后仍可能把已读文件列为“未读/下一步待读”。 | session `20260708T081827983347Z` 中 `QueryFeePlanInfoReq.java` 已成功 read_file，但最终回答仍写出 “not yet read”。同时最终回答虽有结构化内容，但没有完全按用户要求的 5 点结构展开。 | OMP 会把当前任务、runtime state、tool evidence 和 steering 一起放回上下文，并用 tool-choice/forced-final 明确模型下一步必须回答什么，而不是只提醒“不要继续读”。 | 已补强 forced-final steering：注入原始用户请求摘要；已读文件列表后追加“不得声称未读，如仍需实现级深读，应说明已读但缺少哪些细节”。测试覆盖该 steering 内容。 |
+| PT-016 | P0 | 同一空搜索词跨路径扩散会绕过同参重复 guard。 | session `20260708T082703005777Z` 中模型反复搜索 `exceptionCoreEnterprise` / `ExceptionCoreEnterprise`，路径从全仓到 `src/main/java`、`application`、`domain`、`base` 等多级目录变化，因此同参重复 guard 没触发，最终被人工中断。 | OMP 会标记 useless tool result，并通过 pruning、tool-choice/soft escalation 小上限把模型从低价值工具探索拉回回答。 | 已新增搜索词级 guard：同一 `search_code` pattern 忽略大小写并归一空白后，多次无结果会跳过后续搜索、注入 forced-final steering，并要求基于已收集证据回答或换真正不同的业务词。session `20260708T083312934017` 未再出现该空搜索扩散并按 5 点结构收束。 |
 | PT-012 | P1 | 单一企业项目可能无法覆盖跨服务需求，Agent 容易把“本仓库未命中”误读成“需求不存在”。 | 用户确认本次测试项目可能无法完全覆盖需求；`拓展服务费结算` 在 `crcl-open` 里未找到直接 Controller/Application/Mapper，只有 fee plan / incentive feign 等前置线索。 | OMP 依赖明确 workspace/context 和用户提供的项目集合；当需求跨仓库时，应让模型把“缺失证据”和“需要其他项目”作为结论，而不是强行在当前仓库闭环。 | 文档记录该边界；后续真实需求压测应把相关项目也作为 `--allow-dir` 加入，或分轮让 Agent 先输出“当前项目证据 + 需要补充的项目清单”。 |
 | PT-002 | P0 | 企业源码/需求发送到三方 AI API 需要明确数据外发边界。 | 用户已确认可发给百炼；早期受限 Codex 环境曾拒绝代跑该联网压测，因为会把真实企业代码和需求内容发送到三方 AI API。切换 full-access + network enabled 后，Agent 已代跑 session `20260708T081827983347Z`。 | OMP 的模型 provider 调用天然会把进入上下文的内容发给已配置 provider；它依靠 provider/config、workspace context、工具审批和 permission gate 控制执行行为，但不是“私有代码不外发”的自动保证，也不是默认禁止外发。 | LCA 不内置“企业数据不能外发”禁令；是否能跑由用户授权、provider、permission 和当前宿主环境共同决定。 |
 | PT-003 | P1 | 跨项目运行时 token 配置不够顺手。 | 原先 `load_config()` 只加载目标 `--cwd/.env`；当 `--cwd` 切到企业项目时，如果 token 只在 LCA 仓库 `.env`，需要手动 source。 | OMP `AgentOptions` 中 `getApiKey(model)`、`model`、`cwd/cwdResolver` 是分离的：凭据/模型是 runtime 配置，cwd 是项目上下文。源码依据：`packages/agent/src/agent.ts` 和 `packages/agent/src/agent-loop.ts`。 | 已新增 `--env-file`；`./agent` 会自动把 LCA 安装目录 `.env` 注入为 env-file，再加载目标 workspace `.env`。优先级：真实环境变量 > env-file > workspace `.env`。 |
@@ -107,6 +112,7 @@ cd /Users/chengming/mycode/self/local-coding-agent
 | 同文件连续切片读取漂移 guard | `src/local_agent/agent.py` / `tests/test_agent.py` | 已完成 |
 | 显式只读优先于编辑词，并在 forced-final steering 注入已读文件证据 | `src/local_agent/agent.py` / `tests/test_agent.py` | 已完成 |
 | forced-final steering 注入原始请求和已读文件一致性规则 | `src/local_agent/agent.py` / `tests/test_agent.py` | 已完成 |
+| search_code 空搜索词跨路径 guard | `src/local_agent/agent.py` / `tests/test_agent.py` | 已完成 |
 | 增加跨项目 env-file | `src/local_agent/config.py` / `src/local_agent/cli.py` / `agent` | 已完成 |
 | 增加 `ToolResult.useless` 标记 | `src/local_agent/tools/base.py` | 已完成 |
 | 空搜索和空 LSP 结果标记为 useless | `src/local_agent/tools/search.py` / `src/local_agent/tools/lsp.py` | 已完成 |

@@ -67,6 +67,10 @@ MAX_IDENTICAL_TOOL_CALLS_IN_RECENT_WINDOW = 3
 REPEAT_TOOL_CALL_WINDOW = 12
 MAX_DUPLICATE_TOOL_GUARD_HITS = 8
 MAX_DUPLICATE_TOOL_FINAL_ANSWER_STEERS = 2
+MAX_USELESS_SEARCHES_PER_PATTERN_IN_RECENT_WINDOW = 8
+USELESS_SEARCH_PATTERN_WINDOW = 20
+MAX_USELESS_SEARCH_PATTERN_GUARD_HITS = 4
+MAX_USELESS_SEARCH_PATTERN_FINAL_ANSWER_STEERS = 2
 MAX_READ_FILE_CALLS_PER_FILE_IN_RECENT_WINDOW = 8
 READ_FILE_PATH_WINDOW = 14
 MAX_REPEATED_READ_FILE_GUARD_HITS = 4
@@ -202,9 +206,12 @@ class AgentRuntime:
         self._session_tool_approval: dict[str, str] = {}
         self._summary_cache: dict[str, str] = {}
         self._recent_tool_call_signatures: list[str] = []
+        self._recent_useless_search_pattern_keys: list[str] = []
         self._recent_read_file_path_keys: list[str] = []
         self._duplicate_tool_guard_hits = 0
         self._duplicate_tool_final_answer_steers = 0
+        self._useless_search_pattern_guard_hits = 0
+        self._useless_search_pattern_final_answer_steers = 0
         self._repeated_read_file_guard_hits = 0
         self._repeated_read_file_final_answer_steers = 0
         self._read_file_evidence_paths: list[str] = []
@@ -309,6 +316,7 @@ class AgentRuntime:
                 arguments = function.get("arguments") or "{}"
                 self._log_tool_start(name, arguments)
                 duplicate_hits_before = self._duplicate_tool_guard_hits
+                useless_search_hits_before = self._useless_search_pattern_guard_hits
                 repeated_read_hits_before = self._repeated_read_file_guard_hits
                 try:
                     result = self._execute_tool_with_repeat_guard(name, arguments, tool_context)
@@ -330,6 +338,7 @@ class AgentRuntime:
                 self._record_read_file_evidence(name, arguments, result)
                 self._observe_soft_tool_requirement(name, arguments, result)
                 duplicate_skipped = self._duplicate_tool_guard_hits > duplicate_hits_before
+                useless_search_skipped = self._useless_search_pattern_guard_hits > useless_search_hits_before
                 repeated_read_skipped = self._repeated_read_file_guard_hits > repeated_read_hits_before
                 if repeated_read_skipped and self._steer_after_repeated_read_file():
                     self._append_synthetic_tool_results(
@@ -343,6 +352,18 @@ class AgentRuntime:
                         self._repeated_read_file_stop_message(),
                     )
                     return self._stop_for_repeated_read_file(deadline, run_start_index)
+                if useless_search_skipped and self._steer_after_useless_search_pattern():
+                    self._append_synthetic_tool_results(
+                        tool_calls[index + 1 :],
+                        self._useless_search_pattern_stop_message(),
+                    )
+                    break
+                if self._useless_search_pattern_guard_hits >= MAX_USELESS_SEARCH_PATTERN_GUARD_HITS:
+                    self._append_synthetic_tool_results(
+                        tool_calls[index + 1 :],
+                        self._useless_search_pattern_stop_message(),
+                    )
+                    return self._stop_for_useless_search_pattern(deadline, run_start_index)
                 if duplicate_skipped and self._steer_after_duplicate_tool_call(name):
                     self._append_synthetic_tool_results(
                         tool_calls[index + 1 :],
@@ -636,7 +657,19 @@ class AgentRuntime:
         if recent_count >= MAX_IDENTICAL_TOOL_CALLS_IN_RECENT_WINDOW:
             self._duplicate_tool_guard_hits += 1
             return self._duplicate_tool_result(name, recent_count)
-        return self._registry.execute(name, arguments, tool_context)
+        search_pattern_key = _search_pattern_key(name, arguments)
+        if search_pattern_key is not None:
+            recent_useless_count = self._recent_useless_search_pattern_keys.count(search_pattern_key)
+            if recent_useless_count >= MAX_USELESS_SEARCHES_PER_PATTERN_IN_RECENT_WINDOW:
+                self._useless_search_pattern_guard_hits += 1
+                return self._useless_search_pattern_result(search_pattern_key, recent_useless_count)
+        result = self._registry.execute(name, arguments, tool_context)
+        if search_pattern_key is not None and result.useless and not result.is_error:
+            self._recent_useless_search_pattern_keys.append(search_pattern_key)
+            self._recent_useless_search_pattern_keys = self._recent_useless_search_pattern_keys[
+                -USELESS_SEARCH_PATTERN_WINDOW:
+            ]
+        return result
 
     def _repeated_read_file_result(self, path_key: str, prior_count: int) -> ToolResult:
         return ToolResult(
@@ -655,6 +688,17 @@ class AgentRuntime:
                 f"has already run {prior_count} times in this session. "
                 "Use the earlier tool results and provide the requested final answer, "
                 "or call a different tool/arguments only if new evidence is truly necessary."
+            ),
+            is_error=True,
+        )
+
+    def _useless_search_pattern_result(self, pattern_key: str, prior_count: int) -> ToolResult:
+        return ToolResult(
+            (
+                f"Tool call skipped: search_code has already returned no matches for pattern "
+                f"'{pattern_key}' {prior_count} times recently across paths. "
+                "Use the collected evidence and provide the requested final answer, "
+                "or switch to a meaningfully different business term only if new evidence is truly necessary."
             ),
             is_error=True,
         )
@@ -681,6 +725,33 @@ class AgentRuntime:
                 "tool": name,
                 "duplicate_hits": self._duplicate_tool_guard_hits,
                 "steer_count": self._duplicate_tool_final_answer_steers,
+            },
+        )
+        self._force_final_answer_without_tools = True
+        return True
+
+    def _steer_after_useless_search_pattern(self) -> bool:
+        if self._useless_search_pattern_final_answer_steers >= MAX_USELESS_SEARCH_PATTERN_FINAL_ANSWER_STEERS:
+            return False
+        self._useless_search_pattern_final_answer_steers += 1
+        evidence = self._read_file_evidence_summary()
+        request_summary = self._final_answer_request_summary()
+        content = (
+            "Runtime steering: repeated search_code calls with the same no-match pattern are no longer useful. "
+            "Your next response must be a final answer without tool calls. "
+            "Return to the user's original requested output structure, use the evidence already collected, "
+            "state uncertainty explicitly, and list exact next files or different business terms instead of "
+            "continuing to search the same empty keyword across directories."
+            f"{request_summary}"
+            f"{evidence}"
+        )
+        self._messages.append({"role": "user", "content": content})
+        self._session.append(
+            "runtime_steering",
+            {
+                "kind": "useless_search_pattern_final_answer",
+                "guard_hits": self._useless_search_pattern_guard_hits,
+                "steer_count": self._useless_search_pattern_final_answer_steers,
             },
         )
         self._force_final_answer_without_tools = True
@@ -960,6 +1031,19 @@ class AgentRuntime:
     def _stop_for_repeated_read_file(self, deadline: float | None, run_start_index: int) -> str:
         content = (
             "Stopped because the assistant kept reading adjacent ranges from the same file. "
+            "Retry with a narrower request or ask it to answer from the evidence already collected."
+        )
+        return self._finish_run(content, deadline, run_start_index)
+
+    def _useless_search_pattern_stop_message(self) -> str:
+        return (
+            "Tool call was not executed because repeated search_code calls with the same no-match pattern "
+            "were no longer useful. Use the already collected evidence and answer the user's original request."
+        )
+
+    def _stop_for_useless_search_pattern(self, deadline: float | None, run_start_index: int) -> str:
+        content = (
+            "Stopped because the assistant kept searching the same no-match pattern across paths. "
             "Retry with a narrower request or ask it to answer from the evidence already collected."
         )
         return self._finish_run(content, deadline, run_start_index)
@@ -2106,6 +2190,25 @@ def _tool_call_signature(name: str, arguments: str | dict[str, Any]) -> str:
         "arguments": normalized_arguments,
     }
     return json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
+
+
+def _search_pattern_key(name: str, arguments: str | dict[str, Any]) -> str | None:
+    if name != "search_code":
+        return None
+    if isinstance(arguments, dict):
+        parsed: Any = arguments
+    else:
+        try:
+            parsed = json.loads(arguments or "{}")
+        except json.JSONDecodeError:
+            return None
+    if not isinstance(parsed, dict):
+        return None
+    pattern = parsed.get("pattern")
+    if not isinstance(pattern, str):
+        return None
+    normalized = " ".join(pattern.strip().lower().split())
+    return normalized or None
 
 
 def _read_file_path_key(
