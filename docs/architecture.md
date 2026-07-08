@@ -1,6 +1,6 @@
 # Local Coding Agent 架构设计
 
-更新时间：2026-07-07
+更新时间：2026-07-08
 
 本文档描述 `local-coding-agent` 当前架构基线，以及按技术成熟度划分的待加入能力。它是给后续实现者和协作 Agent 读取的架构视图；项目进度事实源仍以 `docs/project-status.md` 和 `docs/project-management.md` 为准。
 
@@ -46,8 +46,9 @@
 | 工具系统 | `[CORE-已落地]` | 工具注册、schema、tier、approval policy、参数校验、错误包装。 | `src/local_agent/tools/base.py`。 |
 | 本地工具层 | `[CORE-已落地]` | 文件、搜索、shell/test、git、patch、rollback、memory、learn、todo、ask_user。 | `src/local_agent/tools/`。 |
 | 上下文治理 | `[MVP-已落地]` | OMP 风格 reserve、auto/local/llm summary、recent 保留、tool 输出截断、单 system message。 | `AgentRuntime._messages_for_model()`。 |
+| Context / Rules | `[MVP-已落地]` | 用户级/项目级 `AGENTS.md` 启动注入，`RULES.md` 每轮 sticky 注入。 | `~/.config/local-coding-agent/`、`.local-agent/`。 |
 | 轻量代码导航 | `[MVP-已落地]` | Python、Java、JS、TS、Vue 的 symbols/definition/references/diagnostics。 | `src/local_agent/tools/lsp.py`。 |
-| 本地持久化 | `[CORE-已落地]` | JSONL session、patch log、todo、Markdown memory。 | `.local-agent/`。 |
+| 本地持久化 | `[CORE-已落地]` | JSONL session、patch log、todo、Markdown memory。 | runtime state 默认在用户级 state dir；项目 memory/skills 仍在 `.local-agent/`。 |
 | Memory / Skills | `[WIP-增强中]` | Markdown memory 启动注入、learn 和 authored skills discovery 已落地；managed skills 待评估。 | `docs/memory-skills-implementation-plan.md`。 |
 | 项目管理视图 | `[CORE-已落地]` | Markdown 事实源和 Excel 人工视图。 | `docs/project-management.md`、同步脚本。 |
 
@@ -65,10 +66,14 @@ flowchart TD
   APR --> REG["Tool registry"]
   REG --> TOOLS["Local tools"]
   TOOLS --> RT
-  RT --> SESS["JSONL session"]
-  RT --> PATCH["Patch log"]
-  RT --> TODO["Session todo"]
+  RT --> SESS["JSONL session in state dir"]
+  RT --> PATCH["Patch log in state dir"]
+  RT --> TODO["Session todo in state dir"]
+  RT --> CTFILE["AGENTS.md context"]
+  RT --> RULES["RULES.md sticky rules"]
   RT --> MEM["Markdown memory"]
+  CTFILE --> RT
+  RULES --> RT
   MEM --> RT
   SKILL["Skills directory"] -. "[NEXT] discovery" .-> RT
   RT --> U
@@ -85,14 +90,17 @@ flowchart TD
 | 工具注册 | `[CORE-已落地]` | OpenAI function schema、运行时参数校验、tier 分类。 | tier 是 approval 的基础：read/state/interaction/write/exec。 |
 | Approval | `[CORE-已落地]` | `always-ask`、`write`、`yolo`；每工具 `allow/prompt/deny`；session allow/reject；REPL `/approval`。 | 配置级 `prompt/deny` 是硬护栏，不被 session allow 绕过。 |
 | 文件读取 | `[CORE-已落地]` | workspace 或显式 allowed dir 内读文件，返回 hash tag 和行号，限制大文件和二进制。 | 写入前必须先读，给 anchored patch 提供校验锚点。 |
-| Multi-root | `[MVP-已落地]` | `--allow-dir` / `AGENT_ALLOWED_DIRS` 显式授权额外目录。 | 文件、搜索、LSP、patch 工具可访问额外目录；shell、git、session、todo、memory 仍锚定 `--cwd`。 |
+| Multi-root | `[MVP-已落地]` | `--allow-dir` / `AGENT_ALLOWED_DIRS` 显式授权额外目录。 | 文件、搜索、LSP、patch 工具可访问额外目录；shell、git、project memory/skills 仍锚定 `--cwd`，session/todo/patch logs 走 state dir。 |
 | Anchored patch | `[CORE-已落地]` | `replace`、`insert_before`、`insert_after`、`dry_run`。 | 依靠 path、hash tag、line range、old_text 多重校验。 |
 | Patch rollback | `[MVP-已落地]` | 回滚当前 session 中由 `apply_patch` 写入的补丁。 | 以 patch log 和 after tag 校验避免误回滚用户后续修改。 |
 | 搜索 | `[CORE-已落地]` | `search_code` 调用 `rg`，结果使用 workspace 相对路径。 | 作为 LSP 轻量导航之外的通用兜底。 |
 | Shell / Tests | `[CORE-已落地]` | `shell`、`run_tests`，带 timeout、budget clamp、危险命令拒绝。 | shell 不是沙箱，真正隔离依赖封闭 VM 和审批。 |
 | Git | `[CORE-已落地]` | `git_status`、`git_diff`。 | 作为最终交付摘要和人工 review 的证据。 |
-| Session | `[CORE-已落地]` | `.local-agent/sessions/*.jsonl`，支持坏尾部恢复。 | session 是对话事实，不承担长期 memory 职责。 |
-| Todo | `[MVP-已落地]` | `todo_read/add/update`，状态保存在 session 维度。 | 用于长任务进度和 compaction 后恢复上下文。 |
+| Runtime state | `[CORE-已落地]` | `--state-dir` / `AGENT_STATE_DIR`，默认 `${XDG_STATE_HOME:-~/.local/state}/local-coding-agent/workspaces/<workspace-key>/`。 | 对齐 OMP，把运行转录与目标源码目录分层，避免只读跨项目分析污染目标仓库。 |
+| Session | `[CORE-已落地]` | state dir 下的 `sessions/*.jsonl`，支持坏尾部恢复。 | session 是对话事实，不承担长期 memory 职责。 |
+| Todo | `[MVP-已落地]` | `todo_read/add/update`，状态保存在 state dir 下的 session 维度。 | 用于长任务进度和 compaction 后恢复上下文。 |
+| Startup context | `[MVP-已落地]` | 用户级 `AGENTS.md` 和项目级 `.local-agent/AGENTS.md` 启动注入。 | 常驻上下文是 advisory；项目上下文在用户上下文之后，更贴近当前 workspace。 |
+| Sticky rules | `[MVP-已落地]` | 用户级 `RULES.md` 和项目级 `.local-agent/RULES.md` 在每次 provider request 前注入。 | 用于短规则，避免长会话/compaction 后丢失关键操作约束。 |
 | ask_user | `[MVP-已落地]` | 支持 `timeout_seconds`、`default_answer`、deadline clamp。 | 只在需求歧义影响结果时使用。 |
 | Context compaction | `[MVP-已落地]` | `auto/local/llm` summary，recent 保留，tool 输出只在发给模型副本中截断。 | 当前以字符预算近似 token，保留 OMP reserve 思路。 |
 | Light LSP | `[MVP-已落地]` | symbols、definition、references、diagnostics。 | 不启动外部 language server，封闭 VM 友好。 |
@@ -145,6 +153,19 @@ flowchart TD
 - 默认 `summary_mode=auto`：触发 compaction 时尝试 LLM summary，失败回退 local summary。
 
 待增强点是 token 估算。架构上不替换现有字符预算，而是在其上增加 provider/model 相关估算，失败时继续回退字符预算。
+
+### Context / Rules
+
+当前有两类人工上下文文件：
+
+- 用户级：`~/.config/local-coding-agent/AGENTS.md`、`~/.config/local-coding-agent/RULES.md`，可用 `AGENT_CONFIG_DIR` 改目录。
+- 项目级：`.local-agent/AGENTS.md`、`.local-agent/RULES.md`。
+
+加载语义：
+
+- `AGENTS.md` 在新 session 启动时注入 system prompt，适合项目背景、个人偏好、常用流程。
+- `RULES.md` 在每次发送模型请求前追加到 provider-bound context，适合“不要自动 commit/push”这类短而重要的 sticky rules。
+- 两者都是 advisory guidance；当前用户指令和刚读取的源码证据优先。
 
 ### Memory / Skills
 
@@ -213,6 +234,8 @@ rollback 只回滚当前 session 的 patch record，并要求当前文件仍匹�
 - 本地 git status/diff。
 - anchored patch / rollback。
 - Markdown memory。
+- 用户级/项目级 `AGENTS.md` 启动注入。
+- 用户级/项目级 `RULES.md` sticky 注入。
 - Markdown memory 启动注入。
 - `learn` 工具。
 - Authored skills discovery。
@@ -237,6 +260,6 @@ rollback 只回滚当前 session 的 patch record，并要求当前文件仍匹�
 
 ## 推荐落地顺序
 
-1. 用真实需求验证 multi-root、startup memory、learn、authored skills、auto summary 和 light LSP 的组合体验。
+1. 用真实需求验证 multi-root、startup context/rules、startup memory、learn、authored skills、auto summary 和 light LSP 的组合体验。
 2. 做 token 预算，支撑更真实的长需求场景。
 3. 最后再评估 managed skills、外部 LSP adapter、AST edit、reviewer/planner 和 TUI。

@@ -163,6 +163,39 @@ class _UnexpectedRegistry:
 
 
 class AgentRuntimeTests(unittest.TestCase):
+    def test_runtime_state_dir_keeps_sessions_and_todos_out_of_workspace(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            workspace = root / "workspace"
+            state_dir = root / "state" / "workspace-key"
+            workspace.mkdir()
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=workspace,
+                state_dir=state_dir,
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _FinalClient):
+                runtime = AgentRuntime(config, show_tool_logs=False)
+                result = runtime.run("hello")
+                todo_path = state_dir / "todos" / f"{runtime._session.session_id}.json"
+                runtime._registry.execute(
+                    "todo_add",
+                    {"id": "T1", "task": "Track state dir"},
+                    runtime._tool_context,
+                )
+
+            self.assertEqual(result, "done")
+            self.assertTrue((state_dir / "sessions" / f"{runtime._session.session_id}.jsonl").exists())
+            self.assertTrue(todo_path.exists())
+            self.assertFalse((workspace / ".local-agent" / "sessions").exists())
+            self.assertFalse((workspace / ".local-agent" / "todos").exists())
+
     def test_budget_seconds_stops_before_next_llm_request(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             config = AgentConfig(
@@ -226,6 +259,80 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertIn(".local-agent/memory/project.md", system_content)
         self.assertIn("Use pytest for this project.", system_content)
         self.assertIn("advisory", system_content)
+
+    def test_user_and_project_agents_context_are_injected_at_startup(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            workspace = root / "workspace"
+            user_config = root / "user-config"
+            workspace.mkdir()
+            user_config.mkdir()
+            project_dir = workspace / ".local-agent"
+            project_dir.mkdir()
+            (user_config / "AGENTS.md").write_text("Prefer concise final answers.\n", encoding="utf-8")
+            (project_dir / "AGENTS.md").write_text("Project context: run unit tests.\n", encoding="utf-8")
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=workspace,
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+            )
+            with (
+                patch.dict("os.environ", {"AGENT_CONFIG_DIR": str(user_config)}),
+                patch("local_agent.agent.OpenAICompatibleClient", _FinalClient),
+            ):
+                runtime = AgentRuntime(config, show_tool_logs=False)
+
+        system_content = runtime._messages[0]["content"]
+        self.assertIn("[User/project context]", system_content)
+        self.assertIn(str(user_config / "AGENTS.md"), system_content)
+        self.assertIn(".local-agent/AGENTS.md", system_content)
+        self.assertIn("Prefer concise final answers.", system_content)
+        self.assertIn("Project context: run unit tests.", system_content)
+        self.assertLess(
+            system_content.index("Prefer concise final answers."),
+            system_content.index("Project context: run unit tests."),
+        )
+
+    def test_user_and_project_sticky_rules_are_sent_to_provider_context(self) -> None:
+        _MessageRecordingClient.messages = []
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            workspace = root / "workspace"
+            user_config = root / "user-config"
+            workspace.mkdir()
+            user_config.mkdir()
+            project_dir = workspace / ".local-agent"
+            project_dir.mkdir()
+            (user_config / "RULES.md").write_text("Never commit unless asked.\n", encoding="utf-8")
+            (project_dir / "RULES.md").write_text("Always summarize verification.\n", encoding="utf-8")
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=workspace,
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+            )
+            with (
+                patch.dict("os.environ", {"AGENT_CONFIG_DIR": str(user_config)}),
+                patch("local_agent.agent.OpenAICompatibleClient", _MessageRecordingClient),
+            ):
+                runtime = AgentRuntime(config, show_tool_logs=False)
+                result = runtime.run("hello")
+
+        sent_system = [message for message in _MessageRecordingClient.messages if message.get("role") == "system"][0]
+        self.assertEqual(result, "done")
+        self.assertIn("[Sticky rules]", sent_system["content"])
+        self.assertIn("Never commit unless asked.", sent_system["content"])
+        self.assertIn("Always summarize verification.", sent_system["content"])
+        self.assertNotIn("[Sticky rules]", runtime._messages[0]["content"])
 
     def test_authored_skills_metadata_is_injected_without_body(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

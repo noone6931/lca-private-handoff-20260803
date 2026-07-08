@@ -13,9 +13,11 @@ from .config import normalize_approval_mode
 from .llm import LlmError
 from .llm import OpenAICompatibleClient
 from .session.jsonl_store import JsonlSessionStore
+from .state import default_config_root
 from .tools import create_default_registry
 from .tools.base import ToolContext
 from .tools.base import ToolResult
+from .tools.base import tool_state_dir
 
 
 SYSTEM_PROMPT = """You are a local coding agent running inside a user's workspace.
@@ -33,6 +35,7 @@ Default working style:
 - Inspect git_diff after writing so the final answer can summarize exactly what changed.
 - Do not claim a command, test, or diff passed unless you actually ran the relevant tool.
 - Project memory is advisory. Current user instructions and direct repository evidence override memory. Do not write memory or use learn unless the user asks you to remember something or a durable convention is clearly established.
+- User/project AGENTS.md context and RULES.md sticky rules are advisory operating guidance. Current user instructions and direct repository evidence still take precedence when they conflict.
 - Keep final answers concise and include changed files, verification, and any remaining risk.
 """
 
@@ -44,6 +47,8 @@ DEFAULT_RESERVE_CHARS = 16384 * 4
 MIN_RESERVE_RATIO = 0.15
 STARTUP_MEMORY_NAMES = ("project", "decisions", "conventions", "learned")
 STARTUP_MEMORY_CHAR_LIMIT = 8000
+STARTUP_CONTEXT_CHAR_LIMIT = 8000
+STICKY_RULES_CHAR_LIMIT = 4000
 STARTUP_SKILLS_CHAR_LIMIT = 4000
 MAX_AUTHORED_SKILLS = 40
 MAX_SKILL_DESCRIPTION_CHARS = 320
@@ -101,11 +106,14 @@ class AgentRuntime:
         self._summary_cache: dict[str, str] = {}
         self._recent_tool_call_signatures: list[str] = []
         self._duplicate_tool_guard_hits = 0
+        self._state_dir = config.state_dir or config.workspace / ".local-agent"
         self._session = JsonlSessionStore(
             config.workspace,
+            state_dir=self._state_dir,
             session_id=session_id,
             continue_recent=continue_session,
         )
+        self._user_config_dir = default_config_root()
         system_prompt = _system_prompt_with_startup_context(config.workspace)
         self._messages: list[dict[str, Any]] = [
             {"role": "system", "content": system_prompt},
@@ -114,6 +122,7 @@ class AgentRuntime:
         self._tool_context = ToolContext(
             workspace=config.workspace,
             approval_mode=config.approval_mode,
+            state_dir=self._state_dir,
             allowed_dirs=config.allowed_dirs,
             session_id=self._session.session_id,
             auto_approve_tools=config.auto_approve_tools,
@@ -248,10 +257,10 @@ class AgentRuntime:
         todo_summary = self._open_todo_summary()
         provider_context = _prune_context_tool_outputs(self._messages)
         if self._config.context_char_budget <= 0:
-            return _provider_safe_messages(_messages_with_runtime_todo_reminder(provider_context, todo_summary))
+            return self._provider_safe_runtime_messages(provider_context, todo_summary)
         threshold = _resolve_compaction_threshold_chars(self._config.context_char_budget)
         if _estimate_message_chars(provider_context) <= threshold:
-            return _provider_safe_messages(_messages_with_runtime_todo_reminder(provider_context, todo_summary))
+            return self._provider_safe_runtime_messages(provider_context, todo_summary)
 
         system_messages = [message for message in provider_context if message.get("role") == "system"]
         non_system = [message for message in provider_context if message.get("role") != "system"]
@@ -277,9 +286,18 @@ class AgentRuntime:
                         "threshold_chars": threshold,
                     },
                 )
-                return _provider_safe_messages(compacted)
+                return self._provider_safe_runtime_messages(compacted, todo_summary)
             recent_count = max(6, recent_count // 2)
-        return _provider_safe_messages(_messages_with_runtime_todo_reminder(self._messages, todo_summary))
+        return self._provider_safe_runtime_messages(self._messages, todo_summary)
+
+    def _provider_safe_runtime_messages(
+        self,
+        messages: list[dict[str, Any]],
+        todo_summary: list[str],
+    ) -> list[dict[str, Any]]:
+        return _provider_safe_messages(
+            _messages_with_runtime_context(messages, todo_summary, self._config.workspace, self._user_config_dir)
+        )
 
     def _build_compaction_summary(
         self,
@@ -389,7 +407,7 @@ class AgentRuntime:
         return summary
 
     def _open_todo_summary(self) -> list[str]:
-        path = self._config.workspace / ".local-agent" / "todos" / f"{self._session.session_id}.json"
+        path = tool_state_dir(self._tool_context) / "todos" / f"{self._session.session_id}.json"
         if not path.exists():
             return []
         try:
@@ -543,8 +561,20 @@ def _estimate_message_chars(messages: list[dict[str, Any]]) -> int:
     return sum(len(json.dumps(message, ensure_ascii=False, default=str)) for message in messages)
 
 
-def _system_prompt_with_startup_context(workspace: Path) -> str:
+def _system_prompt_with_startup_context(workspace: Path, user_config_dir: Path | None = None) -> str:
     blocks = [SYSTEM_PROMPT.rstrip()]
+    startup_context = _load_startup_context_files(
+        workspace,
+        user_config_dir or default_config_root(),
+        max_chars=STARTUP_CONTEXT_CHAR_LIMIT,
+    )
+    if startup_context:
+        blocks.append(
+            "[User/project context]\n"
+            "The following AGENTS.md context is advisory guidance loaded at session start. "
+            "Prefer current user instructions and freshly inspected files when they conflict.\n\n"
+            f"{startup_context}"
+        )
     memory = _load_startup_memory(workspace, max_chars=STARTUP_MEMORY_CHAR_LIMIT)
     if memory:
         blocks.append(
@@ -565,16 +595,46 @@ def _system_prompt_with_startup_context(workspace: Path) -> str:
     return "\n\n".join(blocks)
 
 
+def _load_startup_context_files(workspace: Path, user_config_dir: Path, *, max_chars: int) -> str:
+    if max_chars <= 0:
+        return ""
+    candidates = [
+        user_config_dir / "AGENTS.md",
+        workspace / ".local-agent" / "AGENTS.md",
+    ]
+    return _load_markdown_blocks(workspace, candidates, max_chars=max_chars, truncation_marker="...<earlier context truncated>\n")
+
+
 def _load_startup_memory(workspace: Path, *, max_chars: int) -> str:
     memory_dir = workspace / ".local-agent" / "memory"
     if max_chars <= 0 or not memory_dir.exists():
         return ""
+    paths = [memory_dir / f"{name}.md" for name in STARTUP_MEMORY_NAMES]
+    return _load_markdown_blocks(workspace, paths, max_chars=max_chars, truncation_marker="...<earlier memory truncated>\n")
+
+
+def _load_sticky_rules(workspace: Path, user_config_dir: Path, *, max_chars: int) -> str:
+    if max_chars <= 0:
+        return ""
+    candidates = [
+        user_config_dir / "RULES.md",
+        workspace / ".local-agent" / "RULES.md",
+    ]
+    return _load_markdown_blocks(workspace, candidates, max_chars=max_chars, truncation_marker="...<earlier rules truncated>\n")
+
+
+def _load_markdown_blocks(
+    workspace: Path,
+    paths: list[Path],
+    *,
+    max_chars: int,
+    truncation_marker: str,
+) -> str:
     blocks: list[str] = []
     remaining = max_chars
-    for name in STARTUP_MEMORY_NAMES:
+    for path in paths:
         if remaining <= 0:
             break
-        path = memory_dir / f"{name}.md"
         if not path.exists() or not path.is_file():
             continue
         try:
@@ -584,21 +644,35 @@ def _load_startup_memory(workspace: Path, *, max_chars: int) -> str:
         text = text.replace("\x00", "").strip()
         if not text:
             continue
-        header = f"### {path.relative_to(workspace)}\n"
+        header = f"### {_display_context_path(workspace, path)}\n"
         available = remaining - len(header)
         if available <= 0:
             break
-        clipped = _clip_memory_text(text, max_chars=available)
+        clipped = _clip_context_text(text, max_chars=available, marker=truncation_marker)
         block = f"{header}{clipped}"
         blocks.append(block)
         remaining -= len(block) + 2
     return "\n\n".join(blocks)
 
 
+def _display_context_path(workspace: Path, path: Path) -> str:
+    try:
+        return str(path.relative_to(workspace))
+    except ValueError:
+        pass
+    try:
+        return "~/" + str(path.relative_to(Path.home()))
+    except ValueError:
+        return str(path)
+
+
 def _clip_memory_text(text: str, *, max_chars: int) -> str:
+    return _clip_context_text(text, max_chars=max_chars, marker="...<earlier memory truncated>\n")
+
+
+def _clip_context_text(text: str, *, max_chars: int, marker: str) -> str:
     if len(text) <= max_chars:
         return text
-    marker = "...<earlier memory truncated>\n"
     keep = max(0, max_chars - len(marker))
     if keep == 0:
         return marker[:max_chars]
@@ -755,6 +829,31 @@ def _messages_with_runtime_todo_reminder(
     system_messages = [message for message in messages if message.get("role") == "system"]
     non_system = [message for message in messages if message.get("role") != "system"]
     return [_system_message_with_appended_context(system_messages, reminder), *non_system]
+
+
+def _messages_with_runtime_context(
+    messages: list[dict[str, Any]],
+    todo_summary: list[str],
+    workspace: Path,
+    user_config_dir: Path,
+) -> list[dict[str, Any]]:
+    updated = list(messages)
+    sticky_rules = _load_sticky_rules(workspace, user_config_dir, max_chars=STICKY_RULES_CHAR_LIMIT)
+    if sticky_rules:
+        updated = _messages_with_sticky_rules(updated, sticky_rules)
+    return _messages_with_runtime_todo_reminder(updated, todo_summary)
+
+
+def _messages_with_sticky_rules(messages: list[dict[str, Any]], sticky_rules: str) -> list[dict[str, Any]]:
+    block = (
+        "[Sticky rules]\n"
+        "The following RULES.md guidance is repeated for this model request. "
+        "Follow it unless the current user explicitly overrides it.\n\n"
+        f"{sticky_rules}"
+    )
+    system_messages = [message for message in messages if message.get("role") == "system"]
+    non_system = [message for message in messages if message.get("role") != "system"]
+    return [_system_message_with_appended_context(system_messages, block), *non_system]
 
 
 def _system_message_with_appended_context(

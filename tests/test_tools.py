@@ -419,9 +419,10 @@ class ToolTests(unittest.TestCase):
     def test_rollback_patch_restores_latest_patch(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp).resolve()
+            state_dir = workspace / "state"
             target = workspace / "README.md"
             original = "old\n"
-            context = ToolContext(workspace=workspace, approval_mode="yolo", session_id="s1")
+            context = ToolContext(workspace=workspace, approval_mode="yolo", state_dir=state_dir, session_id="s1")
             target.write_text(original, encoding="utf-8")
 
             patch_result = patch_file(
@@ -438,8 +439,13 @@ class ToolTests(unittest.TestCase):
             rollback_result = rollback_patch({}, context)
             second_rollback = rollback_patch({}, context)
             persisted = target.read_text(encoding="utf-8")
+            patch_log = state_dir / "patches" / "s1.jsonl"
+            patch_log_exists = patch_log.exists()
+            workspace_patch_dir_exists = (workspace / ".local-agent" / "patches").exists()
 
         self.assertFalse(patch_result.is_error)
+        self.assertTrue(patch_log_exists)
+        self.assertFalse(workspace_patch_dir_exists)
         self.assertIn("Patch id:", patch_result.content)
         self.assertFalse(rollback_result.is_error)
         self.assertIn("Rolled back patch", rollback_result.content)
@@ -977,15 +983,26 @@ class ToolTests(unittest.TestCase):
     def test_todo_add_update_and_read_use_session_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp).resolve()
-            context = ToolContext(workspace=workspace, approval_mode="ask", session_id="session-1")
+            state_dir = workspace / "state"
+            context = ToolContext(
+                workspace=workspace,
+                approval_mode="ask",
+                state_dir=state_dir,
+                session_id="session-1",
+            )
 
             added = todo_add({"id": "T1", "task": "Wire budget seconds"}, context)
             updated = todo_update({"id": "T1", "status": "done", "note": "covered by tests"}, context)
             read = todo_read({}, context)
+            todo_file = state_dir / "todos" / "session-1.json"
+            todo_file_exists = todo_file.exists()
+            workspace_todo_dir_exists = (workspace / ".local-agent" / "todos").exists()
 
         self.assertFalse(added.is_error)
         self.assertFalse(updated.is_error)
         self.assertFalse(read.is_error)
+        self.assertTrue(todo_file_exists)
+        self.assertFalse(workspace_todo_dir_exists)
         self.assertIn("[done] T1: Wire budget seconds", read.content)
         self.assertIn("covered by tests", read.content)
 

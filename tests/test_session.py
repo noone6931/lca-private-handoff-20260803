@@ -8,6 +8,19 @@ from local_agent.session.jsonl_store import JsonlSessionStore, SessionError
 
 
 class SessionStoreTests(unittest.TestCase):
+    def test_session_store_can_use_state_dir_outside_workspace(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            workspace = root / "workspace"
+            state_dir = root / "state" / "workspace-key"
+            workspace.mkdir()
+
+            store = JsonlSessionStore(workspace, state_dir=state_dir)
+            store.append("user", {"content": "hello"})
+
+            self.assertTrue((state_dir / "sessions" / f"{store.session_id}.jsonl").exists())
+            self.assertFalse((workspace / ".local-agent").exists())
+
     def test_load_messages_reconstructs_user_assistant_and_tool_result(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp).resolve()

@@ -5,6 +5,9 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from .state import resolve_state_root
+from .state import workspace_state_dir
+
 
 class ConfigError(RuntimeError):
     """Raised when the agent cannot be configured safely."""
@@ -26,6 +29,7 @@ class AgentConfig:
     api_key: str
     model: str
     workspace: Path
+    state_dir: Path | None = None
     allowed_dirs: tuple[Path, ...] = ()
     max_steps: int = DEFAULT_MAX_STEPS
     budget_seconds: int | None = DEFAULT_BUDGET_SECONDS
@@ -43,6 +47,7 @@ def load_config(
     config_path: str | None,
     env_file: str | None = None,
     cwd: str | None,
+    state_dir: str | None = None,
     provider: str | None,
     api_base_url: str | None,
     api_key: str | None,
@@ -61,6 +66,11 @@ def load_config(
     workspace = Path(cwd or file_config.get("workspace") or os.getcwd()).expanduser().resolve()
     if not workspace.exists() or not workspace.is_dir():
         raise ConfigError(f"Workspace does not exist or is not a directory: {workspace}")
+    raw_state_dir = state_dir or file_config.get("state_dir") or os.environ.get("AGENT_STATE_DIR")
+    resolved_state_root = resolve_state_root(raw_state_dir, workspace)
+    if resolved_state_root.exists() and not resolved_state_root.is_dir():
+        raise ConfigError(f"state_dir exists but is not a directory: {resolved_state_root}")
+    resolved_state_dir = workspace_state_dir(resolved_state_root, workspace)
     _load_dotenv(_resolve_env_file(env_file, workspace), required=env_file is not None)
     _load_dotenv(workspace / ".env")
 
@@ -169,6 +179,7 @@ def load_config(
         api_key=resolved_api_key,
         model=resolved_model,
         workspace=workspace,
+        state_dir=resolved_state_dir,
         allowed_dirs=resolved_allowed_dirs,
         max_steps=resolved_max_steps,
         budget_seconds=resolved_budget_seconds,

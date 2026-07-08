@@ -20,12 +20,17 @@ class ToolResult:
 class ToolContext:
     workspace: Path
     approval_mode: str
+    state_dir: Path | None = None
     allowed_dirs: tuple[Path, ...] = ()
     session_id: str | None = None
     auto_approve_tools: tuple[str, ...] = ()
     tool_approval: dict[str, str] | None = None
     session_tool_approval: dict[str, str] | None = None
     deadline_monotonic: float | None = None
+
+
+def tool_state_dir(context: ToolContext) -> Path:
+    return context.state_dir or context.workspace / ".local-agent"
 
 
 class ToolValidationError(RuntimeError):

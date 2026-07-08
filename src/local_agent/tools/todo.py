@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from .base import Tool, ToolContext, ToolResult
+from .base import Tool, ToolContext, ToolResult, tool_state_dir
 
 TODO_STATUSES = ["todo", "in_progress", "done", "blocked", "skipped"]
 
@@ -114,7 +114,7 @@ def todo_update(args: dict[str, Any], context: ToolContext) -> ToolResult:
 
 def _todo_path(context: ToolContext):
     session_id = context.session_id or "default"
-    return context.workspace / ".local-agent" / "todos" / f"{session_id}.json"
+    return tool_state_dir(context) / "todos" / f"{session_id}.json"
 
 
 def _load_todos(context: ToolContext) -> list[dict[str, str]]:

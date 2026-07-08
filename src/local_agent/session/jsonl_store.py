@@ -13,8 +13,16 @@ class SessionError(RuntimeError):
 
 
 class JsonlSessionStore:
-    def __init__(self, workspace: Path, *, session_id: str | None = None, continue_recent: bool = False):
-        self.session_dir = workspace / ".local-agent" / "sessions"
+    def __init__(
+        self,
+        workspace: Path,
+        *,
+        state_dir: Path | None = None,
+        session_id: str | None = None,
+        continue_recent: bool = False,
+    ):
+        self.state_dir = state_dir or workspace / ".local-agent"
+        self.session_dir = self.state_dir / "sessions"
         self.session_dir.mkdir(parents=True, exist_ok=True)
         if session_id:
             self.path = self._path_for_id(session_id)

@@ -545,13 +545,13 @@ OMP 的分层更清晰：
 - `/Users/chengming/mycode/opensource/oh-my-pi/packages/coding-agent/src/session/session-manager.ts` 的 `SessionManager.create(cwd, sessionDir?)` 默认用 `SessionManager.getDefaultSessionDir(cwd, undefined, storage)`，即“session 按 cwd 归类，但不直接写进 cwd”；
 - 项目级 `.omp/` 主要承载项目 context/config/rules/skills，而不是默认 transcript/session 存储。
 
-LCA 下一步应直接采纳这个设计：
+LCA 已在 T-052 直接采纳这个设计的 MVP 版：
 
-- 增加 `--state-dir` / `AGENT_STATE_DIR`；
-- 默认 state root 放在用户级目录，例如 `~/.local/state/local-coding-agent` 或 `~/.local-coding-agent`；
-- sessions/todos/patch logs 默认写入 `state_root/sessions/<cwd-encoded>` 或同等结构；
-- `--cwd/.local-agent/memory`、`.local-agent/skills` 是否继续项目本地，需要单独定义，因为它们是项目知识，不完全等同 runtime transcript；
-- 对“企业项目零业务落盘只读压测”，应支持不在目标仓库创建 `.local-agent/sessions`。
+- 已增加 `--state-dir` / `AGENT_STATE_DIR`；
+- 默认 state root 为 `${XDG_STATE_HOME:-~/.local/state}/local-coding-agent`；
+- sessions/todos/patch logs 默认写入 `state_root/workspaces/<workspace-key>/` 下；
+- `--cwd/.local-agent/memory`、`.local-agent/skills` 继续项目本地，因为它们是项目知识，不是 runtime transcript；
+- 对“企业项目零业务落盘只读压测”，新 session 不应再在目标仓库创建 `.local-agent/sessions`。
 
 如果明确想设保险丝：
 

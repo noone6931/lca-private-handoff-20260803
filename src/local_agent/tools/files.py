@@ -12,7 +12,7 @@ from local_agent.patch.anchored import hash_text
 from local_agent.patch.anchored import PatchError
 from local_agent.patch.anchored import resolve_workspace_path
 
-from .base import Tool, ToolContext, ToolResult
+from .base import Tool, ToolContext, ToolResult, tool_state_dir
 
 MAX_READ_BYTES = 256 * 1024
 MAX_READ_LINES = 400
@@ -319,4 +319,4 @@ def _find_rollback_record(records: list[dict[str, Any]], patch_id: str | None) -
 
 def _patch_log_path(context: ToolContext) -> Path:
     session_id = context.session_id or "default"
-    return context.workspace / ".local-agent" / "patches" / f"{session_id}.jsonl"
+    return tool_state_dir(context) / "patches" / f"{session_id}.jsonl"

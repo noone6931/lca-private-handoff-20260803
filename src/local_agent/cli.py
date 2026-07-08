@@ -14,6 +14,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("prompt", nargs="*", help="Task prompt. If omitted, starts a simple REPL.")
     parser.add_argument("--cwd", help="Workspace directory.")
     parser.add_argument(
+        "--state-dir",
+        help=(
+            "Runtime state root for sessions, todos, and patch logs. "
+            "Defaults to XDG_STATE_HOME/local-coding-agent or ~/.local/state/local-coding-agent; "
+            "workspace-specific state is stored below this root."
+        ),
+    )
+    parser.add_argument(
         "--allow-dir",
         dest="allowed_dirs",
         action="append",
@@ -85,6 +93,7 @@ def main(argv: list[str] | None = None) -> int:
             config_path=args.config,
             env_file=args.env_file,
             cwd=args.cwd,
+            state_dir=args.state_dir,
             provider=args.provider,
             api_base_url=args.api_base_url,
             api_key=args.api_key,

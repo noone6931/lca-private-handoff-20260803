@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from local_agent.config import load_config
+from local_agent.state import workspace_state_dir
 
 
 class ConfigTests(unittest.TestCase):
@@ -157,6 +158,50 @@ class ConfigTests(unittest.TestCase):
                 )
 
         self.assertEqual(config.budget_seconds, 30)
+
+    def test_state_dir_uses_workspace_specific_directory_under_explicit_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            state_root = workspace / "state-root"
+            with patch.dict("os.environ", {"DASHSCOPE_API_KEY": "token"}, clear=True):
+                config = load_config(
+                    config_path=None,
+                    cwd=str(workspace),
+                    state_dir=str(state_root),
+                    provider="bailian",
+                    api_base_url=None,
+                    api_key=None,
+                    model=None,
+                    max_steps=None,
+                    budget_seconds=None,
+                    approval_mode=None,
+                )
+
+        self.assertEqual(config.state_dir, workspace_state_dir(state_root.resolve(), workspace))
+        self.assertFalse((workspace / ".local-agent").exists())
+
+    def test_state_dir_can_come_from_env(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            state_root = workspace / "env-state"
+            with patch.dict(
+                "os.environ",
+                {"DASHSCOPE_API_KEY": "token", "AGENT_STATE_DIR": str(state_root)},
+                clear=True,
+            ):
+                config = load_config(
+                    config_path=None,
+                    cwd=str(workspace),
+                    provider="bailian",
+                    api_base_url=None,
+                    api_key=None,
+                    model=None,
+                    max_steps=None,
+                    budget_seconds=None,
+                    approval_mode=None,
+                )
+
+        self.assertEqual(config.state_dir, workspace_state_dir(state_root.resolve(), workspace))
 
     def test_dotenv_can_supply_bailian_token_for_one_command_start(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

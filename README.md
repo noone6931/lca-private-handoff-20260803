@@ -127,6 +127,22 @@ local-agent "帮我找一下测试失败原因"
 
 `--allow-dir` 可以传多次。它只扩展文件、搜索、LSP 和 patch 类工具的可访问根目录；shell、git、session、todo 和 memory 仍锚定在 `--cwd`。
 
+可以放用户级和项目级常驻上下文：
+
+```text
+~/.config/local-coding-agent/AGENTS.md
+.local-agent/AGENTS.md
+```
+
+也可以放 sticky rules：
+
+```text
+~/.config/local-coding-agent/RULES.md
+.local-agent/RULES.md
+```
+
+`AGENTS.md` 会在新 session 启动时作为 advisory context 注入；`RULES.md` 会在每次发送模型请求前重新附加，用于“不要自动 commit/push”“总结验证结果”这类短规则。可用 `AGENT_CONFIG_DIR` 改用户级配置目录。当前用户指令和刚读取到的源码证据优先。
+
 长会话默认启用 OMP 风格上下文压缩策略：`--context-char-budget` 近似表示上下文窗口，runtime 会至少预留 15% 给下一轮 prompt/输出；超过阈值后压缩早期历史，保留最近消息和未完成 todo，并截断发送给模型的超大 tool 输出。发送给模型的上下文还会折叠空搜索/LSP 这类 useless 结果，以及被新等价读取/搜索 supersede 的旧工具结果；session 日志仍保留原文。默认 `--summary-mode auto`：小历史不摘要，触发 compaction 时自动调用当前配置的 AI API 生成语义摘要，失败回退本地确定性摘要。可用 `--summary-mode local` 强制只用本地摘要，`--summary-mode llm` 强制在 compaction 时尝试 LLM 摘要，`--context-char-budget 0` 关闭压缩。
 
 项目内可放可复用工作流 skill：
@@ -211,7 +227,13 @@ REPL 中可以临时调整当前会话的权限：
 
 ## 会话恢复
 
-每次运行都会写入 `.local-agent/sessions/<session-id>.jsonl`。继续最近一次会话：
+每次运行都会把会话写到用户级 runtime state 目录，默认是：
+
+```text
+${XDG_STATE_HOME:-~/.local/state}/local-coding-agent/workspaces/<workspace-key>/sessions/<session-id>.jsonl
+```
+
+也可以用 `--state-dir` 或 `AGENT_STATE_DIR` 指定 state root；LCA 会在其下按 workspace 编码分目录保存。继续最近一次会话：
 
 ```bash
 ./agent --continue "继续刚才的问题"
@@ -223,7 +245,7 @@ REPL 中可以临时调整当前会话的权限：
 ./agent --session 20260707T060000000000Z "继续这个会话"
 ```
 
-`apply_patch` 的回滚记录会写入 `.local-agent/patches/<session-id>.jsonl`，用于 `rollback_patch` 校验并恢复本 session 中的补丁。`.local-agent/` 已被 `.gitignore` 忽略。
+`todo` 和 `apply_patch` 的回滚记录也写入同一个 runtime state 目录下的 `todos/` 与 `patches/`，用于 `todo_read` 和 `rollback_patch`。项目级 `.local-agent/memory` 和 `.local-agent/skills` 仍保留在 workspace 中，因为它们是项目知识而不是运行转录。
 
 ## 本地测试
 
@@ -267,6 +289,8 @@ python3 scripts/sync_project_excel.py
 - `lsp_references`: 查找这些语言中的标识符引用。
 - `lsp_diagnostics`: 运行轻量诊断；Python 使用 `compile()`，Java/JS/TS/Vue 使用本地括号/分隔符检查。
 - context compaction: 按 OMP 风格 reserve 阈值压缩早期历史、保留当前用户请求和未完成 todo，并截断发送给模型的超大 tool 输出；空搜索/LSP 结果会标记 useless，发送给模型的上下文会折叠 useless/superseded 工具结果；默认 `--summary-mode auto` 会在触发压缩时尝试 LLM 摘要并失败回退 local。
+- startup context injection: 新 session 启动时会读取用户级和项目级 `AGENTS.md`，作为 advisory context 注入 system prompt。
+- sticky rules injection: 每次发送模型请求前会读取用户级和项目级 `RULES.md` 并追加到 provider-bound context。
 - startup memory injection: 新 session 启动时会读取 `.local-agent/memory/{project,decisions,conventions,learned}.md` 并作为 advisory context 注入 system prompt；当前用户指令和最新源码证据优先。
 - authored skills discovery: 新 session 启动时会扫描 `.local-agent/skills/<name>/SKILL.md`，只注入 name、description 和 source path，正文按需读取。
 
@@ -290,6 +314,7 @@ python3 scripts/sync_project_excel.py
 - patch 会尽量保留原文件 BOM 和 CRLF/LF 换行风格；
 - `--budget-seconds` 用墙钟时间限制单次任务，`--max-steps` 默认不限步，只作为显式安全兜底；
 - 默认工作流已沉到 system prompt 和 runtime reminder，用户可以直接用自然语言描述任务；
+- 用户级和项目级 `AGENTS.md` 提供常驻上下文，`RULES.md` 提供短 sticky rules；二者都是 advisory，当前用户指令和源码证据优先；
 - 项目 authored skills 只把 metadata 注入启动上下文，正文按需读取，避免 prompt 膨胀；
 - 长上下文默认使用 OMP 风格 auto compaction：超过阈值才尝试 LLM summary，失败回退本地确定性摘要，并在发送给模型的上下文中折叠 useless/superseded 工具结果；
 - LSP 能力先做封闭 VM 友好的多语言静态导航工具，覆盖 Python、Java、JavaScript、TypeScript、Vue，不启动外部语言服务器；
