@@ -29,6 +29,8 @@ OMP 的 skills 也有两条路径：
 
 当前 LCA 已有：
 
+- 用户级 / 项目级人工上下文：`AGENT_CONFIG_DIR/AGENTS.md` 和 `.local-agent/AGENTS.md` 启动时注入 advisory context。
+- Sticky rules：`AGENT_CONFIG_DIR/RULES.md` 和 `.local-agent/RULES.md` 每次 provider request 前注入，适合短规则。
 - `memory_read` / `memory_write`：写入 `.local-agent/memory/{project,decisions,conventions,learned}.md`。
 - 启动时自动注入 `.local-agent/memory/{project,decisions,conventions,learned}.md`，并标记为 advisory context。
 - `learn` 工具：把可复用 lesson 写入 `.local-agent/memory/learned.md`。
@@ -40,6 +42,7 @@ OMP 的 skills 也有两条路径：
 
 - managed skills / autolearn。
 - memory backend selector。
+- Claude Code 风格 path-scoped rules。
 
 ## 设计目标
 
@@ -211,8 +214,9 @@ Read .local-agent/skills/code-review/SKILL.md before using it.
 
 ## 推荐落地顺序
 
-1. 做 M5 managed skills。
-2. 真实项目压测后再考虑 M3 consolidation 和 autolearn autoContinue。
+1. 真实项目压测用户级 / 项目级 `AGENTS.md` 与 `RULES.md` 的注入效果。
+2. 做 M3 memory consolidation。
+3. 最后评估 M5 managed skills 和 autolearn autoContinue。
 
 ## 主要风险
 
