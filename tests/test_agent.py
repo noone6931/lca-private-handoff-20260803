@@ -226,6 +226,47 @@ class _AllowedDirRequirementClient:
         return type("Response", (), {"message": {"content": "done after reading requirement docs"}})()
 
 
+class _RepeatedReadFileRangeClient:
+    calls = 0
+    tools_seen: list[int] = []
+    file_path: str = ""
+
+    def __init__(self, config: AgentConfig):
+        self.config = config
+
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).calls += 1
+        type(self).tools_seen.append(len(tools))
+        if not tools:
+            return type("Response", (), {"message": {"content": "final answer after enough file evidence"}})()
+        start_line = type(self).calls
+        return type(
+            "Response",
+            (),
+            {
+                "message": {
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": f"call_{type(self).calls}",
+                            "type": "function",
+                            "function": {
+                                "name": "read_file",
+                                "arguments": json.dumps(
+                                    {
+                                        "path": type(self).file_path,
+                                        "start_line": start_line,
+                                        "end_line": start_line,
+                                    }
+                                ),
+                            },
+                        }
+                    ],
+                }
+            },
+        )()
+
+
 class _InterruptingRegistry:
     def schemas(self):
         return []
@@ -679,6 +720,74 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertEqual(len(steering_messages), 1)
         self.assertEqual(_RepeatingToolClient.calls, 5)
         self.assertEqual(_RepeatingToolClient.tools_seen[-1], 0)
+
+    def test_repeated_read_file_ranges_are_steered_to_final_answer(self) -> None:
+        _RepeatedReadFileRangeClient.calls = 0
+        _RepeatedReadFileRangeClient.tools_seen = []
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            target = workspace / "large.py"
+            target.write_text("\n".join(f"line {index}" for index in range(1, 80)), encoding="utf-8")
+            _RepeatedReadFileRangeClient.file_path = "large.py"
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=workspace,
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+                context_char_budget=0,
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _RepeatedReadFileRangeClient):
+                runtime = AgentRuntime(config, show_tool_logs=False)
+                result = runtime.run("只读分析这个项目并最后输出结论")
+
+        tool_messages = [message for message in runtime._messages if message.get("role") == "tool"]
+        repeated_messages = [
+            message for message in tool_messages if "read_file has already read" in message["content"]
+        ]
+        steering_messages = [
+            message
+            for message in runtime._messages
+            if "repeated read_file slices from the same file" in str(message.get("content"))
+        ]
+        self.assertEqual(result, "final answer after enough file evidence")
+        self.assertEqual(_RepeatedReadFileRangeClient.tools_seen[-1], 0)
+        self.assertEqual(len(repeated_messages), 1)
+        self.assertGreaterEqual(len(steering_messages), 1)
+
+    def test_repeated_read_file_guard_does_not_force_final_for_edit_tasks(self) -> None:
+        _RepeatedReadFileRangeClient.calls = 0
+        _RepeatedReadFileRangeClient.tools_seen = []
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            target = workspace / "large.py"
+            target.write_text("\n".join(f"line {index}" for index in range(1, 80)), encoding="utf-8")
+            _RepeatedReadFileRangeClient.file_path = "large.py"
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=workspace,
+                max_steps=10,
+                budget_seconds=None,
+                approval_mode="yolo",
+                context_char_budget=0,
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _RepeatedReadFileRangeClient):
+                runtime = AgentRuntime(config, show_tool_logs=False)
+                result = runtime.run("修改这个大文件里的逻辑")
+
+        tool_messages = [message for message in runtime._messages if message.get("role") == "tool"]
+        repeated_messages = [
+            message for message in tool_messages if "read_file has already read" in message["content"]
+        ]
+        self.assertEqual(result, "Stopped after reaching max_steps=10.")
+        self.assertEqual(repeated_messages, [])
+        self.assertNotIn(0, _RepeatedReadFileRangeClient.tools_seen)
 
     def test_keyboard_interrupt_synthesizes_remaining_tool_results(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

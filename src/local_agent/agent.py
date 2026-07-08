@@ -67,6 +67,10 @@ MAX_IDENTICAL_TOOL_CALLS_IN_RECENT_WINDOW = 3
 REPEAT_TOOL_CALL_WINDOW = 12
 MAX_DUPLICATE_TOOL_GUARD_HITS = 8
 MAX_DUPLICATE_TOOL_FINAL_ANSWER_STEERS = 2
+MAX_READ_FILE_CALLS_PER_FILE_IN_RECENT_WINDOW = 8
+READ_FILE_PATH_WINDOW = 14
+MAX_REPEATED_READ_FILE_GUARD_HITS = 4
+MAX_REPEATED_READ_FILE_FINAL_ANSWER_STEERS = 2
 MAX_SOFT_TOOL_REQUIREMENT_STEERS = 3
 USELESS_TOOL_RESULT_NOTICE = "[Uneventful tool result elided during local context pruning]"
 SUPERSEDED_TOOL_RESULT_NOTICE = "[Superseded by a newer equivalent tool result during local context pruning]"
@@ -126,6 +130,35 @@ ALLOWED_DIR_DOC_NAME_KEYWORDS = {
     "方案",
 }
 MAX_ALLOWED_DIR_DOC_CANDIDATES = 8
+READ_FILE_DRIFT_GUARD_KEYWORDS = {
+    "analysis",
+    "analyze",
+    "describe",
+    "inspect",
+    "review",
+    "readonly",
+    "read-only",
+    "只读",
+    "分析",
+    "总结",
+    "阅读",
+    "定位",
+    "压测",
+}
+READ_FILE_DRIFT_GUARD_EDIT_KEYWORDS = {
+    "apply_patch",
+    "change",
+    "edit",
+    "fix",
+    "implement",
+    "modify",
+    "patch",
+    "write",
+    "修改",
+    "修复",
+    "实现",
+    "写入",
+}
 
 
 @dataclass
@@ -153,8 +186,12 @@ class AgentRuntime:
         self._session_tool_approval: dict[str, str] = {}
         self._summary_cache: dict[str, str] = {}
         self._recent_tool_call_signatures: list[str] = []
+        self._recent_read_file_path_keys: list[str] = []
         self._duplicate_tool_guard_hits = 0
         self._duplicate_tool_final_answer_steers = 0
+        self._repeated_read_file_guard_hits = 0
+        self._repeated_read_file_final_answer_steers = 0
+        self._read_file_drift_guard_enabled = False
         self._force_final_answer_without_tools = False
         self._soft_tool_requirement: SoftToolRequirement | None = None
         self._state_dir = config.state_dir or config.workspace / ".local-agent"
@@ -200,6 +237,7 @@ class AgentRuntime:
         self._session.append("user", {"content": prompt})
         if model_prompt != prompt:
             self._session.append("workflow_nudge", {"content": WORKFLOW_NUDGE})
+        self._read_file_drift_guard_enabled = _should_guard_repeated_read_file(prompt)
         self._soft_tool_requirement = _initial_soft_tool_requirement(prompt, self._config.allowed_dirs)
         if self._soft_tool_requirement is not None:
             self._append_soft_tool_requirement_message(self._soft_tool_requirement)
@@ -252,6 +290,7 @@ class AgentRuntime:
                 arguments = function.get("arguments") or "{}"
                 self._log_tool_start(name, arguments)
                 duplicate_hits_before = self._duplicate_tool_guard_hits
+                repeated_read_hits_before = self._repeated_read_file_guard_hits
                 try:
                     result = self._execute_tool_with_repeat_guard(name, arguments, tool_context)
                 except KeyboardInterrupt:
@@ -271,6 +310,19 @@ class AgentRuntime:
                 )
                 self._observe_soft_tool_requirement(name, arguments, result)
                 duplicate_skipped = self._duplicate_tool_guard_hits > duplicate_hits_before
+                repeated_read_skipped = self._repeated_read_file_guard_hits > repeated_read_hits_before
+                if repeated_read_skipped and self._steer_after_repeated_read_file():
+                    self._append_synthetic_tool_results(
+                        tool_calls[index + 1 :],
+                        self._repeated_read_file_stop_message(),
+                    )
+                    break
+                if self._repeated_read_file_guard_hits >= MAX_REPEATED_READ_FILE_GUARD_HITS:
+                    self._append_synthetic_tool_results(
+                        tool_calls[index + 1 :],
+                        self._repeated_read_file_stop_message(),
+                    )
+                    return self._stop_for_repeated_read_file(deadline, run_start_index)
                 if duplicate_skipped and self._steer_after_duplicate_tool_call(name):
                     self._append_synthetic_tool_results(
                         tool_calls[index + 1 :],
@@ -545,6 +597,18 @@ class AgentRuntime:
         arguments: str | dict[str, Any],
         tool_context: ToolContext,
     ) -> ToolResult:
+        read_file_key = (
+            _read_file_path_key(name, arguments, self._config.workspace, self._config.allowed_dirs)
+            if self._read_file_drift_guard_enabled
+            else None
+        )
+        if read_file_key is not None:
+            recent_path_count = self._recent_read_file_path_keys.count(read_file_key)
+            self._recent_read_file_path_keys.append(read_file_key)
+            self._recent_read_file_path_keys = self._recent_read_file_path_keys[-READ_FILE_PATH_WINDOW:]
+            if recent_path_count >= MAX_READ_FILE_CALLS_PER_FILE_IN_RECENT_WINDOW:
+                self._repeated_read_file_guard_hits += 1
+                return self._repeated_read_file_result(read_file_key, recent_path_count)
         signature = _tool_call_signature(name, arguments)
         recent_count = self._recent_tool_call_signatures.count(signature)
         self._recent_tool_call_signatures.append(signature)
@@ -553,6 +617,16 @@ class AgentRuntime:
             self._duplicate_tool_guard_hits += 1
             return self._duplicate_tool_result(name, recent_count)
         return self._registry.execute(name, arguments, tool_context)
+
+    def _repeated_read_file_result(self, path_key: str, prior_count: int) -> ToolResult:
+        return ToolResult(
+            (
+                f"Tool call skipped: read_file has already read '{path_key}' {prior_count} times recently. "
+                "Use the collected evidence and provide the requested final answer, "
+                "or switch to a different, more targeted file only if new evidence is truly necessary."
+            ),
+            is_error=True,
+        )
 
     def _duplicate_tool_result(self, name: str, prior_count: int) -> ToolResult:
         return ToolResult(
@@ -583,6 +657,28 @@ class AgentRuntime:
                 "tool": name,
                 "duplicate_hits": self._duplicate_tool_guard_hits,
                 "steer_count": self._duplicate_tool_final_answer_steers,
+            },
+        )
+        self._force_final_answer_without_tools = True
+        return True
+
+    def _steer_after_repeated_read_file(self) -> bool:
+        if self._repeated_read_file_final_answer_steers >= MAX_REPEATED_READ_FILE_FINAL_ANSWER_STEERS:
+            return False
+        self._repeated_read_file_final_answer_steers += 1
+        content = (
+            "Runtime steering: repeated read_file slices from the same file are no longer useful. "
+            "Your next response must be a final answer without tool calls. "
+            "Return to the user's original requested output structure, use the evidence already collected, "
+            "state uncertainty explicitly, and list exact next files instead of continuing to read adjacent ranges."
+        )
+        self._messages.append({"role": "user", "content": content})
+        self._session.append(
+            "runtime_steering",
+            {
+                "kind": "repeated_read_file_final_answer",
+                "duplicate_hits": self._repeated_read_file_guard_hits,
+                "steer_count": self._repeated_read_file_final_answer_steers,
             },
         )
         self._force_final_answer_without_tools = True
@@ -630,6 +726,12 @@ class AgentRuntime:
             "Stopped because the task required reading requirement/spec documents from an allowed directory, "
             "but the assistant did not call read_file on any allowed-directory document after repeated reminders. "
             "Retry with the same --allow-dir, or explicitly name the requirement file path."
+        )
+
+    def _repeated_read_file_stop_message(self) -> str:
+        return (
+            "Tool call was not executed because repeated read_file slices from the same file were no longer useful. "
+            "Use the already collected evidence and answer the user's original request."
         )
 
     def _observe_soft_tool_requirement(self, name: str, arguments: str | dict[str, Any], result: ToolResult) -> None:
@@ -780,6 +882,13 @@ class AgentRuntime:
     def _stop_for_duplicate_tools(self, deadline: float | None, run_start_index: int) -> str:
         content = (
             "Stopped because the assistant repeated identical tool calls too many times. "
+            "Retry with a narrower request or ask it to answer from the evidence already collected."
+        )
+        return self._finish_run(content, deadline, run_start_index)
+
+    def _stop_for_repeated_read_file(self, deadline: float | None, run_start_index: int) -> str:
+        content = (
+            "Stopped because the assistant kept reading adjacent ranges from the same file. "
             "Retry with a narrower request or ask it to answer from the evidence already collected."
         )
         return self._finish_run(content, deadline, run_start_index)
@@ -1472,6 +1581,13 @@ def _should_add_workflow_nudge(prompt: str) -> bool:
     return any(keyword in lowered for keyword in WORKFLOW_NUDGE_KEYWORDS)
 
 
+def _should_guard_repeated_read_file(prompt: str) -> bool:
+    lowered = prompt.lower()
+    if any(keyword in lowered for keyword in READ_FILE_DRIFT_GUARD_EDIT_KEYWORDS):
+        return False
+    return any(keyword in lowered for keyword in READ_FILE_DRIFT_GUARD_KEYWORDS)
+
+
 def _initial_soft_tool_requirement(prompt: str, allowed_dirs: tuple[Path, ...]) -> SoftToolRequirement | None:
     if not allowed_dirs:
         return None
@@ -1906,6 +2022,33 @@ def _tool_call_signature(name: str, arguments: str | dict[str, Any]) -> str:
         "arguments": normalized_arguments,
     }
     return json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
+
+
+def _read_file_path_key(
+    name: str,
+    arguments: str | dict[str, Any],
+    workspace: Path,
+    allowed_dirs: tuple[Path, ...],
+) -> str | None:
+    if name != "read_file":
+        return None
+    if isinstance(arguments, dict):
+        parsed: Any = arguments
+    else:
+        try:
+            parsed = json.loads(arguments or "{}")
+        except json.JSONDecodeError:
+            return None
+    if not isinstance(parsed, dict):
+        return None
+    raw_path = parsed.get("path")
+    if not isinstance(raw_path, str) or not raw_path.strip():
+        return None
+    try:
+        path = resolve_workspace_path(workspace, raw_path, allowed_dirs)
+    except PatchError:
+        return raw_path
+    return str(path)
 
 
 def _validate_runtime_tool_name(tool: str) -> str:
