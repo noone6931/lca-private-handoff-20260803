@@ -84,7 +84,7 @@
 
 - Path-scoped rules 还未实现，作为下一步候选。
 - Managed skills / autolearn 继续暂缓。
-- 企业项目联网压测：当前 full-access + network enabled 环境已可由 Agent 代跑。单项目压测 session `20260708T083312934017` 已按 5 点结构收束；多项目压测连续暴露 path escape 父目录误用、LSP 空 query 扩散和最终回答结构漂移，已分别补 path escape roots hint、LSP 空 query guard、Current task contract；session `20260708T085927874078` 已按 6 点结构输出，并定位 `CrclLimitMainBySelectController.limitConstituteAllotImport`、`CrclLimitMainBySelectApplication.limitConstituteAllotImport`、`LimitConstituteAllotImportReq`、`BatchImportConstituteDto` 等真实证据。T-069 归因复测 session `20260708T094926471758Z` 已验证 attribution 能正确区分 pre-existing 与 this-session，同时暴露最终 diff 细节概括仍需增强。
+- 企业项目联网压测：当前 full-access + network enabled 环境已可由 Agent 代跑。单项目压测 session `20260708T083312934017` 已按 5 点结构收束；多项目压测连续暴露 path escape 父目录误用、LSP 空 query 扩散和最终回答结构漂移，已分别补 path escape roots hint、LSP 空 query guard、Current task contract；session `20260708T085927874078` 已按 6 点结构输出，并定位 `CrclLimitMainBySelectController.limitConstituteAllotImport`、`CrclLimitMainBySelectApplication.limitConstituteAllotImport`、`LimitConstituteAllotImportReq`、`BatchImportConstituteDto` 等真实证据。T-070 复测 session `20260708T100128250335Z` 已验证百炼模型能正确引用 `git_diff` summary + attribution。
 - 用户确认当前测试项目可能无法完全覆盖需求，尤其“拓展服务费结算”可能需要其他项目配合；后续跨服务需求应把相关项目也作为 `--allow-dir`，或让 Agent 明确输出需要补充的项目/服务。
 - Runtime state 与 workspace 已解耦：`--state-dir` / `AGENT_STATE_DIR` 可指定用户级 state root；默认 `${XDG_STATE_HOME:-~/.local/state}/local-coding-agent/workspaces/<workspace-key>/`；sessions/todos/patch logs 已不再默认写入目标 `--cwd/.local-agent`。显式项目 memory/skills 仍保留在 workspace 中，自动 consolidation 默认写 state dir。
 - 已对 `/Users/chengming/mycode/project/crcl-open/crcl-open` 做本地 state-dir 验证：默认 state dir 为 `/Users/chengming/.local/state/local-coding-agent/workspaces/mycode-project-crcl-open-crcl-open-966d4fe7a33b`，目标仓库当前未发现 `.local-agent`。
@@ -222,7 +222,7 @@
 | T-067 | Evidence Ledger MVP | 已完成并小改压测通过 | P7 | provider-bound `[Evidence ledger]` 已落地；session `20260708T092554037057Z` 验证小改闭环仍可跑通。 |
 | T-068 | apply_patch tag 参数易误填 `path#tag` | 已完成 | P7 | `read_file` 现在显式输出 `tag: <hash>`；`apply_patch` 兼容误传的 `path#tag` / `[path#tag]` 并提示下次传纯 hash，hash 校验不放宽。 |
 | T-069 | git_diff 区分已有修改与本轮修改 | 已完成 MVP 版 | P7 | 每轮 run start 捕获 git baseline 并写 session；`git_diff` 追加 attribution 小节，按 pre-existing、this-session apply_patch、mixed、new unattributed 提示模型分开总结。 |
-| T-070 | 最终 diff 细节概括准确性 | 已完成 MVP 版 | P7 | `git_diff` 已追加 `[diff summary]`，按文件输出 `+N/-M`、hunk 数、hunk header 和少量 added/removed 片段；测试覆盖重复标题 + smoke-test 行实际为 `+3 -0`。 |
+| T-070 | 最终 diff 细节概括准确性 | 已完成并复测通过 | P7 | `git_diff` 已追加 `[diff summary]`，按文件输出 `+N/-M`、hunk 数、hunk header 和少量 added/removed 片段；测试覆盖重复标题 + smoke-test 行实际为 `+3 -0`；百炼复测 session `20260708T100128250335Z` 已正确总结 `+1/-1`、1 hunk 和 attribution。 |
 
 ## 风险清单
 
@@ -256,7 +256,7 @@
 | R-026 | 最终回答结构和证据路径可能漂移 | 已补并复跑通过 | session `20260708T085426840146Z` 最终只总结最后一个需求文档；此前也出现把未验证路径当下一步建议路径的倾向。 | 参考 OMP 当前任务和 runtime evidence 持续注入：新增 Current task contract 和 evidence-backed path rule。 |
 | R-027 | 模型可能把 `path#tag` 整串误当成 patch tag | 已关闭 | session `20260708T092554037057Z` 中 `apply_patch dry_run` 因 `tag=README.md#3988a904` 连续失败。 | 已参考 OMP 结构化工具观察/编辑参数提示：read_file 显式给出 pure tag，apply_patch 兼容 `path#tag` 并提示模型。 |
 | R-028 | 脏工作区下最终 diff 摘要可能混入非本轮改动 | 已关闭 MVP 版 | session `20260708T092554037057Z` 的 `git_diff` 同时包含 README 小改和正在开发的 Evidence Ledger 代码 diff。 | 参考 OMP task/worktree/session state：已记录 run start baseline，并按 pre-existing / this-run patch / mixed / new unattributed 分组提示。 |
-| R-029 | 最终 diff 细节可能被模型过度简化或说错 | 已关闭 MVP 版 | session `20260708T094926471758Z` 中 attribution 分类正确，但模型没有准确描述实际 diff hunk；低价值 README smoke-test 改动已撤回。 | 参考 OMP runtime observation 思路：已给 `git_diff` 增加 diff stats/hunk summary，后续观察是否需要 reviewer 自检。 |
+| R-029 | 最终 diff 细节可能被模型过度简化或说错 | 已关闭并复测通过 | session `20260708T094926471758Z` 中 attribution 分类正确，但模型没有准确描述实际 diff hunk；低价值 README smoke-test 改动已撤回。 | 参考 OMP runtime observation 思路：已给 `git_diff` 增加 diff stats/hunk summary；session `20260708T100128250335Z` 验证最终总结可正确引用 summary + attribution。 |
 
 ## 架构决策
 

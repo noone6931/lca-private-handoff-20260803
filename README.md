@@ -168,7 +168,7 @@ description: Use when reviewing a patch before commit.
 
 启动时只会把 `name`、`description` 和 `SKILL.md` 路径注入 system prompt；不会注入正文。Agent 需要使用某个 skill 时，应先用 `read_file` 读取对应 `SKILL.md`。设置 `hide: true` 可以让某个 skill 不进入启动提示。
 
-普通代码任务不需要每次手写“先 list_files、再 read_file、再 dry_run、再 run_tests、再 git_diff”。系统提示和 runtime reminder 已固化默认工作流：Agent 会按任务需要自行探索、维护 todo、修改前读取文件、用 anchored patch 写入、修改后验证并总结 diff。
+普通代码任务不需要每次手写“先 list_files、再 read_file、再 dry_run、再 run_tests、再 git_diff”。系统提示和 runtime reminder 已固化默认工作流：Agent 会按任务需要自行探索、维护 todo、修改前读取文件、用 anchored patch 写入、修改后验证并总结 diff。git_diff 工具能提供 [diff summary]（文件数、+N/-M、hunk 数）和 [diff attribution]（本轮修改、运行前已有修改、mixed 文件）的详细分析，帮助准确描述变更。
 
 如果 `always-ask` 模式下某些工具你已经确认安全，可以只对白名单工具免确认：
 
