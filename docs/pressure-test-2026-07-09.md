@@ -329,5 +329,6 @@ OMP 对应思路：
 
 LCA 措施：
 
-- T-075 补 no-edit final hygiene：当实现任务选择“无法安全实现/目标服务缺失/证据不足”时，仍应读取或更新 todo 状态，并调用 `git_status` / `git_diff` 或在最终回答中明确说明未做文件修改、未运行测试的原因。
+- T-075 已补 no-edit final hygiene：当实现任务选择“无法安全实现/目标服务缺失/证据不足”时，如果尚未做 git/todo 收束，runtime 会追加 steering，并临时只开放 `todo_read` / `todo_add` / `todo_update` / `git_status` / `git_diff`。
+- 测试覆盖：provider context 会注入 `[No-edit final hygiene]`；过早 no-edit final 会被 steering 到 `todo_add` + `git_status` 后再最终回答。
 - 如果后续提供 `zqyl-investment-plan` 路径，应把它作为主 `--cwd` 或 `--allow-dir`，继续真实实现压测。

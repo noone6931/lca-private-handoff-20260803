@@ -90,6 +90,8 @@ READ_FILE_PATH_WINDOW = 14
 MAX_REPEATED_READ_FILE_GUARD_HITS = 4
 MAX_REPEATED_READ_FILE_FINAL_ANSWER_STEERS = 2
 MAX_SOFT_TOOL_REQUIREMENT_STEERS = 3
+MAX_NO_EDIT_FINAL_HYGIENE_STEERS = 2
+NO_EDIT_FINAL_HYGIENE_TOOLS = {"todo_read", "todo_add", "todo_update", "git_status", "git_diff"}
 USELESS_TOOL_RESULT_NOTICE = "[Uneventful tool result elided during local context pruning]"
 SUPERSEDED_TOOL_RESULT_NOTICE = "[Superseded by a newer equivalent tool result during local context pruning]"
 
@@ -193,6 +195,47 @@ READ_FILE_DRIFT_GUARD_EDIT_KEYWORDS = {
     "实现",
     "写入",
 }
+NO_EDIT_FINAL_KEYWORDS = {
+    "belongs to another service",
+    "cannot safely",
+    "can't safely",
+    "did not change",
+    "did not modify",
+    "insufficient evidence",
+    "no changes",
+    "no edits",
+    "no files changed",
+    "not safe",
+    "out of scope",
+    "target service",
+    "unable to safely",
+    "不在当前仓库",
+    "不做修改",
+    "不能安全",
+    "不应包含",
+    "不应强行",
+    "不安全",
+    "不属于当前仓库",
+    "依赖不足",
+    "停止实施",
+    "当前仓库不包含",
+    "当前授权",
+    "没有修改",
+    "未修改",
+    "无改动",
+    "无法安全",
+    "目标服务",
+    "证据不足",
+}
+TODO_REQUEST_KEYWORDS = {
+    "todo",
+    "task list",
+    "checklist",
+    "待办",
+    "任务清单",
+    "维护 todo",
+    "维护todo",
+}
 
 
 @dataclass
@@ -242,6 +285,7 @@ class AgentRuntime:
         self._useless_lsp_symbol_final_answer_steers = 0
         self._repeated_read_file_guard_hits = 0
         self._repeated_read_file_final_answer_steers = 0
+        self._no_edit_final_hygiene_steers = 0
         self._read_file_evidence_paths: list[str] = []
         self._strong_relevance_paths: list[str] = []
         self._evidence_records: list[EvidenceRecord] = []
@@ -249,6 +293,7 @@ class AgentRuntime:
         self._current_user_request: str | None = None
         self._read_file_drift_guard_enabled = False
         self._force_final_answer_without_tools = False
+        self._temporary_tool_allowlist: set[str] | None = None
         self._soft_tool_requirement: SoftToolRequirement | None = None
         self._state_dir = config.state_dir or config.workspace / ".local-agent"
         self._session = JsonlSessionStore(
@@ -292,6 +337,8 @@ class AgentRuntime:
         run_start_index = len(self._messages)
         model_prompt = _with_workflow_nudge(prompt)
         self._current_user_request = prompt
+        self._no_edit_final_hygiene_steers = 0
+        self._temporary_tool_allowlist = None
         self._messages.append({"role": "user", "content": model_prompt})
         self._session.append("user", {"content": prompt})
         if model_prompt != prompt:
@@ -345,6 +392,10 @@ class AgentRuntime:
                         run_start_index,
                     )
                 content = message.get("content") or ""
+                if self._should_steer_no_edit_final_hygiene(content, run_start_index):
+                    if self._steer_for_no_edit_final_hygiene(content, run_start_index):
+                        step += 1
+                        continue
                 return self._finish_run(content, deadline, run_start_index)
 
             for index, tool_call in enumerate(tool_calls):
@@ -441,6 +492,13 @@ class AgentRuntime:
     def _tools_for_model(self) -> list[dict[str, Any]]:
         if self._force_final_answer_without_tools:
             return []
+        if self._temporary_tool_allowlist is not None:
+            allowed_names = self._temporary_tool_allowlist
+            return [
+                schema
+                for schema in self._registry.schemas()
+                if schema.get("function", {}).get("name") in allowed_names
+            ]
         requirement = self._soft_tool_requirement
         if requirement is not None and not requirement.satisfied:
             allowed_names = {"list_files", "read_file"}
@@ -1043,6 +1101,61 @@ class AgentRuntime:
             "\n\nOriginal user request to satisfy now:\n"
             f"- {_one_line(self._current_user_request, max_chars=1200)}"
         )
+
+    def _should_steer_no_edit_final_hygiene(self, content: str, run_start_index: int) -> bool:
+        if self._no_edit_final_hygiene_steers >= MAX_NO_EDIT_FINAL_HYGIENE_STEERS:
+            return False
+        if not is_code_implementation_request(self._current_user_request):
+            return False
+        if not _looks_like_no_edit_final(content):
+            return False
+        tool_names = _tool_names_since(self._messages, run_start_index)
+        if tool_names.intersection({"apply_patch", "write_file", "rollback_patch"}):
+            return False
+        return bool(self._no_edit_final_hygiene_missing(tool_names))
+
+    def _no_edit_final_hygiene_missing(self, tool_names: set[str]) -> list[str]:
+        missing: list[str] = []
+        if not tool_names.intersection({"git_status", "git_diff"}):
+            missing.append("git_status_or_git_diff")
+        if _request_mentions_todo(self._current_user_request) or self._open_todo_summary():
+            if not any(name.startswith("todo_") for name in tool_names):
+                missing.append("todo_state")
+        return missing
+
+    def _steer_for_no_edit_final_hygiene(self, content: str, run_start_index: int) -> bool:
+        tool_names = _tool_names_since(self._messages, run_start_index)
+        missing = self._no_edit_final_hygiene_missing(tool_names)
+        if not missing:
+            return False
+        self._no_edit_final_hygiene_steers += 1
+        request_summary = self._final_answer_request_summary()
+        missing_lines = ", ".join(missing)
+        content_summary = _one_line(content, max_chars=800)
+        steering = (
+            "Runtime steering: you are about to finish an implementation task without changing files. "
+            "That is acceptable when evidence shows the requested implementation is unsafe, out of scope, or belongs "
+            "to another service, but the no-edit stop must still be auditable before the final answer.\n"
+            f"- Missing hygiene: {missing_lines}.\n"
+            "- Use only todo_read/todo_add/todo_update and git_status/git_diff now.\n"
+            "- If the user requested todo tracking or open todos exist, update/read todo state and mark the task "
+            "blocked/skipped with the evidence-backed reason.\n"
+            "- Run git_status or git_diff to prove whether the workspace changed; if no tests were run because no files "
+            "changed or the target service is missing, say that explicitly in the final answer.\n"
+            f"- Draft final answer that triggered this check: {content_summary}"
+            f"{request_summary}"
+        )
+        self._messages.append({"role": "user", "content": steering})
+        self._session.append(
+            "runtime_steering",
+            {
+                "kind": "no_edit_final_hygiene",
+                "missing": missing,
+                "steer_count": self._no_edit_final_hygiene_steers,
+            },
+        )
+        self._temporary_tool_allowlist = set(NO_EDIT_FINAL_HYGIENE_TOOLS)
+        return True
 
     def _append_soft_tool_requirement_message(self, requirement: SoftToolRequirement) -> None:
         content = _soft_tool_requirement_message(requirement)
@@ -1954,6 +2067,7 @@ def _messages_with_runtime_context(
         updated = _messages_with_workspace_roots(updated, workspace_roots)
     if current_user_request:
         updated = _messages_with_current_task_contract(updated, current_user_request)
+        updated = _messages_with_no_edit_final_hygiene(updated, current_user_request, todo_summary)
     if evidence_ledger:
         updated = _messages_with_evidence_ledger(updated, evidence_ledger)
     sticky_rules = _load_sticky_rules(workspace, user_config_dir, max_chars=STICKY_RULES_CHAR_LIMIT)
@@ -1992,6 +2106,37 @@ def _messages_with_current_task_contract(messages: list[dict[str, Any]], current
     content = str(base.get("content") or "")
     first_marker = content.find("[Current task contract]")
     last_marker = content.rfind("[Current task contract]")
+    if first_marker != -1 and first_marker != last_marker:
+        base["content"] = content[:last_marker].rstrip()
+    return [base, *non_system]
+
+
+def _messages_with_no_edit_final_hygiene(
+    messages: list[dict[str, Any]],
+    current_user_request: str,
+    todo_summary: list[str],
+) -> list[dict[str, Any]]:
+    if not is_code_implementation_request(current_user_request):
+        return list(messages)
+    todo_clause = (
+        "If the user requested todo tracking or open todos exist, update/read todo state before finalizing."
+        if _request_mentions_todo(current_user_request) or todo_summary
+        else "Todo tracking is optional unless the task becomes multi-step or ambiguous."
+    )
+    block = (
+        "[No-edit final hygiene]\n"
+        "For implementation/change requests, an evidence-backed decision to make no file changes is valid. "
+        "Before finalizing that kind of no-edit stop, make it auditable: use git_status or git_diff to show whether "
+        "the workspace changed, and explain why tests were not run if no files changed or the target implementation "
+        "belongs to another service. "
+        f"{todo_clause}"
+    )
+    system_messages = [message for message in messages if message.get("role") == "system"]
+    non_system = [message for message in messages if message.get("role") != "system"]
+    base = _system_message_with_appended_context(system_messages, block)
+    content = str(base.get("content") or "")
+    first_marker = content.find("[No-edit final hygiene]")
+    last_marker = content.rfind("[No-edit final hygiene]")
     if first_marker != -1 and first_marker != last_marker:
         base["content"] = content[:last_marker].rstrip()
     return [base, *non_system]
@@ -2278,6 +2423,17 @@ def _should_add_workflow_nudge(prompt: str) -> bool:
     return any(keyword in lowered for keyword in WORKFLOW_NUDGE_KEYWORDS)
 
 
+def _looks_like_no_edit_final(content: str) -> bool:
+    lowered = content.lower()
+    compact = " ".join(content.split())
+    return any(keyword in lowered or keyword in compact for keyword in NO_EDIT_FINAL_KEYWORDS)
+
+
+def _request_mentions_todo(content: str | None) -> bool:
+    lowered = (content or "").lower()
+    return any(keyword in lowered for keyword in TODO_REQUEST_KEYWORDS)
+
+
 def _should_guard_repeated_read_file(prompt: str) -> bool:
     lowered = prompt.lower()
     if any(keyword in lowered for keyword in READ_FILE_DRIFT_GUARD_STRONG_READONLY_KEYWORDS):
@@ -2562,6 +2718,18 @@ def _run_used_memory_write_tool(messages: list[dict[str, Any]]) -> bool:
         if any(name in MEMORY_CONSOLIDATION_WRITE_TOOLS for name in _assistant_tool_call_names(message)):
             return True
     return False
+
+
+def _tool_names_since(messages: list[dict[str, Any]], start_index: int) -> set[str]:
+    names: set[str] = set()
+    for message in messages[start_index:]:
+        if message.get("role") == "tool":
+            name = message.get("_lca_tool_name")
+            if isinstance(name, str) and name:
+                names.add(name)
+        elif message.get("role") == "assistant":
+            names.update(_assistant_tool_call_names(message))
+    return names
 
 
 def _should_auto_consolidate_memory(

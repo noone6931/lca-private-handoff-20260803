@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -132,6 +133,55 @@ class _InvalidMemoryConsolidationClient:
         if tools:
             return type("Response", (), {"message": {"content": "Finished the task."}})()
         return type("Response", (), {"message": {"content": "not json"}})()
+
+
+class _NoEditThenHygieneClient:
+    calls: list[dict] = []
+
+    def __init__(self, config: AgentConfig):
+        self.config = config
+
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
+        if len(type(self).calls) == 1:
+            return type(
+                "Response",
+                (),
+                {"message": {"content": "无法安全实现：当前仓库不包含目标服务，未修改文件。"}},
+            )()
+        if len(type(self).calls) == 2:
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "call_todo",
+                                "type": "function",
+                                "function": {
+                                    "name": "todo_add",
+                                    "arguments": json.dumps(
+                                        {
+                                            "id": "T075",
+                                            "task": "Stop because target service is missing",
+                                            "status": "blocked",
+                                            "note": "No safe local edit.",
+                                        }
+                                    ),
+                                },
+                            },
+                            {
+                                "id": "call_git_status",
+                                "type": "function",
+                                "function": {"name": "git_status", "arguments": "{}"},
+                            },
+                        ],
+                    }
+                },
+            )()
+        return type("Response", (), {"message": {"content": "已收束：未修改文件，git_status 已检查，todo 已记录。"}})()
 
 
 class _TwoToolClient:
@@ -476,6 +526,89 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertIn("File paths in final answers must be evidence-backed", sent_system["content"])
         self.assertEqual(sent_system["content"].count("[Current task contract]"), 1)
         self.assertNotIn("[Current task contract]", runtime._messages[0]["content"])
+
+    def test_no_edit_final_hygiene_context_is_sent_for_implementation_tasks(self) -> None:
+        _MessageRecordingClient.messages = []
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=workspace,
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _MessageRecordingClient):
+                runtime = AgentRuntime(config, show_tool_logs=False)
+                result = runtime.run("实现 Java 导入校验需求，必须维护 todo")
+
+        sent_system = [message for message in _MessageRecordingClient.messages if message.get("role") == "system"][0]
+        self.assertEqual(result, "done")
+        self.assertIn("[No-edit final hygiene]", sent_system["content"])
+        self.assertIn("git_status or git_diff", sent_system["content"])
+        self.assertIn("update/read todo state", sent_system["content"])
+        self.assertNotIn("[No-edit final hygiene]", runtime._messages[0]["content"])
+
+    def test_no_edit_final_is_steered_to_todo_and_git_hygiene(self) -> None:
+        _NoEditThenHygieneClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            subprocess.run(["git", "init"], cwd=workspace, text=True, capture_output=True, check=True)
+            state_dir = workspace / "state"
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=workspace,
+                state_dir=state_dir,
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _NoEditThenHygieneClient):
+                runtime = AgentRuntime(config, show_tool_logs=False)
+                result = runtime.run("实现 Java 导入校验需求，必须维护 todo")
+                records = [
+                    json.loads(line)
+                    for line in runtime._session.path.read_text(encoding="utf-8").splitlines()
+                ]
+                todo_path = state_dir / "todos" / f"{runtime._session.session_id}.json"
+                todo_path_exists = todo_path.exists()
+
+        second_call_tools = {
+            schema["function"]["name"] for schema in _NoEditThenHygieneClient.calls[1]["tools"]
+        }
+        self.assertEqual(result, "已收束：未修改文件，git_status 已检查，todo 已记录。")
+        self.assertEqual(
+            second_call_tools,
+            {"todo_read", "todo_add", "todo_update", "git_status", "git_diff"},
+        )
+        self.assertTrue(todo_path_exists)
+        self.assertTrue(
+            any(
+                record.get("event") == "runtime_steering"
+                and record.get("payload", {}).get("kind") == "no_edit_final_hygiene"
+                for record in records
+            )
+        )
+        self.assertTrue(
+            any(
+                record.get("event") == "tool_result"
+                and record.get("payload", {}).get("name") == "git_status"
+                for record in records
+            )
+        )
+        self.assertTrue(
+            any(
+                record.get("event") == "tool_result"
+                and record.get("payload", {}).get("name") == "todo_add"
+                for record in records
+            )
+        )
 
     def test_evidence_ledger_is_sent_to_provider_context_after_tool_results(self) -> None:
         _ReadFileThenFinalClient.calls = []
