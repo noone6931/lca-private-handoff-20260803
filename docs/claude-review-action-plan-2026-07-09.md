@@ -49,3 +49,9 @@ Claude review 的方向基本成立：`agent.py` 已经偏大，context budget �
 ## 当前判断
 
 LCA 与 OMP 的架构原则继续靠拢，但不把 OMP 的完整产品形态搬进来。近期重点不是“照着 OMP 补全所有子系统”，而是把 OMP 的成熟控制思想小步落进 LCA：runtime/event 分层、soft requirement、evidence ledger、permission、compaction、可观测 summary 和可回滚编辑闭环。
+
+## 2026-07-09 复核补充
+
+第二轮 review 再次指出 `agent.py` 行数继续上升、Java/Vue LSP 仍是轻量正则、token budget 仍是字符近似。这个警告有效：后续新增 steering/guard 时应优先考虑抽到独立模块，避免继续把所有控制逻辑塞进 `agent.py`。
+
+但执行顺序仍不调整为“立刻 P0 大拆分”。最新真实压测暴露的是 evidence-first、语义级探索扩散和最终回答结构/证据卫生，这些是今天能否用起来的直接问题。当前策略是：先用小而可测的 runtime gate 关闭 P9 实战缺口；一旦 T-087/T-088/T-089 收束，再开始第一批低风险模块化（优先 `evidence.py`、`compaction.py`、`run_collector.py`），并把 Java/Vue LSP provider 拆分列入下一阶段。

@@ -107,6 +107,7 @@
 - 还没有完整 OMP ToolChoiceQueue；当前只为 allowed-dir 需求文档读取实现了轻量 soft tool requirement，其余场景仍用 system/tool 描述、runtime reminder、todo reminder、pruning、重复工具熔断、forced-final steering 和 relevance gate 做本地版。T-073 复跑暂未证明必须立即上完整 ToolChoiceQueue。
 - T-084 暴露的同路径整文件重复读取已用 T-086 缓解；后续真实压测继续观察是否还需要更强的 evidence-sufficient final steering。
 - T-084 暴露最终回答仍可能轻微结构漂移和过度断言；需要增强 final structure gate / final evidence hygiene。
+- 2026-07-09 密码加密问答压测 review 暴露：证据型问题会先输出推测、用户纠正后路径探索扩散、终端运行中用户输入会混入工具日志；需要补 read-only evidence gate、semantic exploration guard 和更严格的 terminal input/output 隔离。
 - 目标服务接入/真实实现压测仍保留为后续任务：T-075 已补 no-edit 收束规范；后续用户会给项目边界定义，再让 LCA 分析具体需要哪些项目，随后接入目标项目做需求实现设计。
 - LSP 目前是多语言轻量静态工具，不是完整 LSP server，不支持 rename / code action / DAP。
 - 完整异步 Command Bus 尚未实现；当前 Terminal Frontend 复用同步 `AgentRuntime.run()`，approval prompt 仍由工具层同步读取 stdin，但已经产生 approval events。后续只有在真实交互压测显示需要取消/并发/远程 UI 时，再升级为完整 async permission command bus。
@@ -259,6 +260,9 @@
 | T-085 | todo 工具误参纠偏 | 已完成 | P9 | T-084 中模型用 `key/content` 调 `todo_add`、用错误 id 调 `todo_update`；已兼容 `key -> id` / `content -> task`，并在缺参、未知 id、无更新字段错误中返回正确示例。 |
 | T-086 | evidence-aware read repetition guard | 已完成 | P9 | T-084 中 `read_file` 54 次，多次重复读取同一路径但 `guard_hits=0`；已参考 OMP soft escalation/pruning，对同路径同范围成功读取超过阈值后返回 evidence 摘要并 forced-final。 |
 | T-087 | final structure / evidence hygiene 增强 | 候选 | P9 | T-084 最终把“项目表”退化为“表名表”，并对类作用有过度断言；需要 final gate 检查用户显式输出结构和 verified/inferred 标注。 |
+| T-088 | read-only evidence gate | 候选 | P9 | 密码加密问答压测中，模型在未读关键登录/密码文件前先给行业推测；参考 OMP current task / evidence context，证据型问题必须先读到关键命中文件或明确缺证据。 |
+| T-089 | semantic exploration guard | 候选 | P9 | 密码加密问答压测中，用户要求代码证据后出现同模块/父子目录/Path not found 扩散；参考 OMP soft escalation/pruning，对语义重复探索和路径猜测设置小上限并引导回 search_code。 |
+| T-090 | terminal input/output isolation | 候选 | P9/P10 | 压测日志出现用户键盘输入混入工具日志；Terminal Frontend 需要进一步统一渲染和运行中输入管理，普通一次性 CLI 也要提示用户不要在运行中直接敲字。 |
 
 ## 风险清单
 
@@ -307,6 +311,9 @@
 | R-041 | 压测复盘缺少结构化 run coverage | 已关闭 MVP 版 | 只有 session 原文和最终回答时，很难判断模型卡在哪个 guard、用了多少工具、是否触发 compaction 或为什么结束。 | 已参考 OMP run-collector 思路，新增每轮 `run_summary`：工具次数、guard/steering、compaction、termination reason 统一落 session 和事件流。 |
 | R-042 | 只读源码验证中重复读取过多 | 已缓解 | T-084 中 `read_file` 54 次、`list_files` 10 次，重复读取同一批证据文件但没有 guard/steering 命中。 | 已参考 OMP pruning / soft escalation / evidence sufficiency：对已读同范围做 evidence-aware repetition guard，达到阈值后返回已有 evidence 摘要并触发 final-answer steering；编辑任务不启用该 guard。 |
 | R-043 | 最终回答轻微结构漂移和过度断言 | 新增，中 | T-084 要求项目表，但最终输出表名表；还把 `IntentionConfigApplication` 表述为 Spring Boot 启动/配置类，证据不足。 | 增强 Current task contract 的 final structure gate 和 final evidence hygiene，要求输出结构匹配用户字段，类作用类结论必须标 verified 或 inferred。 |
+| R-044 | 证据型只读问题先输出推测 | 新增，高 | “前端密码加密/后端怎么处理”问题中，模型未读关键登录/密码文件就先给“可能 HTTPS 明文 + 后端哈希”的推测。 | T-088：read-only evidence gate；用户要求“代码证据/不推测/找到实现”时，最终回答必须基于 read_file/search_code/lsp 命中的具体文件，否则先继续查证或明确未找到。 |
+| R-045 | 语义级路径探索扩散 | 新增，高 | 用户纠正后出现多次相似目录 list_files、父子目录扩散、Path not found 和大目录读取；exact duplicate guard 太晚才命中。 | T-089：semantic exploration guard；按模块/父目录/Path-not-found pattern 计数，超过阈值后要求改用 search_code 命中文件或收束回答。 |
+| R-046 | 终端输出被用户输入污染 | 新增，中 | 日志出现 `33333333333[tool:start]`，说明一次性 CLI 运行中键盘输入被终端 echo 到 transcript。 | T-090：Terminal Frontend 继续强化 centralized renderer 和输入管理；一次性 CLI 增加运行中输入提示，必要时推荐 `./agent --chat`。 |
 
 ## 架构决策
 
@@ -386,7 +393,7 @@
 
 用户确认本文件后，建议按以下顺序继续：
 
-1. 优先做 T-087：final structure / evidence hygiene 增强。
+1. 优先做 T-087 和 T-088：final structure / evidence hygiene、read-only evidence gate。
 2. 继续执行真实需求使用链路：基于用户给出的需求，先让 LCA 用服务边界圈项目范围；用户确认后再接具体项目源码做实现设计。
 3. 接入真实目标服务继续压测：优先找到 `zqyl-investment-plan` 或对应投资方案服务目录，作为 `--cwd` 或 `--allow-dir` 与需求文档一起跑实现切片。
 4. 观察是否仍出现关键工具不用/乱用；若出现，再按 OMP 思路补更完整的 ToolChoiceQueue 或 reviewer。
