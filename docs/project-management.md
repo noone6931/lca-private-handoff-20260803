@@ -17,7 +17,7 @@ python3 scripts/sync_project_excel.py
 | 字段 | 当前值 | 说明 |
 |---|---|---|
 | 最终目标 | 个人本地编程助手 Agent | 本地优先、封闭 VM 可用、只访问指定 AI API，能读代码、搜代码、改代码、跑测试、生成 diff、沉淀项目记忆。 |
-| 当前阶段 | P9：真实需求使用准备 | P6 默认工作流 MVP 已落地；P7 已补 OMP 风格 auto summary、多语言轻量 LSP、multi-root、startup context/rules、startup memory、learn、可选 memory consolidation、runtime state dir、Evidence Ledger、relevance gate、implementation-quality gate 和 no-edit final hygiene；2026-07-09 已完成 T-076 Event/Command Protocol v1、T-077/T-080 Terminal Frontend MVP 与命令可发现性、T-078 项目边界分析 MVP、T-081 Claude review 行动计划、T-082 run summary / coverage MVP。 |
+| 当前阶段 | P9：真实需求使用准备 | P6 默认工作流 MVP 已落地；P7 已补 OMP 风格 auto summary、多语言轻量 LSP、multi-root、startup context/rules、startup memory、learn、可选 memory consolidation、runtime state dir、Evidence Ledger、relevance gate、implementation-quality gate 和 no-edit final hygiene；2026-07-09 已完成 T-076 Event/Command Protocol v1、T-077/T-080 Terminal Frontend MVP 与命令可发现性、T-078 项目边界分析 MVP、T-081 Claude review 行动计划、T-082 run summary / coverage MVP、T-083 真实需求压测模板和 T-084 qwen3-coder-next 企业项目只读源码验证压测。 |
 | 推荐入口 | `./agent "阅读当前项目"` | 自动设置 `PYTHONPATH=src`，默认当前目录为 workspace。 |
 | Token 配置 | 环境变量 / `--env-file` / `.env` | `./agent` 会自动加载安装目录 `.env`，也可显式传 `--env-file`；真实环境变量优先。 |
 | 测试数 | 188 | 完整 unittest、compileall、diff check、xlsx 检查通过。 |
@@ -62,7 +62,7 @@ python3 scripts/sync_project_excel.py
 | P6 | 日用体验与默认工作流固化 | OMP 默认工作流本地化：system prompt、工具描述、轻量 runtime nudge | 已完成 MVP 版 | 100% | 进入真实任务压测。 |
 | P7 | 高级工程能力轻量版 | OMP 风格 auto summary、轻量 LSP、LSP 兼容别名、multi-root workspace roots、allowed-dir soft tool requirement、startup context/rules、startup memory、learn、memory consolidation、authored skills discovery、重复工具调用熔断、duplicate-tool forced-final steering、同文件切片读取漂移 guard、空搜索词跨路径 guard、path escape roots hint、LSP 空 query guard、Current task contract、Evidence Ledger、tool result pruning、todo steering、跨项目 env-file、runtime state dir、真实项目压测记录、relevance gate / diff reviewer、implementation-quality reviewer、safe new-file policy、no-edit final hygiene | 已完成 MVP 版 | 100% | 高级轻量能力主线已收口，后续按真实压测失败形态补 path-scoped rules、完整 reviewer 或 ToolChoiceQueue。 |
 | P8 | 前端协议与交互基础 | Event/Command Protocol、event replay、terminal-native frontend | 已完成 MVP 版 | 100% | T-076/T-077 已完成；完整 async command bus 和更重 UI 后置，下一步按用户项目边界做项目清单分析压测。 |
-| P9 | 真实需求使用准备 | 项目边界分析、用户确认项目范围、源码验证、实现设计 | 进行中 | 25% | T-078 已完成项目边界分析 MVP；下一步跑真实需求“范围确认 → 源码验证”。 |
+| P9 | 真实需求使用准备 | 项目边界分析、用户确认项目范围、源码验证、实现设计 | 进行中 | 40% | T-078 已完成项目边界分析 MVP；T-083 已固化压测模板；T-084 已完成 qwen3-coder-next 只读源码验证压测并记录新问题。 |
 
 ## 已完成功能
 
@@ -204,10 +204,15 @@ python3 scripts/sync_project_excel.py
 | T-076 | P0 | P8 | Event/Command Protocol v1 | 已完成 MVP 版 | Agent | 参考 OMP runtime/TUI engine 分层，先让 Runtime 产出 replayable typed events，避免后续 terminal frontend 继续窥探 print/stderr | 已新增 dataclass `AgentEvent` / `AgentCommand`、`EventEmitter` / `EventSink` / `StderrEventSink`；`AgentRuntime` 写 session `event_v1` 并通过事件渲染 session/tool 日志；测试覆盖协议 shape 和 runtime event stream。 |
 | T-077 | P0 | P8 | Terminal Frontend MVP | 已完成 MVP 版 | Agent | 用户希望更自然的一键交互；事件协议已就绪，可以做 terminal-native interactive frontend | `./agent`、`./agent --chat`、`./agent chat` 可进入交互；可选 `prompt_toolkit` 提供多行输入/历史，`rich` 提供结构化输出；缺依赖时降级；保留原生 scrollback，不做 fullscreen TUI。 |
 | T-078 | P0 | P8/P9 | 项目边界驱动的项目清单分析压测 | 已完成 MVP 版 | User + Agent | 用户给出部门/业务线/负责服务边界，目标是先让 LCA 判断某需求需要关注哪些项目/服务，再接入源码 | 已按 OMP memory/skill 思路落地：边界表在本机 `.local-agent/memory`，工作流在 `.local-agent/skills`，不新增专用工具；runtime 补 analysis-only 任务识别、named skill soft requirement、自定义 memory_read 安全读取和 final structure gate。 |
-| T-079 | P0 | P9 | 真实需求范围确认到源码验证压测 | 下一步 | User + Agent | 用户希望今天用起来；T-078 已能圈范围，下一步要验证它能从范围进入具体源码证据和实现设计 | 用户给一个真实需求，LCA 先输出项目范围表；用户确认后，用 `--cwd/--allow-dir` 接入候选项目源码，只读验证 API/controller/entity/test 证据。 |
+| T-079 | P0 | P9 | 真实需求范围确认到源码验证压测 | 进行中 | User + Agent | 用户希望今天用起来；T-078 已能圈范围，下一步要验证它能从范围进入具体源码证据和实现设计 | T-084 已完成一轮上线目录 SQL → 源码证据的只读验证；下一步补 T-085~T-087 后继续真实需求链路。 |
 | T-080 | P1 | P8/P9 | Terminal Frontend 命令可发现性 | 已完成 MVP 版 | Agent | 用户询问 TUI 如何使用；设计文档要求 append-only terminal frontend，但现有命令入口不够自解释 | 已新增 `/help`、`/status`、`/tools`，启动横幅提示 `/help`；`/status` 输出 session/workspace/provider/model/budget/approval，`/tools` 列出工具名；不引入 fullscreen 或新依赖。 |
 | T-081 | P1 | P9 | Claude review 行动计划 | 已完成 | Agent | 外部 review 指出 agent.py 过大、token budget、LSP、run collector 等架构差距；需要沉淀取舍，避免聊天结论丢失 | 新增 `docs/claude-review-action-plan-2026-07-09.md`；结论为先做日用/TUI/run summary，再按压测数据渐进拆模块，不先做大重构。 |
 | T-082 | P1 | P9 | Run summary / coverage MVP | 已完成 | Agent | Claude review 和 OMP run-collector 思路都要求每轮可观测，压测复盘不能只靠最终文字 | Runtime 已记录 `run_summary` 和 `RunSummary` event，包含终止原因、耗时、LLM 请求数、工具调用/错误/无效结果、synthetic result、compaction、tool counts、guard hits 和 steering counts；`/status` 展示最近一轮摘要。 |
+| T-083 | P1 | P9 | 真实需求压测模板 | 已完成 | Agent | 真实需求链路需要可复用步骤，否则每次压测都靠聊天记忆 | 新增 `docs/real-requirement-pressure-test-template.md`，覆盖范围判断、用户确认、源码只读验证、实现设计、小改压测、run summary 和问题记录。 |
+| T-084 | P0 | P9 | qwen3-coder-next 只读源码验证压测 | 已完成并记录问题 | Agent | 切换编码模型后，需要验证真实企业项目只读链路是否仍能收束 | session `20260709T071219747931Z` 正常 final：153 秒、35 次 LLM 请求、78 次工具调用、33 次 compaction、18 次 LLM summary；读 YXK-397 SQL 并定位 `IntentionConfig*` 证据链；新增 PT-030~PT-032。 |
+| T-085 | P1 | P9 | todo 工具误参纠偏 | 候选 | Agent | T-084 中模型用 `key/content` 调 `todo_add`、用错误 id 调 `todo_update` | 工具错误返回正确参数示例；可选兼容 `key -> id`、`content -> task`，但继续提示规范 schema。 |
+| T-086 | P0 | P9 | evidence-aware read repetition guard | 候选 | Agent | T-084 中 `read_file` 54 次，同一路径重复读但 `guard_hits=0` | 参考 OMP pruning / soft escalation：同路径同范围已读多次后返回 evidence 摘要并触发 final-answer steering。 |
+| T-087 | P1 | P9 | final structure / evidence hygiene 增强 | 候选 | Agent | T-084 最终把“项目表”退化成“表名表”，并对类作用有过度断言 | 增强 Current task contract / final gate，检查用户显式输出结构；类作用类结论必须标 verified 或 inferred。 |
 
 ## 风险与决策
 
@@ -253,6 +258,8 @@ python3 scripts/sync_project_excel.py
 | 风险 | R-039 | 中 | TUI 命令不可发现会降低日用体验 | 已关闭 MVP 版 | 交互入口已有，但用户需要记 `/approval` 等命令，且缺少当前 runtime 状态视图 | 已参考 terminal frontend 设计文档，在 append-only 前端内新增 `/help`、`/status`、`/tools`，不做 fullscreen。 |
 | 风险 | R-040 | 中 | 过早大拆 `agent.py` 可能打断真实使用验证 | 新增，受控 | Claude review 指出 `agent.py` 已大，但 P0 大拆分会扩大回归面，影响今天可用目标 | 接受架构方向但调整顺序：先做 run summary/coverage 和真实压测，再按 startup_context/evidence/compaction/memory_consolidation/steering 分批抽模块。 |
 | 风险 | R-041 | 中 | 压测复盘缺少结构化 run coverage | 已关闭 MVP 版 | 只有 session 原文和最终回答时，很难判断模型卡在哪个 guard、用了多少工具、是否触发 compaction 或为什么结束 | 已参考 OMP run-collector 思路，新增每轮 `run_summary`：工具次数、guard/steering、compaction、termination reason 统一落 session 和事件流。 |
+| 风险 | R-042 | 中 | 只读源码验证中重复读取过多 | 新增 | T-084 中 `read_file` 54 次、`list_files` 10 次，重复读取同一批证据文件但没有 guard/steering 命中 | 参考 OMP pruning / soft escalation / evidence sufficiency：对已读同范围做 evidence-aware repetition guard，达到证据足够时触发 final-answer steering。 |
+| 风险 | R-043 | 中 | 最终回答轻微结构漂移和过度断言 | 新增 | T-084 要求项目表，但最终输出表名表；还把 `IntentionConfigApplication` 表述为 Spring Boot 启动/配置类，证据不足 | 增强 Current task contract 的 final structure gate 和 final evidence hygiene，要求输出结构匹配用户字段，类作用类结论必须标 verified 或 inferred。 |
 | ADR | ADR-001 | 2026-07-07 | 优先采纳 OMP 成熟设计，按本地目标裁剪 | 已接受 | 好设计可直接采用，复杂度按需收敛 | OMP 是重要参考实现；我们不为了“避免复制”而绕开好设计。采用标准是收益是否大于复杂度，并且不破坏个人本地使用、封闭 VM、无公网依赖和第一阶段 MVP 边界。 |
 | ADR | ADR-002 | 2026-07-07 | max_steps 只作为防失控保险丝 | 已落地 | 默认值已改为 0，不限步 | OMP 的 stepCounter 主要用于 telemetry，终止靠无 tool_calls、deadline、abort；我们把 `max_steps` 仅作为显式保险丝。 |
 | ADR | ADR-003 | 2026-07-07 | todo、ask_user、per-tool approval 是主功能 | 已落地 | P3 已实现 | OMP 将 todo、approval、elicitation 做成可观测会话能力；我们 P3 先做终端轻量版，后续再补 UI 化。 |
@@ -280,17 +287,19 @@ python3 scripts/sync_project_excel.py
 | ADR | ADR-026 | 2026-07-09 | 企业服务边界用 memory/skill 承载，不新增专用工具 | 已接受并落地 | 已完成 T-078 | 组织边界是用户个人长期上下文，不是通用 Agent tool；参考 OMP authored skills / project memory，把边界和工作流沉淀为本机上下文，代码只补通用 runtime 能力，包括 analysis-only、named skill soft requirement、custom memory read 和 final-structure gate。 |
 | ADR | ADR-027 | 2026-07-09 | Claude review 先转为行动计划，不立即做 P0 大拆分 | 已接受 | 已完成 T-081 | OMP 架构原则继续作为方向；但 LCA 当前以真实日用闭环为先。先补 TUI 可发现性和 run summary/coverage，再用压测数据驱动模块拆分、token budget 和 LSP provider 增强。 |
 | ADR | ADR-028 | 2026-07-09 | Run summary 先做 runtime 内轻量 collector，暂不拆大模块 | 已接受并落地 | 已完成 T-082 | 参考 OMP run-collector 的可观测性原则，但当前先把计数和终止原因汇总到 `RunSummary` / `run_summary`，服务压测和 `/status`；等数据稳定后再抽 `run_collector.py` 或 Steerer 协议。 |
+| ADR | ADR-029 | 2026-07-09 | 默认编码模型切到 `qwen3-coder-next` 做日用压测 | 已接受 | 本地 `.env` 已切换，连通性返回 OK；`.env` 不提交 token | 阿里云百炼 Qwen-Coder 文档把 `qwen3-coder-next` 用作代码任务/tool interaction 示例模型；本地真实压测 T-084 已能正常收束。 |
+| ADR | ADR-030 | 2026-07-09 | P9 压测问题优先补 runtime steering，不先做大重构 | 已接受 | 先做 T-085~T-087 | T-084 暴露的是重复读、todo 参数纠偏、最终结构/证据卫生；这些适合在工具错误、evidence-aware guard、final gate 层小步修复，不需要立刻大拆 `agent.py` 或上完整 ToolChoiceQueue。 |
 
 ## 阶段回顾
 
 | 项目 | 结论 | 依据 | 后续 |
 |---|---|---|---|
-| 阶段判断 | P9 真实需求使用准备进行中 | T-076/T-077 已让 Runtime 产出 typed events，并提供 terminal-native 交互入口；T-078 已把项目边界分析沉淀为本机 memory/skill 和通用 runtime gate | 进入真实需求“范围确认 → 源码验证 → 实现设计/小改” |
+| 阶段判断 | P9 真实需求使用准备进行中 | T-076/T-077 已让 Runtime 产出 typed events，并提供 terminal-native 交互入口；T-078 已把项目边界分析沉淀为本机 memory/skill 和通用 runtime gate；T-084 已完成新模型只读源码验证压测 | 先补 T-085~T-087，再继续真实需求“范围确认 → 源码验证 → 实现设计/小改” |
 | 与 OMP 的主要差距 | 差距集中在高级工程化，不阻塞低风险实战 | 完整 ToolChoiceQueue、reviewer/subagents、完整 LSP/DAP、browser/TUI、AST edit、managed skills 仍后置 | 由压测失败形态触发 |
 | 已关闭风险 | P0/P1 runtime 风险已基本收口 | Python 3.12 patch、非交互审批、orphan tool_calls、max_steps、allowed-dir、重复工具、证据漂移、diff 混淆等均已有修复或缓解 | 继续用真实任务验证 |
 | reviewer 决策 | 先保留轻量实现质量 gate | T-074 已补 no-comment-only reviewer，复跑未再产生伪实现 | 继续用真实任务验证；若后续出现更复杂 patch 质量问题，再补完整 reviewer/subagent |
 | ToolChoiceQueue 决策 | 暂不先做完整 ToolChoiceQueue | 已有 allowed-dir soft requirement、duplicate forced-final、todo steering、pruning；还缺“关键工具长期不用/乱用”的新失败样本 | 若 T-072 暴露工具选择失控，再按 OMP 裁剪 ToolChoiceQueue |
-| 下一步 | 真实需求范围确认到源码验证压测 | 用户已给服务边界，T-078 已完成项目边界分析 MVP | 做 T-079：先用边界圈项目范围，用户确认后接入候选项目源码，只读验证 API/controller/entity/test 证据并形成实现设计 |
+| 下一步 | 补齐 T-085~T-087 后继续真实需求链路 | T-084 已证明新模型能跑通只读链路，但暴露重复读、todo 参数和最终结构/证据卫生问题 | 先做小修小补，再进入用户真实需求的项目范围确认和源码验证 |
 
 ## P7 综合压测问题
 
@@ -325,6 +334,9 @@ python3 scripts/sync_project_excel.py
 | PT-027 | P0 | 已缓解并复跑 | T-073 复跑中模型定位到相关 Java DTO，但 `write_file` 被 deny 后退化为只给字段补 JavaDoc，并把它包装成“健壮性/校验相关”实现。T-074 复跑未再产生 comment-only patch。 | OMP 可通过 reviewer、tool-choice queue、todo/plan consistency 和 verification 判断 patch 是否真正满足任务，而不是只看 patch 语法成功。 | 已新增 implementation-quality reviewer：本轮代码实现 diff 如果只有注释/文档，会提示不要声称行为/校验/解析/测试变化；复跑 session `20260709T025706579604Z` 选择停止而非伪实现。 |
 | PT-028 | P1 | 已缓解并复跑 | T-073 复跑曾尝试新增 validator 注解和目录，但 `shell=deny` / `write_file=deny` 使新文件路径被拦，导致模型降级。T-074 后新文件创建可先 dry-run，并能记录/回滚。 | OMP 的 permission model 支持按工具和上下文请求权限；新文件写入应由审批/策略控制，而非一概 deny。 | `write_file` 支持 `dry_run=true` 新文件 diff 预览；真实创建会记录 patch log；`rollback_patch` 可删除本 session 创建的新文件。复跑中未因新文件权限降级改注释。 |
 | PT-029 | P1 | 已关闭 MVP 版 | T-074 复跑中模型正确判断当前 `crcl-open` 只是 `zqyl-investment-plan` 调用方并停止，但没有维护 todo，也没有调用 `git_diff` 证明无改动。 | OMP 会持续注入 current task / todo / tool evidence，并通过 tool-choice steering 约束最终回答前的必要收束步骤。 | T-075 已实现 no-edit final hygiene：实现任务准备无改动停止时，会先要求 todo/git 收束；测试覆盖过早 final 被 steering 到 `todo_add` + `git_status`。 |
+| PT-030 | P1 | 新增 | T-084 中模型首次用 `key/content/status` 调 `todo_add`，后续又用错误 id 调 `todo_update`；任务最终完成，但 todo 台账不可靠。 | OMP 的高频状态工具需要强 schema 提示、UI 可见性和可行动错误。 | T-085 候选：工具错误返回正确调用示例；可选兼容 `key -> id`、`content -> task`，同时继续提示规范参数名。 |
+| PT-031 | P0 | 新增 | T-084 中 153 秒内调用 78 次工具，其中 `read_file` 54 次，同一批 SQL/Java/XML 文件多次重复读取，但 `guard_hits=0`、`steering_counts=0`。 | OMP 将 tool result pruning、soft escalation、task state 和 evidence sufficiency 组合，用小上限把低价值重复探索切回回答。 | T-086 候选：evidence-aware read repetition guard；同路径同范围成功读取多次后返回已读 evidence 摘要并触发 final-answer steering。 |
+| PT-032 | P1 | 新增 | T-084 要求输出“必须关注/可能关注/暂不关注项目表”，最终变成“表名表”；对 `IntentionConfigApplication` 的作用也有过度断言。 | OMP 持续注入 current task contract 和 runtime evidence；成熟 reviewer/final check 会要求 verified fact 与 inference 分开。 | T-087 候选：增强 final structure gate 和 final evidence hygiene，检查显式输出结构，要求类作用类结论标 verified/inferred。 |
 
 ## P5 收口结论
 

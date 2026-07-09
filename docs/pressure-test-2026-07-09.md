@@ -4,6 +4,8 @@
 
 本文记录 T-072 首轮真实需求实现压测，以及随后 T-073 relevance gate / reviewer、T-074 implementation-quality reviewer / safe new-file policy 复跑。T-072 成功暴露了一个必须处理的问题：LCA 在真实实现任务中可能从正确需求漂移到无关配置文件，并产生无业务价值 patch。T-073 已缓解该跑偏问题，但复跑又暴露真实实现可能退化成 comment-only 低价值 patch。T-074 已缓解 comment-only 伪实现和新文件权限降级问题；复跑中模型没有强行修改，而是在当前仓库缺少目标服务实现时停止说明。
 
+2026-07-09 后续又完成一次 qwen3-coder-next 只读压测：模型能从 `YXK-397 云信通用优化25.1` 上线 SQL 进入 `IntentionConfig*` 实体、Mapper、Controller 和 user-center 辅助文档，最终正常收束；但暴露了 todo 参数易错、重复读取过多、最终回答部分过度断言和“项目范围表”退化为“表名范围表”等问题。
+
 ## 压测目标
 
 | 项目 | 内容 |
@@ -332,3 +334,126 @@ LCA 措施：
 - T-075 已补 no-edit final hygiene：当实现任务选择“无法安全实现/目标服务缺失/证据不足”时，如果尚未做 git/todo 收束，runtime 会追加 steering，并临时只开放 `todo_read` / `todo_add` / `todo_update` / `git_status` / `git_diff`。
 - 测试覆盖：provider context 会注入 `[No-edit final hygiene]`；过早 no-edit final 会被 steering 到 `todo_add` + `git_status` 后再最终回答。
 - 如果后续提供 `zqyl-investment-plan` 路径，应把它作为主 `--cwd` 或 `--allow-dir`，继续真实实现压测。
+
+## T-084 qwen3-coder-next 只读源码验证压测
+
+压测时间：2026-07-09
+
+| 项目 | 内容 |
+|---|---|
+| Provider / model | `bailian / qwen3-coder-next` |
+| LCA session | `20260709T071219747931Z` |
+| session JSONL | `/Users/chengming/.local/state/local-coding-agent/workspaces/mycode-project-crcl-open-lca-t072-worktree-5a7a7365d7ed/sessions/20260709T071219747931Z.jsonl` |
+| 主 workspace | `/Users/chengming/mycode/project/crcl-open-lca-t072-worktree` |
+| allowed-dir 1 | `/Users/chengming/mycode/project/crcl-open-lca-t072-worktree/deployMessage/YXK-397 云信通用优化25.1` |
+| allowed-dir 2 | `/Users/chengming/mycode/project/zqyl-user-center-service` |
+| 是否只读 | 是，显式 deny `shell/run_tests/apply_patch/write_file/memory_write/rollback_patch/git_status/git_diff` |
+
+运行命令核心：
+
+```bash
+./agent --provider bailian \
+  --approval-mode yolo \
+  --tool-approval shell=deny,run_tests=deny,apply_patch=deny,write_file=deny,memory_write=deny,rollback_patch=deny,git_status=deny,git_diff=deny \
+  --cwd /Users/chengming/mycode/project/crcl-open-lca-t072-worktree \
+  --allow-dir "/Users/chengming/mycode/project/crcl-open-lca-t072-worktree/deployMessage/YXK-397 云信通用优化25.1" \
+  --allow-dir /Users/chengming/mycode/project/zqyl-user-center-service \
+  --budget-seconds 600 \
+  --context-char-budget 12000 \
+  "这是一次使用 qwen3-coder-next 的真实企业项目只读压测..."
+```
+
+Run summary：
+
+| 指标 | 值 |
+|---|---:|
+| termination_reason | `final` |
+| elapsed_ms | 153338 |
+| llm_requests | 35 |
+| tool_calls | 78 |
+| tool_errors | 6 |
+| compactions | 33 |
+| llm_context_summaries | 18 |
+| synthetic_tool_results | 0 |
+| useless_tool_results | 0 |
+| guard_hits | 0 |
+| steering_counts | 0 |
+
+Tool counts：
+
+| 工具 | 次数 |
+|---|---:|
+| `read_file` | 54 |
+| `list_files` | 10 |
+| `search_code` | 7 |
+| `todo_add` | 4 |
+| `todo_update` | 2 |
+| `todo_read` | 1 |
+
+压测结果：
+
+| 观察点 | 结果 | 判断 |
+|---|---|---|
+| 模型切换 | `qwen3-coder-next` 连通性测试返回 `OK` | 通过 |
+| 需求/上线线索读取 | 先读取 `YXK-397 云信通用优化25.1/sql/表结构变更.sql` | 通过 |
+| 源码定位 | 定位 `IntentionConfig.java`、`IntentionMethod.java`、`IntentionExemptCompany.java`、`IntentionConfigMapper.xml`、`IntentionConfigManagerController.java` 等 | 通过 |
+| 辅助项目判断 | 读取 user-center 的 `READ.md`、`工作量统计_涉及表.md` 等，判断暂不需要 user-center 直接配合 | 基本通过 |
+| 只读约束 | 没有写文件、没有跑 shell、没有跑测试、没有 git 操作 | 通过 |
+| 任务收束 | 最终正常输出 6 段回答，没有 budget 停止 | 通过 |
+| 工具效率 | 78 次工具调用，`read_file` 54 次，多次重复读同一批文件 | 不理想 |
+| todo 使用 | 首次 `todo_add` 用错参数 `key/content`，后续 `todo_update` 用错 id | 不理想 |
+| 最终回答准确性 | 能给出大方向，但把“项目表”写成“表名表”，并对 `IntentionConfigApplication` 做了“Spring Boot 启动类/配置类”的过度断言 | 待改进 |
+
+### PT-030：todo 工具 schema 仍容易被模型误用
+
+现象：
+
+- 首次 `todo_add` 调用参数为 `key/content/status`，工具返回 `Missing required argument(s): id, task.`
+- 后续 `todo_update` 又出现 `Todo not found: step1` 和 `Todo not found: in_progress`。
+- 模型最终能继续完成任务，但 todo 状态没有成为可靠的任务台账。
+
+OMP 对应思路：
+
+- OMP 的 todo 是高频状态工具，工具描述、schema、系统提示和 UI 都应让参数名稳定可见。
+- 当模型传错参数时，工具错误应尽量给出可直接复制的正确调用形态。
+
+LCA 措施：
+
+- T-085 候选：在 `todo_add` / `todo_update` 错误中返回正确参数示例。
+- 可选兼容 `key -> id`、`content -> task`，但建议仍在错误中提示规范参数，避免长期污染 schema。
+
+### PT-031：只读源码验证中重复读取过多但未触发收束
+
+现象：
+
+- 本轮总计 78 次工具调用，其中 `read_file` 54 次。
+- `表结构变更.sql`、`IntentionConfig.java`、`IntentionConfigManagerController.java`、`IntentionConfigMapper.xml` 等被多次重复读取。
+- `guard_hits` 和 `steering_counts` 均为 0，说明现有 repeated read guard 没有覆盖“同一路径整文件重复读”的场景。
+
+OMP 对应思路：
+
+- OMP 不只靠 exact duplicate guard，而是把工具结果可用性、superseded/useless pruning、soft escalation 和当前任务收束结合起来。
+- 当同一路径已有足够 evidence 时，runtime 可以把重复读取转为“已读过，请基于已有证据回答”的 steering，而不是继续消耗预算。
+
+LCA 措施：
+
+- T-086 候选：增加 evidence-aware read repetition guard。对同一路径同范围成功读取多次后，返回带 evidence 摘要的 tool error 或 steering。
+- 只读分析任务中，若已满足用户要求的输出结构和证据数量，可以触发“evidence sufficient” final-answer steering。
+
+### PT-032：最终回答存在轻微结构漂移和证据过度断言
+
+现象：
+
+- 用户要求“必须关注/可能关注/暂不关注项目表”，模型输出列名是“表名”，范围从项目退化为数据库表。
+- `IntentionConfigApplication.java` 被表述为“Spring Boot 启动类/配置类”，但这需要进一步核实，不能仅由文件名推断。
+- 对部分文件使用“已读取首行，确认存在”这类说法，与实际 `read_file` 工具读取全文/片段的证据表达不一致。
+
+OMP 对应思路：
+
+- OMP 会持续注入当前任务 contract 和 runtime evidence，并让最终回答区分 verified fact / inference。
+- 更成熟的 reviewer 或 final-answer check 可以在输出前检查：表头是否符合用户要求、路径是否来自证据、推断是否明确标注。
+
+LCA 措施：
+
+- T-087 候选：增强 final structure gate，对“项目表/证据表/不确定项”等用户显式结构做更严格检查。
+- T-088 候选：增加 final evidence hygiene，要求模型把“类作用/启动类/配置类”等非直接证据标为推断。
