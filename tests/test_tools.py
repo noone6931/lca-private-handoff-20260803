@@ -346,6 +346,66 @@ while True:
     )
 
 
+def _write_fake_jdtls_with_project_probe(path: Path) -> None:
+    path.write_text(
+        r'''
+from __future__ import annotations
+
+import json
+import sys
+
+
+def read_message():
+    headers = {}
+    while True:
+        line = sys.stdin.buffer.readline()
+        if line == b"":
+            return None
+        if line in {b"\r\n", b"\n"}:
+            break
+        decoded = line.decode("ascii").strip()
+        if ":" in decoded:
+            key, value = decoded.split(":", 1)
+            headers[key.lower()] = value.strip()
+    length = int(headers.get("content-length", "0"))
+    return json.loads(sys.stdin.buffer.read(length).decode("utf-8"))
+
+
+def send(payload):
+    body = json.dumps(payload).encode("utf-8")
+    sys.stdout.buffer.write(f"Content-Length: {len(body)}\r\n\r\n".encode("ascii") + body)
+    sys.stdout.buffer.flush()
+
+
+while True:
+    message = read_message()
+    if message is None:
+        break
+    method = message.get("method")
+    request_id = message.get("id")
+    if method == "initialize":
+        send({
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "result": {"capabilities": {"executeCommandProvider": {"commands": ["java.project.getAll", "java.project.listSourcePaths"]}}},
+        })
+    elif method == "workspace/executeCommand":
+        command = message.get("params", {}).get("command")
+        if command == "java.project.getAll":
+            result = [{"name": "demo"}]
+        elif command == "java.project.listSourcePaths":
+            result = {"status": True, "data": ["src/main/java"]}
+        else:
+            result = None
+        send({"jsonrpc": "2.0", "id": request_id, "result": result})
+    else:
+        if request_id is not None:
+            send({"jsonrpc": "2.0", "id": request_id, "result": None})
+'''.lstrip(),
+        encoding="utf-8",
+    )
+
+
 class ToolTests(unittest.TestCase):
     def test_list_files_skips_agent_and_cache_dirs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -720,6 +780,28 @@ class ToolTests(unittest.TestCase):
         self.assertFalse(result.is_error)
         self.assertIn("External LSP mode", result.content)
         self.assertIn("typescript-language-server", result.content)
+
+    def test_lsp_status_probe_reports_java_project_health(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            (workspace / "pom.xml").write_text("<project />\n", encoding="utf-8")
+            source = workspace / "src" / "main" / "java" / "demo" / "Hello.java"
+            source.parent.mkdir(parents=True)
+            source.write_text("package demo;\npublic class Hello {}\n", encoding="utf-8")
+            fake_server = workspace / "fake_jdtls.py"
+            _write_fake_jdtls_with_project_probe(fake_server)
+            command = f"{sys.executable} {fake_server}"
+            with patch.dict("os.environ", {"AGENT_LSP_JDTLS_COMMAND": command}):
+                try:
+                    result = lsp_status({"probe": True}, ToolContext(workspace=workspace, approval_mode="yolo"))
+                finally:
+                    close_all_clients()
+
+        self.assertFalse(result.is_error)
+        self.assertIn("[lsp probe]", result.content)
+        self.assertIn("java.project.getAll: 1 project(s)", result.content)
+        self.assertIn("java.project.listSourcePaths: 1 source path(s)", result.content)
+        self.assertIn("project health: jdtls has imported Java project metadata", result.content)
 
     def test_lsp_tools_reject_path_escape(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

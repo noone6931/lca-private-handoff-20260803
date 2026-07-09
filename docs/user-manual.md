@@ -274,6 +274,16 @@ d: 当前 session 总是拒绝
 /tools
 ```
 
+排查 Java LSP / jdtls 是否真正导入项目：
+
+```bash
+AGENT_LSP_MODE=external ./agent --provider bailian \
+  --cwd /path/to/java-project \
+  "请调用 lsp_status probe=true，并解释 Java project health。"
+```
+
+如果输出里 `java.project.getAll` 或 `java.project.listSourcePaths` 是 0，说明 jdtls 虽然启动了，但 Maven/Gradle 项目没有成功导入；通常需要补齐公司 parent POM、私服配置或本地依赖缓存。LCA 会继续用 lightweight fallback 给出类/方法定位，但这不是完整 type-aware navigation。
+
 隐藏工具日志，只看最终回答：
 
 ```bash
@@ -308,4 +318,3 @@ d: 当前 session 总是拒绝
 5. 真要改代码时，用 `always-ask`，看到写入、测试、shell 审批再决定。
 6. 中途看状态用 `/status`，改权限用 `/approval`。
 7. 想接着上次问，用 `--continue` 或 `--session`。
-

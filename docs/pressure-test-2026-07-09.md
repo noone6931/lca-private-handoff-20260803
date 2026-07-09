@@ -655,8 +655,12 @@ LCA 措施：
 - 已保留并扩展 server request 响应：workspace folders、configuration、dynamic registration、workDoneProgress create、showDocument、applyEdit read-only 拒绝。
 - 已新增回归测试覆盖 workspace folders 和 configuration 反向请求。
 - 真实企业项目 strict external 复测保持稳定：缺 parent POM 时 jdtls diagnostics OK，symbols/definition 自动输出 external 边界并合并 fallback Java 类/方法定位。
+- 已新增 `lsp_status probe=true` project health 探针，真实企业项目复测输出：
+  - `crcl-open`：`java.project.getAll: 0 project(s)`，`java.project.listSourcePaths: 0 source path(s)`。
+  - `zqyl-user-center-service`：`java.project.getAll: 0 project(s)`，`java.project.listSourcePaths: 0 source path(s)`。
+  - 输出会提示检查 Maven/Gradle parent POM、private repositories 和本地依赖缓存。
 
 剩余边界：
 
 - 若要做到真正 type-aware Java navigation，必须补齐本机 Maven 私服配置、公司 parent POM 和依赖缓存；这是环境条件，不是 Agent 代码可以单独绕过的。
-- 后续可选增强：暴露 `lsp_request` / `lsp_capabilities` 调试工具，或在 `lsp_status` 中报告 jdtls project import/source path 状态。
+- 后续可选增强：暴露 `lsp_request` / `lsp_capabilities` 调试工具；`lsp_status` 已能报告 jdtls project import/source path 状态。

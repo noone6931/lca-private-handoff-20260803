@@ -91,6 +91,19 @@ class StdioLspClient:
         result = self.request("workspace/symbol", {"query": query_text}, timeout=timeout)
         return _parse_workspace_symbols(result)
 
+    def execute_command(
+        self,
+        command: str,
+        arguments: list[Any] | None = None,
+        *,
+        timeout: float = DEFAULT_LSP_TIMEOUT_SECONDS,
+    ) -> Any:
+        return self.request(
+            "workspace/executeCommand",
+            {"command": command, "arguments": arguments or []},
+            timeout=timeout,
+        )
+
     def definition(self, path: Path, symbol: str, *, timeout: float = DEFAULT_LSP_TIMEOUT_SECONDS) -> list[LspLocation]:
         position = _symbol_position(path, symbol)
         if position is None:

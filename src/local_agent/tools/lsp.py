@@ -9,8 +9,12 @@ from typing import Any, Iterable
 from local_agent.patch.anchored import PatchError
 from local_agent.patch.anchored import display_workspace_path
 from local_agent.patch.anchored import resolve_workspace_path
+from local_agent.lsp.client import LspClientError
+from local_agent.lsp.client import get_client
 from local_agent.lsp.config import external_lsp_enabled
+from local_agent.lsp.config import root_for_path
 from local_agent.lsp.config import resolved_server_configs
+from local_agent.lsp.config import servers_for_path
 from local_agent.lsp.config import strict_external_lsp
 from local_agent.lsp.external import external_definition
 from local_agent.lsp.external import external_diagnostics
@@ -181,10 +185,18 @@ def lsp_tools() -> list[Tool]:
             name="lsp_status",
             description=(
                 "Show external language-server availability and fallback status. "
-                "External servers are used when configured/auto-detected; otherwise tools use lightweight fallback."
+                "External servers are used when configured/auto-detected; otherwise tools use lightweight fallback. "
+                "Set probe=true to start the matching server and inspect Java project import/source path health."
             ),
             tier="read",
-            input_schema={"type": "object", "properties": {}, "additionalProperties": False},
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
+                    "probe": {"type": "boolean"},
+                },
+                "additionalProperties": False,
+            },
             handler=lsp_status,
         ),
     ]
@@ -342,6 +354,13 @@ def lsp_diagnostics(args: dict[str, Any], context: ToolContext) -> ToolResult:
 def lsp_status(args: dict[str, Any], context: ToolContext) -> ToolResult:
     if not external_lsp_enabled():
         return ToolResult("External LSP: disabled by AGENT_LSP_MODE; lightweight fallback is active.")
+    raw_path = args.get("path") or "."
+    try:
+        status_root = resolve_workspace_path(context.workspace, raw_path, context.allowed_dirs)
+    except PatchError as exc:
+        return ToolResult(str(exc), is_error=True)
+    if not status_root.exists():
+        return ToolResult(f"Path not found: {raw_path}", is_error=True)
     servers = resolved_server_configs(context.workspace)
     mode = "strict external" if strict_external_lsp() else "auto external with lightweight fallback"
     lines = [f"External LSP mode: {mode}"]
@@ -361,6 +380,10 @@ def lsp_status(args: dict[str, Any], context: ToolContext) -> ToolResult:
     lines.append(
         "Tools use an external server only when root markers match; otherwise they fall back to lightweight static navigation."
     )
+    if args.get("probe"):
+        lines.extend(_render_lsp_probe_status(status_root, context))
+    else:
+        lines.append("Set probe=true to inspect external project health; this may start language-server processes.")
     return ToolResult("\n".join(lines))
 
 
@@ -396,6 +419,94 @@ def _render_lsp_results(results: list[str], suffixes: set[str], *, external: Any
         lines.append(BEST_EFFORT_NOTICE)
     lines.extend(results)
     return "\n".join(lines)
+
+
+def _render_lsp_probe_status(root: Path, context: ToolContext) -> list[str]:
+    lines = ["", "[lsp probe]"]
+    java_file = _first_java_file(root)
+    if java_file is None:
+        lines.append("No Java files found under the requested path; Java project health probe skipped.")
+        return lines
+    lsp_root = _lsp_probe_root_for_path(context.workspace, context.allowed_dirs, java_file)
+    matches = servers_for_path(lsp_root, java_file)
+    jdtls_matches = [server for server in matches if server.name == "jdtls"]
+    if not jdtls_matches:
+        lines.append("No matching jdtls server/root marker found for the Java probe file.")
+        lines.append(f"Probe file: {display_workspace_path(context.workspace, java_file, context.allowed_dirs)}")
+        return lines
+    for server in jdtls_matches:
+        server_root = root_for_path(lsp_root, java_file, server)
+        if server_root is None:
+            lines.append(f"- {server.name}: root marker not found for probe file.")
+            continue
+        rel_probe = display_workspace_path(context.workspace, java_file, context.allowed_dirs)
+        rel_root = display_workspace_path(context.workspace, server_root, context.allowed_dirs)
+        lines.append(f"- {server.name}: probe file={rel_probe}; server root={rel_root}")
+        try:
+            client = get_client(server, server_root)
+            projects = client.execute_command("java.project.getAll", [], timeout=15)
+            source_paths = client.execute_command("java.project.listSourcePaths", [], timeout=15)
+        except (OSError, LspClientError) as exc:
+            lines.append(f"  project health: unavailable ({type(exc).__name__}: {exc})")
+            continue
+        lines.extend(_render_java_project_probe(projects, source_paths))
+    return lines
+
+
+def _first_java_file(root: Path) -> Path | None:
+    if root.is_file():
+        return root if root.suffix == ".java" else None
+    for path in _iter_supported_files(root):
+        if path.suffix == ".java":
+            return path
+    return None
+
+
+def _lsp_probe_root_for_path(workspace: Path, allowed_roots: tuple[Path, ...], path: Path) -> Path:
+    resolved = path.resolve()
+    for root in (workspace, *allowed_roots):
+        try:
+            resolved.relative_to(root.resolve())
+            return root
+        except ValueError:
+            continue
+    return workspace
+
+
+def _render_java_project_probe(projects: Any, source_paths: Any) -> list[str]:
+    lines: list[str] = []
+    project_count = len(projects) if isinstance(projects, list) else 0
+    source_entries = _java_source_path_entries(source_paths)
+    source_count = len(source_entries)
+    lines.append(f"  java.project.getAll: {project_count} project(s)")
+    lines.append(f"  java.project.listSourcePaths: {source_count} source path(s)")
+    for entry in source_entries[:8]:
+        lines.append(f"    - {entry}")
+    if len(source_entries) > 8:
+        lines.append(f"    ... truncated after 8 of {len(source_entries)} source paths")
+    if project_count == 0 or source_count == 0:
+        lines.append(
+            "  project health: incomplete. jdtls started, but Java project import/source paths are empty; "
+            "check Maven/Gradle parent POMs, private repositories, and local dependency cache."
+        )
+    else:
+        lines.append("  project health: jdtls has imported Java project metadata.")
+    return lines
+
+
+def _java_source_path_entries(source_paths: Any) -> list[str]:
+    raw = source_paths.get("data") if isinstance(source_paths, dict) else source_paths
+    if not isinstance(raw, list):
+        return []
+    entries: list[str] = []
+    for item in raw:
+        if isinstance(item, str):
+            entries.append(item)
+        elif isinstance(item, dict):
+            value = item.get("path") or item.get("sourcePath") or item.get("uri") or item.get("name")
+            if value:
+                entries.append(str(value))
+    return entries
 
 
 def _iter_symbol_records(root: Path, workspace: Path, allowed_roots: tuple[Path, ...]) -> Iterable[SymbolRecord]:
