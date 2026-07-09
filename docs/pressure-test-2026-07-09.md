@@ -565,3 +565,34 @@ LCA 措施：
 - 默认 `AGENT_LSP_MODE=auto`：Java 通过 `jdtls`，TypeScript/JavaScript 通过 `typescript-language-server --stdio`，Vue 通过 `vue-language-server --stdio`；支持嵌套项目 root marker。
 - `AGENT_LSP_MODE=light` 可强制轻量回退，`AGENT_LSP_MODE=external` 可强制外部 LSP 并在缺依赖时报错；`lsp_status` 用于诊断当前 VM 依赖是否可用。
 - 运行时不自动下载 npm/maven/pip 依赖；封闭 VM 需要提前预置，或通过 `AGENT_LSP_*_COMMAND` 指向离线安装路径。
+
+### PT-039：真实企业项目 LSP 可用性压测
+
+压测对象：
+
+- `/Users/chengming/mycode/project/crcl-open/crcl-open`
+- `/Users/chengming/mycode/project/zqyl-user-center-service`
+
+压测会话：
+
+- `crcl-open`：`20260709T082448561892Z`
+- `zqyl-user-center-service`：`20260709T082459082275Z`
+- `zqyl-user-center-service` 精确路径复测：`20260709T082540210824Z`
+
+现象：
+
+- 当前机器有 `mvn` 和 `npm`，但没有 `jdtls`、`typescript-language-server`、`vue-language-server` 命令。
+- `lsp_status` 在两个 Maven 企业项目中均正确输出：`auto external with lightweight fallback`，并提示未找到外部 LSP server command。
+- `crcl-open` 样本 `IntentionConfigManagerController.java` 可通过 `lsp_symbols` / `lsp_definition` 定位类和方法符号。
+- `zqyl-user-center-service` 首轮 `lsp_symbols` 里模型把路径 `interfaces/controller` 误写成 `interfaces.controller`，导致一次 `Path not found`；同轮 `lsp_definition` 使用正确路径成功定位 `Oauth2Controller`，精确路径复测 `lsp_symbols` 成功定位 `Oauth2Controller`、`authorize`、`getToken`。
+
+OMP 对应思路：
+
+- OMP 的 LSP 能力依赖真实 language server/client 子系统；环境依赖缺失时，工具层应该把可用性和能力边界反馈给模型。
+- 对 path-sensitive 工具，OMP 通过持续注入 cwd/project context、工具观察和纠偏机制减少路径漂移；LCA 已有 path-not-found roots hint，但本次是“路径内部字符误写”，不属于越界。
+
+LCA 措施：
+
+- T-094 已完成：真实项目只读压测证明 external LSP adapter 的 availability reporting 和 light fallback 主链路可用。
+- 当前不自动安装 jdtls/npm language servers，保持封闭 VM 边界；如果要验证完整外部 Java LSP，下一步应做 T-095：预置/配置 jdtls 并复测。
+- 路径字符误写暂记录观察，不立刻加新 guard；已有精确路径复测通过，后续若同类问题在真实需求中重复出现，再考虑给 path-not-found 增加“相似已知路径/拼写纠偏”提示。

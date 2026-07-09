@@ -30,7 +30,7 @@
 
 ## 当前进度
 
-当前项目已完成 P8 前端协议与交互基础 MVP，并进入 P9 真实需求使用准备：P5 的安全与恢复增强 MVP 已收口；P6 默认工作流 MVP 已落地，用户可以用自然语言描述任务，而不是每次手写 `list_files/read_file/dry_run/run_tests/git_diff` 工具顺序；P7 已完成 OMP 风格 auto summary、多语言 LSP/light fallback、multi-root `--allow-dir`、workspace roots 注入、Markdown memory 启动注入、`learn` 工具、可选 session memory consolidation、authored skills discovery、重复工具调用熔断、duplicate-tool forced-final steering、tool result pruning、todo steering、跨项目 `--env-file` / launcher 安装目录 `.env` 加载、OMP 风格用户级 `--state-dir` runtime state 分层、Evidence Ledger、relevance gate、implementation-quality gate 和 no-edit final hygiene。2026-07-09 已完成 T-076 Event/Command Protocol v1、T-077/T-080 Terminal Frontend MVP 与命令可发现性、T-078 项目边界分析 MVP、T-081 Claude review 行动计划、T-082 run summary / coverage MVP，并新增 T-083 真实需求压测模板。模型默认已切到 `qwen3-coder-next`，已完成 T-084 企业项目只读源码验证压测，并已落地 T-085 todo 工具误参纠偏、T-086 evidence-aware read repetition guard、T-087 final structure / evidence hygiene、T-088 read-only evidence gate、T-089 semantic exploration guard、T-090 terminal input/output isolation、T-091 Vue diff reviewer 误报修复、T-092 compaction 渐进模块化 / LSP 置信度提示和 T-093 可选外部 LSP adapter：Runtime 能产出 typed events，CLI/session/tool 日志和 terminal frontend 共用事件流，session JSONL 追加 `event_v1` 供后续 replay；analysis-only 任务不会套用代码实现类 hygiene，点名 authored skill 时会先软性要求读取对应 `SKILL.md`，最终回答结构不完整时会强制无工具重答；每轮结束会写入结构化 `run_summary`，用于压测复盘和 `/status` 展示。
+当前项目已完成 P8 前端协议与交互基础 MVP，并进入 P9 真实需求使用准备：P5 的安全与恢复增强 MVP 已收口；P6 默认工作流 MVP 已落地，用户可以用自然语言描述任务，而不是每次手写 `list_files/read_file/dry_run/run_tests/git_diff` 工具顺序；P7 已完成 OMP 风格 auto summary、多语言 LSP/light fallback、multi-root `--allow-dir`、workspace roots 注入、Markdown memory 启动注入、`learn` 工具、可选 session memory consolidation、authored skills discovery、重复工具调用熔断、duplicate-tool forced-final steering、tool result pruning、todo steering、跨项目 `--env-file` / launcher 安装目录 `.env` 加载、OMP 风格用户级 `--state-dir` runtime state 分层、Evidence Ledger、relevance gate、implementation-quality gate 和 no-edit final hygiene。2026-07-09 已完成 T-076 Event/Command Protocol v1、T-077/T-080 Terminal Frontend MVP 与命令可发现性、T-078 项目边界分析 MVP、T-081 Claude review 行动计划、T-082 run summary / coverage MVP，并新增 T-083 真实需求压测模板。模型默认已切到 `qwen3-coder-next`，已完成 T-084 企业项目只读源码验证压测，并已落地 T-085 todo 工具误参纠偏、T-086 evidence-aware read repetition guard、T-087 final structure / evidence hygiene、T-088 read-only evidence gate、T-089 semantic exploration guard、T-090 terminal input/output isolation、T-091 Vue diff reviewer 误报修复、T-092 compaction 渐进模块化 / LSP 置信度提示、T-093 可选外部 LSP adapter 和 T-094 真实项目 LSP 可用性压测：Runtime 能产出 typed events，CLI/session/tool 日志和 terminal frontend 共用事件流，session JSONL 追加 `event_v1` 供后续 replay；analysis-only 任务不会套用代码实现类 hygiene，点名 authored skill 时会先软性要求读取对应 `SKILL.md`，最终回答结构不完整时会强制无工具重答；每轮结束会写入结构化 `run_summary`，用于压测复盘和 `/status` 展示。
 
 已具备的核心能力：
 
@@ -98,6 +98,7 @@
 - T-091 Vue diff reviewer 误报修复已落地：implementation-quality reviewer 的 comment-only 判断改为按文件类型处理，JavaDoc `<p>/<li>` 仅在 Java 中按注释处理，Vue 模板 markup 不再误触 comment-only 警告。
 - T-092 compaction 渐进模块化已落地：`src/local_agent/compaction.py` 承载压缩阈值、provider-safe 清理、tool output pruning、recent message 修剪、summary transcript/cache 等纯函数；`agent.py` 保留主循环编排，开始按 OMP 一职责一文件方向降低上帝对象风险。
 - T-093 可选外部 LSP adapter 已落地：新增 `src/local_agent/lsp/`，支持 stdio JSON-RPC LSP client、Java `jdtls`、TypeScript `typescript-language-server --stdio`、Vue `vue-language-server --stdio`、嵌套项目 root marker 发现、`AGENT_LSP_MODE=auto|light|external` 和 `AGENT_LSP_*_COMMAND`；运行时不自动下载依赖，外部 server 不可用时回退 light fallback。
+- T-094 真实项目 LSP 可用性压测已完成：`crcl-open/crcl-open` session `20260709T082448561892Z` 和 `zqyl-user-center-service` sessions `20260709T082459082275Z` / `20260709T082540210824Z` 已验证当前机器未安装外部 LSP server 命令，`lsp_status` 能正确报告 fallback，Java 样本 `IntentionConfigManagerController` / `Oauth2Controller` 能通过 light fallback 定位符号。
 
 真实缺口：
 
@@ -118,6 +119,7 @@
 - 目标服务接入/真实实现压测仍保留为后续任务：T-075 已补 no-edit 收束规范；后续用户会给项目边界定义，再让 LCA 分析具体需要哪些项目，随后接入目标项目做需求实现设计。
 - LSP 目前已支持可选外部只读导航，但不支持 rename / code action / DAP；这些写入类工程能力继续后置。
 - Java/JavaScript/TypeScript/Vue 在外部 server 不可用时仍会回退 regex/delimiter fallback，已标注 best-effort；封闭 VM 若需要完整定义/引用/诊断，应预置 `jdtls`、`typescript-language-server`、`vue-language-server` 或通过 `AGENT_LSP_*_COMMAND` 指定离线路径。
+- T-094 暴露当前本机没有 `jdtls` / `typescript-language-server` / `vue-language-server` 命令；企业 Java 项目当前只能走 light fallback。若要验证外部 Java LSP 精度，下一步应做 jdtls 预置/配置压测。
 - `agent.py` 已开始拆出 `compaction.py`，但 Evidence Ledger、run collector、startup context、memory consolidation 和 steering 仍在主文件内；后续继续按低风险模块边界拆分。
 - 完整异步 Command Bus 尚未实现；当前 Terminal Frontend 复用同步 `AgentRuntime.run()`，approval prompt 仍由工具层同步读取 stdin，但已经产生 approval events。后续只有在真实交互压测显示需要取消/并发/远程 UI 时，再升级为完整 async permission command bus。
 - provider 请求失败发生在 assistant tool_call 之前，当前会以 `LlmError` 停止；后续可继续优化用户提示。
@@ -277,6 +279,7 @@
 | T-091 | Vue diff reviewer comment-only 误报修复 | 已完成 | P9 | 已把 comment-only 判断改为按文件类型处理：JavaDoc `<p>/<li>` 仅在 Java 中作为注释标记，Vue 模板 markup 不再算 comment-only；新增回归测试覆盖 Vue `<p>` 模板替换。 |
 | T-092 | compaction 渐进模块化与 LSP 置信度提示 | 已完成 | P9/P10 | 已新增 `src/local_agent/compaction.py`，迁出压缩阈值、provider-safe 清理、tool output pruning、summary transcript/cache helpers；Java/JS/TS/Vue LSP 输出新增 `[lsp confidence]` best-effort 提示。 |
 | T-093 | 可选外部 LSP adapter | 已完成 | P9/P10 | 新增 `src/local_agent/lsp/`，支持 stdio JSON-RPC LSP client、Java/TypeScript/Vue server 自动发现、嵌套项目 root marker、`lsp_status` 和 `AGENT_LSP_MODE=auto|light|external`；不自动下载依赖，不可用时回退 light fallback。 |
+| T-094 | 真实项目 LSP 可用性压测 | 已完成并记录问题 | P9/P10 | `crcl-open` 与 `zqyl-user-center-service` 均能由 LCA 调用 `lsp_status` / `lsp_symbols` / `lsp_definition`；当前机器无外部 LSP server 命令，因此正确回退 light fallback；user-center 首轮出现一次路径字符误写，精确路径复测通过。 |
 
 ## 风险清单
 

@@ -17,7 +17,7 @@ python3 scripts/sync_project_excel.py
 | 字段 | 当前值 | 说明 |
 |---|---|---|
 | 最终目标 | 个人本地编程助手 Agent | 本地优先、封闭 VM 可用、只访问指定 AI API，能读代码、搜代码、改代码、跑测试、生成 diff、沉淀项目记忆。 |
-| 当前阶段 | P9：真实需求使用准备 | P6 默认工作流 MVP 已落地；P7 已补 OMP 风格 auto summary、多语言 LSP/light fallback、multi-root、startup context/rules、startup memory、learn、可选 memory consolidation、runtime state dir、Evidence Ledger、relevance gate、implementation-quality gate 和 no-edit final hygiene；2026-07-09 已完成 T-076 Event/Command Protocol v1、T-077/T-080 Terminal Frontend MVP 与命令可发现性、T-078 项目边界分析 MVP、T-081 Claude review 行动计划、T-082 run summary / coverage MVP、T-083 真实需求压测模板、T-084 qwen3-coder-next 企业项目只读源码验证压测、T-089 semantic exploration guard、T-090 terminal input/output isolation、T-091 Vue diff reviewer 误报修复、T-092 compaction 渐进模块化 / LSP 置信度提示和 T-093 可选外部 LSP adapter。 |
+| 当前阶段 | P9：真实需求使用准备 | P6 默认工作流 MVP 已落地；P7 已补 OMP 风格 auto summary、多语言 LSP/light fallback、multi-root、startup context/rules、startup memory、learn、可选 memory consolidation、runtime state dir、Evidence Ledger、relevance gate、implementation-quality gate 和 no-edit final hygiene；2026-07-09 已完成 T-076 Event/Command Protocol v1、T-077/T-080 Terminal Frontend MVP 与命令可发现性、T-078 项目边界分析 MVP、T-081 Claude review 行动计划、T-082 run summary / coverage MVP、T-083 真实需求压测模板、T-084 qwen3-coder-next 企业项目只读源码验证压测、T-089 semantic exploration guard、T-090 terminal input/output isolation、T-091 Vue diff reviewer 误报修复、T-092 compaction 渐进模块化 / LSP 置信度提示、T-093 可选外部 LSP adapter 和 T-094 真实项目 LSP 可用性压测。 |
 | 推荐入口 | `./agent "阅读当前项目"` | 自动设置 `PYTHONPATH=src`，默认当前目录为 workspace。 |
 | Token 配置 | 环境变量 / `--env-file` / `.env` | `./agent` 会自动加载安装目录 `.env`，也可显式传 `--env-file`；真实环境变量优先。 |
 | 测试数 | 206 | 完整 unittest、compileall、diff check、xlsx 检查通过。 |
@@ -221,6 +221,7 @@ python3 scripts/sync_project_excel.py
 | T-091 | P1 | P9 | Vue diff reviewer comment-only 误报修复 | 已完成 | Agent | Claude review 指出 `.vue` 模板标签可能被 implementation-quality reviewer 当成注释-only，导致真实 Vue 模板改动被误报 | 已把 comment-only 判断改为按文件类型处理：JavaDoc `<p>/<li>` 仅在 Java 中作为注释标记，Vue 模板 markup 不再算 comment-only；新增回归测试覆盖 Vue `<p>` 模板替换。 |
 | T-092 | P1 | P9/P10 | compaction 渐进模块化与 LSP 置信度提示 | 已完成 | Agent | Claude review 指出 `agent.py` 继续膨胀、compaction/token/context 应拆模块，且 Java/Vue LSP 正则回退与 Python AST 输出无区分 | 已新增 `src/local_agent/compaction.py`，迁出压缩阈值、provider-safe 清理、tool output pruning、summary transcript/cache helpers；Java/JS/TS/Vue LSP 输出新增 `[lsp confidence]` best-effort 提示，避免模型把轻量正则当完整 LSP。 |
 | T-093 | P1 | P9/P10 | 可选外部 LSP adapter | 已完成 | Agent | 用户希望 Java、JS、Vue 等主流语言尽量完整；仅靠 regex fallback 与 OMP 的 LSP 子系统差距明显 | 新增 `src/local_agent/lsp/`：stdio JSON-RPC client、Java `jdtls`、TypeScript `typescript-language-server --stdio`、Vue `vue-language-server --stdio`、嵌套项目 root marker、`lsp_status`、`AGENT_LSP_MODE=auto|light|external` 和 `AGENT_LSP_*_COMMAND`；不自动下载依赖，不可用时回退 light fallback。 |
+| T-094 | P1 | P9/P10 | 真实项目 LSP 可用性压测 | 已完成并记录问题 | Agent | T-093 需要在真实企业项目里验证 `lsp_status`、root marker、light fallback 和模型是否会正确使用 LSP 工具 | `crcl-open` session `20260709T082448561892Z`、`zqyl-user-center-service` sessions `20260709T082459082275Z` / `20260709T082540210824Z` 通过；当前机器未安装 `jdtls` / TS / Vue server，LCA 正确回退 light fallback；Java 样本符号定位成功；记录一次模型路径字符误写。 |
 
 ## 风险与决策
 
@@ -274,6 +275,7 @@ python3 scripts/sync_project_excel.py
 | 风险 | R-047 | 中 | Vue 模板改动可能被 comment-only reviewer 误报 | 已关闭 | implementation-quality reviewer 原本使用全局注释行判断，JavaDoc 标签规则可能误伤 Vue/JSX 模板 markup | T-091 已完成：comment-only 判断按文件后缀区分，JavaDoc markup 只在 Java 中生效，Vue `<p>` 模板替换不会触发实现质量误报。 |
 | 风险 | R-048 | 中 | `agent.py` 继续膨胀影响后续维护 | 已开始缓解 | Claude review 指出 OMP 的主循环、compaction、telemetry、LSP 等关注点分离，而 LCA 的 `agent.py` 已承担过多职责 | T-092 已先抽出 `compaction.py`，后续继续按低风险顺序拆 `evidence.py` / `run_collector.py` / `startup_context.py` / `memory_consolidation.py`，暂不一次性重写主循环。 |
 | 风险 | R-049 | 中 | Java/JS/Vue 仅靠轻量 LSP 会漏报或误报 | 已缓解 | 企业项目以 Java/Vue/JS 为主，regex fallback 难以提供完整 definition/reference/diagnostic 证据 | T-093 已参考 OMP 的 LSP client 子系统，接入可选外部 language server；无依赖时仍回退 light fallback 并标注 confidence，避免封闭 VM 默认强依赖。 |
+| 风险 | R-050 | 中 | 真实环境未预置外部 LSP server | 新增，待配置 | T-094 证明当前机器只有 `mvn` / `npm`，没有 `jdtls`、`typescript-language-server`、`vue-language-server`，因此 Java 企业项目仍只能走 light fallback | 下一步可做 T-095：预置/配置 jdtls，或在 VM 镜像中离线安装 language servers；LCA 继续不自动下载依赖。 |
 | ADR | ADR-001 | 2026-07-07 | 优先采纳 OMP 成熟设计，按本地目标裁剪 | 已接受 | 好设计可直接采用，复杂度按需收敛 | OMP 是重要参考实现；我们不为了“避免复制”而绕开好设计。采用标准是收益是否大于复杂度，并且不破坏个人本地使用、封闭 VM、无公网依赖和第一阶段 MVP 边界。 |
 | ADR | ADR-002 | 2026-07-07 | max_steps 只作为防失控保险丝 | 已落地 | 默认值已改为 0，不限步 | OMP 的 stepCounter 主要用于 telemetry，终止靠无 tool_calls、deadline、abort；我们把 `max_steps` 仅作为显式保险丝。 |
 | ADR | ADR-003 | 2026-07-07 | todo、ask_user、per-tool approval 是主功能 | 已落地 | P3 已实现 | OMP 将 todo、approval、elicitation 做成可观测会话能力；我们 P3 先做终端轻量版，后续再补 UI 化。 |
@@ -310,7 +312,7 @@ python3 scripts/sync_project_excel.py
 
 | 项目 | 结论 | 依据 | 后续 |
 |---|---|---|---|
-| 阶段判断 | P9 真实需求使用准备进行中 | T-076/T-077 已让 Runtime 产出 typed events，并提供 terminal-native 交互入口；T-078 已把项目边界分析沉淀为本机 memory/skill 和通用 runtime gate；T-084 已完成新模型只读源码验证压测；T-085/T-086/T-087/T-088/T-089/T-090 已补 todo 参数纠偏、重复读收束、最终结构/证据卫生、evidence-first gate、语义探索收束和终端输入隔离；T-091/T-092 已修 Vue reviewer 误报并启动 OMP 风格渐进模块化；T-093 已补可选外部 LSP adapter | 下一步继续真实需求“范围确认 → 源码验证 → 实现设计/小改”，并按 review 顺序继续拆 `agent.py` 小模块 |
+| 阶段判断 | P9 真实需求使用准备进行中 | T-076/T-077 已让 Runtime 产出 typed events，并提供 terminal-native 交互入口；T-078 已把项目边界分析沉淀为本机 memory/skill 和通用 runtime gate；T-084 已完成新模型只读源码验证压测；T-085/T-086/T-087/T-088/T-089/T-090 已补 todo 参数纠偏、重复读收束、最终结构/证据卫生、evidence-first gate、语义探索收束和终端输入隔离；T-091/T-092 已修 Vue reviewer 误报并启动 OMP 风格渐进模块化；T-093 已补可选外部 LSP adapter；T-094 已完成真实项目 LSP 可用性压测 | 下一步可选：预置 jdtls 做 external Java LSP 压测，或继续进入真实需求“范围确认 → 源码验证 → 实现设计/小改”。 |
 | 与 OMP 的主要差距 | 差距集中在高级工程化，不阻塞低风险实战 | 完整 ToolChoiceQueue、reviewer/subagents、完整 LSP/DAP、browser/TUI、AST edit、managed skills 仍后置 | 由压测失败形态触发 |
 | 已关闭风险 | P0/P1 runtime 风险已基本收口 | Python 3.12 patch、非交互审批、orphan tool_calls、max_steps、allowed-dir、重复工具、证据漂移、diff 混淆等均已有修复或缓解 | 继续用真实任务验证 |
 | reviewer 决策 | 先保留轻量实现质量 gate | T-074 已补 no-comment-only reviewer，复跑未再产生伪实现 | 继续用真实任务验证；若后续出现更复杂 patch 质量问题，再补完整 reviewer/subagent |
@@ -362,7 +364,7 @@ python3 scripts/sync_project_excel.py
 | 测试 | 通过 | P5 收口时 90 个 unittest、compileall、xlsx 检查、diff check 均通过；P9 当前代码已跑通 206 个 unittest、compileall 和 diff check。 |
 | 日用入口 | 通过 | README 已补只读分析和小改任务命令模板。 |
 | 开放风险 | 可接受 | shell 仍非沙箱、prompt injection 仍需靠审批和封闭 VM；token budget / output reserve / managed skills 继续后置评估。 |
-| 下一阶段 | 真实需求设计与实现压测 | 已验证默认工作流、auto summary、多语言 LSP/light fallback、multi-root、startup memory、learn、authored skills、runtime state dir、多项目只读压测主链路、relevance gate、implementation-quality gate、no-edit final hygiene、semantic exploration guard、terminal input isolation、Event/Command Protocol、Terminal Frontend MVP 和项目边界分析 MVP；下一步用真实需求跑范围确认到源码验证。 |
+| 下一阶段 | 真实需求设计与实现压测 | 已验证默认工作流、auto summary、多语言 LSP/light fallback、multi-root、startup memory、learn、authored skills、runtime state dir、多项目只读压测主链路、relevance gate、implementation-quality gate、no-edit final hygiene、semantic exploration guard、terminal input isolation、Event/Command Protocol、Terminal Frontend MVP 和项目边界分析 MVP；T-094 证明 external LSP 需要额外预置 server。 |
 
 ## 推荐工作流
 
