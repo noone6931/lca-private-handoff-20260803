@@ -332,6 +332,7 @@ class AgentRuntime:
             auto_approve_tools=config.auto_approve_tools,
             tool_approval=config.tool_approval,
             session_tool_approval=self._session_tool_approval,
+            event_callback=self._emit_event,
         )
         self._events.emit(
             "SessionStarted",
@@ -1512,6 +1513,9 @@ class AgentRuntime:
 
     def _record_event_v1(self, event: AgentEvent) -> None:
         self._session.append("event_v1", event.to_dict())
+
+    def _emit_event(self, event_type: str, payload: dict[str, Any]) -> None:
+        self._events.emit(event_type, payload)
 
 
 def _assistant_event_payload(message: dict[str, Any]) -> dict[str, Any]:

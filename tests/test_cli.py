@@ -5,6 +5,7 @@ import unittest
 from contextlib import redirect_stdout
 
 from local_agent.cli import _handle_repl_command
+from local_agent.cli import _is_chat_prompt
 
 
 class _FakeRuntime:
@@ -25,6 +26,11 @@ class _FakeRuntime:
 
 
 class CliTests(unittest.TestCase):
+    def test_chat_prompt_alias_is_detected(self) -> None:
+        self.assertTrue(_is_chat_prompt(["chat"]))
+        self.assertFalse(_is_chat_prompt(["chat", "about", "this", "repo"]))
+        self.assertFalse(_is_chat_prompt(["describe", "chat"]))
+
     def test_approval_repl_commands_update_runtime(self) -> None:
         runtime = _FakeRuntime()
         output = io.StringIO()

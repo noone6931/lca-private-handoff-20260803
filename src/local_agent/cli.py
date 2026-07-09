@@ -5,6 +5,8 @@ import sys
 
 from .agent import AgentRuntime
 from .config import ConfigError, load_config
+from .frontends.terminal import TerminalEventSink
+from .frontends.terminal import run_terminal_chat
 from .llm import LlmError
 from .session.jsonl_store import SessionError
 
@@ -101,6 +103,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--continue", dest="continue_session", action="store_true", help="Continue the latest session.")
     parser.add_argument("--session", help="Continue a specific session id from .local-agent/sessions.")
+    parser.add_argument("--chat", action="store_true", help="Start the terminal-native interactive frontend.")
     parser.add_argument("--hide-tools", action="store_true", help="Hide tool call logs from stderr.")
     args = parser.parse_args(argv)
 
@@ -126,12 +129,25 @@ def main(argv: list[str] | None = None) -> int:
             memory_scope=args.memory_scope,
             allowed_dirs=args.allowed_dirs,
         )
+        chat_requested = args.chat or _is_chat_prompt(args.prompt)
+        event_sink = (
+            TerminalEventSink(show_tools=not args.hide_tools)
+            if chat_requested or not args.prompt
+            else None
+        )
         runtime = AgentRuntime(
             config,
             show_tool_logs=not args.hide_tools,
             session_id=args.session,
             continue_session=args.continue_session,
+            event_sink=event_sink,
         )
+        if chat_requested or not args.prompt:
+            return run_terminal_chat(
+                runtime,
+                command_handler=_handle_repl_command,
+                history_path=(config.state_dir or config.workspace / ".local-agent") / "terminal_history",
+            )
         if args.prompt:
             print(runtime.run(" ".join(args.prompt)))
             return 0
@@ -158,6 +174,10 @@ def _repl(runtime: AgentRuntime) -> int:
             _handle_repl_command(runtime, prompt)
             continue
         print(runtime.run(prompt))
+
+
+def _is_chat_prompt(prompt: list[str]) -> bool:
+    return len(prompt) == 1 and prompt[0] == "chat"
 
 
 def _handle_repl_command(runtime: AgentRuntime, command: str) -> None:

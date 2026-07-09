@@ -5,6 +5,12 @@ description = "A local-first coding agent MVP for personal and sealed-VM use."
 requires-python = ">=3.11"
 dependencies = []
 
+[project.optional-dependencies]
+terminal = [
+    "prompt_toolkit>=3.0",
+    "rich>=13.0",
+]
+
 [project.scripts]
 local-agent = "local_agent.cli:main"
 

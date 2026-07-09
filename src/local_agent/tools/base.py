@@ -30,6 +30,7 @@ class ToolContext:
     git_baseline: dict[str, Any] | None = None
     current_user_request: str | None = None
     patch_relevance_checker: Callable[[str, Path], str | None] | None = None
+    event_callback: Callable[[str, dict[str, Any]], None] | None = None
 
 
 def tool_state_dir(context: ToolContext) -> Path:
@@ -126,28 +127,53 @@ def _interactive_approval_denial_reason(
     allow_session_cache: bool = True,
 ) -> str | None:
     if not sys.stdin.isatty():
+        _emit_context_event(
+            context,
+            "ApprovalResult",
+            {
+                "tool": tool.name,
+                "tier": tool.tier,
+                "decision": "non_interactive",
+                "allowed": False,
+            },
+        )
         return (
             f"Tool '{tool.name}' requires approval, but stdin is not interactive. "
             "Run with an interactive terminal, use --approval-mode write for write-safe tasks, "
             "or use --approval-mode yolo only in a trusted workspace."
         )
     prompt = _approval_prompt(tool, allow_session_cache=allow_session_cache)
+    _emit_context_event(
+        context,
+        "ApprovalRequested",
+        {
+            "tool": tool.name,
+            "tier": tool.tier,
+            "allow_session_cache": allow_session_cache,
+        },
+    )
     try:
         answer = _read_approval_answer(prompt, context)
     except EOFError:
+        _emit_approval_result(tool, context, "eof", allowed=False)
         return f"Tool '{tool.name}' requires approval, but stdin closed before a decision."
     if answer is None:
+        _emit_approval_result(tool, context, "cancelled", allowed=False)
         return f"Tool '{tool.name}' approval cancelled because budget_seconds is exhausted."
     if answer in {"y", "yes"}:
+        _emit_approval_result(tool, context, "allow_once", allowed=True)
         return None
     if allow_session_cache and answer in {"s", "session", "always"}:
         if context.session_tool_approval is not None:
             context.session_tool_approval[tool.name] = "allow_always"
+        _emit_approval_result(tool, context, "allow_session", allowed=True)
         return None
     if allow_session_cache and answer in {"d", "deny", "reject_always"}:
         if context.session_tool_approval is not None:
             context.session_tool_approval[tool.name] = "reject_always"
+        _emit_approval_result(tool, context, "reject_session", allowed=False)
         return f"User denied tool execution for this session: {tool.name}"
+    _emit_approval_result(tool, context, "reject_once", allowed=False)
     return f"User denied tool execution: {tool.name}"
 
 
@@ -177,6 +203,24 @@ def _read_approval_answer(prompt: str, context: ToolContext) -> str | None:
     if line == "":
         raise EOFError
     return line.strip().lower()
+
+
+def _emit_approval_result(tool: Tool, context: ToolContext, decision: str, *, allowed: bool) -> None:
+    _emit_context_event(
+        context,
+        "ApprovalResult",
+        {
+            "tool": tool.name,
+            "tier": tool.tier,
+            "decision": decision,
+            "allowed": allowed,
+        },
+    )
+
+
+def _emit_context_event(context: ToolContext, event_type: str, payload: dict[str, Any]) -> None:
+    if context.event_callback is not None:
+        context.event_callback(event_type, payload)
 
 
 def _approval_mode(raw_mode: str) -> str:

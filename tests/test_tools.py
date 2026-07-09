@@ -721,6 +721,35 @@ class ToolTests(unittest.TestCase):
         self.assertIn("requires approval", result.content)
         self.assertIn("stdin is not interactive", result.content)
 
+    def test_approval_prompt_emits_requested_and_result_events(self) -> None:
+        registry = ToolRegistry(
+            [
+                Tool(
+                    name="sample_exec",
+                    description="sample exec",
+                    tier="exec",
+                    input_schema={"type": "object", "properties": {}, "additionalProperties": False},
+                    handler=lambda args, context: type("Result", (), {"content": "ok", "is_error": False})(),
+                )
+            ]
+        )
+        events = []
+        with tempfile.TemporaryDirectory() as tmp:
+            context = ToolContext(
+                workspace=Path(tmp).resolve(),
+                approval_mode="always-ask",
+                event_callback=lambda event_type, payload: events.append((event_type, payload)),
+            )
+            with patch("sys.stdin.isatty", return_value=True), patch("builtins.input", return_value="y"):
+                result = registry.execute("sample_exec", "{}", context)
+
+        self.assertFalse(result.is_error)
+        self.assertEqual(events[0][0], "ApprovalRequested")
+        self.assertEqual(events[0][1]["tool"], "sample_exec")
+        self.assertEqual(events[1][0], "ApprovalResult")
+        self.assertEqual(events[1][1]["decision"], "allow_once")
+        self.assertTrue(events[1][1]["allowed"])
+
     def test_write_tool_approval_eof_returns_tool_error(self) -> None:
         registry = ToolRegistry(
             [

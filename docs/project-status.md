@@ -30,7 +30,7 @@
 
 ## 当前进度
 
-当前项目进入 P8 前端协议与交互基础阶段：P5 的安全与恢复增强 MVP 已收口；P6 默认工作流 MVP 已落地，用户可以用自然语言描述任务，而不是每次手写 `list_files/read_file/dry_run/run_tests/git_diff` 工具顺序；P7 已完成 OMP 风格 auto summary、多语言轻量 LSP、multi-root `--allow-dir`、workspace roots 注入、Markdown memory 启动注入、`learn` 工具、可选 session memory consolidation、authored skills discovery、重复工具调用熔断、duplicate-tool forced-final steering、tool result pruning、todo steering、跨项目 `--env-file` / launcher 安装目录 `.env` 加载、OMP 风格用户级 `--state-dir` runtime state 分层、Evidence Ledger、relevance gate、implementation-quality gate 和 no-edit final hygiene。2026-07-09 已完成 T-076 Event/Command Protocol v1：Runtime 开始产出 typed events，CLI 的 session/tool 日志由 `StderrEventSink` 渲染，session JSONL 追加 `event_v1` 供后续 replay。
+当前项目已完成 P8 前端协议与交互基础 MVP：P5 的安全与恢复增强 MVP 已收口；P6 默认工作流 MVP 已落地，用户可以用自然语言描述任务，而不是每次手写 `list_files/read_file/dry_run/run_tests/git_diff` 工具顺序；P7 已完成 OMP 风格 auto summary、多语言轻量 LSP、multi-root `--allow-dir`、workspace roots 注入、Markdown memory 启动注入、`learn` 工具、可选 session memory consolidation、authored skills discovery、重复工具调用熔断、duplicate-tool forced-final steering、tool result pruning、todo steering、跨项目 `--env-file` / launcher 安装目录 `.env` 加载、OMP 风格用户级 `--state-dir` runtime state 分层、Evidence Ledger、relevance gate、implementation-quality gate 和 no-edit final hygiene。2026-07-09 已完成 T-076 Event/Command Protocol v1 和 T-077 Terminal Frontend MVP：Runtime 产出 typed events，CLI/session/tool 日志和 terminal frontend 共用事件流，session JSONL 追加 `event_v1` 供后续 replay。
 
 已具备的核心能力：
 
@@ -43,7 +43,7 @@
 - `apply_patch` 已支持 `replace`、`insert_before`、`insert_after`，并兼容 Python 3.12。
 - 非交互审批、LLM 非 JSON 响应、session 恢复坏尾部、search_code 绝对路径泄漏等问题已经修复。
 - 已完成 Agent 自举测试：能够通过百炼模型调用工具读取、修改、测试和查看 diff。
-- 测试基线：171 个测试在正常本地环境通过。
+- 测试基线：178 个测试在正常本地环境通过。
 
 当前已具备：
 
@@ -83,7 +83,7 @@
 - T-074 implementation-quality reviewer / safe new-file policy 已落地：`git_diff` 会对本轮 comment-only 代码实现 patch 追加 `[diff reviewer]`，禁止把注释/文档改动包装成行为、校验、解析或测试覆盖变化；`write_file dry_run=true` 可预览新文件 diff，真实创建会写 patch log，`rollback_patch` 可删除本 session 创建的新文件。
 - T-075 no-edit final hygiene 已落地：实现任务如果准备以“无法安全实现/当前仓库不包含目标服务/未修改文件”等 no-edit 结论结束，但尚未做 git/todo 收束，runtime 会追加 steering，并临时只暴露 `todo_read` / `todo_add` / `todo_update` / `git_status` / `git_diff`，让停止路径也可审计。
 - T-076 Event/Command Protocol v1 已落地：`src/local_agent/protocol/events.py` / `commands.py` 提供 dataclass event/command shape；`AgentRuntime` 支持注入 `EventSink`，并把关键运行事件写入 session JSONL 的 `event_v1`；现有 CLI 仍保持原样输出。
-- Terminal Frontend 选型已定：第一版不是 fullscreen 重 TUI，而是 terminal-native interactive frontend；使用 `prompt_toolkit` 负责输入、`rich` 负责结构化输出，并复用 T-076 的事件/命令协议。
+- T-077 Terminal Frontend MVP 已落地：`./agent`、`./agent --chat`、`./agent chat` 会进入 terminal-native 交互前端；可选 `prompt_toolkit` 负责历史/多行输入，`rich` 负责结构化输出，未安装时降级为普通终端输入输出；approval prompt 仍是同步 stdin，但会写入 `ApprovalRequested` / `ApprovalResult` 事件。
 
 真实缺口：
 
@@ -100,7 +100,7 @@
 - 还没有完整 OMP ToolChoiceQueue；当前只为 allowed-dir 需求文档读取实现了轻量 soft tool requirement，其余场景仍用 system/tool 描述、runtime reminder、todo reminder、pruning、重复工具熔断、forced-final steering 和 relevance gate 做本地版。T-073 复跑暂未证明必须立即上完整 ToolChoiceQueue。
 - 目标服务接入/真实实现压测仍保留为后续任务：T-075 已补 no-edit 收束规范；后续用户会给项目边界定义，再让 LCA 分析具体需要哪些项目，随后接入目标项目做需求实现设计。
 - LSP 目前是多语言轻量静态工具，不是完整 LSP server，不支持 rename / code action / DAP。
-- Terminal Frontend 尚未实现；当前 CLI 仍直接调用 `AgentRuntime.run()`，但 session/tool 日志已由事件 sink 渲染，后续需要把输入、多行编辑、审批显示、diff/todo 输出接到同一事件流。
+- 完整异步 Command Bus 尚未实现；当前 Terminal Frontend 复用同步 `AgentRuntime.run()`，approval prompt 仍由工具层同步读取 stdin，但已经产生 approval events。后续只有在真实交互压测显示需要取消/并发/远程 UI 时，再升级为完整 async permission command bus。
 - provider 请求失败发生在 assistant tool_call 之前，当前会以 `LlmError` 停止；后续可继续优化用户提示。
 
 ## 阶段路线图
@@ -115,7 +115,7 @@
 | P5 | 安全与恢复增强 | 已完成并收口 | synthetic tool result、patch preview、回滚策略、非信任仓库提示、OMP 风格 approval model、approval prompt deadline cancel；真实小改复测通过。 |
 | P6 | 日用体验与默认工作流固化 | 已完成 MVP 版 | OMP 默认工作流本地化：system prompt、工具描述、轻量 runtime nudge。 |
 | P7 | 高级工程能力轻量版 | 已完成 MVP 版 | 已完成 OMP 风格 auto summary、多语言轻量 LSP、LSP 兼容别名、multi-root workspace roots 与工具观察提示、allowed-dir soft tool requirement、Markdown memory 启动注入、learn、可选 memory consolidation、authored skills discovery、综合压测记录、重复工具调用熔断、duplicate-tool forced-final steering、同文件切片读取漂移 guard、search_code 空搜索词跨路径 guard、path escape roots hint、LSP 空 query guard、Current task contract、Evidence Ledger、tool result pruning、todo steering、跨项目 env-file、用户级 `--state-dir` runtime state 分层、relevance gate、implementation-quality reviewer、safe new-file policy 和 no-edit final hygiene；path-scoped rules、DAP、subagents、完整 reviewer、AST edit、managed skills 继续后置。 |
-| P8 | 前端协议与交互基础 | 进行中 | T-076 已完成 Event/Command Protocol v1、EventSink、CLI stderr renderer 和 session `event_v1`；下一步做 terminal-native frontend，而不是 fullscreen 重 TUI。 |
+| P8 | 前端协议与交互基础 | 已完成 MVP 版 | T-076 已完成 Event/Command Protocol v1、EventSink、CLI stderr renderer 和 session `event_v1`；T-077 已完成 terminal-native frontend，而不是 fullscreen 重 TUI。 |
 
 ## 已完成功能
 
@@ -168,7 +168,8 @@
 | Evidence Ledger | 已完成 MVP 版 | `src/local_agent/agent.py` 从工具结果提炼短证据记录，注入 provider-bound `[Evidence ledger]`，并写 session `evidence` 事件；测试覆盖 read_file 后账本注入。 |
 | Synthetic Tool Result | 已完成 MVP 版 | deadline 到期、用户中断、`finish_reason=length` 时会补齐剩余 tool_call 的 tool result。 |
 | Event/Command Protocol | 已完成 MVP 版 | `src/local_agent/protocol/events.py` / `commands.py` 定义 dataclass event/command；Runtime 通过 `EventSink` 产出事件，CLI 通过 `StderrEventSink` 渲染 session/tool 日志；session JSONL 写入 `event_v1`。 |
-| 测试基线 | 已完成 | 本地正常环境下 171 个测试通过。 |
+| Terminal Frontend | 已完成 MVP 版 | `src/local_agent/frontends/terminal/` 提供 append-only terminal frontend；`./agent`、`./agent --chat`、`./agent chat` 可进入交互；可选 `prompt_toolkit` / `rich` 增强输入和输出，缺失时降级。 |
+| 测试基线 | 已完成 | 本地正常环境下 178 个测试通过。 |
 
 ## 下一步 Todo
 
@@ -238,7 +239,8 @@
 | T-074 | 真实实现质量 gate / safe new-file policy | 已完成并复跑 | P7/P8 | 已新增 comment-only 代码实现 reviewer、`write_file dry_run=true` 新文件预览、创建文件 patch log 和 rollback 删除；复跑 session `20260709T025706579604Z` 未再产生 comment-only patch，也未因新文件权限降级乱改，而是在证据不足时停止说明功能属于 `zqyl-investment-plan`。 |
 | T-075 | no-edit final hygiene / 跨服务目标接入 | 已完成 MVP 版 | P7/P8 | 已新增 no-edit final hygiene provider context 和 runtime steering：实现任务准备无改动停止时，如果缺 git/todo 收束，会临时只开放 todo/git 收束工具；测试覆盖 provider context 和过早 final 被 steering 到 todo_add + git_status。下一步把真实目标服务作为 `--cwd/--allow-dir` 接入继续压测。 |
 | T-076 | Event/Command Protocol v1 | 已完成 MVP 版 | P8 | 新增 dataclass 事件和命令协议：`event_id/session_id/run_id/seq/timestamp/type/payload`；Runtime 通过 EventSink 产出事件，CLI 先作为消费者打印，session JSONL 可重放关键事件；暂不引入 Pydantic。 |
-| T-077 | Terminal Frontend MVP | 下一步 | P8 | 第一版是 terminal-native interactive frontend，不是 fullscreen TUI；使用 `prompt_toolkit` 做输入、多行编辑、历史和快捷键，`rich` 做 assistant/tool/diff/error/todo/approval 输出；保留原生 scrollback，不用 Rich Live 做主渲染。 |
+| T-077 | Terminal Frontend MVP | 已完成 MVP 版 | P8 | 第一版是 terminal-native interactive frontend，不是 fullscreen TUI；支持 `./agent` / `--chat` / `chat` 入口；可选 `prompt_toolkit` 做多行输入、历史和快捷键，`rich` 做 assistant/tool/error/approval 输出；保留原生 scrollback，不用 Rich Live 做主渲染。 |
+| T-078 | 项目边界驱动的项目清单分析压测 | 下一步 | P8/P9 | 用户后续会给项目边界定义；让 LCA 先分析“实现某需求需要哪些项目/服务/目录”，再接入具体目标项目做需求实现设计。 |
 
 ## 风险清单
 
@@ -279,6 +281,7 @@
 | R-033 | no-edit 停止路径可能跳过收束工具 | 已关闭 MVP 版 | T-074 复跑中模型正确停止，但没有维护 todo，也没有调用 `git_diff` 输出“无改动”证据；这会降低最终报告的可审计性。 | T-075 已参考 OMP current task / tool-choice steering 思路落地：no-edit stop 前缺 git/todo 收束会被 runtime steering 纠偏，并临时限制工具到 todo/git hygiene 集合。 |
 | R-034 | 过早做 fullscreen 重 TUI 可能拖慢核心能力 | 新增，中 | 如果把第一版前端理解成 Textual/fullscreen/pane/mouse/overlay，容易提前引入 scrollback、copy/paste、resize、输入法和渲染刷新问题。 | 第一版明确命名为 Terminal Frontend：`prompt_toolkit` 只管输入，`rich` 只管结构化输出，保留原生 terminal scrollback；先做 Event/Command Protocol，后续有真实瓶颈再升级 Textual/Bubble Tea/Ratatui/自研 renderer。 |
 | R-035 | Runtime 与前端输出耦合会阻碍后续终端体验 | 已关闭 MVP 版 | 如果工具日志、审批显示和最终输出继续散落在 Runtime/CLI print 中，后续 `prompt_toolkit + rich` 前端会难以复用和 replay。 | T-076 已参考 OMP runtime/TUI 分层思路，落地 dataclass Event/Command Protocol 和 `EventSink`；Runtime 产出 typed events，CLI 只是第一消费者。 |
+| R-036 | 完整 async command bus 过早引入会扩大复杂度 | 新增，受控 | T-077 已满足本地 terminal 交互，但 approval/cancel/interrupt 仍是同步路径；如果立刻搬完整异步 command bus，会影响当前稳定的单 Agent runtime。 | 参考 OMP 分层但按 LCA 裁剪：MVP 先保留同步 `AgentRuntime.run()`，把 event/replay/terminal 输入输出打通；等真实交互压测需要取消、远程 UI 或并发审批时，再升级 Command Bus。 |
 
 ## 架构决策
 
@@ -301,6 +304,7 @@
 | ADR-022 | 实现任务允许诚实停止，但 no-edit final 也要可审计。 | T-074 复跑证明“证据不足时停止”比强行注释 patch 更好；T-075 已用 provider context + runtime steering 让停止路径保持 todo/git 证据，而不是只靠最终文字。 |
 | ADR-023 | 第一版前端定位为 Terminal Frontend，而不是 fullscreen TUI。 | 采用 `prompt_toolkit + rich`，但通过 dataclass Event/Command Protocol 与 Runtime 解耦；Runtime 不直接 import 前端库，前端只消费事件和发送命令。第一版保留原生 terminal scrollback，不做 Rich Live 主渲染、复杂 pane、mouse、overlay 或可交互 diff viewer。 |
 | ADR-024 | Runtime 先产出 replayable typed events，再做 Terminal Frontend。 | 已落地 T-076；参考 OMP runtime/TUI engine 分层，但本地化为 Python dataclass、`EventEmitter`、`EventSink` 和 session `event_v1`，不引入 Pydantic、异步队列或重 UI。 |
+| ADR-025 | Terminal Frontend MVP 保持同步 runtime，先不引入完整 async command bus。 | 已落地 T-077；`./agent` / `--chat` / `chat` 共用事件 sink，approval 仍走同步 stdin 但发 approval events；可选 `prompt_toolkit` / `rich` 增强体验，缺依赖时降级，符合封闭 VM 可预置依赖原则。 |
 | ADR-015 | 人工上下文按 AGENTS/RULES 分层。 | 参照 Claude Code 与 OMP 的上下文文件/Sticky rules 分层：`AGENTS.md` 作为启动背景，`RULES.md` 作为短规则每轮注入；二者不同于长期 memory 和 session summary。 |
 | ADR-016 | Session memory consolidation 默认关闭；开启后默认写 state memory。 | 这一步不同于只发给模型的 context compaction；默认 off 可以保护只读分析，开启后默认写用户级 state dir，只有显式 `memory_scope=project` 才写项目 `.local-agent/memory`。 |
 | ADR-003 | Excel 作为人工视图，Markdown 作为开发协作 Agent 可读事实源。 | 这套文档服务于开发 LCA 的过程；`.xlsx` 是二进制展示产物，不适合作为协作 Agent 的事实源。 |
@@ -314,10 +318,10 @@
 | 项目 | 结论 | 依据 |
 |---|---|---|
 | 主链路 | 通过 | 百炼真实小改复测已跑通 todo、dry_run、apply_patch、session allow、rollback、run_tests、git_diff。 |
-| 测试 | 通过 | P5 收口时 90 个 unittest、compileall、xlsx 检查、diff check 均通过；P8 当前代码已跑通 171 个 unittest、compileall 和 diff check。 |
+| 测试 | 通过 | P5 收口时 90 个 unittest、compileall、xlsx 检查、diff check 均通过；P8 当前代码已跑通 178 个 unittest、compileall 和 diff check。 |
 | 日用入口 | 通过 | README 已补只读分析和小改任务命令模板。 |
 | 开放风险 | 可接受 | shell 仍非沙箱、prompt injection 仍需靠审批和封闭 VM；token budget / output reserve / managed skills 留到后续评估。 |
-| 下一阶段 | P7 轻量高级能力真实压测后续 | 企业项目联网压测已获用户允许并由 Agent 代跑；跨项目 env-file、轻量 pruning / todo steering、memory consolidation、duplicate-tool forced-final steering、allowed-dir soft tool requirement、repeated read_file guard、空搜索词 guard、path escape roots hint、LSP 空 query guard、Current task contract、relevance gate、implementation-quality reviewer 和 no-edit final hygiene 已完成。下一步继续用真实目标服务验证实现切片。 |
+| 下一阶段 | 项目边界分析与真实需求设计压测 | 企业项目联网压测已获用户允许并由 Agent 代跑；跨项目 env-file、轻量 pruning / todo steering、memory consolidation、duplicate-tool forced-final steering、allowed-dir soft tool requirement、repeated read_file guard、空搜索词 guard、path escape roots hint、LSP 空 query guard、Current task contract、relevance gate、implementation-quality reviewer、no-edit final hygiene 和 Terminal Frontend MVP 已完成。下一步按用户提供的项目边界定义，让 LCA 先分析具体需要哪些项目。 |
 
 ## 推荐工作流
 
@@ -355,5 +359,6 @@
 1. 接入真实目标服务继续压测：优先找到 `zqyl-investment-plan` 或对应投资方案服务目录，作为 `--cwd` 或 `--allow-dir` 与需求文档一起跑实现切片。
 2. 复跑 T-074 同类 no-edit 场景，确认模型会先补 todo/git hygiene，再最终说明“当前仓库不是目标服务”。
 3. T-076 已完成：dataclass Event/Command Protocol 已落地，CLI 由事件 sink 驱动打印，并保留现有 `AgentRuntime.run()` 兼容入口。
-4. 执行 T-077：接入 `prompt_toolkit + rich` 的 Terminal Frontend MVP，保持 append-only transcript 和原生 scrollback。
+4. T-077 已完成：接入 terminal-native frontend，保持 append-only transcript 和原生 scrollback。
+5. 下一步执行 T-078：基于用户给出的项目边界定义，让 LCA 分析具体需要哪些项目/服务/目录。
 5. 观察是否仍出现关键工具不用/乱用；若出现，再按 OMP 思路补更完整的 ToolChoiceQueue。

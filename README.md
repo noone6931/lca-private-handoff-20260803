@@ -85,6 +85,22 @@ export AGENT_ALLOWED_DIRS="/path/to/requirements:/path/to/other-read-write-root"
 ./agent
 ```
 
+也可以显式启动 terminal-native 交互前端：
+
+```bash
+./agent --chat
+# 或
+./agent chat
+```
+
+安装可选前端依赖后，交互输入会使用 `prompt_toolkit` 提供历史和多行编辑，并用 `rich` 渲染回答与工具时间线：
+
+```bash
+python3 -m pip install -e ".[terminal]"
+```
+
+如果没有安装这些可选依赖，`./agent` 仍会降级为普通终端输入输出，不影响一次性任务。
+
 安装成包后也可以用：
 
 ```bash
