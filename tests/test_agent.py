@@ -51,6 +51,34 @@ class _MessageRecordingClient:
         return type("Response", (), {"message": {"content": "done"}})()
 
 
+class _FinalStructureThenTableClient:
+    calls: list[dict] = []
+
+    def __init__(self, config: AgentConfig):
+        self.config = config
+
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
+        if len(type(self).calls) == 1:
+            return type("Response", (), {"message": {"content": "Ready to output final scope analysis table."}})()
+        return type(
+            "Response",
+            (),
+            {
+                "message": {
+                    "content": (
+                        "| 分类 | 服务 |\n"
+                        "|---|---|\n"
+                        "| 必须关注 | zqyl-charge |\n"
+                        "| 可能关注 | zqyl-file |\n"
+                        "| 暂不关注 | zqyl-nlp |\n"
+                        "| 需要用户确认 | download-center |\n"
+                    )
+                }
+            },
+        )()
+
+
 class _ReadFileThenFinalClient:
     calls: list[dict] = []
 
@@ -80,6 +108,39 @@ class _ReadFileThenFinalClient:
                 },
             )()
         return type("Response", (), {"message": {"content": "done with evidence"}})()
+
+
+class _ReadSkillThenFinalClient:
+    calls: list[dict] = []
+
+    def __init__(self, config: AgentConfig):
+        self.config = config
+
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
+        if len(type(self).calls) == 1:
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "call_skill",
+                                "type": "function",
+                                "function": {
+                                    "name": "read_file",
+                                    "arguments": json.dumps(
+                                        {"path": ".local-agent/skills/project-scope-analysis/SKILL.md"}
+                                    ),
+                                },
+                            }
+                        ],
+                    }
+                },
+            )()
+        return type("Response", (), {"message": {"content": "skill applied"}})()
 
 
 class _SummaryThenFinalClient:
@@ -598,6 +659,54 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertIn("update/read todo state", sent_system["content"])
         self.assertNotIn("[No-edit final hygiene]", runtime._messages[0]["content"])
 
+    def test_analysis_scope_task_does_not_receive_coding_nudge_or_no_edit_hygiene(self) -> None:
+        _MessageRecordingClient.messages = []
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=workspace,
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _MessageRecordingClient):
+                runtime = AgentRuntime(config, show_tool_logs=False)
+                result = runtime.run("仅根据需求和服务边界判断需要关注哪些项目，禁止扫描源码，最终用表格输出")
+
+        sent_system = [message for message in _MessageRecordingClient.messages if message.get("role") == "system"][0]
+        user_messages = [message for message in runtime._messages if message.get("role") == "user"]
+        self.assertEqual(result, "done")
+        self.assertNotIn("[No-edit final hygiene]", sent_system["content"])
+        self.assertFalse(any("[Runtime workflow reminder]" in str(message.get("content")) for message in user_messages))
+
+    def test_just_based_on_code_fix_task_still_receives_coding_nudge(self) -> None:
+        _MessageRecordingClient.messages = []
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=workspace,
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _MessageRecordingClient):
+                runtime = AgentRuntime(config, show_tool_logs=False)
+                result = runtime.run("仅根据当前源码修复 README 文档里的一个小问题")
+
+        sent_system = [message for message in _MessageRecordingClient.messages if message.get("role") == "system"][0]
+        user_messages = [message for message in runtime._messages if message.get("role") == "user"]
+        self.assertEqual(result, "done")
+        self.assertIn("[No-edit final hygiene]", sent_system["content"])
+        self.assertTrue(any("[Runtime workflow reminder]" in str(message.get("content")) for message in user_messages))
+
     def test_no_edit_final_is_steered_to_todo_and_git_hygiene(self) -> None:
         _NoEditThenHygieneClient.calls = []
         with tempfile.TemporaryDirectory() as tmp:
@@ -655,6 +764,30 @@ class AgentRuntimeTests(unittest.TestCase):
                 for record in records
             )
         )
+
+    def test_final_structure_gate_forces_requested_table_without_tools(self) -> None:
+        _FinalStructureThenTableClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=workspace,
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _FinalStructureThenTableClient):
+                runtime = AgentRuntime(config, show_tool_logs=False)
+                result = runtime.run(
+                    "最终回答必须用 Markdown 表格输出，包含：必须关注、可能关注、暂不关注、需要用户确认"
+                )
+
+        self.assertIn("| 必须关注 | zqyl-charge |", result)
+        self.assertEqual(len(_FinalStructureThenTableClient.calls), 2)
+        self.assertEqual(_FinalStructureThenTableClient.calls[1]["tools"], [])
 
     def test_evidence_ledger_is_sent_to_provider_context_after_tool_results(self) -> None:
         _ReadFileThenFinalClient.calls = []
@@ -849,6 +982,10 @@ class AgentRuntimeTests(unittest.TestCase):
             memory_dir = workspace / ".local-agent" / "memory"
             memory_dir.mkdir(parents=True)
             (memory_dir / "project.md").write_text("Use pytest for this project.\n", encoding="utf-8")
+            (memory_dir / "enterprise-service-boundary.md").write_text(
+                "zqyl-charge owns platform fee settlement.\n",
+                encoding="utf-8",
+            )
             state_memory_dir = state_dir / "memory"
             state_memory_dir.mkdir(parents=True)
             (state_memory_dir / "learned.md").write_text("Run focused memory tests first.\n", encoding="utf-8")
@@ -869,8 +1006,10 @@ class AgentRuntimeTests(unittest.TestCase):
         system_content = runtime._messages[0]["content"]
         self.assertIn("[Memory]", system_content)
         self.assertIn(".local-agent/memory/project.md", system_content)
+        self.assertIn(".local-agent/memory/enterprise-service-boundary.md", system_content)
         self.assertIn(str(state_memory_dir / "learned.md"), system_content)
         self.assertIn("Use pytest for this project.", system_content)
+        self.assertIn("zqyl-charge owns platform fee settlement.", system_content)
         self.assertIn("Run focused memory tests first.", system_content)
         self.assertIn("advisory", system_content)
 
@@ -1025,6 +1164,41 @@ class AgentRuntimeTests(unittest.TestCase):
         system_content = runtime._messages[0]["content"]
         self.assertIn("release-check: Use before cutting a local release.", system_content)
         self.assertNotIn("Full procedure stays out of startup context.", system_content)
+
+    def test_named_authored_skill_is_soft_required_before_final_answer(self) -> None:
+        _ReadSkillThenFinalClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            skill_dir = workspace / ".local-agent" / "skills" / "project-scope-analysis"
+            skill_dir.mkdir(parents=True)
+            (skill_dir / "SKILL.md").write_text(
+                "---\n"
+                "name: project-scope-analysis\n"
+                "description: Analyze project scope from service boundaries.\n"
+                "---\n\n"
+                "Read the boundary table before answering.\n",
+                encoding="utf-8",
+            )
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=workspace,
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _ReadSkillThenFinalClient):
+                runtime = AgentRuntime(config, show_tool_logs=False)
+                result = runtime.run("请使用 project-scope-analysis 判断需要关注哪些项目")
+
+        first_call_messages = _ReadSkillThenFinalClient.calls[0]["messages"]
+        first_call_text = "\n".join(str(message.get("content") or "") for message in first_call_messages)
+        self.assertEqual(result, "skill applied")
+        self.assertIn("Required skill file", first_call_text)
+        self.assertIn(".local-agent/skills/project-scope-analysis/SKILL.md", first_call_text)
+        self.assertEqual(len(_ReadSkillThenFinalClient.calls), 2)
 
     def test_llm_timeout_is_clamped_to_remaining_budget(self) -> None:
         _TimeoutRecordingClient.timeouts = []

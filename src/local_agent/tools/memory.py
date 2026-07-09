@@ -14,12 +14,18 @@ def memory_tools() -> list[Tool]:
     return [
         Tool(
             name="memory_read",
-            description="Read project Markdown memory.",
+            description=(
+                "Read project Markdown memory by safe basename. Built-in names include project, decisions, "
+                "conventions, and learned; project-specific names such as enterprise-service-boundary are also allowed."
+            ),
             tier="read",
             input_schema={
                 "type": "object",
                 "properties": {
-                    "name": {"type": "string", "enum": list(MEMORY_NAMES)}
+                    "name": {
+                        "type": "string",
+                        "description": "Memory file basename without .md; use letters, numbers, underscores, or hyphens.",
+                    }
                 },
                 "required": ["name"],
                 "additionalProperties": False,
@@ -63,14 +69,18 @@ def memory_tools() -> list[Tool]:
 
 
 def memory_read(args: dict[str, Any], context: ToolContext) -> ToolResult:
-    path = _memory_path(context, args["name"])
+    path = _memory_path(context, args["name"], allow_custom=True)
+    if path is None:
+        return ToolResult("Invalid memory name. Use only letters, numbers, underscores, or hyphens.", is_error=True)
     if not path.exists():
         return ToolResult(f"No memory yet: {args['name']}")
     return ToolResult(path.read_text(encoding="utf-8")[:20000])
 
 
 def memory_write(args: dict[str, Any], context: ToolContext) -> ToolResult:
-    path = _memory_path(context, args["name"])
+    path = _memory_path(context, args["name"], allow_custom=False)
+    if path is None:
+        return ToolResult(f"Invalid memory name: {args['name']}", is_error=True)
     path.parent.mkdir(parents=True, exist_ok=True)
     note = _clean_note(args["note"], max_chars=MAX_MEMORY_NOTE_CHARS)
     if not note:
@@ -86,7 +96,9 @@ def learn(args: dict[str, Any], context: ToolContext) -> ToolResult:
     if not lesson:
         return ToolResult("Lesson is empty after cleanup.", is_error=True)
     topic = _clean_note(args.get("topic") or "general", max_chars=80).replace("\n", " ")
-    path = _memory_path(context, "learned")
+    path = _memory_path(context, "learned", allow_custom=False)
+    if path is None:
+        return ToolResult("Invalid learned memory path.", is_error=True)
     path.parent.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     with path.open("a", encoding="utf-8") as handle:
@@ -94,8 +106,20 @@ def learn(args: dict[str, Any], context: ToolContext) -> ToolResult:
     return ToolResult(f"Learned lesson in {path.relative_to(context.workspace)}")
 
 
-def _memory_path(context: ToolContext, name: str):
-    return context.workspace / ".local-agent" / "memory" / f"{name}.md"
+def _memory_path(context: ToolContext, name: str, *, allow_custom: bool):
+    cleaned = str(name).strip()
+    if allow_custom:
+        if not _is_safe_memory_name(cleaned):
+            return None
+    elif cleaned not in MEMORY_NAMES:
+        return None
+    return context.workspace / ".local-agent" / "memory" / f"{cleaned}.md"
+
+
+def _is_safe_memory_name(name: str) -> bool:
+    if not name or name in {".", ".."}:
+        return False
+    return all(char.isalnum() or char in {"_", "-"} for char in name)
 
 
 def _clean_note(note: str, *, max_chars: int) -> str:

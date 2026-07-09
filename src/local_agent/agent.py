@@ -27,6 +27,7 @@ from .tools.base import ToolContext
 from .tools.base import ToolResult
 from .tools.base import tool_state_dir
 from .tools.git import capture_git_baseline
+from .tools.relevance import is_analysis_only_request
 from .tools.relevance import is_code_implementation_request
 from .tools.relevance import is_low_relevance_patch_path
 from .tools.relevance import path_matches_any
@@ -39,7 +40,7 @@ Default working style:
 - Work from local evidence, not guesses. Choose the tools yourself; the user should not need to spell out tool order.
 - For repo understanding, start with list_files/search_code/read_file as needed. For code navigation in Python, Java, JavaScript, TypeScript, or Vue, prefer lsp_symbols/lsp_definition/lsp_references/lsp_diagnostics before broad text search when helpful. lsp_workspace_symbols and lsp_document_symbols are compatibility aliases for lsp_symbols. Read the exact file or range before editing it.
 - The primary --cwd is the main workspace. If additional directories are configured, file/search/LSP/patch tools may access those explicit paths; shell, git, session, todo, and memory remain anchored to --cwd.
-- For multi-step or ambiguous work, maintain a concise todo list with todo_add/todo_update/todo_read.
+- For multi-step coding or implementation work, maintain a concise todo list with todo_add/todo_update/todo_read. For pure read-only analysis, skip todo unless the user asks for it.
 - If a requirement is ambiguous and guessing would affect the result, use ask_user. If local evidence is enough, continue without asking.
 - For read-only tasks, do not modify files, run commands, or write memory unless the user asks.
 - For edits to existing files, use read_file first, then apply_patch with the hash tag returned by read_file. Preview meaningful edits with dry_run=true before writing unless the user explicitly says to skip preview.
@@ -95,6 +96,7 @@ MAX_REPEATED_READ_FILE_GUARD_HITS = 4
 MAX_REPEATED_READ_FILE_FINAL_ANSWER_STEERS = 2
 MAX_SOFT_TOOL_REQUIREMENT_STEERS = 3
 MAX_NO_EDIT_FINAL_HYGIENE_STEERS = 2
+MAX_FINAL_STRUCTURE_STEERS = 2
 NO_EDIT_FINAL_HYGIENE_TOOLS = {"todo_read", "todo_add", "todo_update", "git_status", "git_diff"}
 USELESS_TOOL_RESULT_NOTICE = "[Uneventful tool result elided during local context pruning]"
 SUPERSEDED_TOOL_RESULT_NOTICE = "[Superseded by a newer equivalent tool result during local context pruning]"
@@ -231,6 +233,31 @@ NO_EDIT_FINAL_KEYWORDS = {
     "目标服务",
     "证据不足",
 }
+INCOMPLETE_FINAL_MARKERS = {
+    "ready to output",
+    "ready to provide",
+    "ready to generate",
+    "final table follows",
+    "final answer follows",
+    "准备输出",
+    "可以输出",
+    "马上输出",
+}
+FINAL_TABLE_REQUEST_KEYWORDS = {
+    "markdown table",
+    "table",
+    "表格",
+    "分析表",
+}
+FINAL_LABEL_CANDIDATES = (
+    "必须关注",
+    "可能关注",
+    "暂不关注",
+    "需要用户确认",
+    "必须关心",
+    "可能关心",
+    "暂不关心",
+)
 TODO_REQUEST_KEYWORDS = {
     "todo",
     "task list",
@@ -290,6 +317,7 @@ class AgentRuntime:
         self._repeated_read_file_guard_hits = 0
         self._repeated_read_file_final_answer_steers = 0
         self._no_edit_final_hygiene_steers = 0
+        self._final_structure_steers = 0
         self._read_file_evidence_paths: list[str] = []
         self._strong_relevance_paths: list[str] = []
         self._evidence_records: list[EvidenceRecord] = []
@@ -357,6 +385,7 @@ class AgentRuntime:
         model_prompt = _with_workflow_nudge(prompt)
         self._current_user_request = prompt
         self._no_edit_final_hygiene_steers = 0
+        self._final_structure_steers = 0
         self._temporary_tool_allowlist = None
         self._messages.append({"role": "user", "content": model_prompt})
         self._session.append("user", {"content": prompt})
@@ -364,7 +393,11 @@ class AgentRuntime:
         if model_prompt != prompt:
             self._session.append("workflow_nudge", {"content": WORKFLOW_NUDGE})
         self._read_file_drift_guard_enabled = _should_guard_repeated_read_file(prompt)
-        self._soft_tool_requirement = _initial_soft_tool_requirement(prompt, self._config.allowed_dirs)
+        self._soft_tool_requirement = _initial_soft_tool_requirement(
+            prompt,
+            self._config.workspace,
+            self._config.allowed_dirs,
+        )
         if self._soft_tool_requirement is not None:
             self._append_soft_tool_requirement_message(self._soft_tool_requirement)
         self._record_workspace_root_evidence()
@@ -424,6 +457,10 @@ class AgentRuntime:
                 content = message.get("content") or ""
                 if self._should_steer_no_edit_final_hygiene(content, run_start_index):
                     if self._steer_for_no_edit_final_hygiene(content, run_start_index):
+                        step += 1
+                        continue
+                if self._should_steer_final_structure(content):
+                    if self._steer_for_final_structure(content):
                         step += 1
                         continue
                 return self._finish_run(content, deadline, run_start_index)
@@ -1144,6 +1181,39 @@ class AgentRuntime:
             return False
         return bool(self._no_edit_final_hygiene_missing(tool_names))
 
+    def _should_steer_final_structure(self, content: str) -> bool:
+        if self._final_structure_steers >= MAX_FINAL_STRUCTURE_STEERS:
+            return False
+        return bool(_final_structure_issues(self._current_user_request, content))
+
+    def _steer_for_final_structure(self, content: str) -> bool:
+        issues = _final_structure_issues(self._current_user_request, content)
+        if not issues:
+            return False
+        self._final_structure_steers += 1
+        request_summary = self._final_answer_request_summary()
+        content_summary = _one_line(content, max_chars=800)
+        steering = (
+            "Runtime steering: the previous final answer did not satisfy the user's requested output structure. "
+            "Do not call tools. Produce the final answer now using the evidence already collected.\n"
+            f"- Missing/invalid structure: {', '.join(issues)}.\n"
+            "- If the user requested tables or named sections, include the actual tables/sections in this response.\n"
+            "- Do not say you are ready to output it; output it directly.\n"
+            f"- Draft final answer that triggered this check: {content_summary}"
+            f"{request_summary}"
+        )
+        self._messages.append({"role": "user", "content": steering})
+        self._session.append(
+            "runtime_steering",
+            {
+                "kind": "final_structure",
+                "issues": issues,
+                "steer_count": self._final_structure_steers,
+            },
+        )
+        self._force_final_answer_without_tools = True
+        return True
+
     def _no_edit_final_hygiene_missing(self, tool_names: set[str]) -> list[str]:
         missing: list[str] = []
         if not tool_names.intersection({"git_status", "git_diff"}):
@@ -1225,6 +1295,12 @@ class AgentRuntime:
         requirement = self._soft_tool_requirement
         if requirement is None:
             return "Stopped because a required tool step was not completed."
+        if requirement.kind == "authored_skill":
+            return (
+                "Stopped because the task explicitly referenced a project skill, but the assistant did not "
+                "read that skill's SKILL.md after repeated reminders. Retry or explicitly ask it to read the "
+                "skill file first."
+            )
         return (
             "Stopped because the task required reading requirement/spec documents from an allowed directory, "
             "but the assistant did not call read_file on any allowed-directory document after repeated reminders. "
@@ -1241,8 +1317,6 @@ class AgentRuntime:
         requirement = self._soft_tool_requirement
         if requirement is None or requirement.satisfied or result.is_error:
             return
-        if requirement.kind != "allowed_dir_requirements":
-            return
         if name != "read_file":
             return
         try:
@@ -1258,7 +1332,7 @@ class AgentRuntime:
             path = resolve_workspace_path(self._config.workspace, raw_path, self._config.allowed_dirs)
         except PatchError:
             return
-        if _path_is_under_any(path, requirement.allowed_dirs):
+        if _soft_tool_requirement_path_satisfies(requirement, path):
             requirement.satisfied = True
             self._session.append(
                 "runtime_steering",
@@ -1641,9 +1715,30 @@ def _load_startup_context_files(workspace: Path, user_config_dir: Path, *, max_c
 def _load_startup_memory(workspace: Path, *, state_dir: Path | None = None, max_chars: int) -> str:
     if max_chars <= 0:
         return ""
-    memory_dirs = _startup_memory_dirs(workspace, state_dir)
-    paths = [memory_dir / f"{name}.md" for memory_dir in memory_dirs for name in STARTUP_MEMORY_NAMES]
+    paths = _startup_memory_paths(_startup_memory_dirs(workspace, state_dir))
     return _load_markdown_blocks(workspace, paths, max_chars=max_chars, truncation_marker="...<earlier memory truncated>\n")
+
+
+def _startup_memory_paths(memory_dirs: list[Path]) -> list[Path]:
+    paths: list[Path] = []
+    seen: set[Path] = set()
+    for memory_dir in memory_dirs:
+        priority_paths = [memory_dir / f"{name}.md" for name in STARTUP_MEMORY_NAMES]
+        extra_paths = sorted(
+            (
+                path
+                for path in memory_dir.glob("*.md")
+                if path.name not in {f"{name}.md" for name in STARTUP_MEMORY_NAMES}
+            ),
+            key=lambda path: path.name.lower(),
+        )
+        for path in [*priority_paths, *extra_paths]:
+            resolved = path.expanduser().resolve()
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            paths.append(path)
+    return paths
 
 
 def _startup_memory_dirs(workspace: Path, state_dir: Path | None) -> list[Path]:
@@ -2497,6 +2592,8 @@ def _strip_workflow_nudge(content: str) -> str:
 
 
 def _should_add_workflow_nudge(prompt: str) -> bool:
+    if is_analysis_only_request(prompt):
+        return False
     lowered = prompt.lower()
     if len(prompt.strip()) <= 24 and not any(keyword in lowered for keyword in WORKFLOW_NUDGE_KEYWORDS):
         return False
@@ -2507,6 +2604,40 @@ def _looks_like_no_edit_final(content: str) -> bool:
     lowered = content.lower()
     compact = " ".join(content.split())
     return any(keyword in lowered or keyword in compact for keyword in NO_EDIT_FINAL_KEYWORDS)
+
+
+def _final_structure_issues(request: str | None, content: str) -> list[str]:
+    request_text = request or ""
+    content_text = content or ""
+    lowered_content = content_text.lower()
+    issues: list[str] = []
+    if any(marker in lowered_content for marker in INCOMPLETE_FINAL_MARKERS):
+        issues.append("incomplete_final")
+    if _request_asks_for_table(request_text) and not _has_markdown_table(content_text):
+        issues.append("missing_table")
+    missing_labels = [
+        label
+        for label in FINAL_LABEL_CANDIDATES
+        if label in request_text and label not in content_text
+    ]
+    if missing_labels:
+        issues.append("missing_labels:" + ",".join(missing_labels))
+    return issues
+
+
+def _request_asks_for_table(request: str) -> bool:
+    lowered = request.lower()
+    return any(keyword.lower() in lowered for keyword in FINAL_TABLE_REQUEST_KEYWORDS)
+
+
+def _has_markdown_table(content: str) -> bool:
+    lines = [line.strip() for line in content.splitlines()]
+    has_row = any(line.startswith("|") and line.endswith("|") and line.count("|") >= 2 for line in lines)
+    has_separator = any(
+        line.startswith("|") and "---" in line and line.endswith("|")
+        for line in lines
+    )
+    return has_row and has_separator
 
 
 def _request_mentions_todo(content: str | None) -> bool:
@@ -2523,7 +2654,18 @@ def _should_guard_repeated_read_file(prompt: str) -> bool:
     return any(keyword in lowered for keyword in READ_FILE_DRIFT_GUARD_KEYWORDS)
 
 
-def _initial_soft_tool_requirement(prompt: str, allowed_dirs: tuple[Path, ...]) -> SoftToolRequirement | None:
+def _initial_soft_tool_requirement(
+    prompt: str,
+    workspace: Path,
+    allowed_dirs: tuple[Path, ...],
+) -> SoftToolRequirement | None:
+    skill_file = _mentioned_authored_skill_file(prompt, workspace)
+    if skill_file is not None:
+        return SoftToolRequirement(
+            kind="authored_skill",
+            allowed_dirs=(),
+            candidate_files=(skill_file,),
+        )
     if not allowed_dirs:
         return None
     lowered = prompt.lower()
@@ -2534,6 +2676,24 @@ def _initial_soft_tool_requirement(prompt: str, allowed_dirs: tuple[Path, ...]) 
         allowed_dirs=allowed_dirs,
         candidate_files=_allowed_dir_doc_candidates(allowed_dirs),
     )
+
+
+def _mentioned_authored_skill_file(prompt: str, workspace: Path) -> Path | None:
+    lowered = prompt.lower()
+    skills_dir = workspace / ".local-agent" / "skills"
+    if not lowered.strip() or not skills_dir.exists() or not skills_dir.is_dir():
+        return None
+    for skill_file in _iter_authored_skill_files(skills_dir):
+        metadata = _read_skill_metadata(workspace, skill_file)
+        if metadata is None or metadata.get("hide"):
+            continue
+        names = {
+            str(metadata["name"]).lower(),
+            skill_file.parent.name.lower(),
+        }
+        if any(name and name in lowered for name in names):
+            return skill_file
+    return None
 
 
 def _allowed_dir_doc_candidates(allowed_dirs: tuple[Path, ...]) -> tuple[Path, ...]:
@@ -2567,6 +2727,19 @@ def _allowed_dir_doc_sort_key(path: Path) -> tuple[int, str]:
 
 
 def _soft_tool_requirement_message(requirement: SoftToolRequirement) -> str:
+    if requirement.kind == "authored_skill":
+        lines = [
+            "[Runtime tool requirement]",
+            "This task explicitly references a project-authored skill. Read the skill instructions before applying it.",
+            "Use only read_file until this requirement is satisfied.",
+            "",
+            "Required skill file:",
+            *[f"- {path}" for path in requirement.candidate_files],
+            "",
+            "Required next evidence: call read_file on the relevant SKILL.md file above. "
+            "Do not answer from skill metadata alone.",
+        ]
+        return "\n".join(lines)
     lines = [
         "[Runtime tool requirement]",
         (
@@ -2594,6 +2767,25 @@ def _soft_tool_requirement_message(requirement: SoftToolRequirement) -> str:
         ]
     )
     return "\n".join(lines)
+
+
+def _soft_tool_requirement_path_satisfies(requirement: SoftToolRequirement, path: Path) -> bool:
+    if requirement.kind == "authored_skill":
+        return _path_matches_any_candidate(path, requirement.candidate_files)
+    if requirement.kind == "allowed_dir_requirements":
+        return _path_is_under_any(path, requirement.allowed_dirs)
+    return False
+
+
+def _path_matches_any_candidate(path: Path, candidates: tuple[Path, ...]) -> bool:
+    resolved = path.resolve()
+    for candidate in candidates:
+        try:
+            if resolved == candidate.resolve():
+                return True
+        except OSError:
+            continue
+    return False
 
 
 def _path_is_under_any(path: Path, roots: tuple[Path, ...]) -> bool:

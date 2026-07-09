@@ -1223,6 +1223,28 @@ class ToolTests(unittest.TestCase):
         self.assertIn("tests", read.content)
         self.assertIn("Run focused tests before full tests.", read.content)
 
+    def test_memory_read_allows_custom_safe_memory_name(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            memory_dir = workspace / ".local-agent" / "memory"
+            memory_dir.mkdir(parents=True)
+            (memory_dir / "enterprise-service-boundary.md").write_text("zqyl-charge\n", encoding="utf-8")
+            context = ToolContext(workspace=workspace, approval_mode="yolo")
+
+            result = memory_read({"name": "enterprise-service-boundary"}, context)
+
+        self.assertFalse(result.is_error)
+        self.assertIn("zqyl-charge", result.content)
+
+    def test_memory_read_rejects_unsafe_memory_name(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            context = ToolContext(workspace=Path(tmp).resolve(), approval_mode="yolo")
+
+            result = memory_read({"name": "../secrets"}, context)
+
+        self.assertTrue(result.is_error)
+        self.assertIn("Invalid memory name", result.content)
+
     def test_ask_user_non_interactive_returns_tool_error(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             context = ToolContext(workspace=Path(tmp).resolve(), approval_mode="ask")

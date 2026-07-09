@@ -294,7 +294,7 @@ python3 scripts/sync_project_excel.py
 - `apply_patch`: 简化版 anchored patch，校验文件 hash 与旧文本后写入；支持 `replace`、`insert_before`、`insert_after`，也支持 `dry_run=true` 只预览 diff 不写文件；若误传 `[path#hash]` 会提取 hash 并提示下次传纯 tag。
 - `rollback_patch`: 回滚当前 session 中由 `apply_patch` 写入的补丁；回滚前会校验文件仍然匹配补丁后的 hash。
 - `write_file`: 只创建新文件；修改已有文件必须使用 `apply_patch`。
-- `memory_read`: 读取 Markdown 项目记忆。
+- `memory_read`: 读取 Markdown 项目记忆；支持安全命名的自定义 memory 文件，如 `enterprise-service-boundary`。
 - `memory_write`: 写入 Markdown 项目记忆。
 - `learn`: 把可复用项目经验写入 `.local-agent/memory/learned.md`。
 - `todo_read`: 读取当前会话 todo。
@@ -311,7 +311,7 @@ python3 scripts/sync_project_excel.py
 - sticky rules injection: 每次发送模型请求前会读取用户级和项目级 `RULES.md` 并追加到 provider-bound context。
 - startup memory injection: 新 session 启动时会读取项目 `.local-agent/memory/{project,decisions,conventions,learned}.md` 和 state dir `memory/{project,decisions,conventions,learned}.md`，并作为 advisory context 注入 system prompt；当前用户指令和最新源码证据优先。
 - memory consolidation: 可选 `--memory-consolidation auto|llm`，在一轮结束后用当前 provider 抽取长期经验；默认 `off`，开启后默认写 state dir，`--memory-scope project` 才写项目 `.local-agent/memory/*.md`。
-- authored skills discovery: 新 session 启动时会扫描 `.local-agent/skills/<name>/SKILL.md`，只注入 name、description 和 source path，正文按需读取。
+- authored skills discovery: 新 session 启动时会扫描 `.local-agent/skills/<name>/SKILL.md`，只注入 name、description 和 source path；如果 prompt 点名某个已发现 skill，runtime 会先要求读取对应 `SKILL.md`，正文仍按需进入上下文。
 
 ## 设计原则
 

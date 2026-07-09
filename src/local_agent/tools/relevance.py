@@ -26,6 +26,47 @@ CODE_IMPLEMENTATION_KEYWORDS = {
     "链路",
 }
 
+ANALYSIS_ONLY_KEYWORDS = {
+    "analysis only",
+    "boundary",
+    "boundary table",
+    "candidate project",
+    "candidate service",
+    "do not scan source",
+    "no source scan",
+    "scope analysis",
+    "范围分类",
+    "范围分析",
+    "服务边界",
+    "候选服务",
+    "候选项目",
+    "哪些服务",
+    "哪些项目",
+    "项目范围",
+    "禁止扫描源码",
+    "不要扫描源码",
+    "不扫源码",
+    "纯业务范围",
+    "纯分析",
+}
+
+ANALYSIS_SCOPE_KEYWORDS = {
+    "boundary",
+    "boundary table",
+    "candidate project",
+    "candidate service",
+    "scope analysis",
+    "范围分类",
+    "范围分析",
+    "服务边界",
+    "候选服务",
+    "候选项目",
+    "哪些服务",
+    "哪些项目",
+    "项目范围",
+    "项目清单",
+}
+
 CONFIG_OR_DEPLOY_REQUEST_KEYWORDS = {
     "application.yml",
     "application.yaml",
@@ -69,8 +110,19 @@ SOURCE_CODE_SUFFIXES = {
 
 
 def is_code_implementation_request(text: str | None) -> bool:
+    if is_analysis_only_request(text):
+        return False
     compact = (text or "").lower()
     return any(keyword.lower() in compact for keyword in CODE_IMPLEMENTATION_KEYWORDS)
+
+
+def is_analysis_only_request(text: str | None) -> bool:
+    compact = (text or "").lower()
+    if any(keyword.lower() in compact for keyword in ANALYSIS_ONLY_KEYWORDS):
+        return True
+    if "仅根据" in compact and any(keyword.lower() in compact for keyword in ANALYSIS_SCOPE_KEYWORDS):
+        return True
+    return False
 
 
 def request_mentions_config_or_path(text: str | None, path: str) -> bool:

@@ -17,10 +17,10 @@ python3 scripts/sync_project_excel.py
 | 字段 | 当前值 | 说明 |
 |---|---|---|
 | 最终目标 | 个人本地编程助手 Agent | 本地优先、封闭 VM 可用、只访问指定 AI API，能读代码、搜代码、改代码、跑测试、生成 diff、沉淀项目记忆。 |
-| 当前阶段 | P8：前端协议与交互基础 MVP 已完成 | P6 默认工作流 MVP 已落地；P7 已补 OMP 风格 auto summary、多语言轻量 LSP、multi-root、startup context/rules、startup memory、learn、可选 memory consolidation、runtime state dir、Evidence Ledger、relevance gate、implementation-quality gate 和 no-edit final hygiene；2026-07-09 已完成 T-076 Event/Command Protocol v1 和 T-077 Terminal Frontend MVP，Runtime 产出 typed events，CLI/session/tool 日志和 terminal frontend 共用事件流，session JSONL 追加 `event_v1` 供后续 replay。 |
+| 当前阶段 | P9：真实需求使用准备 | P6 默认工作流 MVP 已落地；P7 已补 OMP 风格 auto summary、多语言轻量 LSP、multi-root、startup context/rules、startup memory、learn、可选 memory consolidation、runtime state dir、Evidence Ledger、relevance gate、implementation-quality gate 和 no-edit final hygiene；2026-07-09 已完成 T-076 Event/Command Protocol v1、T-077 Terminal Frontend MVP 和 T-078 项目边界分析 MVP。 |
 | 推荐入口 | `./agent "阅读当前项目"` | 自动设置 `PYTHONPATH=src`，默认当前目录为 workspace。 |
 | Token 配置 | 环境变量 / `--env-file` / `.env` | `./agent` 会自动加载安装目录 `.env`，也可显式传 `--env-file`；真实环境变量优先。 |
-| 测试数 | 178 | 完整 unittest、compileall、diff check、xlsx 检查通过。 |
+| 测试数 | 184 | 完整 unittest、compileall、diff check、xlsx 检查通过。 |
 | 默认 budget_seconds | 600 | 单次任务默认 10 分钟墙钟预算；`--budget-seconds 0` 可关闭。 |
 | 默认 max_steps | 0 | 表示不限步；仅在用户显式设置时作为防失控保险丝。 |
 | 预算执行 | 细粒度 | LLM 请求和 shell/run_tests timeout 会按剩余预算夹紧；deadline 到期会补齐未执行工具结果。 |
@@ -45,6 +45,7 @@ python3 scripts/sync_project_excel.py
 | No-edit final hygiene | 已完成 MVP 版 | 实现任务准备以“无法安全实现/目标服务缺失/无改动”停止时，runtime 会要求先做 todo/git 收束，并临时只开放 todo/git hygiene 工具。 |
 | Event/Command Protocol | 已完成 MVP 版 | `src/local_agent/protocol/events.py` / `commands.py` 提供 dataclass event/command shape；Runtime 可注入 `EventSink`，CLI 使用 `StderrEventSink` 渲染，session JSONL 写入 `event_v1`。 |
 | Terminal Frontend | 已完成 MVP 版 | `./agent`、`./agent --chat`、`./agent chat` 进入 terminal-native 交互；可选 `prompt_toolkit` / `rich` 增强输入和输出，缺失时降级。 |
+| 项目边界分析 | 已完成 MVP 版 | 企业服务边界和项目范围分析工作流放入本机 `.local-agent/memory` / `.local-agent/skills`；runtime 新增 analysis-only 任务识别、named skill soft requirement、自定义 memory_read 安全读取和 final structure gate。 |
 | Memory / Skills 设计 | 已完成 | 见 `docs/memory-skills-implementation-plan.md`；Markdown memory 注入、`learn`、memory consolidation 和 authored skills discovery 已完成，path-scoped rules / managed skills 后置。 |
 
 ## 阶段路线图
@@ -60,6 +61,7 @@ python3 scripts/sync_project_excel.py
 | P6 | 日用体验与默认工作流固化 | OMP 默认工作流本地化：system prompt、工具描述、轻量 runtime nudge | 已完成 MVP 版 | 100% | 进入真实任务压测。 |
 | P7 | 高级工程能力轻量版 | OMP 风格 auto summary、轻量 LSP、LSP 兼容别名、multi-root workspace roots、allowed-dir soft tool requirement、startup context/rules、startup memory、learn、memory consolidation、authored skills discovery、重复工具调用熔断、duplicate-tool forced-final steering、同文件切片读取漂移 guard、空搜索词跨路径 guard、path escape roots hint、LSP 空 query guard、Current task contract、Evidence Ledger、tool result pruning、todo steering、跨项目 env-file、runtime state dir、真实项目压测记录、relevance gate / diff reviewer、implementation-quality reviewer、safe new-file policy、no-edit final hygiene | 已完成 MVP 版 | 100% | 高级轻量能力主线已收口，后续按真实压测失败形态补 path-scoped rules、完整 reviewer 或 ToolChoiceQueue。 |
 | P8 | 前端协议与交互基础 | Event/Command Protocol、event replay、terminal-native frontend | 已完成 MVP 版 | 100% | T-076/T-077 已完成；完整 async command bus 和更重 UI 后置，下一步按用户项目边界做项目清单分析压测。 |
+| P9 | 真实需求使用准备 | 项目边界分析、用户确认项目范围、源码验证、实现设计 | 进行中 | 25% | T-078 已完成项目边界分析 MVP；下一步跑真实需求“范围确认 → 源码验证”。 |
 
 ## 已完成功能
 
@@ -116,7 +118,8 @@ python3 scripts/sync_project_excel.py
 | No-edit final hygiene | 已完成 MVP 版 | `src/local_agent/agent.py`、`tests/test_agent.py` | Provider context 提前说明无改动停止要可审计；runtime 发现过早 no-edit final 时追加 steering，并限制下一轮工具到 todo/git 收束集合 | 真实目标服务压测 |
 | Event/Command Protocol | 已完成 MVP 版 | `src/local_agent/protocol/events.py`、`src/local_agent/protocol/commands.py`、`src/local_agent/agent.py` | Runtime 产出 typed events，CLI 通过 stderr sink 渲染，session JSONL 写入 `event_v1`，命令协议 shape 已固化 | T-077 接 Terminal Frontend |
 | Terminal Frontend | 已完成 MVP 版 | `src/local_agent/frontends/terminal/`、`src/local_agent/cli.py` | append-only 交互前端，`./agent` / `--chat` / `chat` 入口，可选 `prompt_toolkit` / `rich`，approval events 可见 | 真实交互压测 |
-| 测试覆盖 | 已完成 | 当前 178 个测试通过 | unittest、compileall、diff check、xlsx 检查通过 | 日用反馈补测 |
+| 项目边界分析 | 已完成 MVP 版 | `.local-agent/memory/enterprise-service-boundary.md`、`.local-agent/skills/project-scope-analysis/SKILL.md`、`src/local_agent/agent.py` | 只根据需求和服务边界圈项目范围；analysis-only 不走实现 hygiene；点名 skill 会先读正文；缺表格/段落会强制无工具重答 | 用真实需求继续压测 |
+| 测试覆盖 | 已完成 | 当前 184 个测试通过 | unittest、compileall、diff check、xlsx 检查通过 | 日用反馈补测 |
 
 ## 下一步 Todo
 
@@ -199,7 +202,8 @@ python3 scripts/sync_project_excel.py
 | T-075 | P1 | P7/P8 | no-edit final hygiene / 跨服务目标接入 | 已完成 MVP 版 | Agent + User | T-074 复跑说明“安全停止”有效，但 no-edit 路径没有维护 todo，也没有调用 git_diff 证明无改动；同时真实实现很可能需要 `zqyl-investment-plan` 服务源码 | 已补 provider context 和 runtime steering：过早 no-edit final 会被要求先做 todo/git hygiene。下一步接入目标服务路径继续真实实现压测。 |
 | T-076 | P0 | P8 | Event/Command Protocol v1 | 已完成 MVP 版 | Agent | 参考 OMP runtime/TUI engine 分层，先让 Runtime 产出 replayable typed events，避免后续 terminal frontend 继续窥探 print/stderr | 已新增 dataclass `AgentEvent` / `AgentCommand`、`EventEmitter` / `EventSink` / `StderrEventSink`；`AgentRuntime` 写 session `event_v1` 并通过事件渲染 session/tool 日志；测试覆盖协议 shape 和 runtime event stream。 |
 | T-077 | P0 | P8 | Terminal Frontend MVP | 已完成 MVP 版 | Agent | 用户希望更自然的一键交互；事件协议已就绪，可以做 terminal-native interactive frontend | `./agent`、`./agent --chat`、`./agent chat` 可进入交互；可选 `prompt_toolkit` 提供多行输入/历史，`rich` 提供结构化输出；缺依赖时降级；保留原生 scrollback，不做 fullscreen TUI。 |
-| T-078 | P0 | P8/P9 | 项目边界驱动的项目清单分析压测 | 下一步 | User + Agent | 用户后续会给项目边界定义；先让 LCA 分析某需求需要哪些项目/服务/目录，再接入具体目标项目做需求实现设计 | 用 LCA 在只读模式读取边界定义和现有项目结构，输出“需要接入项目清单、证据路径、缺口和下一步分析命令”。 |
+| T-078 | P0 | P8/P9 | 项目边界驱动的项目清单分析压测 | 已完成 MVP 版 | User + Agent | 用户给出部门/业务线/负责服务边界，目标是先让 LCA 判断某需求需要关注哪些项目/服务，再接入源码 | 已按 OMP memory/skill 思路落地：边界表在本机 `.local-agent/memory`，工作流在 `.local-agent/skills`，不新增专用工具；runtime 补 analysis-only 任务识别、named skill soft requirement、自定义 memory_read 安全读取和 final structure gate。 |
+| T-079 | P0 | P9 | 真实需求范围确认到源码验证压测 | 下一步 | User + Agent | 用户希望今天用起来；T-078 已能圈范围，下一步要验证它能从范围进入具体源码证据和实现设计 | 用户给一个真实需求，LCA 先输出项目范围表；用户确认后，用 `--cwd/--allow-dir` 接入候选项目源码，只读验证 API/controller/entity/test 证据。 |
 
 ## 风险与决策
 
@@ -240,6 +244,8 @@ python3 scripts/sync_project_excel.py
 | 风险 | R-033 | 中 | no-edit 停止路径可能跳过收束工具 | 已关闭 MVP 版 | T-074 复跑中模型正确停止并说明目标实现属于 `zqyl-investment-plan`，但没有维护 todo，也没有调用 git_diff 证明无改动 | T-075 已参考 OMP current task / tool-choice steering 思路：no-edit stop 缺 todo/git 收束时会触发 runtime steering，并临时只开放 todo/git hygiene 工具。 |
 | 风险 | R-035 | 中 | Runtime 与前端输出耦合会阻碍后续终端体验 | 已关闭 MVP 版 | 工具日志、审批显示、最终输出如果继续散落在 Runtime/CLI print，后续 `prompt_toolkit + rich` 前端难以复用和 replay | T-076 已参考 OMP runtime/TUI 分层思路：Runtime 产出 typed events，CLI 只是第一消费者，session 写 `event_v1`。 |
 | 风险 | R-036 | 中 | 完整 async command bus 过早引入会扩大复杂度 | 新增，受控 | T-077 已满足本地 terminal 交互，但 approval/cancel/interrupt 仍是同步路径；如果立刻搬完整异步 command bus，会影响当前稳定的单 Agent runtime | 参考 OMP 分层但按 LCA 裁剪：MVP 先保留同步 `AgentRuntime.run()`，把 event/replay/terminal 输入输出打通；等真实交互压测需要取消、远程 UI 或并发审批时，再升级 Command Bus。 |
+| 风险 | R-037 | 中 | 纯分析任务被实现任务 hygiene 带偏 | 已关闭 MVP 版 | “根据需求和服务边界圈项目范围”曾被 `需求/项目` 等关键词误判为实现任务，导致 git/todo/no-edit 审计干扰或最终只说 ready | 已补 analysis-only 任务识别；此类任务不加 coding workflow nudge、不触发 no-edit final hygiene；纯只读分析默认跳过 todo；final structure gate 会在缺表格/缺指定段落/ready-to-output 时强制无工具重答。 |
+| 风险 | R-038 | 中 | 点名 authored skill 但模型不读正文 | 已关闭 MVP 版 | T-078 压测中模型只看 skill metadata 时，范围分析规则无法充分生效 | 已参考 OMP soft tool requirement 思路：prompt 点名已发现的 project skill 时，runtime 会软性要求先 `read_file` 对应 `SKILL.md`。 |
 | ADR | ADR-001 | 2026-07-07 | 优先采纳 OMP 成熟设计，按本地目标裁剪 | 已接受 | 好设计可直接采用，复杂度按需收敛 | OMP 是重要参考实现；我们不为了“避免复制”而绕开好设计。采用标准是收益是否大于复杂度，并且不破坏个人本地使用、封闭 VM、无公网依赖和第一阶段 MVP 边界。 |
 | ADR | ADR-002 | 2026-07-07 | max_steps 只作为防失控保险丝 | 已落地 | 默认值已改为 0，不限步 | OMP 的 stepCounter 主要用于 telemetry，终止靠无 tool_calls、deadline、abort；我们把 `max_steps` 仅作为显式保险丝。 |
 | ADR | ADR-003 | 2026-07-07 | todo、ask_user、per-tool approval 是主功能 | 已落地 | P3 已实现 | OMP 将 todo、approval、elicitation 做成可观测会话能力；我们 P3 先做终端轻量版，后续再补 UI 化。 |
@@ -264,17 +270,18 @@ python3 scripts/sync_project_excel.py
 | ADR | ADR-022 | 2026-07-09 | 实现任务允许诚实停止，但 no-edit final 也要可审计 | 已接受并落地 | 已完成 T-075 | T-074 证明“证据不足时停止”比强行注释 patch 更好；T-075 用 provider context + runtime steering 保证停止路径也补 todo/git 证据。 |
 | ADR | ADR-024 | 2026-07-09 | Runtime 先产出 replayable typed events，再做 Terminal Frontend | 已接受并落地 | 已完成 T-076 | 参考 OMP runtime/TUI engine 分层，但本地化为 Python dataclass、`EventEmitter`、`EventSink` 和 session `event_v1`；暂不引入 Pydantic、异步队列或重 UI。 |
 | ADR | ADR-025 | 2026-07-09 | Terminal Frontend MVP 保持同步 runtime，先不引入完整 async command bus | 已接受并落地 | 已完成 T-077 | `./agent` / `--chat` / `chat` 共用事件 sink，approval 仍走同步 stdin 但发 approval events；可选 `prompt_toolkit` / `rich` 增强体验，缺依赖时降级，符合封闭 VM 可预置依赖原则。 |
+| ADR | ADR-026 | 2026-07-09 | 企业服务边界用 memory/skill 承载，不新增专用工具 | 已接受并落地 | 已完成 T-078 | 组织边界是用户个人长期上下文，不是通用 Agent tool；参考 OMP authored skills / project memory，把边界和工作流沉淀为本机上下文，代码只补通用 runtime 能力，包括 analysis-only、named skill soft requirement、custom memory read 和 final-structure gate。 |
 
-## P7 阶段回顾
+## 阶段回顾
 
 | 项目 | 结论 | 依据 | 后续 |
 |---|---|---|---|
-| 阶段判断 | P8 前端协议基础 MVP 已完成 | T-076/T-077 已让 Runtime 产出 typed events，并提供 terminal-native 交互入口 | 按用户项目边界进入目标项目分析 |
+| 阶段判断 | P9 真实需求使用准备进行中 | T-076/T-077 已让 Runtime 产出 typed events，并提供 terminal-native 交互入口；T-078 已把项目边界分析沉淀为本机 memory/skill 和通用 runtime gate | 进入真实需求“范围确认 → 源码验证 → 实现设计/小改” |
 | 与 OMP 的主要差距 | 差距集中在高级工程化，不阻塞低风险实战 | 完整 ToolChoiceQueue、reviewer/subagents、完整 LSP/DAP、browser/TUI、AST edit、managed skills 仍后置 | 由压测失败形态触发 |
 | 已关闭风险 | P0/P1 runtime 风险已基本收口 | Python 3.12 patch、非交互审批、orphan tool_calls、max_steps、allowed-dir、重复工具、证据漂移、diff 混淆等均已有修复或缓解 | 继续用真实任务验证 |
 | reviewer 决策 | 先保留轻量实现质量 gate | T-074 已补 no-comment-only reviewer，复跑未再产生伪实现 | 继续用真实任务验证；若后续出现更复杂 patch 质量问题，再补完整 reviewer/subagent |
 | ToolChoiceQueue 决策 | 暂不先做完整 ToolChoiceQueue | 已有 allowed-dir soft requirement、duplicate forced-final、todo steering、pruning；还缺“关键工具长期不用/乱用”的新失败样本 | 若 T-072 暴露工具选择失控，再按 OMP 裁剪 ToolChoiceQueue |
-| 下一步 | 项目边界分析压测 | 用户后续会给项目边界定义，再让 LCA 分析目标需求需要哪些项目 | 做 T-078：只读分析项目边界，输出需要接入的项目/服务/目录清单 |
+| 下一步 | 真实需求范围确认到源码验证压测 | 用户已给服务边界，T-078 已完成项目边界分析 MVP | 做 T-079：先用边界圈项目范围，用户确认后接入候选项目源码，只读验证 API/controller/entity/test 证据并形成实现设计 |
 
 ## P7 综合压测问题
 
@@ -315,10 +322,10 @@ python3 scripts/sync_project_excel.py
 | 项目 | 结论 | 依据 |
 |---|---|---|
 | 主链路 | 通过 | 百炼真实小改复测已跑通 todo、dry_run、apply_patch、session allow、rollback、run_tests、git_diff。 |
-| 测试 | 通过 | P5 收口时 90 个 unittest、compileall、xlsx 检查、diff check 均通过；P8 当前代码已跑通 178 个 unittest、compileall 和 diff check。 |
+| 测试 | 通过 | P5 收口时 90 个 unittest、compileall、xlsx 检查、diff check 均通过；P9 当前代码已跑通 184 个 unittest、compileall 和 diff check。 |
 | 日用入口 | 通过 | README 已补只读分析和小改任务命令模板。 |
 | 开放风险 | 可接受 | shell 仍非沙箱、prompt injection 仍需靠审批和封闭 VM；token budget / output reserve / managed skills 继续后置评估。 |
-| 下一阶段 | 项目边界分析与真实需求设计压测 | 已验证默认工作流、auto summary、多语言轻量 LSP、multi-root、startup memory、learn、authored skills、runtime state dir、多项目只读压测主链路、relevance gate、implementation-quality gate、no-edit final hygiene、Event/Command Protocol 和 Terminal Frontend MVP；下一步按用户提供的项目边界定义，让 LCA 先分析具体需要哪些项目。 |
+| 下一阶段 | 真实需求设计与实现压测 | 已验证默认工作流、auto summary、多语言轻量 LSP、multi-root、startup memory、learn、authored skills、runtime state dir、多项目只读压测主链路、relevance gate、implementation-quality gate、no-edit final hygiene、Event/Command Protocol、Terminal Frontend MVP 和项目边界分析 MVP；下一步用真实需求跑范围确认到源码验证。 |
 
 ## 推荐工作流
 
