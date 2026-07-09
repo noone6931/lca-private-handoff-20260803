@@ -98,7 +98,18 @@ MAX_REPEATED_READ_FILE_FINAL_ANSWER_STEERS = 2
 MAX_SOFT_TOOL_REQUIREMENT_STEERS = 3
 MAX_NO_EDIT_FINAL_HYGIENE_STEERS = 2
 MAX_FINAL_STRUCTURE_STEERS = 2
+MAX_READ_ONLY_EVIDENCE_STEERS = 2
 NO_EDIT_FINAL_HYGIENE_TOOLS = {"todo_read", "todo_add", "todo_update", "git_status", "git_diff"}
+READ_ONLY_EVIDENCE_TOOLS = {
+    "search_code",
+    "read_file",
+    "lsp_symbols",
+    "lsp_workspace_symbols",
+    "lsp_document_symbols",
+    "lsp_definition",
+    "lsp_references",
+    "lsp_diagnostics",
+}
 USELESS_TOOL_RESULT_NOTICE = "[Uneventful tool result elided during local context pruning]"
 SUPERSEDED_TOOL_RESULT_NOTICE = "[Superseded by a newer equivalent tool result during local context pruning]"
 
@@ -278,9 +289,52 @@ PROJECT_SCOPE_TABLE_COLUMN_KEYWORDS = {
 }
 EVIDENCE_REQUEST_KEYWORDS = {
     "代码证据",
-    "证据",
-    "依据",
-    "evidence",
+    "代码依据",
+    "源码",
+    "代码里",
+    "代码中",
+    "源码中",
+    "source evidence",
+    "source-code evidence",
+    "code evidence",
+}
+NO_SPECULATION_REQUEST_KEYWORDS = {
+    "不需要推测",
+    "不要推测",
+    "别推测",
+    "不要猜",
+    "别猜",
+    "不靠猜",
+    "不要行业惯例",
+    "no speculation",
+    "don't guess",
+    "do not guess",
+}
+IMPLEMENTATION_EVIDENCE_REQUEST_KEYWORDS = {
+    "怎么解决",
+    "怎么处理",
+    "如何处理",
+    "如何实现",
+    "怎么实现",
+    "实现逻辑",
+    "处理逻辑",
+    "解决方案",
+    "在哪里实现",
+    "哪里实现",
+}
+SOURCE_NOT_FOUND_MARKERS = {
+    "未找到",
+    "没有找到",
+    "未发现",
+    "没有发现",
+    "找不到",
+    "无代码证据",
+    "缺少代码证据",
+    "没有代码证据",
+    "not found",
+    "no matches",
+    "no evidence",
+    "not located",
 }
 EVIDENCE_STATUS_REQUEST_KEYWORDS = {
     "已验证",
@@ -389,6 +443,7 @@ class AgentRuntime:
         self._repeated_read_file_final_answer_steers = 0
         self._no_edit_final_hygiene_steers = 0
         self._final_structure_steers = 0
+        self._read_only_evidence_steers = 0
         self._read_file_evidence_paths: list[str] = []
         self._strong_relevance_paths: list[str] = []
         self._evidence_records: list[EvidenceRecord] = []
@@ -462,6 +517,7 @@ class AgentRuntime:
         self._current_user_request = prompt
         self._no_edit_final_hygiene_steers = 0
         self._final_structure_steers = 0
+        self._read_only_evidence_steers = 0
         self._temporary_tool_allowlist = None
         self._messages.append({"role": "user", "content": model_prompt})
         self._session.append("user", {"content": prompt})
@@ -533,6 +589,10 @@ class AgentRuntime:
                         reason="soft_tool_requirement",
                     )
                 content = message.get("content") or ""
+                if self._should_steer_read_only_evidence(content, run_start_index):
+                    if self._steer_for_read_only_evidence(content):
+                        step += 1
+                        continue
                 if self._should_steer_no_edit_final_hygiene(content, run_start_index):
                     if self._steer_for_no_edit_final_hygiene(content, run_start_index):
                         step += 1
@@ -835,6 +895,7 @@ class AgentRuntime:
             ),
             "no_edit_final_hygiene": self._no_edit_final_hygiene_steers,
             "final_structure": self._final_structure_steers,
+            "read_only_evidence": self._read_only_evidence_steers,
             "soft_tool_requirement": self._soft_tool_requirement.steers if self._soft_tool_requirement else 0,
         }
         payload: dict[str, Any] = {
@@ -1454,6 +1515,45 @@ class AgentRuntime:
         if tool_names.intersection({"apply_patch", "write_file", "rollback_patch"}):
             return False
         return bool(self._no_edit_final_hygiene_missing(tool_names))
+
+    def _should_steer_read_only_evidence(self, content: str, run_start_index: int) -> bool:
+        if self._read_only_evidence_steers >= MAX_READ_ONLY_EVIDENCE_STEERS:
+            return False
+        if not _request_needs_read_only_code_evidence(self._current_user_request):
+            return False
+        if _has_successful_read_file_since(self._messages, run_start_index):
+            return False
+        if _content_reports_no_source_evidence(content) and _has_negative_source_evidence_since(
+            self._messages,
+            run_start_index,
+        ):
+            return False
+        return True
+
+    def _steer_for_read_only_evidence(self, content: str) -> bool:
+        self._read_only_evidence_steers += 1
+        request_summary = self._final_answer_request_summary()
+        content_summary = _one_line(content, max_chars=800)
+        steering = (
+            "Runtime steering: the user asked for code/source evidence, but the previous answer was not grounded "
+            "in a successful read_file result from this run. Do not give an industry-practice or filename-based "
+            "guess.\n"
+            "- Use search_code or lsp_* to locate candidate files, then read_file the relevant implementation file.\n"
+            "- If searches return no matches, state that as a verified negative result and include the search terms.\n"
+            "- After collecting code evidence, answer the original question directly and separate verified facts from inference.\n"
+            f"- Draft final answer that triggered this check: {content_summary}"
+            f"{request_summary}"
+        )
+        self._messages.append({"role": "user", "content": steering})
+        self._session.append(
+            "runtime_steering",
+            {
+                "kind": "read_only_evidence",
+                "steer_count": self._read_only_evidence_steers,
+            },
+        )
+        self._temporary_tool_allowlist = set(READ_ONLY_EVIDENCE_TOOLS)
+        return True
 
     def _should_steer_final_structure(self, content: str) -> bool:
         if self._final_structure_steers >= MAX_FINAL_STRUCTURE_STEERS:
@@ -3009,6 +3109,41 @@ def _request_needs_evidence_status_labels(request: str, content: str) -> bool:
 def _content_has_evidence_status_label(content: str) -> bool:
     lowered = content.lower()
     return any(label.lower() in lowered for label in EVIDENCE_STATUS_LABELS)
+
+
+def _request_needs_read_only_code_evidence(request: str | None) -> bool:
+    lowered = (request or "").lower()
+    if not lowered.strip():
+        return False
+    if any(keyword.lower() in lowered for keyword in NO_SPECULATION_REQUEST_KEYWORDS):
+        return True
+    if any(keyword.lower() in lowered for keyword in EVIDENCE_REQUEST_KEYWORDS):
+        return True
+    return any(keyword.lower() in lowered for keyword in IMPLEMENTATION_EVIDENCE_REQUEST_KEYWORDS)
+
+
+def _has_successful_read_file_since(messages: list[dict[str, Any]], start_index: int) -> bool:
+    for message in messages[start_index:]:
+        if message.get("role") != "tool":
+            continue
+        if message.get("_lca_tool_name") == "read_file" and not message.get("_lca_is_error"):
+            return True
+    return False
+
+
+def _has_negative_source_evidence_since(messages: list[dict[str, Any]], start_index: int) -> bool:
+    for message in messages[start_index:]:
+        if message.get("role") != "tool" or message.get("_lca_is_error"):
+            continue
+        name = str(message.get("_lca_tool_name") or "")
+        if (name == "search_code" or name.startswith("lsp_")) and message.get("_lca_useless"):
+            return True
+    return False
+
+
+def _content_reports_no_source_evidence(content: str) -> bool:
+    lowered = content.lower()
+    return any(marker.lower() in lowered for marker in SOURCE_NOT_FOUND_MARKERS)
 
 
 def _request_mentions_todo(content: str | None) -> bool:

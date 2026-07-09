@@ -456,4 +456,4 @@ OMP 对应思路：
 LCA 措施：
 
 - T-087 已完成：增强 final structure / evidence hygiene。项目范围表必须包含项目/服务列；用户要求证据状态或回答含推断性表达时，final gate 会要求已验证/推断标签。
-- T-088 仍保留给 read-only evidence gate：解决“最终回答前必须先找代码证据，而不是先给推测型答案”的问题。
+- T-088 已完成：read-only evidence gate 会拦截代码证据/源码/不推测/怎么处理类问题的无证据最终回答，要求先用 `search_code` / LSP 定位并 `read_file` 关键实现文件；search/LSP no-match 负向证据可明确收束。

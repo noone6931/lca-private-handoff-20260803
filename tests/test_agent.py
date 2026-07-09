@@ -141,6 +141,74 @@ class _FinalEvidenceStatusClient:
         )()
 
 
+class _ReadOnlyEvidenceGateClient:
+    calls: list[dict] = []
+
+    def __init__(self, config: AgentConfig):
+        self.config = config
+
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
+        if len(type(self).calls) == 1:
+            return type("Response", (), {"message": {"content": "可能采用 HTTPS 明文传输，后端再做哈希。"}})()
+        if len(type(self).calls) == 2:
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "call_read",
+                                "type": "function",
+                                "function": {
+                                    "name": "read_file",
+                                    "arguments": json.dumps({"path": "src/LoginController.java"}),
+                                },
+                            }
+                        ],
+                    }
+                },
+            )()
+        return type(
+            "Response",
+            (),
+            {"message": {"content": "已验证：src/LoginController.java 读取 password，并调用 PasswordUtil.check。"}},
+        )()
+
+
+class _ReadOnlyEvidenceNoMatchClient:
+    calls: list[dict] = []
+
+    def __init__(self, config: AgentConfig):
+        self.config = config
+
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
+        if len(type(self).calls) == 1:
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "call_search",
+                                "type": "function",
+                                "function": {
+                                    "name": "search_code",
+                                    "arguments": json.dumps({"pattern": "MissingPasswordEncryptor"}),
+                                },
+                            }
+                        ],
+                    }
+                },
+            )()
+        return type("Response", (), {"message": {"content": "未找到代码证据：search_code 没有匹配 MissingPasswordEncryptor。"}})()
+
+
 class _ReadFileThenFinalClient:
     calls: list[dict] = []
 
@@ -980,7 +1048,7 @@ class AgentRuntimeTests(unittest.TestCase):
             )
             with patch("local_agent.agent.OpenAICompatibleClient", _FinalEvidenceStatusClient):
                 runtime = AgentRuntime(config, show_tool_logs=False)
-                result = runtime.run("请根据代码证据回答，并把每条结论标为已验证或推断。")
+                result = runtime.run("请把每条结论标为已验证或推断。")
                 records = [json.loads(line) for line in runtime._session.path.read_text(encoding="utf-8").splitlines()]
 
         steering_records = [
@@ -994,6 +1062,72 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertEqual(len(_FinalEvidenceStatusClient.calls), 2)
         self.assertEqual(_FinalEvidenceStatusClient.calls[1]["tools"], [])
         self.assertIn("missing_evidence_status_labels", steering_records[0]["payload"]["issues"])
+
+    def test_read_only_evidence_gate_requires_file_evidence_before_final(self) -> None:
+        _ReadOnlyEvidenceGateClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            source_dir = workspace / "src"
+            source_dir.mkdir()
+            (source_dir / "LoginController.java").write_text(
+                "class LoginController { boolean login(String password) { return PasswordUtil.check(password); } }\n",
+                encoding="utf-8",
+            )
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=workspace,
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _ReadOnlyEvidenceGateClient):
+                runtime = AgentRuntime(config, show_tool_logs=False)
+                result = runtime.run("我们是怎么解决前端密码加密问题的？后端怎么处理的")
+                records = [json.loads(line) for line in runtime._session.path.read_text(encoding="utf-8").splitlines()]
+
+        second_tool_names = {
+            schema.get("function", {}).get("name")
+            for schema in _ReadOnlyEvidenceGateClient.calls[1]["tools"]
+        }
+        steering_records = [
+            record
+            for record in records
+            if record.get("event") == "runtime_steering"
+            and record.get("payload", {}).get("kind") == "read_only_evidence"
+        ]
+        self.assertIn("已验证：src/LoginController.java", result)
+        self.assertEqual(len(_ReadOnlyEvidenceGateClient.calls), 3)
+        self.assertIn("read_file", second_tool_names)
+        self.assertIn("search_code", second_tool_names)
+        self.assertNotIn("apply_patch", second_tool_names)
+        self.assertEqual(len(steering_records), 1)
+        self.assertEqual(runtime._last_run_summary["steering_counts"], {"read_only_evidence": 1})
+
+    def test_read_only_evidence_gate_allows_negative_search_evidence(self) -> None:
+        _ReadOnlyEvidenceNoMatchClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            (workspace / "README.md").write_text("# Demo\n", encoding="utf-8")
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=workspace,
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _ReadOnlyEvidenceNoMatchClient):
+                runtime = AgentRuntime(config, show_tool_logs=False)
+                result = runtime.run("请根据代码证据回答 MissingPasswordEncryptor 是怎么处理密码的")
+
+        self.assertIn("未找到代码证据", result)
+        self.assertEqual(len(_ReadOnlyEvidenceNoMatchClient.calls), 2)
+        self.assertEqual(runtime._last_run_summary["steering_counts"], {})
 
     def test_evidence_ledger_is_sent_to_provider_context_after_tool_results(self) -> None:
         _ReadFileThenFinalClient.calls = []

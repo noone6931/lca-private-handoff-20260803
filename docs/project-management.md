@@ -213,7 +213,7 @@ python3 scripts/sync_project_excel.py
 | T-085 | P1 | P9 | todo 工具误参纠偏 | 已完成 | Agent | T-084 中模型用 `key/content` 调 `todo_add`、用错误 id 调 `todo_update` | 已兼容 `key -> id`、`content -> task`，成功结果提示下次使用规范参数；缺参、未知 id、无更新字段错误会返回正确示例和已知 todo id。 |
 | T-086 | P0 | P9 | evidence-aware read repetition guard | 已完成 | Agent | T-084 中 `read_file` 54 次，同一路径重复读但 `guard_hits=0` | 已参考 OMP pruning / soft escalation：只读/分析任务中，同路径同范围成功读取超过阈值后返回 evidence 摘要并触发 final-answer steering；编辑任务不启用该 guard。 |
 | T-087 | P1 | P9 | final structure / evidence hygiene 增强 | 已完成 | Agent | T-084 最终把“项目表”退化成“表名表”，并对类作用有过度断言 | 已增强 Current task contract / final gate：项目范围表必须含项目/服务列；证据状态要求会触发已验证/推断标签检查。 |
-| T-088 | P0 | P9 | read-only evidence gate | 候选 | Agent | 密码加密问答压测中，模型未读关键登录/密码文件前先给推测型答案 | 参考 OMP current task / evidence context：用户要求“代码证据/不推测/找到实现”时，必须先读关键命中文件或明确缺证据，禁止先行业惯例推断。 |
+| T-088 | P0 | P9 | read-only evidence gate | 已完成 | Agent | 密码加密问答压测中，模型未读关键登录/密码文件前先给推测型答案 | 已参考 OMP current task / evidence context：代码证据/源码/不推测/怎么处理类问题若无成功 `read_file` 就准备回答，会被要求先查证据；search/LSP no-match 负向证据可明确收束。 |
 | T-089 | P0 | P9 | semantic exploration guard | 候选 | Agent | 密码加密问答压测中，用户纠正后出现同模块/父子目录/Path not found 扩散，exact duplicate guard 太晚 | 参考 OMP soft escalation / pruning：按模块、父目录、Path-not-found pattern 计数，超过阈值后要求改用 search_code 命中文件或收束回答。 |
 | T-090 | P1 | P9/P10 | terminal input/output isolation | 候选 | Agent | 压测日志出现用户键盘输入混入工具日志，如 `33333333333[tool:start]` | Terminal Frontend 继续强化 centralized renderer 和运行中输入管理；一次性 CLI 提示运行中不要直接敲字，推荐 `./agent --chat`。 |
 
@@ -263,7 +263,7 @@ python3 scripts/sync_project_excel.py
 | 风险 | R-041 | 中 | 压测复盘缺少结构化 run coverage | 已关闭 MVP 版 | 只有 session 原文和最终回答时，很难判断模型卡在哪个 guard、用了多少工具、是否触发 compaction 或为什么结束 | 已参考 OMP run-collector 思路，新增每轮 `run_summary`：工具次数、guard/steering、compaction、termination reason 统一落 session 和事件流。 |
 | 风险 | R-042 | 中 | 只读源码验证中重复读取过多 | 已缓解 | T-084 中 `read_file` 54 次、`list_files` 10 次，重复读取同一批证据文件但没有 guard/steering 命中 | 已参考 OMP pruning / soft escalation / evidence sufficiency：对已读同范围做 evidence-aware repetition guard，达到阈值后返回已有 evidence 摘要并触发 final-answer steering。 |
 | 风险 | R-043 | 中 | 最终回答轻微结构漂移和过度断言 | 已缓解 | T-084 要求项目表，但最终输出表名表；还把 `IntentionConfigApplication` 表述为 Spring Boot 启动/配置类，证据不足 | 已增强 Current task contract 和 final gate：项目范围表必须含项目/服务列；证据状态要求会触发已验证/推断标签检查。 |
-| 风险 | R-044 | 高 | 证据型只读问题先输出推测 | 新增 | “前端密码加密/后端怎么处理”问题中，模型未读关键登录/密码文件就先给“可能 HTTPS 明文 + 后端哈希”的推测 | T-088：read-only evidence gate；最终回答必须绑定具体 read_file/search_code/lsp 证据，否则继续查或明确未找到。 |
+| 风险 | R-044 | 高 | 证据型只读问题先输出推测 | 已缓解 | “前端密码加密/后端怎么处理”问题中，模型未读关键登录/密码文件就先给“可能 HTTPS 明文 + 后端哈希”的推测 | T-088 已完成：无成功 `read_file` 的证据型回答会被 runtime steering 拦住并临时只开放证据工具；search/LSP no-match 负向证据可明确收束。 |
 | 风险 | R-045 | 高 | 语义级路径探索扩散 | 新增 | 用户纠正后出现大量相似目录 list_files、父子目录扩散、Path not found 和大目录读取；exact duplicate guard 太晚命中 | T-089：semantic exploration guard；按模块/父目录/Path-not-found pattern 小上限收束，并引导回 search_code 命中文件。 |
 | 风险 | R-046 | 中 | 终端输出被用户输入污染 | 新增 | 日志出现 `33333333333[tool:start]`，说明一次性 CLI 运行中键盘输入被终端 echo 到 transcript | T-090：强化 Terminal Frontend renderer/输入管理；一次性 CLI 增加提示，推荐长交互用 `./agent --chat`。 |
 | ADR | ADR-001 | 2026-07-07 | 优先采纳 OMP 成熟设计，按本地目标裁剪 | 已接受 | 好设计可直接采用，复杂度按需收敛 | OMP 是重要参考实现；我们不为了“避免复制”而绕开好设计。采用标准是收益是否大于复杂度，并且不破坏个人本地使用、封闭 VM、无公网依赖和第一阶段 MVP 边界。 |
@@ -300,12 +300,12 @@ python3 scripts/sync_project_excel.py
 
 | 项目 | 结论 | 依据 | 后续 |
 |---|---|---|---|
-| 阶段判断 | P9 真实需求使用准备进行中 | T-076/T-077 已让 Runtime 产出 typed events，并提供 terminal-native 交互入口；T-078 已把项目边界分析沉淀为本机 memory/skill 和通用 runtime gate；T-084 已完成新模型只读源码验证压测；T-085/T-086/T-087 已补 todo 参数纠偏、重复读收束和最终结构/证据卫生；新 review 暴露 evidence-first 与语义探索 guard 缺口 | 先补 T-088，再继续真实需求“范围确认 → 源码验证 → 实现设计/小改” |
+| 阶段判断 | P9 真实需求使用准备进行中 | T-076/T-077 已让 Runtime 产出 typed events，并提供 terminal-native 交互入口；T-078 已把项目边界分析沉淀为本机 memory/skill 和通用 runtime gate；T-084 已完成新模型只读源码验证压测；T-085/T-086/T-087/T-088 已补 todo 参数纠偏、重复读收束、最终结构/证据卫生和 evidence-first gate；新 review 仍暴露语义探索 guard 缺口 | 先补 T-089，再继续真实需求“范围确认 → 源码验证 → 实现设计/小改” |
 | 与 OMP 的主要差距 | 差距集中在高级工程化，不阻塞低风险实战 | 完整 ToolChoiceQueue、reviewer/subagents、完整 LSP/DAP、browser/TUI、AST edit、managed skills 仍后置 | 由压测失败形态触发 |
 | 已关闭风险 | P0/P1 runtime 风险已基本收口 | Python 3.12 patch、非交互审批、orphan tool_calls、max_steps、allowed-dir、重复工具、证据漂移、diff 混淆等均已有修复或缓解 | 继续用真实任务验证 |
 | reviewer 决策 | 先保留轻量实现质量 gate | T-074 已补 no-comment-only reviewer，复跑未再产生伪实现 | 继续用真实任务验证；若后续出现更复杂 patch 质量问题，再补完整 reviewer/subagent |
 | ToolChoiceQueue 决策 | 暂不先做完整 ToolChoiceQueue | 已有 allowed-dir soft requirement、duplicate forced-final、todo steering、pruning；还缺“关键工具长期不用/乱用”的新失败样本 | 若 T-072 暴露工具选择失控，再按 OMP 裁剪 ToolChoiceQueue |
-| 下一步 | 补齐 T-088 后继续真实需求链路 | T-084 已证明新模型能跑通只读链路；重复读、todo 参数和最终结构/证据卫生问题已补；密码加密问答 review 证明 evidence-first 仍需加强 | 先做 read-only evidence gate，再进入用户真实需求的项目范围确认和源码验证 |
+| 下一步 | 补齐 T-089 后继续真实需求链路 | T-084 已证明新模型能跑通只读链路；重复读、todo 参数、最终结构/证据卫生和 evidence-first 问题已补；密码加密问答 review 仍证明语义路径探索会扩散 | 先做 semantic exploration guard，再进入用户真实需求的项目范围确认和源码验证 |
 
 ## P7 综合压测问题
 
