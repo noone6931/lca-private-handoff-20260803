@@ -17,7 +17,7 @@ python3 scripts/sync_project_excel.py
 | 字段 | 当前值 | 说明 |
 |---|---|---|
 | 最终目标 | 个人本地编程助手 Agent | 本地优先、封闭 VM 可用、只访问指定 AI API，能读代码、搜代码、改代码、跑测试、生成 diff、沉淀项目记忆。 |
-| 当前阶段 | P7：轻量高级能力与真实压测 | P6 默认工作流 MVP 已落地；P7 已补 OMP 风格 auto summary、多语言轻量 LSP、multi-root、startup context/rules、startup memory、learn、可选 memory consolidation、authored skills discovery，并通过综合压测发现和修复重复工具调用循环，新增 OMP 风格 tool result pruning / todo steering；2026-07-08 已按 OMP 思路完成 runtime state 与 cwd 分层，自动 memory consolidation 默认写 state dir；full-access 后 Agent 已代跑单项目和多项目企业压测，session `20260708T085927874078` 已验证 path escape roots hint、LSP 空 query guard、Current task contract 和证据路径规则，最终按 6 点结构输出；T-069/T-070 已补 `git_diff` attribution 与 diff summary，T-070 复测 session `20260708T100128250335Z` 已验证百炼模型能正确引用 summary + attribution。 |
+| 当前阶段 | P7：轻量高级能力与真实压测 | P6 默认工作流 MVP 已落地；P7 已补 OMP 风格 auto summary、多语言轻量 LSP、multi-root、startup context/rules、startup memory、learn、可选 memory consolidation、authored skills discovery，并通过综合压测发现和修复重复工具调用循环，新增 OMP 风格 tool result pruning / todo steering；2026-07-08 已按 OMP 思路完成 runtime state 与 cwd 分层，自动 memory consolidation 默认写 state dir；full-access 后 Agent 已代跑单项目和多项目企业压测，session `20260708T085927874078` 已验证 path escape roots hint、LSP 空 query guard、Current task contract 和证据路径规则，最终按 6 点结构输出；T-069/T-070 已补 `git_diff` attribution 与 diff summary，T-070 复测 session `20260708T100128250335Z` 已验证百炼模型能正确引用 summary + attribution；2026-07-09 阶段回顾结论是先进入真实需求实现压测，reviewer / 完整 ToolChoiceQueue 作为条件触发项后补。 |
 | 推荐入口 | `./agent "阅读当前项目"` | 自动设置 `PYTHONPATH=src`，默认当前目录为 workspace。 |
 | Token 配置 | 环境变量 / `--env-file` / `.env` | `./agent` 会自动加载安装目录 `.env`，也可显式传 `--env-file`；真实环境变量优先。 |
 | 测试数 | 157 | 完整 unittest、compileall、diff check、xlsx 检查通过。 |
@@ -54,7 +54,7 @@ python3 scripts/sync_project_excel.py
 | P4 | 上下文治理 | 简单 summary/compaction，工具输出折叠，支持长需求文件 | 已完成 MVP 版 | 100% | 首轮百炼只读 compaction 压测已通过；当前已补可选 LLM summary，后续再评估 token 预算、输出 reserve 和 recent 保留。 |
 | P5 | 安全与恢复增强 | synthetic tool result、patch preview、rollback、ask_user timeout、per-tool approval | 已完成并收口 | 100% | 主链路已通过真实百炼复测；后续只修日用反馈中的 P0/P1 问题。 |
 | P6 | 日用体验与默认工作流固化 | OMP 默认工作流本地化：system prompt、工具描述、轻量 runtime nudge | 已完成 MVP 版 | 100% | 进入真实任务压测。 |
-| P7 | 高级工程能力轻量版 | OMP 风格 auto summary、轻量 LSP、LSP 兼容别名、multi-root workspace roots、allowed-dir soft tool requirement、startup context/rules、startup memory、learn、memory consolidation、authored skills discovery、重复工具调用熔断、duplicate-tool forced-final steering、同文件切片读取漂移 guard、空搜索词跨路径 guard、path escape roots hint、LSP 空 query guard、Current task contract、Evidence Ledger、tool result pruning、todo steering、跨项目 env-file、runtime state dir、真实项目压测记录 | 进行中 | 99% | full-access 后 Agent 已代跑单项目和多项目企业项目联网压测；session `20260708T085927874078` 已先读需求、纠正父目录 path escape、定位真实 `limitConstituteAllotImport` 证据，并按 6 点结构输出。小实现压测 `20260708T092554037057Z` 已验证 Evidence Ledger 后小改闭环仍可跑通。下一步继续评估回答准确性、跨项目覆盖边界和工具参数可用性细节。 |
+| P7 | 高级工程能力轻量版 | OMP 风格 auto summary、轻量 LSP、LSP 兼容别名、multi-root workspace roots、allowed-dir soft tool requirement、startup context/rules、startup memory、learn、memory consolidation、authored skills discovery、重复工具调用熔断、duplicate-tool forced-final steering、同文件切片读取漂移 guard、空搜索词跨路径 guard、path escape roots hint、LSP 空 query guard、Current task contract、Evidence Ledger、tool result pruning、todo steering、跨项目 env-file、runtime state dir、真实项目压测记录 | 进行中 | 99% | full-access 后 Agent 已代跑单项目和多项目企业项目联网压测；session `20260708T085927874078` 已先读需求、纠正父目录 path escape、定位真实 `limitConstituteAllotImport` 证据，并按 6 点结构输出。小实现压测 `20260708T092554037057Z` 已验证 Evidence Ledger 后小改闭环仍可跑通。T-071 阶段回顾已决定下一步进入真实需求实现压测；reviewer / 完整 ToolChoiceQueue 仅在压测暴露具体失败后定向补。 |
 
 ## 已完成功能
 
@@ -182,6 +182,9 @@ python3 scripts/sync_project_excel.py
 | T-068 | P1 | P7 | apply_patch tag 参数易误填 `path#tag` | 已完成 | Agent | 小实现压测中模型先把 `read_file` header `README.md#3988a904` 整串传给 `tag`，dry_run 连续失败后才自我修正为 `3988a904` | 已参考 OMP 结构化工具观察/编辑参数提示：`read_file` 现在显式输出 `tag: <hash>`；`apply_patch` 兼容 `[path#hash]` / `path#hash` 并提示下次传纯 hash，anchored hash 校验不放宽；测试覆盖。 |
 | T-069 | P1 | P7 | git_diff 归因区分已有工作区修改与本轮修改 | 已完成 MVP 版 | Agent | 小实现压测时工作区已有人工实现的 Evidence Ledger diff，模型的 `git_diff` 同时看到 README 小改和 agent.py 大改，虽能识别“非本轮改动”，但依赖推理 | 已参考 OMP task/worktree/session state 思路：每轮 run start 捕获 git baseline 并写 session；`git_diff` 追加 attribution 小节，按 pre-existing dirty files、this-session apply_patch files、mixed files、new unattributed files 提示模型分开总结。 |
 | T-070 | P1 | P7 | 最终 diff 细节概括准确性 | 已完成并复测通过 | Agent | T-069 复测 session `20260708T094926471758Z` 中 attribution 分类正确，但模型把“重复标题 + smoke-test 标记”概括为 exactly one insertion，且选择的 README 改动低价值 | 已参考 OMP runtime observation 思路：`git_diff` 追加 `[diff summary]`，按文件输出 `+N/-M`、hunk 数、hunk header 和少量 added/removed 片段；回归测试覆盖重复标题 + smoke-test 行实际为 `+3 -0`；百炼复测 session `20260708T100128250335Z` 已正确总结 `1 file(s), +1 -1, 1 hunk(s)` 和 attribution。 |
+| T-071 | P0 | P7 | P7 阶段回顾与 OMP 差距决策 | 已完成 | Agent | T-070 后需要决定继续补 reviewer/ToolChoiceQueue，还是进入真实需求实现压测 | 新增 `docs/stage-review-2026-07-09.md`；结论是当前主链路已具备低风险实战条件，先做真实需求实现压测。 |
+| T-072 | P0 | P7 | 真实需求实现压测 | 下一步 | User + Agent | 只有真实需求实现才能检验默认工作流、multi-root、LSP、Evidence Ledger、patch、tests、diff attribution 是否形成完整闭环 | 选择一个低风险需求；压测前记录 git status；写入前 dry_run；写入后 run_tests + git_diff；压测问题回写文档和 Excel。 |
+| T-073 | P1 | P7/P8 | reviewer / 完整 ToolChoiceQueue 条件触发评估 | 候选 | Agent | OMP 的 reviewer 和 ToolChoiceQueue 很强，但应由真实失败样本驱动裁剪 | 若 T-072 暴露关键工具不用/乱用，补 ToolChoiceQueue；若暴露 patch 或总结质量问题，补轻量 reviewer。 |
 
 ## 风险与决策
 
@@ -216,6 +219,7 @@ python3 scripts/sync_project_excel.py
 | 风险 | R-027 | 中 | 模型可能把 `read_file` header 的 `path#tag` 整串误当成 patch tag | 已关闭 | 小实现压测 session `20260708T092554037057Z` 中 dry_run 前三次因 `tag=README.md#3988a904` 失败，第四次改成纯 hash 后成功 | 已加双保险：`read_file` 显式输出 pure tag；`apply_patch` 兼容误传的 `path#tag` / `[path#tag]`，但仍用 hash 校验当前文件。 |
 | 风险 | R-028 | 中 | 脏工作区下最终 diff 摘要可能混入非本轮改动 | 已关闭 MVP 版 | 小实现压测 session `20260708T092554037057Z` 的 `git_diff` 同时包含 README 小改和正在开发的 Evidence Ledger 代码 diff；模型能分辨但依赖推理 | 已参考 OMP task/worktree/session state：run start 记录 baseline，`git_diff` 对照本轮 patch records 输出归因提示；同一文件若运行前已 dirty 且本轮又修改，会标成 mixed。 |
 | 风险 | R-029 | 中 | 最终 diff 细节可能被模型过度简化或说错 | 已关闭并复测通过 | T-069 复测 session `20260708T094926471758Z` 中 attribution 分类正确，但模型没有准确描述实际 diff hunk；低价值 README smoke-test 改动已撤回 | 已参考 OMP runtime state/tool observation：`git_diff` 追加结构化 diff summary，直接提供文件级增删统计和 hunk snippets；百炼复测 session `20260708T100128250335Z` 已正确引用 summary 和 attribution。 |
+| 风险 | R-030 | 中 | 过早补完整 reviewer / ToolChoiceQueue 会增加复杂度但未必命中当前痛点 | 开放并受控 | OMP 的 reviewer、subagents、ToolChoiceQueue 很强，但 LCA 当前还缺真实实现压测的失败样本；提前完整搬入可能拖慢 MVP 验证 | 先进入 T-072 真实需求实现压测；若压测暴露工具选择失控，按 OMP 裁剪 ToolChoiceQueue；若暴露 patch/总结质量不稳，按 OMP 裁剪轻量 reviewer。 |
 | ADR | ADR-001 | 2026-07-07 | 优先采纳 OMP 成熟设计，按本地目标裁剪 | 已接受 | 好设计可直接采用，复杂度按需收敛 | OMP 是重要参考实现；我们不为了“避免复制”而绕开好设计。采用标准是收益是否大于复杂度，并且不破坏个人本地使用、封闭 VM、无公网依赖和第一阶段 MVP 边界。 |
 | ADR | ADR-002 | 2026-07-07 | max_steps 只作为防失控保险丝 | 已落地 | 默认值已改为 0，不限步 | OMP 的 stepCounter 主要用于 telemetry，终止靠无 tool_calls、deadline、abort；我们把 `max_steps` 仅作为显式保险丝。 |
 | ADR | ADR-003 | 2026-07-07 | todo、ask_user、per-tool approval 是主功能 | 已落地 | P3 已实现 | OMP 将 todo、approval、elicitation 做成可观测会话能力；我们 P3 先做终端轻量版，后续再补 UI 化。 |
@@ -234,6 +238,18 @@ python3 scripts/sync_project_excel.py
 | ADR | ADR-016 | 2026-07-08 | Session memory consolidation 默认关闭，开启后默认写 state memory | 已接受并落地 | 这一步不同于只发给模型的 context compaction；默认 off 保护只读分析，开启后默认写用户级 state dir；只有显式 `memory_scope=project` 才写项目 `.local-agent/memory` | 显式 `auto/llm` 后才用当前 provider 抽取长期记忆；memory 仍是 advisory，当前用户指令和源码证据优先。 |
 | ADR | ADR-017 | 2026-07-08 | 解决 runtime/工具/上下文问题时先查 OMP 做法 | 已接受 | 先找 OMP 已验证设计，再按 LCA 本地个人 Agent、封闭 VM、单 Agent 和无自动下载边界裁剪 | 用户明确要求后续解决问题都参考 OMP；allowed-dir 问题按 OMP 显式提供 cwd/project context 的思路，落地为 `[Workspace roots]` 注入。 |
 | ADR | ADR-018 | 2026-07-08 | Evidence Ledger 作为 provider-bound runtime context，而不是长期 memory | 已接受并落地 | 工具证据是本轮会话事实，应帮助最终回答区分证据与推断，但不应写入项目长期 memory 或替代 session 原文 | 参考 OMP 将 runtime state / tool evidence / steering 持续放进模型上下文的做法；LCA 中 Evidence Ledger 由 runtime 中央观察工具结果生成，短窗口注入 provider context，并写 session `evidence` 事件用于审计。 |
+| ADR | ADR-019 | 2026-07-09 | P7 后续先进入真实需求实现压测，reviewer / 完整 ToolChoiceQueue 条件触发 | 已接受 | 执行 T-072；T-073 按压测失败形态选择实现 | 阶段回顾显示当前主链路已具备低风险实战条件；完整 reviewer / ToolChoiceQueue 应根据真实实现压测暴露的问题裁剪，而不是在缺少失败样本时提前做重。 |
+
+## P7 阶段回顾
+
+| 项目 | 结论 | 依据 | 后续 |
+|---|---|---|---|
+| 阶段判断 | 可以进入真实需求实现压测 | 读、搜、改、测、diff、approval、budget、compaction、memory、todo、ask_user、Evidence Ledger、diff attribution/summary 主链路已闭环 | 执行 T-072 |
+| 与 OMP 的主要差距 | 差距集中在高级工程化，不阻塞低风险实战 | 完整 ToolChoiceQueue、reviewer/subagents、完整 LSP/DAP、browser/TUI、AST edit、managed skills 仍后置 | 由压测失败形态触发 |
+| 已关闭风险 | P0/P1 runtime 风险已基本收口 | Python 3.12 patch、非交互审批、orphan tool_calls、max_steps、allowed-dir、重复工具、证据漂移、diff 混淆等均已有修复或缓解 | 继续用真实任务验证 |
+| reviewer 决策 | 暂不先做完整 reviewer | 当前还没有真实实现压测中的 patch 质量失败样本；过早实现会增加复杂度 | 若 T-072 暴露 patch/总结质量不稳，再做轻量 post-diff reviewer |
+| ToolChoiceQueue 决策 | 暂不先做完整 ToolChoiceQueue | 已有 allowed-dir soft requirement、duplicate forced-final、todo steering、pruning；还缺“关键工具长期不用/乱用”的新失败样本 | 若 T-072 暴露工具选择失控，再按 OMP 裁剪 ToolChoiceQueue |
+| 下一步 | 真实需求实现压测 | 阶段回顾文档见 `docs/stage-review-2026-07-09.md` | 压测后更新压测文档、项目状态和 Excel |
 
 ## P7 综合压测问题
 
