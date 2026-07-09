@@ -4,6 +4,11 @@ import re
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+from ..completion_audit import audit_completion
+from ..completion_audit import render_completion_audit_message
+from ..task_contract import RequirementContract
+from ..tool_choice_queue import ToolResultSummary
+
 
 NO_EDIT_FINAL_HYGIENE_TOOLS = {"todo_read", "todo_add", "todo_update", "git_status", "git_diff"}
 READ_ONLY_EVIDENCE_TOOLS = {
@@ -218,6 +223,8 @@ class FinalAnswerContext:
     content: str
     messages: list[dict[str, Any]]
     run_start_index: int
+    requirement_contract: RequirementContract | None
+    tool_results: list[ToolResultSummary]
     read_file_evidence_paths: list[str]
     source_evidence: list[SourceEvidence]
     open_todos: list[str]
@@ -422,6 +429,39 @@ class SourceEvidenceFalseNegativeSteerer:
             kind=self.kind,
             message=steering,
             payload={"issues": [issue["summary"] for issue in issues[:5]]},
+        )
+
+
+class CompletionAuditSteerer:
+    kind = "completion_audit"
+
+    def __init__(self, *, max_steers: int) -> None:
+        self._max_steers = max_steers
+
+    def decide(self, context: FinalAnswerContext) -> SteeringDecision | None:
+        if context.steer_counts.get(self.kind, 0) >= self._max_steers:
+            return None
+        result = audit_completion(
+            context.requirement_contract,
+            request=context.request,
+            final_content=context.content,
+            tool_results=context.tool_results,
+            source_paths=context.read_file_evidence_paths,
+            open_todos=context.open_todos,
+        )
+        if result.passed:
+            return None
+        allowed_tools = set(result.allowed_tool_names())
+        return SteeringDecision(
+            kind=self.kind,
+            message=render_completion_audit_message(
+                result,
+                request=context.request,
+                final_content=context.content,
+            ),
+            payload=result.payload(),
+            force_final_answer_without_tools=not allowed_tools,
+            temporary_tool_allowlist=allowed_tools or None,
         )
 
 

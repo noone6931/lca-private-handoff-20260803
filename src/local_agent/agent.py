@@ -43,6 +43,7 @@ from .state import default_config_root
 from .steering.final_answer import FinalAnswerContext
 from .steering.final_answer import FinalAnswerSteerer
 from .steering.final_answer import FinalStructureSteerer
+from .steering.final_answer import CompletionAuditSteerer
 from .steering.final_answer import NoEditFinalHygieneSteerer
 from .steering.final_answer import READ_ONLY_EVIDENCE_TOOLS
 from .steering.final_answer import ReadOnlyEvidenceSteerer
@@ -134,6 +135,7 @@ MAX_FINAL_STRUCTURE_STEERS = 2
 MAX_READ_ONLY_EVIDENCE_STEERS = 2
 MAX_SOURCE_EVIDENCE_FALSE_NEGATIVE_STEERS = 2
 MAX_SOURCE_GROUNDED_NUMERIC_STEERS = 2
+MAX_COMPLETION_AUDIT_STEERS = 2
 MAX_TOOL_CHOICE_QUEUE_STEERS_PER_SIGNATURE = 1
 INVALID_TOOL_CALL_NAME = "__invalid_tool_call"
 WORKFLOW_NUDGE = (
@@ -310,6 +312,7 @@ class AgentRuntime:
         self._read_only_evidence_steers = 0
         self._source_evidence_false_negative_steers = 0
         self._source_grounded_numeric_steers = 0
+        self._completion_audit_steers = 0
         self._read_file_evidence_paths: list[str] = []
         self._source_evidence: list[SourceEvidence] = []
         self._strong_relevance_paths: list[str] = []
@@ -336,6 +339,7 @@ class AgentRuntime:
             FinalStructureSteerer(max_steers=MAX_FINAL_STRUCTURE_STEERS),
             SourceEvidenceFalseNegativeSteerer(max_steers=MAX_SOURCE_EVIDENCE_FALSE_NEGATIVE_STEERS),
             SourceGroundedNumericSteerer(max_steers=MAX_SOURCE_GROUNDED_NUMERIC_STEERS),
+            CompletionAuditSteerer(max_steers=MAX_COMPLETION_AUDIT_STEERS),
         )
         self._state_dir = config.state_dir or config.workspace / ".local-agent"
         self._session = JsonlSessionStore(
@@ -860,6 +864,7 @@ class AgentRuntime:
             "read_only_evidence": self._read_only_evidence_steers,
             "source_evidence_false_negative": self._source_evidence_false_negative_steers,
             "source_grounded_numeric": self._source_grounded_numeric_steers,
+            "completion_audit": self._completion_audit_steers,
             "soft_tool_requirement": self._soft_tool_requirement.steers if self._soft_tool_requirement else 0,
         }
         payload: dict[str, Any] = {
@@ -1572,6 +1577,8 @@ class AgentRuntime:
             content=content,
             messages=self._messages,
             run_start_index=run_start_index,
+            requirement_contract=self._requirement_contract,
+            tool_results=list(self._tool_choice_results),
             read_file_evidence_paths=list(self._read_file_evidence_paths),
             source_evidence=list(self._source_evidence),
             open_todos=self._open_todo_summary(),
@@ -1603,6 +1610,7 @@ class AgentRuntime:
             "final_structure": self._final_structure_steers,
             "source_evidence_false_negative": self._source_evidence_false_negative_steers,
             "source_grounded_numeric": self._source_grounded_numeric_steers,
+            "completion_audit": self._completion_audit_steers,
         }
 
     def _increment_final_answer_steer_count(self, kind: str) -> int:
@@ -1621,6 +1629,9 @@ class AgentRuntime:
         if kind == "source_grounded_numeric":
             self._source_grounded_numeric_steers += 1
             return self._source_grounded_numeric_steers
+        if kind == "completion_audit":
+            self._completion_audit_steers += 1
+            return self._completion_audit_steers
         return 0
 
     def _append_soft_tool_requirement_message(self, requirement: SoftToolRequirement) -> None:

@@ -30,7 +30,7 @@
 
 ## 当前进度
 
-当前项目已完成 P8 前端协议与交互基础 MVP，P9 真实需求使用准备已覆盖项目边界、源码验证、LSP 韧性和服务费结算链路压测，并开始进入 P10 Intelligence Runtime 骨架：P5 的安全与恢复增强 MVP 已收口；P6 默认工作流 MVP 已落地，用户可以用自然语言描述任务，而不是每次手写 `list_files/read_file/dry_run/run_tests/git_diff` 工具顺序；P7 已完成 OMP 风格 auto summary、多语言 LSP/light fallback、multi-root `--allow-dir`、workspace roots 注入、Markdown memory 启动注入、`learn` 工具、可选 session memory consolidation、authored skills discovery、重复工具调用熔断、duplicate-tool forced-final steering、tool result pruning、todo steering、跨项目 `--env-file` / launcher 安装目录 `.env` 加载、OMP 风格用户级 `--state-dir` runtime state 分层、Evidence Ledger、relevance gate、implementation-quality gate 和 no-edit final hygiene。2026-07-09 已完成 T-076 Event/Command Protocol v1、T-077/T-080 Terminal Frontend MVP 与命令可发现性、T-078 项目边界分析 MVP、T-081 Claude review 行动计划、T-082 run summary / coverage MVP，并新增 T-083 真实需求压测模板。模型默认已切到 `qwen3-coder-next`，已完成 T-084 企业项目只读源码验证压测，并已落地 T-085 todo 工具误参纠偏、T-086 evidence-aware read repetition guard、T-087 final structure / evidence hygiene、T-088 read-only evidence gate、T-089 semantic exploration guard、T-090 terminal input/output isolation、T-091 Vue diff reviewer 误报修复、T-092 compaction 渐进模块化 / LSP 置信度提示、T-093 可选外部 LSP adapter、T-094 真实项目 LSP 可用性压测、T-095 jdtls 预置/strict external 复测、T-096 Java LSP 韧性对齐 OMP、T-097 Java project health 探针、T-098 Maven parent probe、T-099 Maven environment probe、T-100 Java LSP fallback 真实复测、T-101 query-aware LSP fallback、T-102 拓展服务费结算真实需求链路压测、T-103 provider-safe invalid tool_call normalization、T-104 msp-pay / zqylpayment 用户确认范围源码复核、T-105 窄范围证据补全、T-106 FinalAnswer Steerer 第一块抽象 / source-grounded numeric guard、T-107 token budget + reserve MVP、T-108 source-grounded numeric/token budget 复测、T-109 RequirementContract 和 T-111 裁剪版 MiniToolChoiceQueue：Runtime 能产出 typed events，CLI/session/tool 日志和 terminal frontend 共用事件流，session JSONL 追加 `event_v1` 供后续 replay；analysis-only 任务不会套用代码实现类 hygiene，点名 authored skill 时会先软性要求读取对应 `SKILL.md`，最终回答结构不完整或证据数字不一致时会强制无工具重答；每轮结束会写入结构化 `run_summary`，用于压测复盘和 `/status` 展示。
+当前项目已完成 P8 前端协议与交互基础 MVP，P9 真实需求使用准备已覆盖项目边界、源码验证、LSP 韧性和服务费结算链路压测，并开始进入 P10 Intelligence Runtime 骨架：P5 的安全与恢复增强 MVP 已收口；P6 默认工作流 MVP 已落地，用户可以用自然语言描述任务，而不是每次手写 `list_files/read_file/dry_run/run_tests/git_diff` 工具顺序；P7 已完成 OMP 风格 auto summary、多语言 LSP/light fallback、multi-root `--allow-dir`、workspace roots 注入、Markdown memory 启动注入、`learn` 工具、可选 session memory consolidation、authored skills discovery、重复工具调用熔断、duplicate-tool forced-final steering、tool result pruning、todo steering、跨项目 `--env-file` / launcher 安装目录 `.env` 加载、OMP 风格用户级 `--state-dir` runtime state 分层、Evidence Ledger、relevance gate、implementation-quality gate 和 no-edit final hygiene。2026-07-09 已完成 T-076 Event/Command Protocol v1、T-077/T-080 Terminal Frontend MVP 与命令可发现性、T-078 项目边界分析 MVP、T-081 Claude review 行动计划、T-082 run summary / coverage MVP，并新增 T-083 真实需求压测模板。模型默认已切到 `qwen3-coder-next`，已完成 T-084 企业项目只读源码验证压测，并已落地 T-085 todo 工具误参纠偏、T-086 evidence-aware read repetition guard、T-087 final structure / evidence hygiene、T-088 read-only evidence gate、T-089 semantic exploration guard、T-090 terminal input/output isolation、T-091 Vue diff reviewer 误报修复、T-092 compaction 渐进模块化 / LSP 置信度提示、T-093 可选外部 LSP adapter、T-094 真实项目 LSP 可用性压测、T-095 jdtls 预置/strict external 复测、T-096 Java LSP 韧性对齐 OMP、T-097 Java project health 探针、T-098 Maven parent probe、T-099 Maven environment probe、T-100 Java LSP fallback 真实复测、T-101 query-aware LSP fallback、T-102 拓展服务费结算真实需求链路压测、T-103 provider-safe invalid tool_call normalization、T-104 msp-pay / zqylpayment 用户确认范围源码复核、T-105 窄范围证据补全、T-106 FinalAnswer Steerer 第一块抽象 / source-grounded numeric guard、T-107 token budget + reserve MVP、T-108 source-grounded numeric/token budget 复测、T-109 RequirementContract、T-110 CompletionAudit 完整版和 T-111 裁剪版 MiniToolChoiceQueue：Runtime 能产出 typed events，CLI/session/tool 日志和 terminal frontend 共用事件流，session JSONL 追加 `event_v1` 供后续 replay；analysis-only 任务不会套用代码实现类 hygiene，点名 authored skill 时会先软性要求读取对应 `SKILL.md`，最终回答结构不完整、证据数字不一致或验收/证据/验证项不满足时会被 final steerer 打回重写或补证据；每轮结束会写入结构化 `run_summary`，用于压测复盘和 `/status` 展示。
 
 已具备的核心能力：
 
@@ -43,7 +43,7 @@
 - `apply_patch` 已支持 `replace`、`insert_before`、`insert_after`，并兼容 Python 3.12。
 - 非交互审批、LLM 非 JSON 响应、session 恢复坏尾部、search_code 绝对路径泄漏等问题已经修复。
 - 已完成 Agent 自举测试：能够通过百炼模型调用工具读取、修改、测试和查看 diff。
-- 测试基线：232 个测试在正常本地环境通过。
+- 测试基线：237 个测试在正常本地环境通过。
 
 当前已具备：
 
@@ -150,7 +150,7 @@
 | P7 | 高级工程能力轻量版 | 已完成 MVP 版 | 已完成 OMP 风格 auto summary、多语言 LSP/light fallback、LSP 兼容别名、multi-root workspace roots 与工具观察提示、allowed-dir soft tool requirement、Markdown memory 启动注入、learn、可选 memory consolidation、authored skills discovery、综合压测记录、重复工具调用熔断、duplicate-tool forced-final steering、同文件切片读取漂移 guard、search_code 空搜索词跨路径 guard、path escape roots hint、LSP 空 query guard、Current task contract、Evidence Ledger、tool result pruning、todo steering、跨项目 env-file、用户级 `--state-dir` runtime state 分层、relevance gate、implementation-quality reviewer、safe new-file policy 和 no-edit final hygiene；path-scoped rules、DAP、subagents、完整 reviewer、AST edit、managed skills 继续后置。 |
 | P8 | 前端协议与交互基础 | 已完成 MVP 版 | T-076 已完成 Event/Command Protocol v1、EventSink、CLI stderr renderer 和 session `event_v1`；T-077 已完成 terminal-native frontend，而不是 fullscreen 重 TUI。 |
 | P9 | 真实需求使用准备 | 已完成阶段性 MVP | 已完成项目边界分析、真实需求模板、企业项目只读源码验证、Java LSP 韧性、拓展服务费结算链路压测和服务范围复核；后续继续按真实需求推进设计/实现切片。 |
-| P10 | Intelligence Runtime 骨架 | 进行中 | 按 OMP 架构原则补单 Agent 内部的目标契约、工具选择队列、完成审计、两阶段计划和 reviewer。当前已完成 RequirementContract、裁剪版 MiniToolChoiceQueue 和 provider-safe tool_call 参数清洗；CompletionAudit / Planner-Explore / Reviewer 后续继续。 |
+| P10 | Intelligence Runtime 骨架 | 进行中 | 按 OMP 架构原则补单 Agent 内部的目标契约、工具选择队列、完成审计、两阶段计划和 reviewer。当前已完成 RequirementContract、CompletionAudit、裁剪版 MiniToolChoiceQueue 和 provider-safe tool_call 参数清洗；Planner-Explore / Reviewer 后续继续。 |
 
 ## 已完成功能
 
@@ -207,7 +207,8 @@
 | Terminal Frontend | 已完成 MVP 版 | `src/local_agent/frontends/terminal/` 提供 append-only terminal frontend；`./agent`、`./agent --chat`、`./agent chat` 可进入交互；支持 `/help`、`/status`、`/tools`、`/approval`；可选 `prompt_toolkit` / `rich` 增强输入和输出，缺失时降级。 |
 | Terminal Input Isolation | 已完成 MVP 版 | `src/local_agent/terminal_io.py` 在 agent run 期间关闭 TTY echo；approval / ask_user 通过 `terminal_input_prompt` 恢复输入并 flush 误敲缓冲。 |
 | Run summary / coverage | 已完成 MVP 版 | `src/local_agent/agent.py` 在每轮结束产出 `RunSummary` event 和 `run_summary` session 记录；`/status` 展示最近一轮摘要。 |
-| 测试基线 | 已完成 | 本地正常环境下 232 个测试通过。 |
+| CompletionAudit | 已完成 MVP 版 | `src/local_agent/completion_audit.py` 在最终回答前按 RequirementContract 核对验收项、证据项和验证项；证据型只读缺路径/证据状态、实现任务写后缺测试/diff 会触发 `completion_audit` final steerer。 |
+| 测试基线 | 已完成 | 本地正常环境下 237 个测试通过。 |
 
 ## 下一步 Todo
 
@@ -309,7 +310,7 @@
 | T-107 | Context token budget + reserve MVP | 已完成 | P9/P10 | 已新增本地 token 估算、`context_token_budget`、`AGENT_CONTEXT_TOKEN_BUDGET` 和 `--context-token-budget`；按 token 或 char 任一超阈值触发 compaction，并至少预留 15% 下一轮预算。 |
 | T-108 | source-grounded numeric / token budget 复测 | 已完成并记录问题 | P10 | session `20260709T095626110047Z` 已验证百炼不再因 provider-safe tool_call 崩溃，枚举数字回答正确；但模型在 `msp-pay` 大搜索结果后未继续读取关键文件就给“未找到证据”结论，说明仍需要更硬的需求契约和工具选择队列。 |
 | T-109 | RequirementContract MVP | 已完成并集成 | P10 | 新增 `src/local_agent/task_contract.py`，本地 deterministic 生成目标、范围、验收项、证据要求、验证要求和风险；runtime 每轮 provider request 注入 `[Requirement contract]`，长任务压缩后仍保留验收边界。 |
-| T-110 | CompletionAudit MVP | 已完成最小切片，继续增强 | P10 | 已补 source evidence false-negative gate：最终回答说“未找到/读取不完整”，但本轮 read_file evidence 中包含用户请求符号时，会强制无工具重答；数字比对会剥离 read_file 行号，避免把 `1:` / `5:` 行号当源码状态值。完整逐项验收审计后续继续。 |
+| T-110 | CompletionAudit 完整版 | 已完成 | P10 | 新增 `src/local_agent/completion_audit.py`，最终回答前按 RequirementContract 逐项核对验收项、证据项和验证项；证据型只读缺源码路径/证据状态会强制无工具重写，实现任务写后缺 `run_tests` / `git_diff` 会只开放缺失验证工具。 |
 | T-111 | MiniToolChoiceQueue MVP | 已完成并集成 | P10 | 新增 `src/local_agent/tool_choice_queue.py`，根据 contract/task kind 和工具摘要对只读证据、需求文档前置读取、写后测试/diff 做工具收窄与 runtime steering；不是完整 OMP ToolChoiceQueue。 |
 
 ## 风险清单
@@ -398,7 +399,7 @@
 | ADR-032 | LSP 按 OMP client 思路做可选外部 adapter，保留 light fallback。 | Java/TypeScript/Vue 的完整代码导航应优先交给成熟 language server；但 LCA 仍不在运行时自动下载依赖，也不把外部 server 作为默认强依赖。封闭 VM 可预置 jdtls/npm 包，或用 `AGENT_LSP_*_COMMAND` 指向离线安装路径。 |
 | ADR-033 | Final-answer steering 先抽统一 Steerer 协议的一块，不再把最终回答 guard 塞进 `agent.py`。 | 对标 OMP“主循环调度，guard/observer/reviewer 分离”的原则；本轮先抽 final-answer steering，直接修 T-105 枚举误报，后续再拆 semantic/evidence/run collector。 |
 | ADR-034 | Token budget 采用本地估算 + reserve，字符预算保留兜底。 | OMP 按 token/context window 管理 compaction 并预留下一轮预算；LCA 当前不引入重 tokenizer 依赖，先用 CJK/ASCII 轻量估算触发压缩，`context_char_budget` 继续作为 fallback。 |
-| ADR-035 | P10 采用裁剪版 Intelligence Runtime，不一次性复制 OMP 大系统。 | T-108 证明需要比 prompt 更硬的目标契约和工具调度；但 LCA 仍是单用户、单 Agent、本地 MVP。当前先落地 RequirementContract + MiniToolChoiceQueue，后续再补 CompletionAudit、Planner/Explore 和 reviewer。 |
+| ADR-035 | P10 采用裁剪版 Intelligence Runtime，不一次性复制 OMP 大系统。 | T-108 证明需要比 prompt 更硬的目标契约、完成审计和工具调度；但 LCA 仍是单用户、单 Agent、本地 MVP。当前已落地 RequirementContract + CompletionAudit + MiniToolChoiceQueue，后续再补 Planner/Explore 和 reviewer。 |
 | ADR-015 | 人工上下文按 AGENTS/RULES 分层。 | 参照 Claude Code 与 OMP 的上下文文件/Sticky rules 分层：`AGENTS.md` 作为启动背景，`RULES.md` 作为短规则每轮注入；二者不同于长期 memory 和 session summary。 |
 | ADR-016 | Session memory consolidation 默认关闭；开启后默认写 state memory。 | 这一步不同于只发给模型的 context compaction；默认 off 可以保护只读分析，开启后默认写用户级 state dir，只有显式 `memory_scope=project` 才写项目 `.local-agent/memory`。 |
 | ADR-003 | Excel 作为人工视图，Markdown 作为开发协作 Agent 可读事实源。 | 这套文档服务于开发 LCA 的过程；`.xlsx` 是二进制展示产物，不适合作为协作 Agent 的事实源。 |
@@ -412,10 +413,10 @@
 | 项目 | 结论 | 依据 |
 |---|---|---|
 | 主链路 | 通过 | 百炼真实小改复测已跑通 todo、dry_run、apply_patch、session allow、rollback、run_tests、git_diff。 |
-| 测试 | 通过 | P5 收口时 90 个 unittest、compileall、xlsx 检查、diff check 均通过；P10 当前代码已跑通 232 个 unittest。 |
+| 测试 | 通过 | P5 收口时 90 个 unittest、compileall、xlsx 检查、diff check 均通过；P10 当前代码已跑通 237 个 unittest。 |
 | 日用入口 | 通过 | README 已补只读分析和小改任务命令模板。 |
 | 开放风险 | 可接受 | shell 仍非沙箱、prompt injection 仍需靠审批和封闭 VM；provider/model 专用 tokenizer、输出 reserve、managed skills、完整 reviewer 和完整 OMP ToolChoiceQueue 继续后置评估。 |
-| 下一阶段 | P10 Intelligence Runtime 继续增强 | T-108 已证明枚举数字 guard 生效，但仍暴露“搜索结果过大后未继续读证据就下结论”；下一步复测 MiniToolChoiceQueue，再做 CompletionAudit。 |
+| 下一阶段 | P10 Intelligence Runtime 继续增强 | T-109/T-110/T-111 已补 RequirementContract、CompletionAudit 和 MiniToolChoiceQueue；下一步进入 Planner/Explore 两阶段，或继续用服务费结算真实需求压测实现设计链路。 |
 
 ## 推荐工作流
 
@@ -451,6 +452,6 @@
 用户确认本文件后，建议按以下顺序继续：
 
 1. 复跑 T-108 同类只读证据任务，观察 RequirementContract + MiniToolChoiceQueue 是否减少“未读关键文件就下结论”。
-2. 做 T-110 CompletionAudit：最终回答前逐项检查目标、验收项、证据要求和验证要求，缺证据时不能说完成。
+2. 做 Planner/Explore 两阶段：复杂需求先只读侦察和形成计划，再进入实现或设计。
 3. 继续真实需求设计链路：基于 `msp-pay` / `zqylpayment` 现有证据输出服务费结算实现设计，明确复用点、缺口和必须补充的项目/数据来源。
 4. 若仍出现关键工具不用/乱用，再扩展 MiniToolChoiceQueue；若出现 patch 质量问题，再补二阶段 reviewer。

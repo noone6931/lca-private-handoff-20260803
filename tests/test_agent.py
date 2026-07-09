@@ -225,6 +225,50 @@ class _ReadOnlyEvidenceGateClient:
         )()
 
 
+class _CompletionAuditReadOnlyClient:
+    calls: list[dict] = []
+
+    def __init__(self, config: AgentConfig):
+        self.config = config
+
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
+        if len(type(self).calls) == 1:
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "call_read",
+                                "type": "function",
+                                "function": {
+                                    "name": "read_file",
+                                    "arguments": json.dumps({"path": "src/LoginController.java"}),
+                                },
+                            }
+                        ],
+                    }
+                },
+            )()
+        if len(type(self).calls) == 2:
+            return type("Response", (), {"message": {"content": "密码在后端校验。"}})()
+        return type(
+            "Response",
+            (),
+            {
+                "message": {
+                    "content": (
+                        "已验证：src/LoginController.java 调用 PasswordUtil.check 校验 password。"
+                        "推断：前端加密方式未在已读代码中确认。"
+                    )
+                }
+            },
+        )()
+
+
 class _ReadOnlyEvidenceNoMatchClient:
     calls: list[dict] = []
 
@@ -396,7 +440,7 @@ class _ReadEnumThenWrongNumericClient:
             {
                 "message": {
                     "content": (
-                        "已验证：src/PreOrderStatusEnum.java:15 中 "
+                        "已验证：src/PreOrderStatusEnum.java 中 "
                         "PreOrderStatusEnum.MAKING = 2，"
                         "PreOrderStatusEnum.MADE = 3，PreOrderStatusEnum.CANCEL = 4。"
                     )
@@ -452,7 +496,7 @@ class _ReadEnumThenFalseNegativeClient:
             {
                 "message": {
                     "content": (
-                        "源码事实：PreOrderStatusEnum.MAKING = 2（待制单），"
+                        "已验证：src/PreOrderStatusEnum.java 中 PreOrderStatusEnum.MAKING = 2（待制单），"
                         "MADE = 3（已制单），CANCEL = 4（已作废）。"
                     )
                 }
@@ -925,7 +969,11 @@ class _RepeatedReadFileSameRangeClient:
         type(self).calls += 1
         type(self).tools_seen.append(len(tools))
         if not tools:
-            return type("Response", (), {"message": {"content": "final answer after repeated same file evidence"}})()
+            return type(
+                "Response",
+                (),
+                {"message": {"content": "已验证：service.java 已读取，可作为 repeated same file evidence。推断：无需继续重复读取。"}},
+            )()
         return type(
             "Response",
             (),
@@ -1490,6 +1538,45 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertNotIn("apply_patch", second_tool_names)
         self.assertEqual(len(steering_records), 1)
         self.assertEqual(runtime._last_run_summary["steering_counts"], {"read_only_evidence": 1})
+
+    def test_completion_audit_rewrites_read_only_answer_without_evidence_status(self) -> None:
+        _CompletionAuditReadOnlyClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            source_dir = workspace / "src"
+            source_dir.mkdir()
+            (source_dir / "LoginController.java").write_text(
+                "class LoginController { boolean login(String password) { return PasswordUtil.check(password); } }\n",
+                encoding="utf-8",
+            )
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=workspace,
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _CompletionAuditReadOnlyClient):
+                runtime = AgentRuntime(config, show_tool_logs=False)
+                result = runtime.run("只读代码，请根据源码证据说明登录密码在哪里校验。不要修改文件。")
+                records = [json.loads(line) for line in runtime._session.path.read_text(encoding="utf-8").splitlines()]
+
+        steering_records = [
+            record
+            for record in records
+            if record.get("event") == "runtime_steering"
+            and record.get("payload", {}).get("kind") == "completion_audit"
+        ]
+        self.assertIn("已验证：src/LoginController.java", result)
+        self.assertIn("推断：", result)
+        self.assertEqual(len(_CompletionAuditReadOnlyClient.calls), 3)
+        self.assertEqual(_CompletionAuditReadOnlyClient.calls[2]["tools"], [])
+        self.assertEqual(len(steering_records), 1)
+        self.assertGreaterEqual(steering_records[0]["payload"]["missing_count"], 1)
+        self.assertEqual(runtime._last_run_summary["steering_counts"], {"completion_audit": 1})
 
     def test_read_only_evidence_gate_allows_negative_search_evidence(self) -> None:
         _ReadOnlyEvidenceNoMatchClient.calls = []
@@ -2426,7 +2513,7 @@ class AgentRuntimeTests(unittest.TestCase):
             for message in runtime._messages
             if "repeated read_file slices from the same file" in str(message.get("content"))
         ]
-        self.assertEqual(result, "final answer after repeated same file evidence")
+        self.assertIn("已验证：service.java", result)
         self.assertEqual(_RepeatedReadFileSameRangeClient.tools_seen[-1], 0)
         self.assertEqual(len(repeated_messages), 1)
         self.assertIn("Existing evidence:", repeated_messages[0]["content"])
