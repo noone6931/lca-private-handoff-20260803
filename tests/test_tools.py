@@ -8,7 +8,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from local_agent.lsp.client import StdioLspClient
 from local_agent.lsp.client import close_all_clients
+from local_agent.lsp.config import LspServerConfig
 from local_agent.patch.anchored import hash_text
 from local_agent.tools.base import Tool, ToolContext, ToolRegistry
 from local_agent.tools.files import file_tools, patch_file, read_file, rollback_patch, write_file
@@ -157,6 +159,185 @@ while True:
                 },
             ],
         })
+    else:
+        if request_id is not None:
+            send({"jsonrpc": "2.0", "id": request_id, "result": None})
+'''.lstrip(),
+        encoding="utf-8",
+    )
+
+
+def _write_fake_lsp_server_requiring_workspace_folders(path: Path) -> None:
+    path.write_text(
+        r'''
+from __future__ import annotations
+
+import json
+import sys
+
+
+def read_message():
+    headers = {}
+    while True:
+        line = sys.stdin.buffer.readline()
+        if line == b"":
+            return None
+        if line in {b"\r\n", b"\n"}:
+            break
+        decoded = line.decode("ascii").strip()
+        if ":" in decoded:
+            key, value = decoded.split(":", 1)
+            headers[key.lower()] = value.strip()
+    length = int(headers.get("content-length", "0"))
+    return json.loads(sys.stdin.buffer.read(length).decode("utf-8"))
+
+
+def send(payload):
+    body = json.dumps(payload).encode("utf-8")
+    sys.stdout.buffer.write(f"Content-Length: {len(body)}\r\n\r\n".encode("ascii") + body)
+    sys.stdout.buffer.flush()
+
+
+while True:
+    message = read_message()
+    if message is None:
+        break
+    method = message.get("method")
+    request_id = message.get("id")
+    if method == "initialize":
+        send({
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "result": {"capabilities": {"documentSymbolProvider": True}},
+        })
+    elif method == "textDocument/documentSymbol":
+        server_request_id = 700
+        send({
+            "jsonrpc": "2.0",
+            "id": server_request_id,
+            "method": "workspace/workspaceFolders",
+            "params": {},
+        })
+        while True:
+            response = read_message()
+            if response is None:
+                sys.exit(0)
+            if response.get("id") == server_request_id and isinstance(response.get("result"), list):
+                break
+        send({
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "result": [
+                {
+                    "name": "loadUser",
+                    "kind": 12,
+                    "range": {
+                        "start": {"line": 0, "character": 16},
+                        "end": {"line": 0, "character": 24},
+                    },
+                    "selectionRange": {
+                        "start": {"line": 0, "character": 16},
+                        "end": {"line": 0, "character": 24},
+                    },
+                }
+            ],
+        })
+    else:
+        if request_id is not None:
+            send({"jsonrpc": "2.0", "id": request_id, "result": None})
+'''.lstrip(),
+        encoding="utf-8",
+    )
+
+
+def _write_fake_lsp_server_requiring_configuration(path: Path) -> None:
+    path.write_text(
+        r'''
+from __future__ import annotations
+
+import json
+import sys
+
+
+def read_message():
+    headers = {}
+    while True:
+        line = sys.stdin.buffer.readline()
+        if line == b"":
+            return None
+        if line in {b"\r\n", b"\n"}:
+            break
+        decoded = line.decode("ascii").strip()
+        if ":" in decoded:
+            key, value = decoded.split(":", 1)
+            headers[key.lower()] = value.strip()
+    length = int(headers.get("content-length", "0"))
+    return json.loads(sys.stdin.buffer.read(length).decode("utf-8"))
+
+
+def send(payload):
+    body = json.dumps(payload).encode("utf-8")
+    sys.stdout.buffer.write(f"Content-Length: {len(body)}\r\n\r\n".encode("ascii") + body)
+    sys.stdout.buffer.flush()
+
+
+while True:
+    message = read_message()
+    if message is None:
+        break
+    method = message.get("method")
+    request_id = message.get("id")
+    if method == "initialize":
+        send({
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "result": {"capabilities": {"documentSymbolProvider": True}},
+        })
+    elif method == "textDocument/documentSymbol":
+        server_request_id = 800
+        send({
+            "jsonrpc": "2.0",
+            "id": server_request_id,
+            "method": "workspace/configuration",
+            "params": {
+                "items": [
+                    {"section": "java.import.maven.enabled"},
+                    {"section": "java.configuration.updateBuildConfiguration"},
+                ]
+            },
+        })
+        while True:
+            response = read_message()
+            if response is None:
+                sys.exit(0)
+            if response.get("id") == server_request_id:
+                result = response.get("result")
+                if result != [True, "automatic"]:
+                    send({
+                        "jsonrpc": "2.0",
+                        "id": request_id,
+                        "error": {"code": -32000, "message": f"bad configuration response: {result!r}"},
+                    })
+                    break
+                send({
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "result": [
+                        {
+                            "name": "loadUser",
+                            "kind": 12,
+                            "range": {
+                                "start": {"line": 0, "character": 16},
+                                "end": {"line": 0, "character": 24},
+                            },
+                            "selectionRange": {
+                                "start": {"line": 0, "character": 16},
+                                "end": {"line": 0, "character": 24},
+                            },
+                        }
+                    ],
+                })
+                break
     else:
         if request_id is not None:
             send({"jsonrpc": "2.0", "id": request_id, "result": None})
@@ -425,6 +606,82 @@ class ToolTests(unittest.TestCase):
         self.assertIn("service.ts:2:10: return loadUser()", references.content)
         self.assertFalse(diagnostics.is_error)
         self.assertIn("Warning: fake diagnostic", diagnostics.content)
+
+    def test_lsp_client_responds_to_server_workspace_folder_requests(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            source = workspace / "src" / "service.ts"
+            source.parent.mkdir()
+            source.write_text("export function loadUser() {}\n", encoding="utf-8")
+            fake_server = workspace / "fake_lsp.py"
+            _write_fake_lsp_server_requiring_workspace_folders(fake_server)
+            server = LspServerConfig(
+                name="fake-lsp",
+                command=(sys.executable, str(fake_server)),
+                file_types=(".ts",),
+                root_markers=("package.json",),
+                language_id="typescript",
+            )
+            (workspace / "package.json").write_text("{}\n", encoding="utf-8")
+            client = StdioLspClient(server, workspace)
+            try:
+                symbols = client.document_symbols(source)
+            finally:
+                client.close()
+
+        self.assertEqual([symbol.name for symbol in symbols], ["loadUser"])
+
+    def test_lsp_client_responds_to_server_configuration_requests(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            source = workspace / "src" / "service.ts"
+            source.parent.mkdir()
+            source.write_text("export function loadUser() {}\n", encoding="utf-8")
+            fake_server = workspace / "fake_lsp.py"
+            _write_fake_lsp_server_requiring_configuration(fake_server)
+            server = LspServerConfig(
+                name="fake-lsp",
+                command=(sys.executable, str(fake_server)),
+                file_types=(".ts",),
+                root_markers=("package.json",),
+                language_id="typescript",
+            )
+            (workspace / "package.json").write_text("{}\n", encoding="utf-8")
+            client = StdioLspClient(server, workspace)
+            try:
+                symbols = client.document_symbols(source)
+            finally:
+                client.close()
+
+        self.assertEqual([symbol.name for symbol in symbols], ["loadUser"])
+
+    def test_lsp_strict_external_empty_result_falls_back_to_lightweight_symbols(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            (workspace / "pom.xml").write_text("<project />\n", encoding="utf-8")
+            source = workspace / "src" / "UserService.java"
+            source.parent.mkdir()
+            source.write_text(
+                "package demo;\n\n"
+                "public class UserService {\n"
+                "  public String findUser() { return \"ok\"; }\n"
+                "}\n",
+                encoding="utf-8",
+            )
+            fake_server = workspace / "fake_lsp.py"
+            _write_fake_lsp_server(fake_server)
+            command = f"{sys.executable} {fake_server}"
+            context = ToolContext(workspace=workspace, approval_mode="yolo")
+            with patch.dict("os.environ", {"AGENT_LSP_MODE": "external", "AGENT_LSP_JDTLS_COMMAND": command}):
+                try:
+                    result = lsp_symbols({"path": "src/UserService.java", "query": "UserService"}, context)
+                finally:
+                    close_all_clients()
+
+        self.assertFalse(result.is_error)
+        self.assertIn("[lsp provider] external unavailable", result.content)
+        self.assertIn("[lsp fallback] using lightweight static navigation", result.content)
+        self.assertIn("UserService.java:3:14: class UserService", result.content)
 
     def test_lsp_uses_nested_project_root_for_external_server(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

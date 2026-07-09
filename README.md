@@ -2,6 +2,8 @@
 
 一个个人本地编程助手 Agent 的 MVP。第一阶段目标是：
 
+- 面向使用者的操作手册见 [docs/user-manual.md](docs/user-manual.md)。
+
 - 运行在本机或封闭 VM；
 - 只访问一个 OpenAI-compatible AI API；
 - 读取/搜索/修改本地代码；

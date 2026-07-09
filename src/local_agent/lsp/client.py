@@ -18,6 +18,8 @@ from .config import LspServerConfig
 
 DEFAULT_LSP_TIMEOUT_SECONDS = 8.0
 DIAGNOSTICS_SETTLE_SECONDS = 1.5
+PROJECT_LOAD_TIMEOUT_SECONDS = 15.0
+PROJECT_LOAD_NO_PROGRESS_GRACE_SECONDS = 0.25
 
 
 @dataclass(frozen=True)
@@ -58,6 +60,9 @@ class StdioLspClient:
         self._messages: queue.Queue[dict[str, Any] | BaseException | None] = queue.Queue()
         self._diagnostics: dict[str, list[dict[str, Any]]] = {}
         self._open_uris: set[str] = set()
+        self._progress_tokens: set[str] = set()
+        self._saw_progress = False
+        self._project_loaded = threading.Event()
         self._process = subprocess.Popen(
             list(server.command),
             cwd=workspace,
@@ -156,8 +161,9 @@ class StdioLspClient:
                 raise LspClientError(str(message)) from message
             if message is None:
                 raise LspClientError(f"LSP request timed out: {method}")
-            if message.get("method") == "textDocument/publishDiagnostics":
-                self._record_diagnostics(message.get("params"))
+            if self._handle_notification(message):
+                continue
+            if self._handle_server_request(message):
                 continue
             if message.get("id") != request_id:
                 continue
@@ -169,24 +175,32 @@ class StdioLspClient:
         self._send({"jsonrpc": "2.0", "method": method, "params": params})
 
     def close(self) -> None:
+        if self._process.poll() is not None:
+            _close_pipe(self._process.stdin)
+            _close_pipe(self._process.stdout)
+            return
         try:
             if self._process.stdin is not None:
                 self._process.stdin.close()
-            if self._process.stdout is not None:
-                self._process.stdout.close()
             if self._process.poll() is None:
                 self._process.terminate()
                 self._process.wait(timeout=1)
-        except Exception:
+        except Exception:  # noqa: BLE001 - cleanup must be best-effort.
             if self._process.poll() is None:
                 self._process.kill()
+        finally:
+            _close_pipe(self._process.stdin)
+            _close_pipe(self._process.stdout)
 
     def _initialize(self) -> None:
         self.request(
             "initialize",
             {
                 "processId": os.getpid(),
+                "rootPath": str(self.workspace),
                 "rootUri": self.workspace.as_uri(),
+                "workspaceFolders": _workspace_folders(self.workspace),
+                "initializationOptions": {},
                 "capabilities": {
                     "textDocument": {
                         "documentSymbol": {"hierarchicalDocumentSymbolSupport": True},
@@ -194,12 +208,18 @@ class StdioLspClient:
                         "references": {},
                         "publishDiagnostics": {"relatedInformation": True},
                     },
-                    "workspace": {"symbol": {}},
+                    "workspace": {
+                        "configuration": True,
+                        "workspaceFolders": True,
+                        "symbol": {},
+                    },
+                    "window": {"workDoneProgress": True},
                 },
             },
             timeout=DEFAULT_LSP_TIMEOUT_SECONDS,
         )
         self.notify("initialized", {})
+        self._wait_for_project_load()
 
     def _send(self, payload: dict[str, Any]) -> None:
         if self._process.stdin is None:
@@ -229,8 +249,8 @@ class StdioLspClient:
 
     def _drain_one_message(self, deadline: float) -> None:
         message = self._read_message(deadline)
-        if isinstance(message, dict) and message.get("method") == "textDocument/publishDiagnostics":
-            self._record_diagnostics(message.get("params"))
+        if isinstance(message, dict):
+            self._handle_notification(message) or self._handle_server_request(message)
 
     def _record_diagnostics(self, params: Any) -> None:
         if not isinstance(params, dict):
@@ -240,8 +260,126 @@ class StdioLspClient:
         if isinstance(uri, str) and isinstance(diagnostics, list):
             self._diagnostics[uri] = diagnostics
 
+    def _handle_notification(self, message: dict[str, Any]) -> bool:
+        method = message.get("method")
+        if method == "textDocument/publishDiagnostics":
+            self._record_diagnostics(message.get("params"))
+            return True
+        if method == "$/progress":
+            self._record_progress(message.get("params"))
+            return True
+        if method in {"window/logMessage", "window/showMessage", "telemetry/event", "language/status"}:
+            return True
+        return False
+
+    def _record_progress(self, params: Any) -> None:
+        if not isinstance(params, dict):
+            return
+        token = params.get("token")
+        value = params.get("value")
+        if token is None or not isinstance(value, dict):
+            return
+        kind = value.get("kind")
+        key = str(token)
+        if kind == "begin":
+            self._saw_progress = True
+            self._progress_tokens.add(key)
+            return
+        if kind == "end":
+            self._progress_tokens.discard(key)
+            if not self._progress_tokens:
+                self._project_loaded.set()
+
+    def _wait_for_project_load(self) -> None:
+        deadline = time.monotonic() + PROJECT_LOAD_TIMEOUT_SECONDS
+        no_progress_deadline = time.monotonic() + PROJECT_LOAD_NO_PROGRESS_GRACE_SECONDS
+        while time.monotonic() < deadline:
+            if self._project_loaded.is_set():
+                return
+            if not self._saw_progress and time.monotonic() >= no_progress_deadline:
+                return
+            self._drain_one_message(min(deadline, time.monotonic() + 0.1))
+
+    def _handle_server_request(self, message: dict[str, Any]) -> bool:
+        method = message.get("method")
+        request_id = message.get("id")
+        if not isinstance(method, str) or request_id is None:
+            return False
+        if method == "workspace/workspaceFolders":
+            self._send_response(request_id, _workspace_folders(self.workspace))
+            return True
+        if method == "workspace/configuration":
+            items = message.get("params", {}).get("items", [])
+            result = _configuration_response(items)
+            self._send_response(request_id, result)
+            return True
+        if method in {
+            "client/registerCapability",
+            "client/unregisterCapability",
+            "window/workDoneProgress/create",
+            "window/showMessageRequest",
+        }:
+            self._send_response(request_id, None)
+            return True
+        if method == "window/showDocument":
+            self._send_response(request_id, {"success": False})
+            return True
+        if method == "workspace/applyEdit":
+            self._send_response(
+                request_id,
+                {"applied": False, "failureReason": "LCA external LSP client is read-only."},
+            )
+            return True
+        self._send_response(
+            request_id,
+            None,
+            error={"code": -32601, "message": f"Unsupported server request: {method}"},
+        )
+        return True
+
+    def _send_response(self, request_id: Any, result: Any, *, error: dict[str, Any] | None = None) -> None:
+        payload: dict[str, Any] = {"jsonrpc": "2.0", "id": request_id}
+        if error is None:
+            payload["result"] = result
+        else:
+            payload["error"] = error
+        self._send(payload)
+
 
 _CLIENTS: dict[tuple[str, str, tuple[str, ...]], StdioLspClient] = {}
+
+
+def _workspace_folders(workspace: Path) -> list[dict[str, str]]:
+    return [{"uri": workspace.as_uri(), "name": workspace.name or "workspace"}]
+
+
+def _configuration_response(items: Any) -> list[Any]:
+    if not isinstance(items, list):
+        return []
+    return [_configuration_item_response(item) for item in items]
+
+
+def _configuration_item_response(item: Any) -> Any:
+    section = item.get("section") if isinstance(item, dict) else None
+    if section == "java":
+        return {
+            "configuration": {"updateBuildConfiguration": "automatic"},
+            "import": {"maven": {"enabled": True}, "gradle": {"enabled": True}},
+        }
+    return {
+        "java.configuration.updateBuildConfiguration": "automatic",
+        "java.import.maven.enabled": True,
+        "java.import.gradle.enabled": True,
+    }.get(section, {})
+
+
+def _close_pipe(pipe: Any) -> None:
+    if pipe is None:
+        return
+    try:
+        pipe.close()
+    except Exception:  # noqa: BLE001 - process cleanup is best-effort.
+        return
 
 
 def get_client(server: LspServerConfig, workspace: Path) -> StdioLspClient:

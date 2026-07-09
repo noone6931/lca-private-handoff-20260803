@@ -206,8 +206,6 @@ def lsp_symbols(args: dict[str, Any], context: ToolContext) -> ToolResult:
     )
     if external.content:
         return ToolResult(external.content)
-    if external.strict and external.error:
-        return ToolResult(external.error, is_error=True)
     results: list[str] = []
     matched_suffixes: set[str] = set()
     for record in _iter_symbol_records(root, context.workspace, context.allowed_dirs):
@@ -220,8 +218,10 @@ def lsp_symbols(args: dict[str, Any], context: ToolContext) -> ToolResult:
             results.append(f"... truncated after {max_results} symbols")
             break
     if not results:
+        if external.strict and external.error:
+            return ToolResult(external.error, is_error=True)
         return ToolResult("No supported code symbols found.", useless=True)
-    return ToolResult(_render_lsp_results(results, matched_suffixes))
+    return ToolResult(_render_lsp_results(results, matched_suffixes, external=external))
 
 
 def lsp_definition(args: dict[str, Any], context: ToolContext) -> ToolResult:
@@ -242,8 +242,6 @@ def lsp_definition(args: dict[str, Any], context: ToolContext) -> ToolResult:
     )
     if external.content:
         return ToolResult(external.content)
-    if external.strict and external.error:
-        return ToolResult(external.error, is_error=True)
     matches: list[str] = []
     matched_suffixes: set[str] = set()
     for record in _iter_symbol_records(root, context.workspace, context.allowed_dirs):
@@ -254,8 +252,10 @@ def lsp_definition(args: dict[str, Any], context: ToolContext) -> ToolResult:
                 matches.append(f"... truncated after {max_results} definitions")
                 break
     if not matches:
+        if external.strict and external.error:
+            return ToolResult(external.error, is_error=True)
         return ToolResult(f"No definition found for: {symbol}", useless=True)
-    return ToolResult(_render_lsp_results(matches, matched_suffixes))
+    return ToolResult(_render_lsp_results(matches, matched_suffixes, external=external))
 
 
 def lsp_references(args: dict[str, Any], context: ToolContext) -> ToolResult:
@@ -276,8 +276,6 @@ def lsp_references(args: dict[str, Any], context: ToolContext) -> ToolResult:
     )
     if external.content:
         return ToolResult(external.content)
-    if external.strict and external.error:
-        return ToolResult(external.error, is_error=True)
     pattern = re.compile(rf"(?<![\w$]){re.escape(symbol)}(?![\w$])")
     results: list[str] = []
     matched_suffixes: set[str] = set()
@@ -297,10 +295,12 @@ def lsp_references(args: dict[str, Any], context: ToolContext) -> ToolResult:
             matched_suffixes.add(path.suffix)
             if len(results) >= max_results:
                 results.append(f"... truncated after {max_results} references")
-                return ToolResult(_render_lsp_results(results, matched_suffixes))
+                return ToolResult(_render_lsp_results(results, matched_suffixes, external=external))
     if not results:
+        if external.strict and external.error:
+            return ToolResult(external.error, is_error=True)
         return ToolResult(f"No references found for: {symbol}", useless=True)
-    return ToolResult(_render_lsp_results(results, matched_suffixes))
+    return ToolResult(_render_lsp_results(results, matched_suffixes, external=external))
 
 
 def lsp_diagnostics(args: dict[str, Any], context: ToolContext) -> ToolResult:
@@ -316,8 +316,6 @@ def lsp_diagnostics(args: dict[str, Any], context: ToolContext) -> ToolResult:
     )
     if external.content:
         return ToolResult(external.content)
-    if external.strict and external.error:
-        return ToolResult(external.error, is_error=True)
     diagnostics: list[str] = []
     matched_suffixes: set[str] = set()
     for path in _iter_supported_files(root):
@@ -335,8 +333,10 @@ def lsp_diagnostics(args: dict[str, Any], context: ToolContext) -> ToolResult:
                 diagnostics.append(f"... truncated after {max_results} diagnostics")
                 break
     if not diagnostics:
+        if external.strict and external.error:
+            return ToolResult(external.error, is_error=True)
         return ToolResult("No lightweight diagnostics.", useless=True)
-    return ToolResult(_render_lsp_results(diagnostics, matched_suffixes))
+    return ToolResult(_render_lsp_results(diagnostics, matched_suffixes, external=external))
 
 
 def lsp_status(args: dict[str, Any], context: ToolContext) -> ToolResult:
@@ -387,10 +387,15 @@ def _clean_symbol(symbol: str) -> str | None:
     return cleaned if SYMBOL_RE.fullmatch(cleaned) else None
 
 
-def _render_lsp_results(results: list[str], suffixes: set[str]) -> str:
+def _render_lsp_results(results: list[str], suffixes: set[str], *, external: Any | None = None) -> str:
+    lines: list[str] = []
+    if getattr(external, "error", None):
+        lines.append(str(external.error))
+        lines.append("[lsp fallback] using lightweight static navigation because the external server returned no usable result.")
     if suffixes.intersection(BEST_EFFORT_SUFFIXES):
-        return "\n".join([BEST_EFFORT_NOTICE, *results])
-    return "\n".join(results)
+        lines.append(BEST_EFFORT_NOTICE)
+    lines.extend(results)
+    return "\n".join(lines)
 
 
 def _iter_symbol_records(root: Path, workspace: Path, allowed_roots: tuple[Path, ...]) -> Iterable[SymbolRecord]:

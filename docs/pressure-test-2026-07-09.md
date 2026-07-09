@@ -596,3 +596,67 @@ LCA 措施：
 - T-094 已完成：真实项目只读压测证明 external LSP adapter 的 availability reporting 和 light fallback 主链路可用。
 - 当前不自动安装 jdtls/npm language servers，保持封闭 VM 边界；如果要验证完整外部 Java LSP，下一步应做 T-095：预置/配置 jdtls 并复测。
 - 路径字符误写暂记录观察，不立刻加新 guard；已有精确路径复测通过，后续若同类问题在真实需求中重复出现，再考虑给 path-not-found 增加“相似已知路径/拼写纠偏”提示。
+
+### PT-040：jdtls 预置后 strict external Java LSP 复测
+
+环境变化：
+
+- 已通过 Homebrew 安装 `jdtls 1.60.0`，命令路径 `/opt/homebrew/bin/jdtls`。
+- Homebrew 同步安装/升级了 jdtls 依赖，包括 `openjdk`、`python@3.14`、`sqlite` 等。
+- jdtls workspace cache 位于 `~/Library/Caches/jdtls/`。
+
+压测会话：
+
+- `crcl-open` strict external：`20260709T083446478774Z`
+- `zqyl-user-center-service` strict external：`20260709T083459445319Z`
+- LSP fallback 合并复测：`20260709T084323683100Z`
+
+现象：
+
+- `lsp_status` 在两个真实企业项目中均能检测到 external `jdtls`。
+- `lsp_diagnostics` 在两个真实企业项目中均走 external provider，并返回 `OK`。
+- `lsp_symbols` 在两个真实企业项目中均返回 external unavailable：没有找到指定 class symbol。
+- 极小临时 Maven 项目验证通过：external `jdtls` 能返回 `Hello` class symbol、definition 和 diagnostics。
+- 复测时发现 `close_all_clients()` 关闭 jdtls 可能卡在 pipe close；已在代码中修复为先 terminate/kill 进程，再 best-effort close pipe。
+- 进一步用 jdtls server command 探针确认：真实企业项目 `java.project.getAll` 为空、`java.project.listSourcePaths` 为空，说明 jdtls 没有成功导入 Java project。
+- 用 Maven 本身验证根因：`crcl-open` 缺 `com.yljr:parent:pom:0.0.5-SNAPSHOT`，`zqyl-user-center-service` 缺 `com.yljr:parent:pom:0.0.4-SNAPSHOT`，因此本机离线 Maven project model 不完整。
+- 补协议后复测：LSP client 已发送 `rootPath` / `workspaceFolders`，并响应 `workspace/workspaceFolders`、`workspace/configuration`、`client/registerCapability` 等 server-initiated requests；但缺 parent POM 的企业项目仍无法获得完整 external symbols。
+- 运行时策略已改为 OMP 风格多来源收敛：external LSP 有结果时优先使用；external 空结果时在输出中说明 provider 边界，并自动合并 lightweight fallback。session `20260709T084323683100Z` 验证模型能正确说明 external jdtls 可用但本项目回退 fallback。
+
+OMP 对应思路：
+
+- OMP 的 LSP 是长期运行的工程子系统，真实 language server 需要考虑 project import、workspace folders、server-initiated requests、workspace cache、diagnostics ledger、server-specific commands 和超时/关闭。
+- 对大型企业 Maven 项目，external LSP 的“server 可启动”不等于“definition/reference/symbols 全部可用”；运行时必须把 provider 能力边界反馈给模型。
+
+LCA 措施：
+
+- T-095 已完成依赖预置与 strict external 复测：当前 external Java diagnostics 可用，小项目 code navigation 可用。
+- 已补 LSP 初始化参数和 server request 响应：`rootPath`、`workspaceFolders`、`workspace/workspaceFolders`、`workspace/configuration`、`client/registerCapability` 等。
+- 已补 external 空结果 fallback 合并：严格 external 模式下如果 jdtls 空结果但 lightweight fallback 能定位符号，工具会返回 provider failure + fallback evidence，而不是直接失败。
+- 真实企业项目 code navigation 的根因是本机 Maven 模型不完整。若要获得完整 type-aware Java navigation，需要补齐公司内部 parent POM / 私服配置 / Maven 本地缓存；在此之前，真实需求分析继续使用 fallback evidence，并保留 `[lsp confidence]`。
+
+### PT-041：Java LSP 韧性按 OMP 继续补齐
+
+用户要求：
+
+- Java 是当前主要语言，LSP 韧性要尽量和 OMP 一样，而不是停留在“jdtls 能启动”。
+
+OMP 对应机制：
+
+- OMP LSP client 会在 initialize 时传 `rootUri`、`rootPath`、`workspaceFolders` 和完整 capabilities。
+- OMP 会响应 server-initiated requests，例如 `workspace/workspaceFolders`、`workspace/configuration`、`workspace/applyEdit`、`window/workDoneProgress/create`、`client/registerCapability`。
+- OMP 会跟踪 `$/progress`，用 `projectLoaded` 等待语言服务器完成初始项目加载；对慢 server 有超时兜底。
+- OMP 不会凭空修复本地缺 Maven 私服/parent POM 的问题；依赖不完整时，type-aware navigation 仍可能无结果，但工具层会把 no-result / useless 状态交给上层收束。
+
+LCA 措施：
+
+- 已新增 `$/progress` 处理：记录 begin/end token，并在初始化后给 project load 一个等待窗口。
+- 已增强 `workspace/configuration` 响应：对 Java 返回 Maven/Gradle import enabled 和 `java.configuration.updateBuildConfiguration=automatic`。
+- 已保留并扩展 server request 响应：workspace folders、configuration、dynamic registration、workDoneProgress create、showDocument、applyEdit read-only 拒绝。
+- 已新增回归测试覆盖 workspace folders 和 configuration 反向请求。
+- 真实企业项目 strict external 复测保持稳定：缺 parent POM 时 jdtls diagnostics OK，symbols/definition 自动输出 external 边界并合并 fallback Java 类/方法定位。
+
+剩余边界：
+
+- 若要做到真正 type-aware Java navigation，必须补齐本机 Maven 私服配置、公司 parent POM 和依赖缓存；这是环境条件，不是 Agent 代码可以单独绕过的。
+- 后续可选增强：暴露 `lsp_request` / `lsp_capabilities` 调试工具，或在 `lsp_status` 中报告 jdtls project import/source path 状态。
