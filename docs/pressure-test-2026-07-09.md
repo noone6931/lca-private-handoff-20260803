@@ -659,6 +659,9 @@ LCA 措施：
   - `crcl-open`：`java.project.getAll: 0 project(s)`，`java.project.listSourcePaths: 0 source path(s)`。
   - `zqyl-user-center-service`：`java.project.getAll: 0 project(s)`，`java.project.listSourcePaths: 0 source path(s)`。
   - 输出会提示检查 Maven/Gradle parent POM、private repositories 和本地依赖缓存。
+- 已新增 Maven parent probe，真实企业项目复测输出：
+  - `crcl-open`：缺 `com.yljr:parent:0.0.5-SNAPSHOT`；检查过 `../pom.xml` 和 `~/.m2/repository/com/yljr/parent/0.0.5-SNAPSHOT/parent-0.0.5-SNAPSHOT.pom`。
+  - `zqyl-user-center-service`：先通过 `relativePath` 找到 `com.yljr:zqyl-usercenter-biz:1.0-SNAPSHOT`，随后缺 `com.yljr:parent:0.0.4-SNAPSHOT`；检查过相对 parent POM 和 `~/.m2/repository/com/yljr/parent/0.0.4-SNAPSHOT/parent-0.0.4-SNAPSHOT.pom`。
 
 剩余边界：
 

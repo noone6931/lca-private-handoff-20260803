@@ -282,7 +282,7 @@ AGENT_LSP_MODE=external ./agent --provider bailian \
   "请调用 lsp_status probe=true，并解释 Java project health。"
 ```
 
-如果输出里 `java.project.getAll` 或 `java.project.listSourcePaths` 是 0，说明 jdtls 虽然启动了，但 Maven/Gradle 项目没有成功导入；通常需要补齐公司 parent POM、私服配置或本地依赖缓存。LCA 会继续用 lightweight fallback 给出类/方法定位，但这不是完整 type-aware navigation。
+如果输出里 `java.project.getAll` 或 `java.project.listSourcePaths` 是 0，说明 jdtls 虽然启动了，但 Maven/Gradle 项目没有成功导入；通常需要补齐公司 parent POM、私服配置或本地依赖缓存。`Maven parent probe` 会继续检查最近 `pom.xml` 的 parent 链，并指出缺失的 GAV、相对路径和 `~/.m2` 路径。LCA 会继续用 lightweight fallback 给出类/方法定位，但这不是完整 type-aware navigation。
 
 隐藏工具日志，只看最终回答：
 

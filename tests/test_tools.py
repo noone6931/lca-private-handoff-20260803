@@ -803,6 +803,40 @@ class ToolTests(unittest.TestCase):
         self.assertIn("java.project.listSourcePaths: 1 source path(s)", result.content)
         self.assertIn("project health: jdtls has imported Java project metadata", result.content)
 
+    def test_lsp_status_probe_reports_missing_maven_parent(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            (workspace / "pom.xml").write_text(
+                """<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>local.agent.test</groupId>
+    <artifactId>missing-parent-for-lca-test</artifactId>
+    <version>999.0.0</version>
+  </parent>
+  <artifactId>demo</artifactId>
+</project>
+""",
+                encoding="utf-8",
+            )
+            source = workspace / "src" / "main" / "java" / "demo" / "Hello.java"
+            source.parent.mkdir(parents=True)
+            source.write_text("package demo;\npublic class Hello {}\n", encoding="utf-8")
+            fake_server = workspace / "fake_jdtls.py"
+            _write_fake_jdtls_with_project_probe(fake_server)
+            command = f"{sys.executable} {fake_server}"
+            with patch.dict("os.environ", {"AGENT_LSP_JDTLS_COMMAND": command}):
+                try:
+                    result = lsp_status({"probe": True}, ToolContext(workspace=workspace, approval_mode="yolo"))
+                finally:
+                    close_all_clients()
+
+        self.assertFalse(result.is_error)
+        self.assertIn("Maven parent probe", result.content)
+        self.assertIn("local.agent.test:missing-parent-for-lca-test:999.0.0: missing", result.content)
+        self.assertIn("action: add the parent POM", result.content)
+
     def test_lsp_tools_reject_path_escape(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp).resolve()

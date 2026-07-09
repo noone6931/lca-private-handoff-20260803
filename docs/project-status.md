@@ -30,7 +30,7 @@
 
 ## 当前进度
 
-当前项目已完成 P8 前端协议与交互基础 MVP，并进入 P9 真实需求使用准备：P5 的安全与恢复增强 MVP 已收口；P6 默认工作流 MVP 已落地，用户可以用自然语言描述任务，而不是每次手写 `list_files/read_file/dry_run/run_tests/git_diff` 工具顺序；P7 已完成 OMP 风格 auto summary、多语言 LSP/light fallback、multi-root `--allow-dir`、workspace roots 注入、Markdown memory 启动注入、`learn` 工具、可选 session memory consolidation、authored skills discovery、重复工具调用熔断、duplicate-tool forced-final steering、tool result pruning、todo steering、跨项目 `--env-file` / launcher 安装目录 `.env` 加载、OMP 风格用户级 `--state-dir` runtime state 分层、Evidence Ledger、relevance gate、implementation-quality gate 和 no-edit final hygiene。2026-07-09 已完成 T-076 Event/Command Protocol v1、T-077/T-080 Terminal Frontend MVP 与命令可发现性、T-078 项目边界分析 MVP、T-081 Claude review 行动计划、T-082 run summary / coverage MVP，并新增 T-083 真实需求压测模板。模型默认已切到 `qwen3-coder-next`，已完成 T-084 企业项目只读源码验证压测，并已落地 T-085 todo 工具误参纠偏、T-086 evidence-aware read repetition guard、T-087 final structure / evidence hygiene、T-088 read-only evidence gate、T-089 semantic exploration guard、T-090 terminal input/output isolation、T-091 Vue diff reviewer 误报修复、T-092 compaction 渐进模块化 / LSP 置信度提示、T-093 可选外部 LSP adapter、T-094 真实项目 LSP 可用性压测、T-095 jdtls 预置/strict external 复测、T-096 Java LSP 韧性对齐 OMP 和 T-097 Java project health 探针：Runtime 能产出 typed events，CLI/session/tool 日志和 terminal frontend 共用事件流，session JSONL 追加 `event_v1` 供后续 replay；analysis-only 任务不会套用代码实现类 hygiene，点名 authored skill 时会先软性要求读取对应 `SKILL.md`，最终回答结构不完整时会强制无工具重答；每轮结束会写入结构化 `run_summary`，用于压测复盘和 `/status` 展示。
+当前项目已完成 P8 前端协议与交互基础 MVP，并进入 P9 真实需求使用准备：P5 的安全与恢复增强 MVP 已收口；P6 默认工作流 MVP 已落地，用户可以用自然语言描述任务，而不是每次手写 `list_files/read_file/dry_run/run_tests/git_diff` 工具顺序；P7 已完成 OMP 风格 auto summary、多语言 LSP/light fallback、multi-root `--allow-dir`、workspace roots 注入、Markdown memory 启动注入、`learn` 工具、可选 session memory consolidation、authored skills discovery、重复工具调用熔断、duplicate-tool forced-final steering、tool result pruning、todo steering、跨项目 `--env-file` / launcher 安装目录 `.env` 加载、OMP 风格用户级 `--state-dir` runtime state 分层、Evidence Ledger、relevance gate、implementation-quality gate 和 no-edit final hygiene。2026-07-09 已完成 T-076 Event/Command Protocol v1、T-077/T-080 Terminal Frontend MVP 与命令可发现性、T-078 项目边界分析 MVP、T-081 Claude review 行动计划、T-082 run summary / coverage MVP，并新增 T-083 真实需求压测模板。模型默认已切到 `qwen3-coder-next`，已完成 T-084 企业项目只读源码验证压测，并已落地 T-085 todo 工具误参纠偏、T-086 evidence-aware read repetition guard、T-087 final structure / evidence hygiene、T-088 read-only evidence gate、T-089 semantic exploration guard、T-090 terminal input/output isolation、T-091 Vue diff reviewer 误报修复、T-092 compaction 渐进模块化 / LSP 置信度提示、T-093 可选外部 LSP adapter、T-094 真实项目 LSP 可用性压测、T-095 jdtls 预置/strict external 复测、T-096 Java LSP 韧性对齐 OMP、T-097 Java project health 探针和 T-098 Maven parent probe：Runtime 能产出 typed events，CLI/session/tool 日志和 terminal frontend 共用事件流，session JSONL 追加 `event_v1` 供后续 replay；analysis-only 任务不会套用代码实现类 hygiene，点名 authored skill 时会先软性要求读取对应 `SKILL.md`，最终回答结构不完整时会强制无工具重答；每轮结束会写入结构化 `run_summary`，用于压测复盘和 `/status` 展示。
 
 已具备的核心能力：
 
@@ -43,7 +43,7 @@
 - `apply_patch` 已支持 `replace`、`insert_before`、`insert_after`，并兼容 Python 3.12。
 - 非交互审批、LLM 非 JSON 响应、session 恢复坏尾部、search_code 绝对路径泄漏等问题已经修复。
 - 已完成 Agent 自举测试：能够通过百炼模型调用工具读取、修改、测试和查看 diff。
-- 测试基线：210 个测试在正常本地环境通过。
+- 测试基线：211 个测试在正常本地环境通过。
 
 当前已具备：
 
@@ -102,6 +102,7 @@
 - T-095 jdtls 预置、协议修复和 strict external 复测已完成：已通过 Homebrew 安装 `jdtls 1.60.0`；极小 Maven 项目 external `symbols` / `definition` / `diagnostics` 全通；真实企业项目 `diagnostics` 走 external jdtls 且 OK，但因缺公司内部 parent POM 无法导入 Maven project，external `symbols` / `definition` 为空；已按 OMP LSP client 思路补 `rootPath` / `workspaceFolders` 初始化和 server-initiated request 响应，并在 external 空结果时自动合并 light fallback，避免 Agent 在企业项目中失明。验证 session：`20260709T084323683100Z`。
 - T-096 Java LSP 韧性对齐 OMP 已落地：LSP client 会处理 `$/progress` 项目加载进度、等待项目加载窗口、响应 `workspace/configuration` 并返回 Java Maven/Gradle import 配置、响应 `workspace/workspaceFolders` / `window/workDoneProgress/create` / dynamic registration 等 server request；真实企业项目缺 parent POM 时仍会明确 external 边界并合并 fallback evidence。
 - T-097 Java project health 探针已落地：`lsp_status` 支持 `probe=true` / `path`，可启动匹配的 external server 并调用 jdtls `java.project.getAll` / `java.project.listSourcePaths`，输出 project count、source path count 和“不完整时检查 parent POM/私服/本地依赖缓存”的行动提示。
+- T-098 Maven parent probe 已落地：`lsp_status probe=true` 会静态解析最近 `pom.xml` 的 parent 链，检查 `relativePath` 与本地 `~/.m2/repository` parent POM；真实企业项目已定位 `crcl-open` 缺 `com.yljr:parent:0.0.5-SNAPSHOT`，`zqyl-user-center-service` 缺 `com.yljr:parent:0.0.4-SNAPSHOT`。
 
 真实缺口：
 
@@ -196,7 +197,7 @@
 | Terminal Frontend | 已完成 MVP 版 | `src/local_agent/frontends/terminal/` 提供 append-only terminal frontend；`./agent`、`./agent --chat`、`./agent chat` 可进入交互；支持 `/help`、`/status`、`/tools`、`/approval`；可选 `prompt_toolkit` / `rich` 增强输入和输出，缺失时降级。 |
 | Terminal Input Isolation | 已完成 MVP 版 | `src/local_agent/terminal_io.py` 在 agent run 期间关闭 TTY echo；approval / ask_user 通过 `terminal_input_prompt` 恢复输入并 flush 误敲缓冲。 |
 | Run summary / coverage | 已完成 MVP 版 | `src/local_agent/agent.py` 在每轮结束产出 `RunSummary` event 和 `run_summary` session 记录；`/status` 展示最近一轮摘要。 |
-| 测试基线 | 已完成 | 本地正常环境下 210 个测试通过。 |
+| 测试基线 | 已完成 | 本地正常环境下 211 个测试通过。 |
 
 ## 下一步 Todo
 
@@ -286,6 +287,7 @@
 | T-095 | jdtls 预置与 strict external 复测 | 已完成 | P9/P10 | Homebrew 已安装 `jdtls 1.60.0`；极小 Maven 项目 external symbols/definition/diagnostics 全通；真实企业项目 diagnostics 走 jdtls 且 OK，但因缺公司内部 parent POM 无法导入 Maven project，external symbols/definition 为空。已补 LSP `workspaceFolders` / server request 响应，并在 external 空结果时合并 light fallback；session `20260709T084323683100Z` 验证 Agent 可正确说明 external 与 fallback。 |
 | T-096 | Java LSP 韧性对齐 OMP | 已完成 | P9/P10 | 参考 OMP LSP client：跟踪 `$/progress`、等待 project load、响应 `workspace/configuration` 的 Java import 配置、处理 workspace folders / dynamic registration / progress create；企业项目缺 Maven parent 时保持 external 边界说明 + fallback evidence。 |
 | T-097 | Java project health 探针 | 已完成 | P9/P10 | `lsp_status probe=true` 会启动匹配 server 并检查 jdtls project/source path 状态；真实企业项目已验证输出 `java.project.getAll: 0` / `java.project.listSourcePaths: 0` 和 Maven parent/私服/缓存修复提示。 |
+| T-098 | Maven parent probe | 已完成 | P9/P10 | `lsp_status probe=true` 会解析 `pom.xml` parent 链，检查相对 parent POM 和 `~/.m2` parent POM；真实企业项目已直接指出缺失的 `com.yljr:parent` 版本，便于补私服/缓存。 |
 
 ## 风险清单
 
@@ -378,7 +380,7 @@
 | 项目 | 结论 | 依据 |
 |---|---|---|
 | 主链路 | 通过 | 百炼真实小改复测已跑通 todo、dry_run、apply_patch、session allow、rollback、run_tests、git_diff。 |
-| 测试 | 通过 | P5 收口时 90 个 unittest、compileall、xlsx 检查、diff check 均通过；P9 当前代码已跑通 210 个 unittest、compileall 和 diff check。 |
+| 测试 | 通过 | P5 收口时 90 个 unittest、compileall、xlsx 检查、diff check 均通过；P9 当前代码已跑通 211 个 unittest、compileall 和 diff check。 |
 | 日用入口 | 通过 | README 已补只读分析和小改任务命令模板。 |
 | 开放风险 | 可接受 | shell 仍非沙箱、prompt injection 仍需靠审批和封闭 VM；token budget / output reserve / managed skills 留到后续评估。 |
 | 下一阶段 | 真实需求设计与实现压测 | 企业项目联网压测已获用户允许并由 Agent 代跑；跨项目 env-file、轻量 pruning / todo steering、memory consolidation、duplicate-tool forced-final steering、allowed-dir soft tool requirement、repeated read_file guard、空搜索词 guard、path escape roots hint、LSP 空 query guard、semantic exploration guard、terminal input isolation、Current task contract、Evidence Ledger、relevance gate、implementation-quality reviewer、no-edit final hygiene、Terminal Frontend MVP 和项目边界分析 MVP 已完成。下一步用真实需求跑“边界圈定 → 用户确认项目范围 → 源码验证 → 实现设计/小改”。 |

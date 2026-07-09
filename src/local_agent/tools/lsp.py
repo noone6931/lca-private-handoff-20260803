@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import re
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
@@ -81,6 +82,18 @@ class SymbolRecord:
         rel = display_workspace_path(workspace, self.path, allowed_roots)
         scoped = f"{self.container}.{self.name}" if self.container else self.name
         return f"{rel}:{self.line}:{self.column + 1}: {self.kind} {scoped}"
+
+
+@dataclass(frozen=True)
+class MavenParent:
+    group_id: str
+    artifact_id: str
+    version: str
+    relative_path: str | None
+
+    @property
+    def gav(self) -> str:
+        return f"{self.group_id}:{self.artifact_id}:{self.version}"
 
 
 def lsp_tools() -> list[Tool]:
@@ -450,6 +463,7 @@ def _render_lsp_probe_status(root: Path, context: ToolContext) -> list[str]:
             lines.append(f"  project health: unavailable ({type(exc).__name__}: {exc})")
             continue
         lines.extend(_render_java_project_probe(projects, source_paths))
+        lines.extend(_render_maven_parent_probe(server_root, context.workspace, context.allowed_dirs))
     return lines
 
 
@@ -492,6 +506,106 @@ def _render_java_project_probe(projects: Any, source_paths: Any) -> list[str]:
     else:
         lines.append("  project health: jdtls has imported Java project metadata.")
     return lines
+
+
+def _render_maven_parent_probe(project_root: Path, workspace: Path, allowed_roots: tuple[Path, ...]) -> list[str]:
+    pom = project_root / "pom.xml"
+    if not pom.exists():
+        return []
+    lines = ["  Maven parent probe:"]
+    current = pom
+    seen: set[Path] = set()
+    for _ in range(8):
+        if current in seen:
+            lines.append(f"    - stopped: parent chain loop at {_display_probe_path(current, workspace, allowed_roots)}")
+            return lines
+        seen.add(current)
+        parent = _read_maven_parent(current)
+        if parent is None:
+            lines.append(f"    - {_display_probe_path(current, workspace, allowed_roots)}: no parent")
+            return lines
+        local_relative = _maven_relative_parent_pom(current, parent)
+        if local_relative is not None and local_relative.exists():
+            lines.append(
+                f"    - {parent.gav}: found via relativePath "
+                f"{_display_probe_path(local_relative, workspace, allowed_roots)}"
+            )
+            current = local_relative
+            continue
+        local_repo = _maven_local_repo_parent_pom(parent)
+        if local_repo.exists():
+            lines.append(f"    - {parent.gav}: found in local Maven repository {_display_home_path(local_repo)}")
+            current = local_repo
+            continue
+        checked = []
+        if local_relative is not None:
+            checked.append(f"relativePath={_display_probe_path(local_relative, workspace, allowed_roots)}")
+        checked.append(f"localRepo={_display_home_path(local_repo)}")
+        lines.append(f"    - {parent.gav}: missing ({'; '.join(checked)})")
+        lines.append("      action: add the parent POM to the workspace, configure Maven private repositories, or prefill ~/.m2.")
+        return lines
+    lines.append("    - stopped: parent chain exceeded 8 levels")
+    return lines
+
+
+def _read_maven_parent(pom: Path) -> MavenParent | None:
+    try:
+        root = ET.parse(pom).getroot()
+    except (ET.ParseError, OSError):
+        return None
+    parent = _xml_child(root, "parent")
+    if parent is None:
+        return None
+    group_id = _xml_child_text(parent, "groupId")
+    artifact_id = _xml_child_text(parent, "artifactId")
+    version = _xml_child_text(parent, "version")
+    if not group_id or not artifact_id or not version:
+        return None
+    relative_path = _xml_child_text(parent, "relativePath")
+    return MavenParent(group_id=group_id, artifact_id=artifact_id, version=version, relative_path=relative_path)
+
+
+def _maven_relative_parent_pom(pom: Path, parent: MavenParent) -> Path | None:
+    relative_path = "../pom.xml" if parent.relative_path is None else parent.relative_path.strip()
+    if not relative_path:
+        return None
+    candidate = (pom.parent / relative_path).resolve()
+    return candidate / "pom.xml" if candidate.is_dir() else candidate
+
+
+def _maven_local_repo_parent_pom(parent: MavenParent) -> Path:
+    group_path = Path(*parent.group_id.split("."))
+    return Path.home() / ".m2" / "repository" / group_path / parent.artifact_id / parent.version / f"{parent.artifact_id}-{parent.version}.pom"
+
+
+def _xml_child(element: ET.Element, local_name: str) -> ET.Element | None:
+    for child in list(element):
+        if _xml_local_name(child.tag) == local_name:
+            return child
+    return None
+
+
+def _xml_child_text(element: ET.Element, local_name: str) -> str | None:
+    child = _xml_child(element, local_name)
+    if child is None or child.text is None:
+        return None
+    return child.text.strip()
+
+
+def _xml_local_name(tag: str) -> str:
+    return tag.rsplit("}", 1)[-1]
+
+
+def _display_probe_path(path: Path, workspace: Path, allowed_roots: tuple[Path, ...]) -> str:
+    return display_workspace_path(workspace, path, allowed_roots)
+
+
+def _display_home_path(path: Path) -> str:
+    try:
+        rel = path.resolve().relative_to(Path.home().resolve())
+        return f"~/{rel}"
+    except ValueError:
+        return str(path)
 
 
 def _java_source_path_entries(source_paths: Any) -> list[str]:
