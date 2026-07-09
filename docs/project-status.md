@@ -30,7 +30,7 @@
 
 ## 当前进度
 
-当前项目处于 P7 轻量高级能力阶段：P5 的安全与恢复增强 MVP 已收口；P6 默认工作流 MVP 已落地，用户可以用自然语言描述任务，而不是每次手写 `list_files/read_file/dry_run/run_tests/git_diff` 工具顺序。本轮已补 OMP 风格 auto summary、多语言轻量 LSP、multi-root `--allow-dir`、workspace roots 注入、Markdown memory 启动注入、`learn` 工具、可选 session memory consolidation、authored skills discovery、重复工具调用熔断、duplicate-tool forced-final steering、tool result pruning、todo steering、跨项目 `--env-file` / launcher 安装目录 `.env` 加载、OMP 风格用户级 `--state-dir` runtime state 分层，以及 Evidence Ledger 证据账本。2026-07-09 已完成 P7 阶段回顾，结论是先进入真实需求实现压测，reviewer / 完整 ToolChoiceQueue 暂作为条件触发候选项。
+当前项目处于 P7 轻量高级能力阶段：P5 的安全与恢复增强 MVP 已收口；P6 默认工作流 MVP 已落地，用户可以用自然语言描述任务，而不是每次手写 `list_files/read_file/dry_run/run_tests/git_diff` 工具顺序。本轮已补 OMP 风格 auto summary、多语言轻量 LSP、multi-root `--allow-dir`、workspace roots 注入、Markdown memory 启动注入、`learn` 工具、可选 session memory consolidation、authored skills discovery、重复工具调用熔断、duplicate-tool forced-final steering、tool result pruning、todo steering、跨项目 `--env-file` / launcher 安装目录 `.env` 加载、OMP 风格用户级 `--state-dir` runtime state 分层，以及 Evidence Ledger 证据账本。2026-07-09 已完成 P7 阶段回顾，并完成 T-072 首轮真实需求实现压测；压测暴露 LCA 会漂移到无关配置文件并产生无业务价值 patch，因此 T-073 已从候选升级为下一步：先做轻量 reviewer / pre-edit relevance gate，再视情况补完整 ToolChoiceQueue。
 
 已具备的核心能力：
 
@@ -224,8 +224,8 @@
 | T-069 | git_diff 区分已有修改与本轮修改 | 已完成 MVP 版 | P7 | 每轮 run start 捕获 git baseline 并写 session；`git_diff` 追加 attribution 小节，按 pre-existing、this-session apply_patch、mixed、new unattributed 提示模型分开总结。 |
 | T-070 | 最终 diff 细节概括准确性 | 已完成并复测通过 | P7 | `git_diff` 已追加 `[diff summary]`，按文件输出 `+N/-M`、hunk 数、hunk header 和少量 added/removed 片段；测试覆盖重复标题 + smoke-test 行实际为 `+3 -0`；百炼复测 session `20260708T100128250335Z` 已正确总结 `+1/-1`、1 hunk 和 attribution。 |
 | T-071 | P7 阶段回顾与 OMP 差距决策 | 已完成 | P7 | 新增 `docs/stage-review-2026-07-09.md`，整理当前与 OMP 的差距、已关闭风险、剩余 P7 候选项，并决定先进入真实需求实现压测。 |
-| T-072 | 真实需求实现压测 | 下一步 | P7 | 选择一个低风险真实需求，验证从需求读取、代码定位、dry_run patch、真实写入、测试、git_diff attribution 到最终总结的完整闭环。 |
-| T-073 | reviewer / ToolChoiceQueue 条件触发评估 | 候选 | P7/P8 | 若 T-072 暴露“关键工具长期不用/乱用”则补完整 ToolChoiceQueue；若暴露 patch 或最终总结质量不稳，则补轻量 reviewer。 |
+| T-072 | 真实需求实现压测 | 首轮完成但未通过 | P7 | session `20260709T013441841983Z` 读取真实需求后漂移到 `deployMessage/nacos`，修改无关 Redis 配置并错误声称 worktree 无 `pom.xml/src`；问题已记录到 `docs/pressure-test-2026-07-09.md`。 |
+| T-073 | 轻量 reviewer / pre-edit relevance gate | 下一步 | P7/P8 | T-072 已暴露 patch 目标相关性问题；下一步先做写入前相关性 gate 和最终 diff reviewer，再按需要补完整 ToolChoiceQueue。 |
 
 ## 风险清单
 
@@ -261,6 +261,7 @@
 | R-028 | 脏工作区下最终 diff 摘要可能混入非本轮改动 | 已关闭 MVP 版 | session `20260708T092554037057Z` 的 `git_diff` 同时包含 README 小改和正在开发的 Evidence Ledger 代码 diff。 | 参考 OMP task/worktree/session state：已记录 run start baseline，并按 pre-existing / this-run patch / mixed / new unattributed 分组提示。 |
 | R-029 | 最终 diff 细节可能被模型过度简化或说错 | 已关闭并复测通过 | session `20260708T094926471758Z` 中 attribution 分类正确，但模型没有准确描述实际 diff hunk；低价值 README smoke-test 改动已撤回。 | 参考 OMP runtime observation 思路：已给 `git_diff` 增加 diff stats/hunk summary；session `20260708T100128250335Z` 验证最终总结可正确引用 summary + attribution。 |
 | R-030 | 过早补完整 reviewer / ToolChoiceQueue 会增加复杂度但未必命中当前痛点 | 开放并受控 | OMP 的 reviewer、subagents、ToolChoiceQueue 很强，但 LCA 当前还缺真实实现压测的失败样本；提前完整搬入可能拖慢 MVP 验证。 | 先按 `docs/stage-review-2026-07-09.md` 进入真实需求实现压测；只有压测暴露工具选择失控或 review 质量问题时，再按 OMP 方式定向裁剪。 |
+| R-031 | 真实实现任务可能产生无关 patch | 新增，高 | T-072 session `20260709T013441841983Z` 读取正确需求后漂移到 Nacos/Redis 配置，并把无关注释当成实现锚点；这说明 dry_run/hash 校验只能保证位置正确，不能保证业务相关。 | 下一步 T-073 做 pre-edit relevance gate：`apply_patch` 真写入前检查目标文件是否来自近期需求/代码证据；同时做轻量 diff reviewer，要求最终变更能解释与需求的关系。 |
 
 ## 架构决策
 
@@ -278,6 +279,7 @@
 | ADR-017 | 解决 runtime/工具/上下文问题时先查 OMP 做法。 | 用户明确要求后续解决问题都参考 OMP；本项目原则更新为先找 OMP 已验证设计，再按本地个人 Agent、封闭 VM、单 Agent 和无自动下载边界裁剪落地。 |
 | ADR-018 | Evidence Ledger 是本轮 provider-bound runtime context，不是长期 memory。 | 工具证据服务于当前会话最终回答和审计，不能替代 session 原文，也不应默认写入项目长期 memory；参考 OMP runtime state / tool evidence / steering 持续入上下文的思路。 |
 | ADR-019 | P7 后续先进入真实需求实现压测，reviewer / 完整 ToolChoiceQueue 条件触发。 | 阶段回顾显示当前主链路已具备低风险实战条件；完整 reviewer / ToolChoiceQueue 应根据真实实现压测暴露的问题裁剪，而不是在缺少失败样本时提前做重。 |
+| ADR-020 | T-073 优先做轻量 relevance gate / reviewer，不先做完整 ToolChoiceQueue。 | T-072 失败点是无关 patch 和反事实 workspace 判断；最小有效修复是写入前目标相关性检查、workspace-root evidence 和最终 diff reviewer。完整 ToolChoiceQueue 继续作为工具选择失控时的后补。 |
 | ADR-015 | 人工上下文按 AGENTS/RULES 分层。 | 参照 Claude Code 与 OMP 的上下文文件/Sticky rules 分层：`AGENTS.md` 作为启动背景，`RULES.md` 作为短规则每轮注入；二者不同于长期 memory 和 session summary。 |
 | ADR-016 | Session memory consolidation 默认关闭；开启后默认写 state memory。 | 这一步不同于只发给模型的 context compaction；默认 off 可以保护只读分析，开启后默认写用户级 state dir，只有显式 `memory_scope=project` 才写项目 `.local-agent/memory`。 |
 | ADR-003 | Excel 作为人工视图，Markdown 作为开发协作 Agent 可读事实源。 | 这套文档服务于开发 LCA 的过程；`.xlsx` 是二进制展示产物，不适合作为协作 Agent 的事实源。 |
@@ -329,8 +331,8 @@
 
 用户确认本文件后，建议按以下顺序继续：
 
-1. 执行 T-072：选择一个低风险真实需求，进入“需求文档 + 代码项目”的实现压测。
-2. 压测前记录目标项目 `git status --short`，必要时创建临时分支或确认有可回滚基线。
-3. 压测时使用 `--summary-mode auto`、`--allow-dir`、`apply_patch dry_run=true`、`run_tests`、`git_diff`，不要使用 `yolo`。
-4. 压测后把问题记录回 `docs/pressure-test-2026-07-08.md` 或新日期压测文档，并同步项目管理 Excel。
-5. 根据失败形态决定 T-073：工具选择问题优先补 ToolChoiceQueue；patch/总结质量问题优先补轻量 reviewer。
+1. 执行 T-073：实现轻量 pre-edit relevance gate，避免真实实现任务写入无关文件。
+2. 将 workspace-root evidence 加入 Evidence Ledger，避免模型根据局部目录错误声称仓库无 `pom.xml/src`。
+3. 增加最终 diff reviewer：要求本轮 diff 能用需求证据和代码证据解释，否则提示回滚/重新定位。
+4. 复跑 T-072 同一需求压测，验证是否能阻止 `deployMessage/nacos` 这类无关 patch。
+5. 若仍出现关键工具不用/乱用，再评估完整 ToolChoiceQueue。
