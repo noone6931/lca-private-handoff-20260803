@@ -15,6 +15,12 @@ class _FakeRuntime:
     def approval_summary(self) -> str:
         return "summary"
 
+    def status_summary(self) -> str:
+        return "status"
+
+    def tool_summary(self) -> str:
+        return "tools"
+
     def set_session_approval_mode(self, mode: str) -> None:
         self.calls.append(("mode", mode))
 
@@ -54,6 +60,31 @@ class CliTests(unittest.TestCase):
                 ("reset", "shell"),
             ],
         )
+
+    def test_terminal_help_status_and_tools_commands(self) -> None:
+        runtime = _FakeRuntime()
+        output = io.StringIO()
+
+        with redirect_stdout(output):
+            _handle_repl_command(runtime, "/help")
+            _handle_repl_command(runtime, "/status")
+            _handle_repl_command(runtime, "/tools")
+
+        rendered = output.getvalue()
+        self.assertIn("/approval", rendered)
+        self.assertIn("/exit", rendered)
+        self.assertIn("status", rendered)
+        self.assertIn("tools", rendered)
+
+    def test_unknown_terminal_command_points_to_help(self) -> None:
+        runtime = _FakeRuntime()
+        output = io.StringIO()
+
+        with redirect_stdout(output):
+            _handle_repl_command(runtime, "/wat")
+
+        self.assertIn("Unknown command: /wat", output.getvalue())
+        self.assertIn("Type /help", output.getvalue())
 
 
 if __name__ == "__main__":

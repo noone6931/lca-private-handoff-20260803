@@ -101,6 +101,21 @@ python3 -m pip install -e ".[terminal]"
 
 如果没有安装这些可选依赖，`./agent` 仍会降级为普通终端输入输出，不影响一次性任务。
 
+交互模式内置命令：
+
+```text
+/help
+/status
+/tools
+/approval
+/approval mode write
+/approval allow run_tests
+/approval prompt shell
+/approval deny write_file
+/approval reset shell
+/exit
+```
+
 安装成包后也可以用：
 
 ```bash

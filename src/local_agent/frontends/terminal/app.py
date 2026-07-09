@@ -3,12 +3,13 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path
 import sys
+from typing import TextIO
 
 from ...agent import AgentRuntime
 from .renderer import TerminalEventSink
 
 
-CommandHandler = Callable[[AgentRuntime, str], None]
+CommandHandler = Callable[[AgentRuntime, str, TextIO], None]
 
 
 def run_terminal_chat(
@@ -21,7 +22,7 @@ def run_terminal_chat(
 ) -> int:
     output = output_stream or sys.stdout
     prompt = _build_prompt(history_path)
-    print("local-agent chat. Type /exit to quit.", file=output)
+    print("local-agent chat. Type /help for commands, /exit to quit.", file=output)
     while True:
         try:
             text = prompt(input_stream=input_stream).strip()
@@ -39,7 +40,7 @@ def run_terminal_chat(
             if command_handler is None:
                 print(f"Unknown command: {text.split()[0]}", file=output)
             else:
-                command_handler(runtime, text)
+                command_handler(runtime, text, output)
             continue
         try:
             runtime.run(text)

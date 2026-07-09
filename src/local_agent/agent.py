@@ -596,6 +596,40 @@ class AgentRuntime:
             lines.append("- session tool policies: none")
         return "\n".join(lines)
 
+    def status_summary(self) -> str:
+        lines = [
+            "Runtime status:",
+            f"- session: {self._session.session_id}",
+            f"- workspace: {self._config.workspace}",
+            f"- state_dir: {self._state_dir}",
+            f"- provider: {self._config.provider}",
+            f"- model: {self._config.model}",
+            f"- approval_mode: {self._tool_context.approval_mode}",
+            f"- budget_seconds: {_display_optional_int(self._config.budget_seconds)}",
+            f"- max_steps: {self._config.max_steps}",
+            f"- summary_mode: {self._config.summary_mode}",
+            f"- memory_consolidation: {self._config.memory_consolidation}",
+        ]
+        if self._config.allowed_dirs:
+            lines.append("- allowed_dirs:")
+            lines.extend(f"  - {path}" for path in self._config.allowed_dirs)
+        else:
+            lines.append("- allowed_dirs: none")
+        if self._tool_context.tool_approval:
+            lines.append("- configured tool policies:")
+            lines.extend(
+                f"  - {tool}: {policy}"
+                for tool, policy in sorted(self._tool_context.tool_approval.items())
+            )
+        else:
+            lines.append("- configured tool policies: none")
+        return "\n".join(lines)
+
+    def tool_summary(self) -> str:
+        lines = ["Available tools:"]
+        lines.extend(f"- {name}" for name in self._registry.tool_names())
+        return "\n".join(lines)
+
     def set_session_approval_mode(self, mode: str) -> None:
         self._tool_context = replace(self._tool_context, approval_mode=normalize_approval_mode(mode))
 
@@ -2576,6 +2610,10 @@ def _one_line(content: str, *, max_chars: int = 240) -> str:
     if len(normalized) <= max_chars:
         return normalized
     return normalized[: max_chars - 14] + "...<truncated>"
+
+
+def _display_optional_int(value: int | None) -> str:
+    return "disabled" if value is None else str(value)
 
 
 def _with_workflow_nudge(prompt: str) -> str:

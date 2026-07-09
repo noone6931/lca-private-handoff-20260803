@@ -26,7 +26,7 @@ class TerminalFrontendTests(unittest.TestCase):
 
         code = run_terminal_chat(
             runtime,  # type: ignore[arg-type]
-            command_handler=lambda rt, command: commands.append((rt, command)),
+            command_handler=lambda rt, command, _stream: commands.append((rt, command)),
             input_stream=input_stream,
             output_stream=output,
         )
@@ -35,6 +35,22 @@ class TerminalFrontendTests(unittest.TestCase):
         self.assertEqual(runtime.prompts, ["hello"])
         self.assertEqual(commands, [(runtime, "/approval")])
         self.assertIn("local-agent chat", output.getvalue())
+        self.assertIn("Type /help", output.getvalue())
+
+    def test_terminal_chat_sends_command_output_to_frontend_stream(self) -> None:
+        runtime = _FakeRuntime()
+        input_stream = io.StringIO("/help\n/exit\n")
+        output = io.StringIO()
+
+        code = run_terminal_chat(
+            runtime,  # type: ignore[arg-type]
+            command_handler=lambda _rt, _command, stream: print("command help", file=stream),
+            input_stream=input_stream,
+            output_stream=output,
+        )
+
+        self.assertEqual(code, 0)
+        self.assertIn("command help", output.getvalue())
 
     def test_terminal_event_sink_renders_append_only_lines(self) -> None:
         output = io.StringIO()

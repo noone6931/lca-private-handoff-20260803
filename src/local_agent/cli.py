@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from typing import TextIO
 
 from .agent import AgentRuntime
 from .config import ConfigError, load_config
@@ -9,6 +10,18 @@ from .frontends.terminal import TerminalEventSink
 from .frontends.terminal import run_terminal_chat
 from .llm import LlmError
 from .session.jsonl_store import SessionError
+
+
+REPL_HELP = """Commands:
+/help                         Show this help.
+/status                       Show session, workspace, provider, budget, and approval summary.
+/tools                        List available tool names.
+/approval                     Show approval settings.
+/approval mode always-ask|write|yolo
+/approval allow|prompt|deny TOOL
+/approval reset TOOL
+/exit or /quit                Exit terminal chat.
+"""
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -180,35 +193,47 @@ def _is_chat_prompt(prompt: list[str]) -> bool:
     return len(prompt) == 1 and prompt[0] == "chat"
 
 
-def _handle_repl_command(runtime: AgentRuntime, command: str) -> None:
+def _handle_repl_command(runtime: AgentRuntime, command: str, stream: TextIO | None = None) -> None:
+    output = stream or sys.stdout
     parts = command.split()
     if not parts:
         return
+    if parts[0] in {"/help", "/?"}:
+        print(REPL_HELP.rstrip(), file=output)
+        return
+    if parts[0] == "/status":
+        print(runtime.status_summary(), file=output)
+        return
+    if parts[0] == "/tools":
+        print(runtime.tool_summary(), file=output)
+        return
     if parts[0] != "/approval":
-        print(f"Unknown command: {parts[0]}")
+        print(f"Unknown command: {parts[0]}", file=output)
+        print("Type /help for commands.", file=output)
         return
     try:
         if len(parts) == 1:
-            print(runtime.approval_summary())
+            print(runtime.approval_summary(), file=output)
             return
         if len(parts) == 3 and parts[1] == "mode":
             runtime.set_session_approval_mode(parts[2])
-            print(runtime.approval_summary())
+            print(runtime.approval_summary(), file=output)
             return
         if len(parts) == 3 and parts[1] in {"allow", "prompt", "deny"}:
             runtime.set_session_tool_policy(parts[2], parts[1])
-            print(runtime.approval_summary())
+            print(runtime.approval_summary(), file=output)
             return
         if len(parts) == 3 and parts[1] == "reset":
             runtime.reset_session_tool_policy(parts[2])
-            print(runtime.approval_summary())
+            print(runtime.approval_summary(), file=output)
             return
     except (ConfigError, ValueError) as exc:
-        print(f"error: {exc}")
+        print(f"error: {exc}", file=output)
         return
     print(
         "Usage: /approval | /approval mode always-ask|write|yolo | "
-        "/approval allow|prompt|deny TOOL | /approval reset TOOL"
+        "/approval allow|prompt|deny TOOL | /approval reset TOOL",
+        file=output,
     )
 
 

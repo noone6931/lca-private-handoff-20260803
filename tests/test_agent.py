@@ -634,6 +634,33 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertEqual(sent_system["content"].count("[Current task contract]"), 1)
         self.assertNotIn("[Current task contract]", runtime._messages[0]["content"])
 
+    def test_runtime_status_and_tool_summary_are_available_for_terminal_frontend(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=workspace,
+                max_steps=0,
+                budget_seconds=600,
+                approval_mode="yolo",
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _FinalClient):
+                runtime = AgentRuntime(config, show_tool_logs=False)
+
+        status = runtime.status_summary()
+        tools = runtime.tool_summary()
+        self.assertIn("Runtime status:", status)
+        self.assertIn(f"- workspace: {workspace}", status)
+        self.assertIn("- provider: openai-compatible", status)
+        self.assertIn("- model: model", status)
+        self.assertIn("- approval_mode: yolo", status)
+        self.assertIn("Available tools:", tools)
+        self.assertIn("- read_file", tools)
+        self.assertIn("- apply_patch", tools)
+
     def test_no_edit_final_hygiene_context_is_sent_for_implementation_tasks(self) -> None:
         _MessageRecordingClient.messages = []
         with tempfile.TemporaryDirectory() as tmp:
