@@ -662,8 +662,10 @@ LCA 措施：
 - 已新增 Maven parent probe，真实企业项目复测输出：
   - `crcl-open`：缺 `com.yljr:parent:0.0.5-SNAPSHOT`；检查过 `../pom.xml` 和 `~/.m2/repository/com/yljr/parent/0.0.5-SNAPSHOT/parent-0.0.5-SNAPSHOT.pom`。
   - `zqyl-user-center-service`：先通过 `relativePath` 找到 `com.yljr:zqyl-usercenter-biz:1.0-SNAPSHOT`，随后缺 `com.yljr:parent:0.0.4-SNAPSHOT`；检查过相对 parent POM 和 `~/.m2/repository/com/yljr/parent/0.0.4-SNAPSHOT/parent-0.0.4-SNAPSHOT.pom`。
+- 已新增 Maven environment probe：`lsp_status probe=true` 会报告 `mvn` 可用性、`settings.xml` 是否存在、本地 Maven 仓库路径，以及 mirror/server/profile/repository/activeProfile 数量；输出刻意不包含私服 URL、server id、账号或密码。
+- 真实企业项目复测中，`crcl-open` 与 `zqyl-user-center-service` 均报告 `mvn=/opt/homebrew/bin/mvn`、`settings=~/.m2/settings.xml (exists)`、`localRepository=~/.m2/repository`、`mirrors=1, servers=0, profiles=1, repositories=0, activeProfiles=0`；说明当前机器已有 Maven settings 和 mirror/profile 摘要，但缺失的公司 parent POM 仍未在本地仓库中。
 
 剩余边界：
 
 - 若要做到真正 type-aware Java navigation，必须补齐本机 Maven 私服配置、公司 parent POM 和依赖缓存；这是环境条件，不是 Agent 代码可以单独绕过的。
-- 后续可选增强：暴露 `lsp_request` / `lsp_capabilities` 调试工具；`lsp_status` 已能报告 jdtls project import/source path 状态。
+- 后续可选增强：暴露 `lsp_request` / `lsp_capabilities` 调试工具；`lsp_status` 已能报告 jdtls project import/source path 状态、Maven parent 缺口和 Maven 环境摘要。

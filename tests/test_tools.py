@@ -837,6 +837,73 @@ class ToolTests(unittest.TestCase):
         self.assertIn("local.agent.test:missing-parent-for-lca-test:999.0.0: missing", result.content)
         self.assertIn("action: add the parent POM", result.content)
 
+    def test_lsp_status_probe_reports_maven_environment(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            fake_home = workspace / "home"
+            settings_dir = fake_home / ".m2"
+            settings_dir.mkdir(parents=True)
+            (settings_dir / "settings.xml").write_text(
+                """<?xml version="1.0" encoding="UTF-8"?>
+<settings xmlns="http://maven.apache.org/SETTINGS/1.0.0">
+  <localRepository>~/company-m2</localRepository>
+  <mirrors>
+    <mirror>
+      <id>private-mirror</id>
+      <url>https://example.invalid/repository/maven-public/</url>
+      <mirrorOf>*</mirrorOf>
+    </mirror>
+  </mirrors>
+  <servers>
+    <server>
+      <id>private-mirror</id>
+      <username>secret-user</username>
+      <password>secret-password</password>
+    </server>
+  </servers>
+  <profiles>
+    <profile>
+      <id>private-profile</id>
+      <repositories>
+        <repository>
+          <id>private-repo</id>
+          <url>https://example.invalid/repository/releases/</url>
+        </repository>
+      </repositories>
+    </profile>
+  </profiles>
+  <activeProfiles>
+    <activeProfile>private-profile</activeProfile>
+  </activeProfiles>
+</settings>
+""",
+                encoding="utf-8",
+            )
+            (workspace / "pom.xml").write_text("<project />\n", encoding="utf-8")
+            source = workspace / "src" / "main" / "java" / "demo" / "Hello.java"
+            source.parent.mkdir(parents=True)
+            source.write_text("package demo;\npublic class Hello {}\n", encoding="utf-8")
+            fake_server = workspace / "fake_jdtls.py"
+            _write_fake_jdtls_with_project_probe(fake_server)
+            command = f"{sys.executable} {fake_server}"
+            with (
+                patch.dict("os.environ", {"AGENT_LSP_JDTLS_COMMAND": command}),
+                patch.object(Path, "home", return_value=fake_home),
+            ):
+                try:
+                    result = lsp_status({"probe": True}, ToolContext(workspace=workspace, approval_mode="yolo"))
+                finally:
+                    close_all_clients()
+
+        self.assertFalse(result.is_error)
+        self.assertIn("Maven environment probe", result.content)
+        self.assertIn("settings: ~/.m2/settings.xml (exists)", result.content)
+        self.assertIn("localRepository: ~/company-m2 (settings.xml)", result.content)
+        self.assertIn("mirrors=1, servers=1, profiles=1, repositories=1, activeProfiles=1", result.content)
+        self.assertNotIn("example.invalid", result.content)
+        self.assertNotIn("private-mirror", result.content)
+        self.assertNotIn("secret-password", result.content)
+
     def test_lsp_tools_reject_path_escape(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp).resolve()

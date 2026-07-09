@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import ast
 import re
+import shlex
+import shutil
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
@@ -94,6 +96,16 @@ class MavenParent:
     @property
     def gav(self) -> str:
         return f"{self.group_id}:{self.artifact_id}:{self.version}"
+
+
+@dataclass(frozen=True)
+class MavenSettingsSummary:
+    local_repository: Path | None
+    mirror_count: int
+    server_count: int
+    profile_count: int
+    repository_count: int
+    active_profile_count: int
 
 
 def lsp_tools() -> list[Tool]:
@@ -463,6 +475,7 @@ def _render_lsp_probe_status(root: Path, context: ToolContext) -> list[str]:
             lines.append(f"  project health: unavailable ({type(exc).__name__}: {exc})")
             continue
         lines.extend(_render_java_project_probe(projects, source_paths))
+        lines.extend(_render_maven_environment_probe(server_root, context.workspace, context.allowed_dirs))
         lines.extend(_render_maven_parent_probe(server_root, context.workspace, context.allowed_dirs))
     return lines
 
@@ -508,6 +521,58 @@ def _render_java_project_probe(projects: Any, source_paths: Any) -> list[str]:
     return lines
 
 
+def _render_maven_environment_probe(project_root: Path, workspace: Path, allowed_roots: tuple[Path, ...]) -> list[str]:
+    if not (project_root / "pom.xml").exists():
+        return []
+    lines = ["  Maven environment probe:"]
+    mvn = shutil.which("mvn")
+    lines.append(f"    - mvn: {mvn if mvn else 'not found on PATH'}")
+    config_path = project_root / ".mvn" / "maven.config"
+    config_tokens = _read_maven_config_tokens(config_path)
+    if config_path.exists():
+        lines.append(
+            f"    - maven.config: {_display_probe_path(config_path, workspace, allowed_roots)} "
+            f"({len(config_tokens)} token(s))"
+        )
+    settings_path = _maven_config_path_option(config_tokens, project_root, ("-s", "--settings"))
+    if settings_path is None:
+        settings_path = Path.home() / ".m2" / "settings.xml"
+    settings = _read_maven_settings(settings_path)
+    local_repository = _maven_config_property_path(config_tokens, project_root, "maven.repo.local")
+    local_repository_source = "maven.config"
+    if local_repository is None and settings is not None and settings.local_repository is not None:
+        local_repository = settings.local_repository
+        local_repository_source = "settings.xml"
+    if local_repository is None:
+        local_repository = Path.home() / ".m2" / "repository"
+        local_repository_source = "default"
+    if settings_path.exists():
+        lines.append(f"    - settings: {_display_home_path(settings_path)} (exists)")
+    else:
+        lines.append(f"    - settings: not found at {_display_home_path(settings_path)}")
+    lines.append(f"    - localRepository: {_display_home_path(local_repository)} ({local_repository_source})")
+    if settings is None:
+        lines.append("    - settings summary: unavailable")
+        lines.append("      private repo readiness: no settings.xml was found; private artifacts must already be in localRepository.")
+        return lines
+    lines.append(
+        "    - settings summary: "
+        f"mirrors={settings.mirror_count}, servers={settings.server_count}, profiles={settings.profile_count}, "
+        f"repositories={settings.repository_count}, activeProfiles={settings.active_profile_count}"
+    )
+    if settings.mirror_count == 0 and settings.repository_count == 0:
+        lines.append(
+            "      private repo readiness: no mirror/profile repository is declared in settings; "
+            "private artifacts must come from project POMs or localRepository."
+        )
+    else:
+        lines.append(
+            "      private repo readiness: settings has repository configuration; verify network, credentials, "
+            "and that required parent POMs are reachable or cached."
+        )
+    return lines
+
+
 def _render_maven_parent_probe(project_root: Path, workspace: Path, allowed_roots: tuple[Path, ...]) -> list[str]:
     pom = project_root / "pom.xml"
     if not pom.exists():
@@ -546,6 +611,65 @@ def _render_maven_parent_probe(project_root: Path, workspace: Path, allowed_root
         return lines
     lines.append("    - stopped: parent chain exceeded 8 levels")
     return lines
+
+
+def _read_maven_config_tokens(config_path: Path) -> list[str]:
+    try:
+        text = config_path.read_text(encoding="utf-8")
+    except OSError:
+        return []
+    try:
+        return shlex.split(text, comments=True)
+    except ValueError:
+        return text.split()
+
+
+def _maven_config_path_option(tokens: list[str], project_root: Path, names: tuple[str, ...]) -> Path | None:
+    for index, token in enumerate(tokens):
+        for name in names:
+            if token == name and index + 1 < len(tokens):
+                return _resolve_maven_path(tokens[index + 1], project_root)
+            if token.startswith(f"{name}="):
+                return _resolve_maven_path(token.split("=", 1)[1], project_root)
+    return None
+
+
+def _maven_config_property_path(tokens: list[str], project_root: Path, property_name: str) -> Path | None:
+    prefix = f"-D{property_name}="
+    for token in tokens:
+        if token.startswith(prefix):
+            return _resolve_maven_path(token[len(prefix) :], project_root)
+    return None
+
+
+def _resolve_maven_path(value: str, project_root: Path) -> Path:
+    expanded = _expand_home_path(value)
+    return expanded if expanded.is_absolute() else (project_root / expanded).resolve()
+
+
+def _read_maven_settings(settings_path: Path) -> MavenSettingsSummary | None:
+    try:
+        root = ET.parse(settings_path).getroot()
+    except (ET.ParseError, OSError):
+        return None
+    local_repository_text = _xml_child_text(root, "localRepository")
+    local_repository = _expand_home_path(local_repository_text) if local_repository_text else None
+    return MavenSettingsSummary(
+        local_repository=local_repository,
+        mirror_count=_xml_nested_count(root, ("mirrors", "mirror")),
+        server_count=_xml_nested_count(root, ("servers", "server")),
+        profile_count=_xml_nested_count(root, ("profiles", "profile")),
+        repository_count=_xml_profile_repository_count(root),
+        active_profile_count=_xml_nested_count(root, ("activeProfiles", "activeProfile")),
+    )
+
+
+def _expand_home_path(value: str) -> Path:
+    if value == "~":
+        return Path.home()
+    if value.startswith("~/"):
+        return Path.home() / value[2:]
+    return Path(value)
 
 
 def _read_maven_parent(pom: Path) -> MavenParent | None:
@@ -590,6 +714,33 @@ def _xml_child_text(element: ET.Element, local_name: str) -> str | None:
     if child is None or child.text is None:
         return None
     return child.text.strip()
+
+
+def _xml_nested_count(element: ET.Element, path: tuple[str, ...]) -> int:
+    current = element
+    for part in path[:-1]:
+        child = _xml_child(current, part)
+        if child is None:
+            return 0
+        current = child
+    return sum(1 for child in list(current) if _xml_local_name(child.tag) == path[-1])
+
+
+def _xml_profile_repository_count(element: ET.Element) -> int:
+    profiles = _xml_child(element, "profiles")
+    if profiles is None:
+        return 0
+    count = 0
+    for profile in list(profiles):
+        if _xml_local_name(profile.tag) != "profile":
+            continue
+        repositories = _xml_child(profile, "repositories")
+        if repositories is not None:
+            count += sum(1 for child in list(repositories) if _xml_local_name(child.tag) == "repository")
+        plugin_repositories = _xml_child(profile, "pluginRepositories")
+        if plugin_repositories is not None:
+            count += sum(1 for child in list(plugin_repositories) if _xml_local_name(child.tag) == "pluginRepository")
+    return count
 
 
 def _xml_local_name(tag: str) -> str:
