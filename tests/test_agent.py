@@ -10,6 +10,7 @@ from unittest.mock import patch
 from local_agent.agent import AgentRuntime
 from local_agent.agent import _resolve_compaction_threshold_chars
 from local_agent.config import AgentConfig
+from local_agent.protocol.events import ListEventSink
 
 
 class _FailingClient:
@@ -434,6 +435,51 @@ class _UnexpectedRegistry:
 
 
 class AgentRuntimeTests(unittest.TestCase):
+    def test_runtime_emits_protocol_events_and_records_event_v1(self) -> None:
+        _ReadFileThenFinalClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            (workspace / "README.md").write_text("# Demo\n\nhello\n", encoding="utf-8")
+            state_dir = workspace / "state"
+            sink = ListEventSink()
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=workspace,
+                state_dir=state_dir,
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _ReadFileThenFinalClient):
+                runtime = AgentRuntime(config, show_tool_logs=False, event_sink=sink)
+                result = runtime.run("先读取 README，再回答")
+
+            records = [json.loads(line) for line in runtime._session.path.read_text(encoding="utf-8").splitlines()]
+
+        event_types = [event.type for event in sink.events]
+        self.assertEqual(result, "done with evidence")
+        self.assertIn("SessionStarted", event_types)
+        self.assertIn("UserMessage", event_types)
+        self.assertIn("LlmRequest", event_types)
+        self.assertIn("AssistantMessage", event_types)
+        self.assertIn("ToolStarted", event_types)
+        self.assertIn("ToolOutput", event_types)
+        self.assertIn("ToolFinished", event_types)
+        self.assertIn("SessionFinished", event_types)
+        self.assertTrue(all(event.session_id == runtime._session.session_id for event in sink.events))
+        self.assertTrue(any(event.run_id for event in sink.events if event.type != "SessionStarted"))
+        self.assertTrue(
+            any(
+                record.get("event") == "event_v1"
+                and record.get("payload", {}).get("type") == "ToolStarted"
+                and record.get("payload", {}).get("payload", {}).get("name") == "read_file"
+                for record in records
+            )
+        )
+
     def test_runtime_state_dir_keeps_sessions_and_todos_out_of_workspace(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp).resolve()

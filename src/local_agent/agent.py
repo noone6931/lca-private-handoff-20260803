@@ -5,7 +5,6 @@ import json
 from datetime import datetime, timezone
 from dataclasses import dataclass, replace
 from pathlib import Path
-import sys
 import time
 from typing import Any
 
@@ -16,6 +15,11 @@ from .llm import OpenAICompatibleClient
 from .patch.anchored import display_workspace_path
 from .patch.anchored import PatchError
 from .patch.anchored import resolve_workspace_path
+from .protocol.events import AgentEvent
+from .protocol.events import EventEmitter
+from .protocol.events import EventSink
+from .protocol.events import NullEventSink
+from .protocol.events import StderrEventSink
 from .session.jsonl_store import JsonlSessionStore
 from .state import default_config_root
 from .tools import create_default_registry
@@ -266,9 +270,9 @@ class AgentRuntime:
         show_tool_logs: bool = True,
         session_id: str | None = None,
         continue_session: bool = False,
+        event_sink: EventSink | None = None,
     ):
         self._config = config
-        self._show_tool_logs = show_tool_logs
         self._client = OpenAICompatibleClient(config)
         self._registry = create_default_registry()
         self._session_tool_approval: dict[str, str] = {}
@@ -302,6 +306,12 @@ class AgentRuntime:
             session_id=session_id,
             continue_recent=continue_session,
         )
+        sink = event_sink if event_sink is not None else StderrEventSink() if show_tool_logs else NullEventSink()
+        self._events = EventEmitter(
+            session_id=self._session.session_id,
+            sink=sink,
+            recorder=self._record_event_v1,
+        )
         self._user_config_dir = default_config_root()
         system_prompt = _system_prompt_with_startup_context(
             config.workspace,
@@ -323,10 +333,18 @@ class AgentRuntime:
             tool_approval=config.tool_approval,
             session_tool_approval=self._session_tool_approval,
         )
-        if self._show_tool_logs:
-            print(f"[session] {self._session.session_id}", file=sys.stderr)
+        self._events.emit(
+            "SessionStarted",
+            {
+                "workspace": str(config.workspace),
+                "state_dir": str(self._state_dir),
+                "provider": config.provider,
+                "continued": bool(continue_session or session_id),
+            },
+        )
 
     def run(self, prompt: str) -> str:
+        self._events.start_run()
         deadline = (
             time.monotonic() + self._config.budget_seconds
             if self._config.budget_seconds is not None
@@ -341,6 +359,7 @@ class AgentRuntime:
         self._temporary_tool_allowlist = None
         self._messages.append({"role": "user", "content": model_prompt})
         self._session.append("user", {"content": prompt})
+        self._events.emit("UserMessage", {"content": prompt})
         if model_prompt != prompt:
             self._session.append("workflow_nudge", {"content": WORKFLOW_NUDGE})
         self._read_file_drift_guard_enabled = _should_guard_repeated_read_file(prompt)
@@ -364,6 +383,15 @@ class AgentRuntime:
             self._session.append("llm_request", {"step": step})
             messages_for_model = self._messages_for_model(deadline)
             tools_for_model = self._tools_for_model()
+            self._events.emit(
+                "LlmRequest",
+                {
+                    "step": step,
+                    "message_count": len(messages_for_model),
+                    "tool_schema_count": len(tools_for_model),
+                    "force_final_answer": self._force_final_answer_without_tools,
+                },
+            )
             force_final_answer = self._force_final_answer_without_tools
             self._force_final_answer_without_tools = False
             response = self._client.chat(
@@ -376,6 +404,7 @@ class AgentRuntime:
             message = {**response.message, "role": "assistant"}
             self._messages.append(message)
             self._session.append("assistant", message)
+            self._events.emit("AssistantMessage", _assistant_event_payload(message))
 
             tool_calls = message.get("tool_calls") or []
             if getattr(response, "finish_reason", None) == "length":
@@ -1248,6 +1277,13 @@ class AgentRuntime:
         self._session.append("final", {"content": content})
         run_messages = self._messages[run_start_index:]
         self._maybe_consolidate_session_memory(run_messages, content, deadline)
+        self._events.emit(
+            "SessionFinished",
+            {
+                "content": content,
+                "reason": "final",
+            },
+        )
         return content
 
     def _maybe_consolidate_session_memory(
@@ -1395,6 +1431,13 @@ class AgentRuntime:
     def _stop_for_interrupt(self) -> str:
         content = "Stopped after user interrupt."
         self._session.append("final", {"content": content})
+        self._events.emit(
+            "SessionFinished",
+            {
+                "content": content,
+                "reason": "interrupt",
+            },
+        )
         return content
 
     def _length_stop_tool_message(self) -> str:
@@ -1429,6 +1472,17 @@ class AgentRuntime:
                 "useless": bool(useless and not is_error),
             },
         )
+        self._events.emit(
+            "ToolOutput",
+            {
+                "tool_call_id": tool_call.get("id"),
+                "name": name,
+                "is_error": is_error,
+                "useless": bool(useless and not is_error),
+                "content_length": len(content),
+                "content_preview": _event_preview(content),
+            },
+        )
         self._messages.append(
             {
                 "role": "tool",
@@ -1448,18 +1502,40 @@ class AgentRuntime:
             self._append_tool_result(tool_call, name, result, is_error=True)
 
     def _log_tool_start(self, name: str, arguments: Any) -> None:
-        if not self._show_tool_logs:
-            return
-        rendered = str(arguments)
-        if len(rendered) > 1000:
-            rendered = rendered[:1000] + "...<truncated>"
-        print(f"[tool:start] {name} {rendered}", file=sys.stderr)
+        self._events.emit("ToolStarted", {"name": name, "arguments": arguments})
 
     def _log_tool_end(self, name: str, is_error: bool, content_length: int) -> None:
-        if not self._show_tool_logs:
-            return
-        status = "error" if is_error else "ok"
-        print(f"[tool:end] {name} {status} ({content_length} chars)", file=sys.stderr)
+        self._events.emit(
+            "ToolFailed" if is_error else "ToolFinished",
+            {"name": name, "content_length": content_length},
+        )
+
+    def _record_event_v1(self, event: AgentEvent) -> None:
+        self._session.append("event_v1", event.to_dict())
+
+
+def _assistant_event_payload(message: dict[str, Any]) -> dict[str, Any]:
+    tool_calls = message.get("tool_calls") or []
+    return {
+        "content": message.get("content") or "",
+        "tool_calls": [_tool_call_event_payload(tool_call) for tool_call in tool_calls if isinstance(tool_call, dict)],
+    }
+
+
+def _tool_call_event_payload(tool_call: dict[str, Any]) -> dict[str, Any]:
+    function = tool_call.get("function") or {}
+    return {
+        "id": tool_call.get("id"),
+        "name": function.get("name") or "",
+        "arguments_preview": _event_preview(function.get("arguments") or ""),
+    }
+
+
+def _event_preview(value: Any, limit: int = 1200) -> str:
+    rendered = str(value)
+    if len(rendered) <= limit:
+        return rendered
+    return rendered[:limit] + "...<truncated>"
 
 
 def _estimate_message_chars(messages: list[dict[str, Any]]) -> int:

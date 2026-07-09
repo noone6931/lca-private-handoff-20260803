@@ -30,7 +30,7 @@
 
 ## 当前进度
 
-当前项目处于 P7 轻量高级能力阶段：P5 的安全与恢复增强 MVP 已收口；P6 默认工作流 MVP 已落地，用户可以用自然语言描述任务，而不是每次手写 `list_files/read_file/dry_run/run_tests/git_diff` 工具顺序。本轮已补 OMP 风格 auto summary、多语言轻量 LSP、multi-root `--allow-dir`、workspace roots 注入、Markdown memory 启动注入、`learn` 工具、可选 session memory consolidation、authored skills discovery、重复工具调用熔断、duplicate-tool forced-final steering、tool result pruning、todo steering、跨项目 `--env-file` / launcher 安装目录 `.env` 加载、OMP 风格用户级 `--state-dir` runtime state 分层，以及 Evidence Ledger 证据账本。2026-07-09 已完成 P7 阶段回顾、T-072 首轮真实需求实现压测、T-073 轻量 relevance gate / reviewer 和 T-074 实现质量 gate / safe new-file policy；T-074 复跑 session `20260709T025706579604Z` 已避免 comment-only 伪实现和未授权新文件降级，模型在证据不足时选择诚实停止，但暴露 no-edit 停止路径仍可能跳过 todo/git_diff 收束。
+当前项目进入 P8 前端协议与交互基础阶段：P5 的安全与恢复增强 MVP 已收口；P6 默认工作流 MVP 已落地，用户可以用自然语言描述任务，而不是每次手写 `list_files/read_file/dry_run/run_tests/git_diff` 工具顺序；P7 已完成 OMP 风格 auto summary、多语言轻量 LSP、multi-root `--allow-dir`、workspace roots 注入、Markdown memory 启动注入、`learn` 工具、可选 session memory consolidation、authored skills discovery、重复工具调用熔断、duplicate-tool forced-final steering、tool result pruning、todo steering、跨项目 `--env-file` / launcher 安装目录 `.env` 加载、OMP 风格用户级 `--state-dir` runtime state 分层、Evidence Ledger、relevance gate、implementation-quality gate 和 no-edit final hygiene。2026-07-09 已完成 T-076 Event/Command Protocol v1：Runtime 开始产出 typed events，CLI 的 session/tool 日志由 `StderrEventSink` 渲染，session JSONL 追加 `event_v1` 供后续 replay。
 
 已具备的核心能力：
 
@@ -43,7 +43,7 @@
 - `apply_patch` 已支持 `replace`、`insert_before`、`insert_after`，并兼容 Python 3.12。
 - 非交互审批、LLM 非 JSON 响应、session 恢复坏尾部、search_code 绝对路径泄漏等问题已经修复。
 - 已完成 Agent 自举测试：能够通过百炼模型调用工具读取、修改、测试和查看 diff。
-- 测试基线：164 个测试在正常本地环境通过。
+- 测试基线：171 个测试在正常本地环境通过。
 
 当前已具备：
 
@@ -81,6 +81,9 @@
 - Evidence Ledger 已落地：runtime 从工具结果中央提炼本轮短证据账本，provider request 注入 `[Evidence ledger]`，并写入 session JSONL `evidence` 事件，帮助最终回答区分证据事实和推断。
 - T-073 relevance gate / reviewer 已落地：真实 `apply_patch` 写入前会检查目标文件是否已被本轮 `read_file` 读取；代码实现任务若要修改部署/配置类低相关路径且用户未提配置，会返回 tool error 要求重新定位或确认；workspace-root evidence 会进入 Evidence Ledger；`git_diff` 会对本轮 patch 触及低相关路径追加 `[diff reviewer]` 提醒；patch log 对 workspace 内绝对路径归一为相对路径，修正 attribution 对不齐问题。
 - T-074 implementation-quality reviewer / safe new-file policy 已落地：`git_diff` 会对本轮 comment-only 代码实现 patch 追加 `[diff reviewer]`，禁止把注释/文档改动包装成行为、校验、解析或测试覆盖变化；`write_file dry_run=true` 可预览新文件 diff，真实创建会写 patch log，`rollback_patch` 可删除本 session 创建的新文件。
+- T-075 no-edit final hygiene 已落地：实现任务如果准备以“无法安全实现/当前仓库不包含目标服务/未修改文件”等 no-edit 结论结束，但尚未做 git/todo 收束，runtime 会追加 steering，并临时只暴露 `todo_read` / `todo_add` / `todo_update` / `git_status` / `git_diff`，让停止路径也可审计。
+- T-076 Event/Command Protocol v1 已落地：`src/local_agent/protocol/events.py` / `commands.py` 提供 dataclass event/command shape；`AgentRuntime` 支持注入 `EventSink`，并把关键运行事件写入 session JSONL 的 `event_v1`；现有 CLI 仍保持原样输出。
+- Terminal Frontend 选型已定：第一版不是 fullscreen 重 TUI，而是 terminal-native interactive frontend；使用 `prompt_toolkit` 负责输入、`rich` 负责结构化输出，并复用 T-076 的事件/命令协议。
 
 真实缺口：
 
@@ -95,8 +98,9 @@
 - 百炼真实小改复测会话 `20260707T094246132064Z` 已验证 todo、dry_run、apply_patch、session allow、rollback、run_tests、git_diff 主链路可跑通；最终仅新增一个测试 docstring。
 - 还没有基于模型 context window 的精确 token 预算；当前用字符窗口近似 OMP reserve 策略。
 - 还没有完整 OMP ToolChoiceQueue；当前只为 allowed-dir 需求文档读取实现了轻量 soft tool requirement，其余场景仍用 system/tool 描述、runtime reminder、todo reminder、pruning、重复工具熔断、forced-final steering 和 relevance gate 做本地版。T-073 复跑暂未证明必须立即上完整 ToolChoiceQueue。
-- T-074 复跑说明：当当前仓库不包含需求所属服务时，模型已能停止并说明 `crcl-open` 只是 `zqyl-investment-plan` 调用方；但 no-edit 停止路径没有严格维护 todo，也没有调用 `git_diff` 证明无改动。下一步补 no-edit final hygiene，或接入真实目标服务继续跨项目实现压测。
+- 目标服务接入/真实实现压测仍保留为后续任务：T-075 已补 no-edit 收束规范；后续用户会给项目边界定义，再让 LCA 分析具体需要哪些项目，随后接入目标项目做需求实现设计。
 - LSP 目前是多语言轻量静态工具，不是完整 LSP server，不支持 rename / code action / DAP。
+- Terminal Frontend 尚未实现；当前 CLI 仍直接调用 `AgentRuntime.run()`，但 session/tool 日志已由事件 sink 渲染，后续需要把输入、多行编辑、审批显示、diff/todo 输出接到同一事件流。
 - provider 请求失败发生在 assistant tool_call 之前，当前会以 `LlmError` 停止；后续可继续优化用户提示。
 
 ## 阶段路线图
@@ -110,7 +114,8 @@
 | P4 | 上下文治理 | 已完成 MVP 版 | 初版 summary / compaction、工具输出折叠、长需求文件工作流。 |
 | P5 | 安全与恢复增强 | 已完成并收口 | synthetic tool result、patch preview、回滚策略、非信任仓库提示、OMP 风格 approval model、approval prompt deadline cancel；真实小改复测通过。 |
 | P6 | 日用体验与默认工作流固化 | 已完成 MVP 版 | OMP 默认工作流本地化：system prompt、工具描述、轻量 runtime nudge。 |
-| P7 | 高级工程能力轻量版 | 进行中 | 已完成 OMP 风格 auto summary、多语言轻量 LSP、LSP 兼容别名、multi-root workspace roots 与工具观察提示、allowed-dir soft tool requirement、Markdown memory 启动注入、learn、可选 memory consolidation、authored skills discovery、综合压测记录、重复工具调用熔断、duplicate-tool forced-final steering、同文件切片读取漂移 guard、search_code 空搜索词跨路径 guard、path escape roots hint、LSP 空 query guard、Current task contract、Evidence Ledger、tool result pruning、todo steering、跨项目 env-file、用户级 `--state-dir` runtime state 分层、relevance gate、implementation-quality reviewer 和 safe new-file policy；path-scoped rules、DAP、TUI、subagents、完整 reviewer、AST edit、managed skills 继续后置。 |
+| P7 | 高级工程能力轻量版 | 已完成 MVP 版 | 已完成 OMP 风格 auto summary、多语言轻量 LSP、LSP 兼容别名、multi-root workspace roots 与工具观察提示、allowed-dir soft tool requirement、Markdown memory 启动注入、learn、可选 memory consolidation、authored skills discovery、综合压测记录、重复工具调用熔断、duplicate-tool forced-final steering、同文件切片读取漂移 guard、search_code 空搜索词跨路径 guard、path escape roots hint、LSP 空 query guard、Current task contract、Evidence Ledger、tool result pruning、todo steering、跨项目 env-file、用户级 `--state-dir` runtime state 分层、relevance gate、implementation-quality reviewer、safe new-file policy 和 no-edit final hygiene；path-scoped rules、DAP、subagents、完整 reviewer、AST edit、managed skills 继续后置。 |
+| P8 | 前端协议与交互基础 | 进行中 | T-076 已完成 Event/Command Protocol v1、EventSink、CLI stderr renderer 和 session `event_v1`；下一步做 terminal-native frontend，而不是 fullscreen 重 TUI。 |
 
 ## 已完成功能
 
@@ -162,7 +167,8 @@
 | Todo Steering | 已完成 MVP 版 | 未完成 todo 会作为 runtime reminder 注入发送给模型的 system context，即使未触发 compaction 也能帮助模型保持方向。 |
 | Evidence Ledger | 已完成 MVP 版 | `src/local_agent/agent.py` 从工具结果提炼短证据记录，注入 provider-bound `[Evidence ledger]`，并写 session `evidence` 事件；测试覆盖 read_file 后账本注入。 |
 | Synthetic Tool Result | 已完成 MVP 版 | deadline 到期、用户中断、`finish_reason=length` 时会补齐剩余 tool_call 的 tool result。 |
-| 测试基线 | 已完成 | 本地正常环境下 164 个测试通过。 |
+| Event/Command Protocol | 已完成 MVP 版 | `src/local_agent/protocol/events.py` / `commands.py` 定义 dataclass event/command；Runtime 通过 `EventSink` 产出事件，CLI 通过 `StderrEventSink` 渲染 session/tool 日志；session JSONL 写入 `event_v1`。 |
+| 测试基线 | 已完成 | 本地正常环境下 171 个测试通过。 |
 
 ## 下一步 Todo
 
@@ -180,7 +186,7 @@
 | T-010 | 初版 context summary / compaction | 已完成 | P3 | 已实现本地确定性 compaction；超过字符预算时折叠早期历史并注入未完成 todo。 |
 | T-011 | synthetic tool result | 已完成 MVP 版 | P3 | deadline 到期、用户中断和模型 `length` 截断已补齐 tool_call 配对。 |
 | T-012 | patch preview / rollback | 已完成 MVP 版 | P4 | 已完成 `dry_run` 预览和 session 级 hash 校验 rollback。 |
-| T-013 | 评估 LSP / TUI / subagents / AST edit | 已部分完成 | P5/P7 | 轻量 LSP 已做；TUI、subagents、AST edit、DAP 继续后置。 |
+| T-013 | 评估 LSP / TUI / subagents / AST edit | 已部分完成 | P5/P7 | 轻量 LSP 已做；fullscreen 重 TUI、subagents、AST edit、DAP 继续后置；轻量 Terminal Frontend 已拆为 T-076/T-077。 |
 | T-014 | 固化 OMP 核心架构笔记 | 已完成 | P1 | 已新增 `docs/omp-core-architecture-notes.md`，避免重复翻 OMP 源码。 |
 | T-015 | 简化一键启动命令 | 已完成 | P1 | 已新增 `./agent`；支持 `.env` token；默认当前目录为 workspace。 |
 | T-016 | 细化 budget deadline 执行检查 | 已完成 | P1 | LLM/tool timeout 使用剩余预算；到期时为未执行工具补 synthetic result。 |
@@ -230,7 +236,9 @@
 | T-072 | 真实需求实现压测 | 首轮完成但未通过 | P7 | session `20260709T013441841983Z` 读取真实需求后漂移到 `deployMessage/nacos`，修改无关 Redis 配置并错误声称 worktree 无 `pom.xml/src`；问题已记录到 `docs/pressure-test-2026-07-09.md`。 |
 | T-073 | 轻量 reviewer / pre-edit relevance gate | 已完成并复跑 | P7/P8 | 已新增真实写入前 relevance gate、workspace-root evidence、`git_diff` reviewer 和 patch log 相对路径归一；复跑 session `20260709T021349259159Z` 未再触碰 `deployMessage/nacos`，也未再声称无 `pom.xml/src`。 |
 | T-074 | 真实实现质量 gate / safe new-file policy | 已完成并复跑 | P7/P8 | 已新增 comment-only 代码实现 reviewer、`write_file dry_run=true` 新文件预览、创建文件 patch log 和 rollback 删除；复跑 session `20260709T025706579604Z` 未再产生 comment-only patch，也未因新文件权限降级乱改，而是在证据不足时停止说明功能属于 `zqyl-investment-plan`。 |
-| T-075 | no-edit final hygiene / 跨服务目标接入 | 下一步 | P7/P8 | T-074 复跑证明安全停止有效，但未严格维护 todo，也未调用 `git_diff` 证明无改动；下一步补 no-edit 停止路径的收束规范，或把真实目标服务作为 `--cwd/--allow-dir` 接入继续实现压测。 |
+| T-075 | no-edit final hygiene / 跨服务目标接入 | 已完成 MVP 版 | P7/P8 | 已新增 no-edit final hygiene provider context 和 runtime steering：实现任务准备无改动停止时，如果缺 git/todo 收束，会临时只开放 todo/git 收束工具；测试覆盖 provider context 和过早 final 被 steering 到 todo_add + git_status。下一步把真实目标服务作为 `--cwd/--allow-dir` 接入继续压测。 |
+| T-076 | Event/Command Protocol v1 | 已完成 MVP 版 | P8 | 新增 dataclass 事件和命令协议：`event_id/session_id/run_id/seq/timestamp/type/payload`；Runtime 通过 EventSink 产出事件，CLI 先作为消费者打印，session JSONL 可重放关键事件；暂不引入 Pydantic。 |
+| T-077 | Terminal Frontend MVP | 下一步 | P8 | 第一版是 terminal-native interactive frontend，不是 fullscreen TUI；使用 `prompt_toolkit` 做输入、多行编辑、历史和快捷键，`rich` 做 assistant/tool/diff/error/todo/approval 输出；保留原生 scrollback，不用 Rich Live 做主渲染。 |
 
 ## 风险清单
 
@@ -268,7 +276,9 @@
 | R-030 | 过早补完整 reviewer / ToolChoiceQueue 会增加复杂度但未必命中当前痛点 | 开放并受控 | OMP 的 reviewer、subagents、ToolChoiceQueue 很强，但 LCA 当前还缺真实实现压测的失败样本；提前完整搬入可能拖慢 MVP 验证。 | 先按 `docs/stage-review-2026-07-09.md` 进入真实需求实现压测；只有压测暴露工具选择失控或 review 质量问题时，再按 OMP 方式定向裁剪。 |
 | R-031 | 真实实现任务可能产生无关 patch | 已缓解，继续观察 | T-072 session `20260709T013441841983Z` 读取正确需求后漂移到 Nacos/Redis 配置，并把无关注释当成实现锚点；这说明 dry_run/hash 校验只能保证位置正确，不能保证业务相关。 | 已完成 T-073：真实写入前要求目标文件已读；代码实现任务修改部署/配置类低相关路径会被拦截或要求用户确认；workspace-root evidence 进入 Evidence Ledger；`git_diff` 增加 reviewer 提示。T-073 复跑未再触碰 `deployMessage/nacos`。 |
 | R-032 | 真实实现可能退化成低价值注释 patch | 已缓解并复跑 | T-073 复跑 session `20260709T021349259159Z` 中模型定位到相关 Java 文件，但因 `write_file` 被 deny，最终只给 DTO 字段补 JavaDoc；这不能算真实业务实现。 | T-074 已补 implementation-quality reviewer：本轮代码 diff 若只有注释/文档改动，`git_diff` 会提醒不能声称行为、校验、解析或测试覆盖变化。复跑 session `20260709T025706579604Z` 没有再做 comment-only patch，而是在当前仓库缺目标实现时停止说明。 |
-| R-033 | no-edit 停止路径可能跳过收束工具 | 新增，中 | T-074 复跑中模型正确停止，但没有维护 todo，也没有调用 `git_diff` 输出“无改动”证据；这会降低最终报告的可审计性。 | 下一步 T-075 参考 OMP current task / tool-choice steering 思路：当实现任务选择 no-edit stop 时，仍要求输出 open todo 状态、git status/diff 或明确说明为何无须验证；必要时 runtime 注入 no-edit final hygiene reminder。 |
+| R-033 | no-edit 停止路径可能跳过收束工具 | 已关闭 MVP 版 | T-074 复跑中模型正确停止，但没有维护 todo，也没有调用 `git_diff` 输出“无改动”证据；这会降低最终报告的可审计性。 | T-075 已参考 OMP current task / tool-choice steering 思路落地：no-edit stop 前缺 git/todo 收束会被 runtime steering 纠偏，并临时限制工具到 todo/git hygiene 集合。 |
+| R-034 | 过早做 fullscreen 重 TUI 可能拖慢核心能力 | 新增，中 | 如果把第一版前端理解成 Textual/fullscreen/pane/mouse/overlay，容易提前引入 scrollback、copy/paste、resize、输入法和渲染刷新问题。 | 第一版明确命名为 Terminal Frontend：`prompt_toolkit` 只管输入，`rich` 只管结构化输出，保留原生 terminal scrollback；先做 Event/Command Protocol，后续有真实瓶颈再升级 Textual/Bubble Tea/Ratatui/自研 renderer。 |
+| R-035 | Runtime 与前端输出耦合会阻碍后续终端体验 | 已关闭 MVP 版 | 如果工具日志、审批显示和最终输出继续散落在 Runtime/CLI print 中，后续 `prompt_toolkit + rich` 前端会难以复用和 replay。 | T-076 已参考 OMP runtime/TUI 分层思路，落地 dataclass Event/Command Protocol 和 `EventSink`；Runtime 产出 typed events，CLI 只是第一消费者。 |
 
 ## 架构决策
 
@@ -288,7 +298,9 @@
 | ADR-019 | P7 后续先进入真实需求实现压测，reviewer / 完整 ToolChoiceQueue 条件触发。 | 阶段回顾显示当前主链路已具备低风险实战条件；完整 reviewer / ToolChoiceQueue 应根据真实实现压测暴露的问题裁剪，而不是在缺少失败样本时提前做重。 |
 | ADR-020 | T-073 优先做轻量 relevance gate / reviewer，不先做完整 ToolChoiceQueue。 | T-072 失败点是无关 patch 和反事实 workspace 判断；最小有效修复是写入前目标相关性检查、workspace-root evidence 和最终 diff reviewer。完整 ToolChoiceQueue 继续作为工具选择失控时的后补。 |
 | ADR-021 | T-074 先补实现质量 gate 和受控新文件策略，再决定是否上完整 ToolChoiceQueue。 | T-073 复跑证明 relevance gate 能挡无关目录漂移，但真实实现仍可能退化为 comment-only patch；T-074 已先解决“什么算有效实现”和“何时允许新文件”的 MVP 问题。 |
-| ADR-022 | 实现任务允许诚实停止，但 no-edit final 也要可审计。 | T-074 复跑证明“证据不足时停止”比强行注释 patch 更好；下一步需要让停止路径也保持 todo/git_diff/原因归档，而不是只靠最终文字。 |
+| ADR-022 | 实现任务允许诚实停止，但 no-edit final 也要可审计。 | T-074 复跑证明“证据不足时停止”比强行注释 patch 更好；T-075 已用 provider context + runtime steering 让停止路径保持 todo/git 证据，而不是只靠最终文字。 |
+| ADR-023 | 第一版前端定位为 Terminal Frontend，而不是 fullscreen TUI。 | 采用 `prompt_toolkit + rich`，但通过 dataclass Event/Command Protocol 与 Runtime 解耦；Runtime 不直接 import 前端库，前端只消费事件和发送命令。第一版保留原生 terminal scrollback，不做 Rich Live 主渲染、复杂 pane、mouse、overlay 或可交互 diff viewer。 |
+| ADR-024 | Runtime 先产出 replayable typed events，再做 Terminal Frontend。 | 已落地 T-076；参考 OMP runtime/TUI engine 分层，但本地化为 Python dataclass、`EventEmitter`、`EventSink` 和 session `event_v1`，不引入 Pydantic、异步队列或重 UI。 |
 | ADR-015 | 人工上下文按 AGENTS/RULES 分层。 | 参照 Claude Code 与 OMP 的上下文文件/Sticky rules 分层：`AGENTS.md` 作为启动背景，`RULES.md` 作为短规则每轮注入；二者不同于长期 memory 和 session summary。 |
 | ADR-016 | Session memory consolidation 默认关闭；开启后默认写 state memory。 | 这一步不同于只发给模型的 context compaction；默认 off 可以保护只读分析，开启后默认写用户级 state dir，只有显式 `memory_scope=project` 才写项目 `.local-agent/memory`。 |
 | ADR-003 | Excel 作为人工视图，Markdown 作为开发协作 Agent 可读事实源。 | 这套文档服务于开发 LCA 的过程；`.xlsx` 是二进制展示产物，不适合作为协作 Agent 的事实源。 |
@@ -302,10 +314,10 @@
 | 项目 | 结论 | 依据 |
 |---|---|---|
 | 主链路 | 通过 | 百炼真实小改复测已跑通 todo、dry_run、apply_patch、session allow、rollback、run_tests、git_diff。 |
-| 测试 | 通过 | P5 收口时 90 个 unittest、compileall、xlsx 检查、diff check 均通过；P7 当前代码已跑通 164 个 unittest、compileall 和 diff check。 |
+| 测试 | 通过 | P5 收口时 90 个 unittest、compileall、xlsx 检查、diff check 均通过；P8 当前代码已跑通 171 个 unittest、compileall 和 diff check。 |
 | 日用入口 | 通过 | README 已补只读分析和小改任务命令模板。 |
 | 开放风险 | 可接受 | shell 仍非沙箱、prompt injection 仍需靠审批和封闭 VM；token budget / output reserve / managed skills 留到后续评估。 |
-| 下一阶段 | P7 轻量高级能力真实压测后续 | 企业项目联网压测已获用户允许并由 Agent 代跑；跨项目 env-file、轻量 pruning / todo steering、memory consolidation、duplicate-tool forced-final steering、allowed-dir soft tool requirement、repeated read_file guard、空搜索词 guard、path escape roots hint、LSP 空 query guard、Current task contract、relevance gate 和 implementation-quality reviewer 已完成。下一步补 no-edit final hygiene，并继续用真实目标服务验证实现切片。 |
+| 下一阶段 | P7 轻量高级能力真实压测后续 | 企业项目联网压测已获用户允许并由 Agent 代跑；跨项目 env-file、轻量 pruning / todo steering、memory consolidation、duplicate-tool forced-final steering、allowed-dir soft tool requirement、repeated read_file guard、空搜索词 guard、path escape roots hint、LSP 空 query guard、Current task contract、relevance gate、implementation-quality reviewer 和 no-edit final hygiene 已完成。下一步继续用真实目标服务验证实现切片。 |
 
 ## 推荐工作流
 
@@ -340,6 +352,8 @@
 
 用户确认本文件后，建议按以下顺序继续：
 
-1. 执行 T-075：补 no-edit final hygiene，让“无法安全实现/目标服务缺失”的停止路径也维护 todo，并用 `git_status` / `git_diff` 或等价证据证明无改动。
-2. 接入真实目标服务继续压测：优先找到 `zqyl-investment-plan` 或对应投资方案服务目录，作为 `--cwd` 或 `--allow-dir` 与需求文档一起跑实现切片。
-3. 观察是否仍出现关键工具不用/乱用；若出现，再按 OMP 思路补更完整的 ToolChoiceQueue。
+1. 接入真实目标服务继续压测：优先找到 `zqyl-investment-plan` 或对应投资方案服务目录，作为 `--cwd` 或 `--allow-dir` 与需求文档一起跑实现切片。
+2. 复跑 T-074 同类 no-edit 场景，确认模型会先补 todo/git hygiene，再最终说明“当前仓库不是目标服务”。
+3. T-076 已完成：dataclass Event/Command Protocol 已落地，CLI 由事件 sink 驱动打印，并保留现有 `AgentRuntime.run()` 兼容入口。
+4. 执行 T-077：接入 `prompt_toolkit + rich` 的 Terminal Frontend MVP，保持 append-only transcript 和原生 scrollback。
+5. 观察是否仍出现关键工具不用/乱用；若出现，再按 OMP 思路补更完整的 ToolChoiceQueue。

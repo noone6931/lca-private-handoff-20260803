@@ -1,6 +1,6 @@
 # Local Coding Agent 架构设计
 
-更新时间：2026-07-08
+更新时间：2026-07-09
 
 本文档描述 `local-coding-agent` 当前架构基线，以及按技术成熟度划分的待加入能力。它是给后续实现者和协作 Agent 读取的架构视图；项目进度事实源仍以 `docs/project-status.md` 和 `docs/project-management.md` 为准。
 
@@ -50,14 +50,16 @@
 | 轻量代码导航 | `[MVP-已落地]` | Python、Java、JS、TS、Vue 的 symbols/definition/references/diagnostics。 | `src/local_agent/tools/lsp.py`。 |
 | 本地持久化 | `[CORE-已落地]` | JSONL session、patch log、todo、Markdown memory。 | runtime state 默认在用户级 state dir；显式项目 memory/skills 在 `.local-agent/`，自动 consolidation 默认写 state memory。 |
 | Memory / Skills | `[MVP-已落地]` | Markdown memory 启动注入、learn、可选 session memory consolidation 和 authored skills discovery 已落地；managed skills 待评估。 | `docs/memory-skills-implementation-plan.md`。 |
+| Frontend / Event Protocol | `[WIP-增强中]` | 把 CLI、Terminal Frontend 和未来 Remote/Web 与 Runtime 解耦。 | dataclass Event/Command Protocol、EventSink、session `event_v1` 和 CLI stderr renderer 已落地；轻量 terminal-native frontend 后续接入。 |
 | 项目管理视图 | `[CORE-已落地]` | Markdown 事实源和 Excel 人工视图。 | `docs/project-management.md`、同步脚本。 |
 
 ## 执行流程
 
 ```mermaid
 flowchart TD
-  U["User prompt / REPL"] --> CLI["CLI"]
-  CLI --> CFG["Config resolver"]
+  USER["User"] --> FE["Frontend: CLI / Terminal / Remote"]
+  FE --> CMD["Command Bus"]
+  CMD --> CFG["Config resolver"]
   CFG --> RT["Agent Runtime"]
   RT --> CTX["Context governance"]
   CTX --> LLM["OpenAI-compatible API"]
@@ -66,7 +68,9 @@ flowchart TD
   APR --> REG["Tool registry"]
   REG --> TOOLS["Local tools"]
   TOOLS --> RT
-  RT --> SESS["JSONL session in state dir"]
+  RT --> EV["Event Bus"]
+  EV --> FE
+  EV --> SESS["JSONL session in state dir"]
   RT --> PATCH["Patch log in state dir"]
   RT --> TODO["Session todo in state dir"]
   RT --> CTFILE["AGENTS.md context"]
@@ -77,8 +81,7 @@ flowchart TD
   RULES --> RT
   MEM --> RT
   MC --> MEM
-  SKILL["Skills directory"] -. "[NEXT] discovery" .-> RT
-  RT --> U
+  SKILL["Skills directory"] -. "[MVP] discovery" .-> RT
 ```
 
 ## 已落地能力矩阵
@@ -110,6 +113,7 @@ flowchart TD
 | Learn | `[MVP-已落地]` | `learn` 将可复用经验写入 `.local-agent/memory/learned.md`。 | tier=`write`，默认需要审批，不自动学习。 |
 | Memory consolidation | `[MVP-已落地]` | `--memory-consolidation auto|llm` 在一轮结束后抽取 session 中的长期经验；默认 `--memory-scope state` 写 state dir 的 `memory/*.md`，显式 `project` 才写 `.local-agent/memory/*.md`。 | 默认 `off`；坏 JSON、空结果、预算耗尽或本轮已显式写 memory 时不写入。 |
 | Authored skills discovery | `[MVP-已落地]` | 启动时扫描 `.local-agent/skills/<name>/SKILL.md`。 | 只注入 name、description 和 source path；正文按需用 `read_file` 读取。 |
+| Frontend boundary | `[WIP-增强中]` | CLI、Terminal Frontend 和未来 Remote/Web 通过 Command/Event 协议接入 Runtime。 | Runtime 已开始产出 typed events；现有 CLI 输出由 `StderrEventSink` 渲染，后续 Terminal Frontend 复用同一事件流。 |
 
 ## 待加入能力矩阵
 
@@ -117,11 +121,14 @@ flowchart TD
 |---|---|---|---|---|
 | Context token 预算 | `[NEXT-近期待加入]` | Context governance。 | 在字符预算外加入模型相关 token 估算，保留字符 fallback。 | 长上下文压测中 compaction 触发更接近真实 context window。 |
 | Path-scoped rules | `[NEXT-近期待加入]` | Context / Rules。 | 支持按路径/glob 生效的规则文件，避免全局 sticky rules 对无关目录造成噪音。 | 编辑匹配路径时规则可见；不匹配路径时不注入或只作为可读取提示。 |
+| Event Protocol v1 | `[MVP-已落地]` | `src/local_agent/protocol/events.py`。 | 使用 Python `dataclass` 定义 replayable events：`event_id`、`session_id`、`run_id`、`seq`、`timestamp`、`type`、`payload`；提供 `EventEmitter`、`EventSink`、`ListEventSink`、`StderrEventSink`。 | Runtime 已产出 `SessionStarted`、`UserMessage`、`LlmRequest`、`AssistantMessage`、`ToolStarted`、`ToolOutput`、`ToolFinished/ToolFailed`、`SessionFinished`；session JSONL 写入 `event_v1`；不引入 Pydantic。 |
+| Command Protocol v1 | `[MVP-已落地]` | `src/local_agent/protocol/commands.py`。 | 定义 `SubmitPrompt`、`ApproveTool`、`RejectTool`、`SetApprovalMode`、`SetToolApproval`、`CancelRun`、`InterruptTool`、`ContinueSession` 的 dataclass command shape。 | 命令对象和 `to_dict()` 已可测试复用；完整 runtime command handler 留给 Terminal Frontend 接入时补齐。 |
+| Terminal Frontend MVP | `[NEXT-近期待加入]` | `src/local_agent/frontends/terminal/`。 | 第一版选型为 `prompt_toolkit` + 可选 `rich`；定位是 terminal-native interactive frontend，不是 fullscreen TUI；保留原生 terminal scrollback，不做 OMP 级自研 renderer。 | `lca chat` 或等价入口能消费同一套 events，不影响现有 CLI。 |
 | Managed skills / autolearn | `[LATER-后续候选]` | Skills 子系统。 | 默认关闭；generated skills 与 authored skills 隔离，优先级最低，需审计。 | 不影响 authored skills，且能清楚区分人工与自动生成来源。 |
 | 完整外部 LSP adapter | `[LATER-后续候选]` | 可选后台进程层。 | 作为 light LSP 的增强，不替换当前静态工具；按语言和依赖可用性启用。 | 支持更准确定义、rename、code action，但无依赖时自动降级。 |
 | AST edit / refactor | `[LATER-后续候选]` | Patch 层增强。 | 先保留 anchored patch 主路径，再评估 Python/TS 局部 AST 修改。 | 能降低大规模重构误改率，同时保留 diff 和回滚。 |
 | Reviewer / planner 角色 | `[LATER-后续候选]` | Runtime 内部策略或未来 subagent。 | 先做单 Agent 的轻量 review prompt，不急于多 Agent 并发。 | 对高风险改动能给出更稳定的自检清单。 |
-| TUI | `[DEFER-暂缓]` | UI 层。 | 当前 CLI 足够验证核心能力；TUI 等稳定后再做。 | 需要明确日用交互痛点后再进入排期。 |
+| Remote/Web frontend | `[LATER-后续候选]` | `src/local_agent/frontends/remote/`。 | 等 Event/Command 协议稳定后再通过 JSONL replay 或 WebSocket 暴露；不进入第一版。 | CLI/Terminal Frontend 已证明协议可复用后，再接 remote/web。 |
 | DAP | `[DEFER-暂缓]` | 调试工具层。 | 依赖语言生态和进程管理，当前收益低于 LSP / memory。 | 有真实调试场景后再设计。 |
 | Browser / Web search | `[OUT-阶段外]` | 不加入第一阶段。 | 与封闭 VM、本地优先和无公网搜索目标冲突。 | 项目目标改变前不做。 |
 | MCP / 插件市场 | `[OUT-阶段外]` | 不加入第一阶段。 | 会扩大外部依赖和权限面。 | 等本地核心稳定后重新评估。 |
@@ -144,6 +151,80 @@ flowchart TD
 - 配置级 `prompt` 强制询问，不允许 session cache 绕过。
 - session reject 高于 session allow。
 - `yolo` 只跳过常规确认，仍受配置级 `prompt/deny` 和危险命令拒绝约束。
+
+### Frontend / Event Protocol
+
+下一阶段前端架构参考 OMP 的“runtime 与 TUI engine 分层”思路，但按 LCA 当前 Python Runtime 做本地化裁剪。T-076 已先落地协议与事件 sink，不急着引入 fullscreen UI：
+
+```text
+Frontend
+  -> Command Bus
+  -> AgentRuntime
+  -> Event Bus
+  -> Frontend
+```
+
+核心原则：
+
+- Runtime 只产出 typed events，不关心 CLI、Terminal Frontend 或未来 Remote/Web 如何渲染。
+- Frontend 只发送 typed commands 和渲染 events，不参与 Agent 决策、工具选择或上下文治理。
+- Runtime 不直接 import `rich`、`prompt_toolkit`、Textual、Bubble Tea 或 Ratatui。
+- 所有 terminal 输出集中到一个 renderer，避免 assistant delta、tool output 和用户输入互相冲掉。
+- 第一版保持 append-only terminal transcript，保留原生 scrollback、copy/paste 和终端选择能力。
+- 第一版不使用 fullscreen layout，不使用 Rich Live 作为主渲染循环，不做复杂 pane、mouse、overlay 或可交互 diff viewer。
+
+Event Protocol v1 使用 Python `dataclass`，暂不引入 Pydantic。公共字段已落地在 `src/local_agent/protocol/events.py`：
+
+```python
+@dataclass
+class BaseEvent:
+    event_id: str
+    session_id: str
+    run_id: str
+    seq: int
+    timestamp: float
+    type: str
+    payload: dict[str, object]
+```
+
+`seq` 从第一版就保留，用于 session replay、远程 UI 同步、日志审计、断线重连和调试事件顺序。
+
+第一版事件集合：
+
+- `UserMessage`
+- `AssistantDelta`
+- `AssistantMessage`
+- `ToolStarted`
+- `ToolOutput`
+- `ToolFinished`
+- `ToolFailed`
+- `ApprovalRequested`
+- `ApprovalResult`
+- `TodoUpdated`
+- `ContextUpdated`
+- `SessionStarted`
+- `SessionFinished`
+- `ErrorEvent`
+
+Command Protocol v1 至少包含：
+
+- `SubmitPrompt`
+- `ApproveTool`
+- `RejectTool`
+- `SetApprovalMode`
+- `SetToolApproval`
+- `CancelRun`
+- `InterruptTool`
+- `ContinueSession`
+
+当前 `src/local_agent/protocol/commands.py` 已先固化这些 command 的 dataclass 和 JSON shape；approval、cancel、continue 等具体 runtime command handler 会在 T-077 Terminal Frontend MVP 中逐步接入，避免在协议层一次性改造 runtime。
+
+第一版 Terminal Frontend 选型：
+
+- `prompt_toolkit` 负责输入层：多行编辑、历史、补全、快捷键和确认输入。
+- `rich` 负责输出层：assistant message、tool timeline、diff、error、todo、approval prompt 和 context summary。
+- 建议入口命名为 `lca chat` 或 `local-agent chat`，避免 `tui` 一词让实现者误以为要做 fullscreen 重 UI。
+- 后续只有当真实出现长会话渲染卡顿、复杂 pane/mouse、native binary 分发或 OMP 级终端控制需求时，才评估 Textual、Bubble Tea、Ratatui 或自研 renderer。
 
 ### Context Governance
 
@@ -277,4 +358,4 @@ rollback 只回滚当前 session 的 patch record，并要求当前文件仍匹�
 
 1. 用真实需求验证 multi-root、startup context/rules、startup memory、learn、memory consolidation、authored skills、auto summary 和 light LSP 的组合体验。
 2. 做 path-scoped rules 或 token 预算，取决于真实任务里先暴露的是规则噪音还是上下文预算问题。
-3. 最后再评估 managed skills、外部 LSP adapter、AST edit、reviewer/planner 和 TUI。
+3. 最后再评估 managed skills、外部 LSP adapter、AST edit、reviewer/planner 和更重的 TUI/Remote UI。
