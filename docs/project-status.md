@@ -30,7 +30,7 @@
 
 ## 当前进度
 
-当前项目已完成 P8 前端协议与交互基础 MVP，并进入 P9 真实需求使用准备：P5 的安全与恢复增强 MVP 已收口；P6 默认工作流 MVP 已落地，用户可以用自然语言描述任务，而不是每次手写 `list_files/read_file/dry_run/run_tests/git_diff` 工具顺序；P7 已完成 OMP 风格 auto summary、多语言轻量 LSP、multi-root `--allow-dir`、workspace roots 注入、Markdown memory 启动注入、`learn` 工具、可选 session memory consolidation、authored skills discovery、重复工具调用熔断、duplicate-tool forced-final steering、tool result pruning、todo steering、跨项目 `--env-file` / launcher 安装目录 `.env` 加载、OMP 风格用户级 `--state-dir` runtime state 分层、Evidence Ledger、relevance gate、implementation-quality gate 和 no-edit final hygiene。2026-07-09 已完成 T-076 Event/Command Protocol v1、T-077/T-080 Terminal Frontend MVP 与命令可发现性、T-078 项目边界分析 MVP、T-081 Claude review 行动计划、T-082 run summary / coverage MVP，并新增 T-083 真实需求压测模板。模型默认已切到 `qwen3-coder-next`，已完成 T-084 企业项目只读源码验证压测，并已落地 T-086 evidence-aware read repetition guard：Runtime 能产出 typed events，CLI/session/tool 日志和 terminal frontend 共用事件流，session JSONL 追加 `event_v1` 供后续 replay；analysis-only 任务不会套用代码实现类 hygiene，点名 authored skill 时会先软性要求读取对应 `SKILL.md`，最终回答结构不完整时会强制无工具重答；每轮结束会写入结构化 `run_summary`，用于压测复盘和 `/status` 展示。
+当前项目已完成 P8 前端协议与交互基础 MVP，并进入 P9 真实需求使用准备：P5 的安全与恢复增强 MVP 已收口；P6 默认工作流 MVP 已落地，用户可以用自然语言描述任务，而不是每次手写 `list_files/read_file/dry_run/run_tests/git_diff` 工具顺序；P7 已完成 OMP 风格 auto summary、多语言轻量 LSP、multi-root `--allow-dir`、workspace roots 注入、Markdown memory 启动注入、`learn` 工具、可选 session memory consolidation、authored skills discovery、重复工具调用熔断、duplicate-tool forced-final steering、tool result pruning、todo steering、跨项目 `--env-file` / launcher 安装目录 `.env` 加载、OMP 风格用户级 `--state-dir` runtime state 分层、Evidence Ledger、relevance gate、implementation-quality gate 和 no-edit final hygiene。2026-07-09 已完成 T-076 Event/Command Protocol v1、T-077/T-080 Terminal Frontend MVP 与命令可发现性、T-078 项目边界分析 MVP、T-081 Claude review 行动计划、T-082 run summary / coverage MVP，并新增 T-083 真实需求压测模板。模型默认已切到 `qwen3-coder-next`，已完成 T-084 企业项目只读源码验证压测，并已落地 T-085 todo 工具误参纠偏和 T-086 evidence-aware read repetition guard：Runtime 能产出 typed events，CLI/session/tool 日志和 terminal frontend 共用事件流，session JSONL 追加 `event_v1` 供后续 replay；analysis-only 任务不会套用代码实现类 hygiene，点名 authored skill 时会先软性要求读取对应 `SKILL.md`，最终回答结构不完整时会强制无工具重答；每轮结束会写入结构化 `run_summary`，用于压测复盘和 `/status` 展示。
 
 已具备的核心能力：
 
@@ -43,7 +43,7 @@
 - `apply_patch` 已支持 `replace`、`insert_before`、`insert_after`，并兼容 Python 3.12。
 - 非交互审批、LLM 非 JSON 响应、session 恢复坏尾部、search_code 绝对路径泄漏等问题已经修复。
 - 已完成 Agent 自举测试：能够通过百炼模型调用工具读取、修改、测试和查看 diff。
-- 测试基线：189 个测试在正常本地环境通过。
+- 测试基线：192 个测试在正常本地环境通过。
 
 当前已具备：
 
@@ -89,6 +89,7 @@
 - T-082 Run summary / coverage MVP 已落地：每轮结束写 session `run_summary` 和 typed `RunSummary` event，包含终止原因、耗时、LLM 请求数、工具调用/错误/无效结果、synthetic result、compaction、tool counts、guard hits 和 steering counts；`/status` 会显示最近一轮摘要。
 - T-083 真实需求范围确认到源码验证压测模板已落地：`docs/real-requirement-pressure-test-template.md` 把“范围判断 → 用户确认 → 源码只读验证 → 实现设计 → 小改压测 → run summary”固化成可复用模板。
 - T-084 qwen3-coder-next 只读源码验证压测已完成：session `20260709T071219747931Z` 从 `YXK-397 云信通用优化25.1` SQL 线索定位 `IntentionConfig*` 实体、Mapper、Controller 和 user-center 辅助文档，最终正常收束；新暴露 todo 参数误用、重复读取过多和最终回答轻微结构漂移问题。
+- T-085 todo 工具误参纠偏已落地：`todo_add` / `todo_update` 兼容压测中真实出现的 `key -> id`、`content -> task`，成功结果会提示下次使用规范参数；缺参、无更新字段、未知 id 会返回正确调用示例和已知 todo id。
 - T-086 evidence-aware read repetition guard 已落地：只读/分析任务中，同一路径同范围成功 `read_file` 多次后，后续重复读取会返回已有 evidence 摘要并触发 forced-final steering；编辑类任务仍不启用该 guard，避免影响实现前必要读取。
 
 真实缺口：
@@ -255,7 +256,7 @@
 | T-082 | Run summary / coverage MVP | 已完成 | P9 | Runtime 已记录 `run_summary` 和 `RunSummary` event，包含终止原因、耗时、LLM 请求数、工具调用/错误/无效结果、synthetic result、compaction、tool counts、guard hits 和 steering counts；`/status` 展示最近一轮摘要。 |
 | T-083 | 真实需求范围确认到源码验证压测模板 | 已完成 | P9 | 新增 `docs/real-requirement-pressure-test-template.md`，把真实需求从范围判断推进到源码验证和小改压测的步骤、命令、验收和问题记录固化下来。 |
 | T-084 | qwen3-coder-next 只读源码验证压测 | 已完成并记录问题 | P9 | session `20260709T071219747931Z` 正常收束：153 秒、35 次 LLM 请求、78 次工具调用、33 次 compaction、18 次 LLM summary；读到 YXK-397 SQL 并定位 `IntentionConfig*` 证据链。新增 PT-030~PT-032。 |
-| T-085 | todo 工具误参纠偏 | 候选 | P9 | T-084 中模型用 `key/content` 调 `todo_add`、用错误 id 调 `todo_update`；可在工具错误中返回正确示例，或兼容 `key -> id` / `content -> task`。 |
+| T-085 | todo 工具误参纠偏 | 已完成 | P9 | T-084 中模型用 `key/content` 调 `todo_add`、用错误 id 调 `todo_update`；已兼容 `key -> id` / `content -> task`，并在缺参、未知 id、无更新字段错误中返回正确示例。 |
 | T-086 | evidence-aware read repetition guard | 已完成 | P9 | T-084 中 `read_file` 54 次，多次重复读取同一路径但 `guard_hits=0`；已参考 OMP soft escalation/pruning，对同路径同范围成功读取超过阈值后返回 evidence 摘要并 forced-final。 |
 | T-087 | final structure / evidence hygiene 增强 | 候选 | P9 | T-084 最终把“项目表”退化为“表名表”，并对类作用有过度断言；需要 final gate 检查用户显式输出结构和 verified/inferred 标注。 |
 
@@ -385,7 +386,7 @@
 
 用户确认本文件后，建议按以下顺序继续：
 
-1. 优先做 T-085 和 T-087：todo 工具误参纠偏、final structure/evidence hygiene。
+1. 优先做 T-087：final structure / evidence hygiene 增强。
 2. 继续执行真实需求使用链路：基于用户给出的需求，先让 LCA 用服务边界圈项目范围；用户确认后再接具体项目源码做实现设计。
 3. 接入真实目标服务继续压测：优先找到 `zqyl-investment-plan` 或对应投资方案服务目录，作为 `--cwd` 或 `--allow-dir` 与需求文档一起跑实现切片。
 4. 观察是否仍出现关键工具不用/乱用；若出现，再按 OMP 思路补更完整的 ToolChoiceQueue 或 reviewer。

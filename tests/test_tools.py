@@ -17,7 +17,7 @@ from local_agent.tools.memory import learn, memory_read
 from local_agent.tools.search import list_files
 from local_agent.tools.search import search_code
 from local_agent.tools.shell import run_shell, run_tests
-from local_agent.tools.todo import todo_add, todo_read, todo_update
+from local_agent.tools.todo import todo_add, todo_read, todo_tools, todo_update
 
 
 class _FakeStdin:
@@ -1208,6 +1208,66 @@ class ToolTests(unittest.TestCase):
         self.assertFalse(workspace_todo_dir_exists)
         self.assertIn("[done] T1: Wire budget seconds", read.content)
         self.assertIn("covered by tests", read.content)
+
+    def test_todo_accepts_key_content_aliases_with_guidance(self) -> None:
+        registry = ToolRegistry(todo_tools())
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            context = ToolContext(
+                workspace=workspace,
+                approval_mode="yolo",
+                state_dir=workspace / "state",
+                session_id="session-1",
+            )
+
+            added = registry.execute(
+                "todo_add",
+                '{"key": "step1", "content": "Read requirement", "status": "in_progress"}',
+                context,
+            )
+            updated = registry.execute(
+                "todo_update",
+                '{"key": "step1", "content": "Summarize requirement", "status": "done"}',
+                context,
+            )
+            read = todo_read({}, context)
+
+        self.assertFalse(added.is_error)
+        self.assertFalse(updated.is_error)
+        self.assertIn("accepted todo compatibility alias", added.content)
+        self.assertIn("key -> id", added.content)
+        self.assertIn("content -> task", updated.content)
+        self.assertIn("[done] step1: Summarize requirement", read.content)
+
+    def test_todo_add_missing_arguments_returns_actionable_example(self) -> None:
+        registry = ToolRegistry(todo_tools())
+        with tempfile.TemporaryDirectory() as tmp:
+            context = ToolContext(workspace=Path(tmp).resolve(), approval_mode="yolo")
+            result = registry.execute("todo_add", "{}", context)
+
+        self.assertTrue(result.is_error)
+        self.assertIn("Missing required todo argument(s): id, task", result.content)
+        self.assertIn('todo_add {"id":"step-1","task":"Read the requirement"', result.content)
+
+    def test_todo_update_unknown_id_lists_known_ids_and_example(self) -> None:
+        registry = ToolRegistry(todo_tools())
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            context = ToolContext(
+                workspace=workspace,
+                approval_mode="yolo",
+                state_dir=workspace / "state",
+                session_id="session-1",
+            )
+
+            added = registry.execute("todo_add", '{"id": "T1", "task": "Read requirement"}', context)
+            result = registry.execute("todo_update", '{"id": "step1", "status": "done"}', context)
+
+        self.assertFalse(added.is_error)
+        self.assertTrue(result.is_error)
+        self.assertIn("Todo not found: step1", result.content)
+        self.assertIn("Known todo id(s): T1", result.content)
+        self.assertIn('todo_update {"id":"step-1","status":"done"', result.content)
 
     def test_learn_writes_learned_memory(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

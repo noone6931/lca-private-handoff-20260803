@@ -210,7 +210,7 @@ python3 scripts/sync_project_excel.py
 | T-082 | P1 | P9 | Run summary / coverage MVP | 已完成 | Agent | Claude review 和 OMP run-collector 思路都要求每轮可观测，压测复盘不能只靠最终文字 | Runtime 已记录 `run_summary` 和 `RunSummary` event，包含终止原因、耗时、LLM 请求数、工具调用/错误/无效结果、synthetic result、compaction、tool counts、guard hits 和 steering counts；`/status` 展示最近一轮摘要。 |
 | T-083 | P1 | P9 | 真实需求压测模板 | 已完成 | Agent | 真实需求链路需要可复用步骤，否则每次压测都靠聊天记忆 | 新增 `docs/real-requirement-pressure-test-template.md`，覆盖范围判断、用户确认、源码只读验证、实现设计、小改压测、run summary 和问题记录。 |
 | T-084 | P0 | P9 | qwen3-coder-next 只读源码验证压测 | 已完成并记录问题 | Agent | 切换编码模型后，需要验证真实企业项目只读链路是否仍能收束 | session `20260709T071219747931Z` 正常 final：153 秒、35 次 LLM 请求、78 次工具调用、33 次 compaction、18 次 LLM summary；读 YXK-397 SQL 并定位 `IntentionConfig*` 证据链；新增 PT-030~PT-032。 |
-| T-085 | P1 | P9 | todo 工具误参纠偏 | 候选 | Agent | T-084 中模型用 `key/content` 调 `todo_add`、用错误 id 调 `todo_update` | 工具错误返回正确参数示例；可选兼容 `key -> id`、`content -> task`，但继续提示规范 schema。 |
+| T-085 | P1 | P9 | todo 工具误参纠偏 | 已完成 | Agent | T-084 中模型用 `key/content` 调 `todo_add`、用错误 id 调 `todo_update` | 已兼容 `key -> id`、`content -> task`，成功结果提示下次使用规范参数；缺参、未知 id、无更新字段错误会返回正确示例和已知 todo id。 |
 | T-086 | P0 | P9 | evidence-aware read repetition guard | 已完成 | Agent | T-084 中 `read_file` 54 次，同一路径重复读但 `guard_hits=0` | 已参考 OMP pruning / soft escalation：只读/分析任务中，同路径同范围成功读取超过阈值后返回 evidence 摘要并触发 final-answer steering；编辑任务不启用该 guard。 |
 | T-087 | P1 | P9 | final structure / evidence hygiene 增强 | 候选 | Agent | T-084 最终把“项目表”退化成“表名表”，并对类作用有过度断言 | 增强 Current task contract / final gate，检查用户显式输出结构；类作用类结论必须标 verified 或 inferred。 |
 
@@ -294,12 +294,12 @@ python3 scripts/sync_project_excel.py
 
 | 项目 | 结论 | 依据 | 后续 |
 |---|---|---|---|
-| 阶段判断 | P9 真实需求使用准备进行中 | T-076/T-077 已让 Runtime 产出 typed events，并提供 terminal-native 交互入口；T-078 已把项目边界分析沉淀为本机 memory/skill 和通用 runtime gate；T-084 已完成新模型只读源码验证压测 | 先补 T-085~T-087，再继续真实需求“范围确认 → 源码验证 → 实现设计/小改” |
+| 阶段判断 | P9 真实需求使用准备进行中 | T-076/T-077 已让 Runtime 产出 typed events，并提供 terminal-native 交互入口；T-078 已把项目边界分析沉淀为本机 memory/skill 和通用 runtime gate；T-084 已完成新模型只读源码验证压测；T-085/T-086 已补 todo 参数纠偏和重复读收束 | 先补 T-087，再继续真实需求“范围确认 → 源码验证 → 实现设计/小改” |
 | 与 OMP 的主要差距 | 差距集中在高级工程化，不阻塞低风险实战 | 完整 ToolChoiceQueue、reviewer/subagents、完整 LSP/DAP、browser/TUI、AST edit、managed skills 仍后置 | 由压测失败形态触发 |
 | 已关闭风险 | P0/P1 runtime 风险已基本收口 | Python 3.12 patch、非交互审批、orphan tool_calls、max_steps、allowed-dir、重复工具、证据漂移、diff 混淆等均已有修复或缓解 | 继续用真实任务验证 |
 | reviewer 决策 | 先保留轻量实现质量 gate | T-074 已补 no-comment-only reviewer，复跑未再产生伪实现 | 继续用真实任务验证；若后续出现更复杂 patch 质量问题，再补完整 reviewer/subagent |
 | ToolChoiceQueue 决策 | 暂不先做完整 ToolChoiceQueue | 已有 allowed-dir soft requirement、duplicate forced-final、todo steering、pruning；还缺“关键工具长期不用/乱用”的新失败样本 | 若 T-072 暴露工具选择失控，再按 OMP 裁剪 ToolChoiceQueue |
-| 下一步 | 补齐 T-085~T-087 后继续真实需求链路 | T-084 已证明新模型能跑通只读链路，但暴露重复读、todo 参数和最终结构/证据卫生问题 | 先做小修小补，再进入用户真实需求的项目范围确认和源码验证 |
+| 下一步 | 补齐 T-087 后继续真实需求链路 | T-084 已证明新模型能跑通只读链路；重复读和 todo 参数问题已补，剩余重点是最终结构/证据卫生 | 先做 final gate 小修，再进入用户真实需求的项目范围确认和源码验证 |
 
 ## P7 综合压测问题
 
@@ -334,7 +334,7 @@ python3 scripts/sync_project_excel.py
 | PT-027 | P0 | 已缓解并复跑 | T-073 复跑中模型定位到相关 Java DTO，但 `write_file` 被 deny 后退化为只给字段补 JavaDoc，并把它包装成“健壮性/校验相关”实现。T-074 复跑未再产生 comment-only patch。 | OMP 可通过 reviewer、tool-choice queue、todo/plan consistency 和 verification 判断 patch 是否真正满足任务，而不是只看 patch 语法成功。 | 已新增 implementation-quality reviewer：本轮代码实现 diff 如果只有注释/文档，会提示不要声称行为/校验/解析/测试变化；复跑 session `20260709T025706579604Z` 选择停止而非伪实现。 |
 | PT-028 | P1 | 已缓解并复跑 | T-073 复跑曾尝试新增 validator 注解和目录，但 `shell=deny` / `write_file=deny` 使新文件路径被拦，导致模型降级。T-074 后新文件创建可先 dry-run，并能记录/回滚。 | OMP 的 permission model 支持按工具和上下文请求权限；新文件写入应由审批/策略控制，而非一概 deny。 | `write_file` 支持 `dry_run=true` 新文件 diff 预览；真实创建会记录 patch log；`rollback_patch` 可删除本 session 创建的新文件。复跑中未因新文件权限降级改注释。 |
 | PT-029 | P1 | 已关闭 MVP 版 | T-074 复跑中模型正确判断当前 `crcl-open` 只是 `zqyl-investment-plan` 调用方并停止，但没有维护 todo，也没有调用 `git_diff` 证明无改动。 | OMP 会持续注入 current task / todo / tool evidence，并通过 tool-choice steering 约束最终回答前的必要收束步骤。 | T-075 已实现 no-edit final hygiene：实现任务准备无改动停止时，会先要求 todo/git 收束；测试覆盖过早 final 被 steering 到 `todo_add` + `git_status`。 |
-| PT-030 | P1 | 新增 | T-084 中模型首次用 `key/content/status` 调 `todo_add`，后续又用错误 id 调 `todo_update`；任务最终完成，但 todo 台账不可靠。 | OMP 的高频状态工具需要强 schema 提示、UI 可见性和可行动错误。 | T-085 候选：工具错误返回正确调用示例；可选兼容 `key -> id`、`content -> task`，同时继续提示规范参数名。 |
+| PT-030 | P1 | 已缓解 | T-084 中模型首次用 `key/content/status` 调 `todo_add`，后续又用错误 id 调 `todo_update`；任务最终完成，但 todo 台账不可靠。 | OMP 的高频状态工具需要强 schema 提示、UI 可见性和可行动错误。 | T-085 已完成：兼容 `key -> id`、`content -> task`，同时继续提示规范参数名；未知 id 错误会列出已知 todo id 和正确调用示例。 |
 | PT-031 | P0 | 已缓解 | T-084 中 153 秒内调用 78 次工具，其中 `read_file` 54 次，同一批 SQL/Java/XML 文件多次重复读取，但 `guard_hits=0`、`steering_counts=0`。 | OMP 将 tool result pruning、soft escalation、task state 和 evidence sufficiency 组合，用小上限把低价值重复探索切回回答。 | T-086 已完成：同路径同范围成功读取多次后返回已读 evidence 摘要并触发 final-answer steering；只读/分析任务启用，编辑任务不启用。 |
 | PT-032 | P1 | 新增 | T-084 要求输出“必须关注/可能关注/暂不关注项目表”，最终变成“表名表”；对 `IntentionConfigApplication` 的作用也有过度断言。 | OMP 持续注入 current task contract 和 runtime evidence；成熟 reviewer/final check 会要求 verified fact 与 inference 分开。 | T-087 候选：增强 final structure gate 和 final evidence hygiene，检查显式输出结构，要求类作用类结论标 verified/inferred。 |
 
