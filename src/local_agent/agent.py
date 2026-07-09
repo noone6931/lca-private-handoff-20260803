@@ -95,6 +95,10 @@ READ_FILE_PATH_WINDOW = 14
 MAX_READ_FILE_SUCCESSES_PER_RANGE_IN_RUN = 3
 MAX_REPEATED_READ_FILE_GUARD_HITS = 4
 MAX_REPEATED_READ_FILE_FINAL_ANSWER_STEERS = 2
+MAX_SEMANTIC_EXPLORATIONS_PER_KEY_IN_RECENT_WINDOW = 4
+SEMANTIC_EXPLORATION_WINDOW = 20
+MAX_SEMANTIC_EXPLORATION_GUARD_HITS = 4
+MAX_SEMANTIC_EXPLORATION_STEERS = 2
 MAX_SOFT_TOOL_REQUIREMENT_STEERS = 3
 MAX_NO_EDIT_FINAL_HYGIENE_STEERS = 2
 MAX_FINAL_STRUCTURE_STEERS = 2
@@ -432,6 +436,7 @@ class AgentRuntime:
         self._recent_useless_search_pattern_keys: list[str] = []
         self._recent_useless_lsp_symbol_query_keys: list[str] = []
         self._recent_read_file_path_keys: list[str] = []
+        self._recent_semantic_exploration_keys: list[str] = []
         self._read_file_range_counts: dict[tuple[str, int, str], int] = {}
         self._duplicate_tool_guard_hits = 0
         self._duplicate_tool_final_answer_steers = 0
@@ -441,6 +446,8 @@ class AgentRuntime:
         self._useless_lsp_symbol_final_answer_steers = 0
         self._repeated_read_file_guard_hits = 0
         self._repeated_read_file_final_answer_steers = 0
+        self._semantic_exploration_guard_hits = 0
+        self._semantic_exploration_steers = 0
         self._no_edit_final_hygiene_steers = 0
         self._final_structure_steers = 0
         self._read_only_evidence_steers = 0
@@ -615,6 +622,7 @@ class AgentRuntime:
                 useless_search_hits_before = self._useless_search_pattern_guard_hits
                 useless_lsp_hits_before = self._useless_lsp_symbol_guard_hits
                 repeated_read_hits_before = self._repeated_read_file_guard_hits
+                semantic_exploration_hits_before = self._semantic_exploration_guard_hits
                 try:
                     result = self._execute_tool_with_repeat_guard(name, arguments, tool_context)
                 except KeyboardInterrupt:
@@ -639,6 +647,9 @@ class AgentRuntime:
                 useless_search_skipped = self._useless_search_pattern_guard_hits > useless_search_hits_before
                 useless_lsp_skipped = self._useless_lsp_symbol_guard_hits > useless_lsp_hits_before
                 repeated_read_skipped = self._repeated_read_file_guard_hits > repeated_read_hits_before
+                semantic_exploration_skipped = (
+                    self._semantic_exploration_guard_hits > semantic_exploration_hits_before
+                )
                 if repeated_read_skipped and self._steer_after_repeated_read_file():
                     self._append_synthetic_tool_results(
                         tool_calls[index + 1 :],
@@ -651,6 +662,18 @@ class AgentRuntime:
                         self._repeated_read_file_stop_message(),
                     )
                     return self._stop_for_repeated_read_file(deadline, run_start_index)
+                if semantic_exploration_skipped and self._steer_after_semantic_exploration():
+                    self._append_synthetic_tool_results(
+                        tool_calls[index + 1 :],
+                        self._semantic_exploration_stop_message(),
+                    )
+                    break
+                if self._semantic_exploration_guard_hits >= MAX_SEMANTIC_EXPLORATION_GUARD_HITS:
+                    self._append_synthetic_tool_results(
+                        tool_calls[index + 1 :],
+                        self._semantic_exploration_stop_message(),
+                    )
+                    return self._stop_for_semantic_exploration(deadline, run_start_index)
                 if useless_search_skipped and self._steer_after_useless_search_pattern():
                     self._append_synthetic_tool_results(
                         tool_calls[index + 1 :],
@@ -812,12 +835,14 @@ class AgentRuntime:
                 "useless_search_pattern": self._useless_search_pattern_guard_hits,
                 "useless_lsp_symbol": self._useless_lsp_symbol_guard_hits,
                 "repeated_read_file": self._repeated_read_file_guard_hits,
+                "semantic_exploration": self._semantic_exploration_guard_hits,
             },
             steer_start={
                 "duplicate_tool_final_answer": self._duplicate_tool_final_answer_steers,
                 "useless_search_pattern_final_answer": self._useless_search_pattern_final_answer_steers,
                 "useless_lsp_symbol_final_answer": self._useless_lsp_symbol_final_answer_steers,
                 "repeated_read_file_final_answer": self._repeated_read_file_final_answer_steers,
+                "semantic_exploration": self._semantic_exploration_steers,
             },
         )
 
@@ -875,6 +900,9 @@ class AgentRuntime:
             "repeated_read_file": (
                 self._repeated_read_file_guard_hits - stats.guard_start.get("repeated_read_file", 0)
             ),
+            "semantic_exploration": (
+                self._semantic_exploration_guard_hits - stats.guard_start.get("semantic_exploration", 0)
+            ),
         }
         steering_counts = {
             "duplicate_tool_final_answer": (
@@ -892,6 +920,9 @@ class AgentRuntime:
             "repeated_read_file_final_answer": (
                 self._repeated_read_file_final_answer_steers
                 - stats.steer_start.get("repeated_read_file_final_answer", 0)
+            ),
+            "semantic_exploration": (
+                self._semantic_exploration_steers - stats.steer_start.get("semantic_exploration", 0)
             ),
             "no_edit_final_hygiene": self._no_edit_final_hygiene_steers,
             "final_structure": self._final_structure_steers,
@@ -1176,6 +1207,21 @@ class AgentRuntime:
                 lsp_symbol_query_key,
                 len(self._recent_useless_lsp_symbol_query_keys),
             )
+        semantic_exploration_key = _semantic_exploration_key(
+            name,
+            arguments,
+            self._config.workspace,
+            self._config.allowed_dirs,
+        )
+        if semantic_exploration_key is not None:
+            recent_semantic_count = self._recent_semantic_exploration_keys.count(semantic_exploration_key)
+            self._recent_semantic_exploration_keys.append(semantic_exploration_key)
+            self._recent_semantic_exploration_keys = self._recent_semantic_exploration_keys[
+                -SEMANTIC_EXPLORATION_WINDOW:
+            ]
+            if recent_semantic_count >= MAX_SEMANTIC_EXPLORATIONS_PER_KEY_IN_RECENT_WINDOW:
+                self._semantic_exploration_guard_hits += 1
+                return self._semantic_exploration_result(semantic_exploration_key, recent_semantic_count)
         result = self._registry.execute(name, arguments, tool_context)
         if search_pattern_key is not None and result.useless and not result.is_error:
             self._recent_useless_search_pattern_keys.append(search_pattern_key)
@@ -1236,6 +1282,17 @@ class AgentRuntime:
                 f"Tool call skipped: lsp symbol queries have returned no matches {prior_count} times recently; "
                 f"latest query was '{query_key}'. Use the collected evidence and provide the requested final answer, "
                 "or switch to search_code with a genuinely different business term only if new evidence is necessary."
+            ),
+            is_error=True,
+        )
+
+    def _semantic_exploration_result(self, path_key: str, prior_count: int) -> ToolResult:
+        return ToolResult(
+            (
+                f"Tool call skipped: directory exploration under '{path_key}' has already happened "
+                f"{prior_count} times recently. Stop guessing parent/child paths in the same module. "
+                "Use search_code, lsp_* navigation, or read_file on exact matched files; if evidence is sufficient, "
+                "answer the user's original question and mark any uncertainty explicitly."
             ),
             is_error=True,
         )
@@ -1345,6 +1402,33 @@ class AgentRuntime:
             },
         )
         self._force_final_answer_without_tools = True
+        return True
+
+    def _steer_after_semantic_exploration(self) -> bool:
+        if self._semantic_exploration_steers >= MAX_SEMANTIC_EXPLORATION_STEERS:
+            return False
+        self._semantic_exploration_steers += 1
+        evidence = self._read_file_evidence_summary()
+        request_summary = self._final_answer_request_summary()
+        content = (
+            "Runtime steering: directory/path exploration is repeating under the same module or parent path. "
+            "Do not keep calling list_files on sibling, parent, or child guesses. "
+            "Use targeted evidence tools only: search_code with business terms, lsp_* navigation, or read_file on "
+            "exact files already discovered. If enough evidence has been collected, answer the user's original "
+            "question directly and label uncertainty explicitly."
+            f"{request_summary}"
+            f"{evidence}"
+        )
+        self._messages.append({"role": "user", "content": content})
+        self._session.append(
+            "runtime_steering",
+            {
+                "kind": "semantic_exploration",
+                "guard_hits": self._semantic_exploration_guard_hits,
+                "steer_count": self._semantic_exploration_steers,
+            },
+        )
+        self._temporary_tool_allowlist = set(READ_ONLY_EVIDENCE_TOOLS)
         return True
 
     def _record_read_file_evidence(self, name: str, arguments: str | dict[str, Any], result: ToolResult) -> None:
@@ -1885,6 +1969,19 @@ class AgentRuntime:
             "Retry with a narrower request or ask it to answer from the evidence already collected."
         )
         return self._finish_run(content, deadline, run_start_index, reason="useless_lsp_symbol_guard")
+
+    def _semantic_exploration_stop_message(self) -> str:
+        return (
+            "Tool call was not executed because repeated list_files exploration under the same module or parent path "
+            "was no longer useful. Use targeted search_code/lsp/read_file evidence or answer from collected evidence."
+        )
+
+    def _stop_for_semantic_exploration(self, deadline: float | None, run_start_index: int) -> str:
+        content = (
+            "Stopped because the assistant kept exploring sibling, parent, or child directories in the same module. "
+            "Retry with a narrower request or ask it to use search_code/LSP evidence instead of path guessing."
+        )
+        return self._finish_run(content, deadline, run_start_index, reason="semantic_exploration_guard")
 
     def _stop_for_interrupt(self) -> str:
         content = "Stopped after user interrupt."
@@ -3705,6 +3802,64 @@ def _lsp_symbol_query_key(name: str, arguments: str | dict[str, Any]) -> str | N
         return None
     normalized = " ".join(query.strip().lower().split())
     return normalized or None
+
+
+def _semantic_exploration_key(
+    name: str,
+    arguments: str | dict[str, Any],
+    workspace: Path,
+    allowed_dirs: tuple[Path, ...],
+) -> str | None:
+    if name != "list_files":
+        return None
+    parsed = _parse_tool_arguments(arguments)
+    raw_path = str(parsed.get("path") or ".").strip() or "."
+    if raw_path in {"", "."}:
+        return None
+    try:
+        path = resolve_workspace_path(workspace, raw_path, allowed_dirs)
+    except PatchError:
+        path = Path(raw_path).expanduser()
+        if not path.is_absolute():
+            path = workspace / path
+    return _semantic_directory_key(path, workspace, allowed_dirs)
+
+
+def _semantic_directory_key(path: Path, workspace: Path, allowed_dirs: tuple[Path, ...]) -> str | None:
+    parts = _path_parts_relative_to_known_root(path, (workspace, *allowed_dirs))
+    if not parts:
+        return None
+    if "src" in parts:
+        src_index = parts.index("src")
+        if src_index > 0:
+            parts = parts[:src_index]
+    elif len(parts) > 2:
+        parts = parts[:2]
+    key_parts = [part for part in parts[:3] if part not in {"", ".", "/"}]
+    if not key_parts:
+        return None
+    return "/".join(key_parts)
+
+
+def _path_parts_relative_to_known_root(path: Path, roots: tuple[Path, ...]) -> list[str]:
+    try:
+        resolved = path.resolve(strict=False)
+    except OSError:
+        resolved = path.absolute()
+    best_relative: Path | None = None
+    best_depth = -1
+    for root in roots:
+        try:
+            resolved_root = root.resolve(strict=False)
+            relative = resolved.relative_to(resolved_root)
+        except (OSError, ValueError):
+            continue
+        depth = len(resolved_root.parts)
+        if depth > best_depth:
+            best_relative = relative
+            best_depth = depth
+    candidate = best_relative if best_relative is not None else resolved
+    return [part for part in candidate.parts if part not in {"", ".", candidate.anchor}]
 
 
 def _read_file_path_key(

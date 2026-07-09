@@ -533,6 +533,90 @@ class _UselessLspSymbolClient:
         )()
 
 
+class _SemanticListFilesClient:
+    calls = 0
+    tool_names_seen: list[set[str]] = []
+    paths = (
+        "service-a/src/main/java/com/example/login",
+        "service-a/src/main/java/com/example/auth",
+        "service-a/src/main/java/com/example/account",
+        "service-a/src/main/java/com/example/password",
+        "service-a/src/main/java/com/example/session",
+    )
+
+    def __init__(self, config: AgentConfig):
+        self.config = config
+
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).calls += 1
+        tool_names = {schema.get("function", {}).get("name") for schema in tools}
+        type(self).tool_names_seen.append(tool_names)
+        if "list_files" not in tool_names:
+            return type("Response", (), {"message": {"content": "final answer after semantic exploration guard"}})()
+        path = type(self).paths[(type(self).calls - 1) % len(type(self).paths)]
+        return type(
+            "Response",
+            (),
+            {
+                "message": {
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": f"call_{type(self).calls}",
+                            "type": "function",
+                            "function": {
+                                "name": "list_files",
+                                "arguments": json.dumps({"path": path}),
+                            },
+                        }
+                    ],
+                }
+            },
+        )()
+
+
+class _SemanticPathNotFoundClient:
+    calls = 0
+    tool_names_seen: list[set[str]] = []
+    paths = (
+        "missing-service/interfaces/controller",
+        "missing-service/interfaces/service",
+        "missing-service/interfaces/repository",
+        "missing-service/interfaces/model",
+        "missing-service/interfaces/util",
+    )
+
+    def __init__(self, config: AgentConfig):
+        self.config = config
+
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).calls += 1
+        tool_names = {schema.get("function", {}).get("name") for schema in tools}
+        type(self).tool_names_seen.append(tool_names)
+        if "list_files" not in tool_names:
+            return type("Response", (), {"message": {"content": "final answer after path guessing guard"}})()
+        path = type(self).paths[(type(self).calls - 1) % len(type(self).paths)]
+        return type(
+            "Response",
+            (),
+            {
+                "message": {
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": f"call_{type(self).calls}",
+                            "type": "function",
+                            "function": {
+                                "name": "list_files",
+                                "arguments": json.dumps({"path": path}),
+                            },
+                        }
+                    ],
+                }
+            },
+        )()
+
+
 class _AllowedDirRequirementClient:
     calls: list[dict] = []
     doc_path: str = ""
@@ -1718,6 +1802,84 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertEqual(_UselessLspSymbolClient.tools_seen[-1], 0)
         self.assertEqual(len(skipped_messages), 1)
         self.assertGreaterEqual(len(steering_messages), 1)
+
+    def test_semantic_list_files_exploration_is_steered_to_evidence_tools(self) -> None:
+        _SemanticListFilesClient.calls = 0
+        _SemanticListFilesClient.tool_names_seen = []
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            for path in _SemanticListFilesClient.paths:
+                directory = workspace / path
+                directory.mkdir(parents=True)
+                (directory / "Sample.java").write_text("class Sample {}\n", encoding="utf-8")
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=workspace,
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+                context_char_budget=0,
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _SemanticListFilesClient):
+                runtime = AgentRuntime(config, show_tool_logs=False)
+                result = runtime.run("查看目录结构后总结当前项目")
+
+        tool_messages = [message for message in runtime._messages if message.get("role") == "tool"]
+        skipped_messages = [
+            message for message in tool_messages if "directory exploration under 'service-a'" in message["content"]
+        ]
+        steering_messages = [
+            str(message.get("content"))
+            for message in runtime._messages
+            if "directory/path exploration is repeating" in str(message.get("content"))
+        ]
+        final_tools = _SemanticListFilesClient.tool_names_seen[-1]
+        self.assertEqual(result, "final answer after semantic exploration guard")
+        self.assertEqual(len(skipped_messages), 1)
+        self.assertGreaterEqual(len(steering_messages), 1)
+        self.assertNotIn("list_files", final_tools)
+        self.assertIn("search_code", final_tools)
+        self.assertIn("read_file", final_tools)
+        self.assertEqual(runtime._last_run_summary["guard_hits"], {"semantic_exploration": 1})
+        self.assertEqual(runtime._last_run_summary["steering_counts"], {"semantic_exploration": 1})
+
+    def test_semantic_path_not_found_exploration_is_steered_to_evidence_tools(self) -> None:
+        _SemanticPathNotFoundClient.calls = 0
+        _SemanticPathNotFoundClient.tool_names_seen = []
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=workspace,
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+                context_char_budget=0,
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _SemanticPathNotFoundClient):
+                runtime = AgentRuntime(config, show_tool_logs=False)
+                result = runtime.run("查看目录结构后回答")
+
+        tool_messages = [message for message in runtime._messages if message.get("role") == "tool"]
+        not_found_messages = [message for message in tool_messages if "Path not found" in message["content"]]
+        skipped_messages = [
+            message
+            for message in tool_messages
+            if "directory exploration under 'missing-service/interfaces'" in message["content"]
+        ]
+        final_tools = _SemanticPathNotFoundClient.tool_names_seen[-1]
+        self.assertEqual(result, "final answer after path guessing guard")
+        self.assertEqual(len(not_found_messages), 4)
+        self.assertEqual(len(skipped_messages), 1)
+        self.assertNotIn("list_files", final_tools)
+        self.assertIn("search_code", final_tools)
+        self.assertEqual(runtime._last_run_summary["guard_hits"], {"semantic_exploration": 1})
 
     def test_repeated_read_file_ranges_are_steered_to_final_answer(self) -> None:
         _RepeatedReadFileRangeClient.calls = 0

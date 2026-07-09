@@ -457,3 +457,21 @@ LCA 措施：
 
 - T-087 已完成：增强 final structure / evidence hygiene。项目范围表必须包含项目/服务列；用户要求证据状态或回答含推断性表达时，final gate 会要求已验证/推断标签。
 - T-088 已完成：read-only evidence gate 会拦截代码证据/源码/不推测/怎么处理类问题的无证据最终回答，要求先用 `search_code` / LSP 定位并 `read_file` 关键实现文件；search/LSP no-match 负向证据可明确收束。
+
+### PT-033：语义级路径探索扩散
+
+现象：
+
+- 密码加密问答压测 review 中，用户要求“不要推测，找代码证据”后，模型开始大量猜路径。
+- 探索模式不是完全相同参数重复，而是同一模块/父目录下的相似 `list_files`、父子目录扩散和多次 `Path not found`。
+- 既有 exact duplicate guard 只能挡完全同参调用，触发太晚，无法及时拦住语义重复探索。
+
+OMP 对应思路：
+
+- OMP 对病态子循环不靠主步数限制，而是用 soft escalation、小上限、tool result pruning 和 runtime steering 收束。
+- 重复失败或低价值探索应变成“换策略/收束回答”的信号，而不是继续猜路径。
+
+LCA 措施：
+
+- T-089 已完成：新增 semantic exploration guard。`list_files` 会按模块/父目录归一语义探索 key，同一模块或同一 Path-not-found 父路径超过小上限后跳过目录猜测。
+- 命中后 runtime 会追加 steering，并临时只开放 `search_code` / `read_file` / LSP 证据工具，要求模型回到命中文件证据或基于已有证据收束回答。
