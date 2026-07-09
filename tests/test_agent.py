@@ -14,6 +14,10 @@ from local_agent.config import AgentConfig
 from local_agent.protocol.events import ListEventSink
 
 
+def _tool_names_from_schema_call(tools: list[dict]) -> set[str]:
+    return {str(schema.get("function", {}).get("name") or "") for schema in tools}
+
+
 class _FailingClient:
     def __init__(self, config: AgentConfig):
         self.config = config
@@ -49,6 +53,48 @@ class _MessageRecordingClient:
 
     def chat(self, messages, tools, *, timeout=None):
         type(self).messages = messages
+        return type("Response", (), {"message": {"content": "done"}})()
+
+
+class _ToolSchemaRecordingClient:
+    calls: list[dict] = []
+
+    def __init__(self, config: AgentConfig):
+        self.config = config
+
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
+        return type("Response", (), {"message": {"content": "done"}})()
+
+
+class _WriteFileThenFinalClient:
+    calls: list[dict] = []
+
+    def __init__(self, config: AgentConfig):
+        self.config = config
+
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
+        if len(type(self).calls) == 1:
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "call_write",
+                                "type": "function",
+                                "function": {
+                                    "name": "write_file",
+                                    "arguments": json.dumps({"path": "generated.txt", "content": "hello\n"}),
+                                },
+                            }
+                        ],
+                    }
+                },
+            )()
         return type("Response", (), {"message": {"content": "done"}})()
 
 
@@ -229,13 +275,44 @@ class _InvalidToolCallThenFinalClient:
                             {
                                 "id": "call_empty_name",
                                 "type": "function",
-                                "function": {"name": "", "arguments": "{}"},
+                                "function": {"name": "", "arguments": ""},
                             }
                         ],
                     }
                 },
             )()
         return type("Response", (), {"message": {"content": "recovered"}})()
+
+
+class _MalformedToolArgumentsThenFinalClient:
+    calls: list[dict] = []
+
+    def __init__(self, config: AgentConfig):
+        self.config = config
+
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
+        if len(type(self).calls) == 1:
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "call_bad_args",
+                                "type": "function",
+                                "function": {
+                                    "name": "read_file",
+                                    "arguments": '{"path": "README.md"}}',
+                                },
+                            }
+                        ],
+                    }
+                },
+            )()
+        return type("Response", (), {"message": {"content": "recovered from malformed args"}})()
 
 
 class _ReadFileThenFinalClient:
@@ -304,8 +381,11 @@ class _ReadEnumThenWrongNumericClient:
                 {
                     "message": {
                         "content": (
-                            "PreOrderStatusEnum.MAKING = 50，"
-                            "PreOrderStatusEnum.MADE = 60。证据文件：src/PreOrderStatusEnum.java"
+                            "### PreOrderStatusEnum\n"
+                            "- MAKING(1, \"制单中\")\n"
+                            "- MADE(3, \"已制单\")\n"
+                            "- CANCEL(5, \"已取消\")\n"
+                            "证据文件：src/PreOrderStatusEnum.java"
                         )
                     }
                 },
@@ -317,7 +397,63 @@ class _ReadEnumThenWrongNumericClient:
                 "message": {
                     "content": (
                         "已验证：src/PreOrderStatusEnum.java:15 中 "
-                        "PreOrderStatusEnum.MAKING = 2，PreOrderStatusEnum.MADE = 3。"
+                        "PreOrderStatusEnum.MAKING = 2，"
+                        "PreOrderStatusEnum.MADE = 3，PreOrderStatusEnum.CANCEL = 4。"
+                    )
+                }
+            },
+        )()
+
+
+class _ReadEnumThenFalseNegativeClient:
+    calls: list[dict] = []
+
+    def __init__(self, config: AgentConfig):
+        self.config = config
+
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
+        if len(type(self).calls) == 1:
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "call_read_enum",
+                                "type": "function",
+                                "function": {
+                                    "name": "read_file",
+                                    "arguments": json.dumps({"path": "src/PreOrderStatusEnum.java"}),
+                                },
+                            }
+                        ],
+                    }
+                },
+            )()
+        if len(type(self).calls) == 2:
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": (
+                            "PreOrderStatusEnum 已读取但源码不完整；MAKING、MADE、CANCEL 未找到，"
+                            "需补充读取后续内容。"
+                        )
+                    }
+                },
+            )()
+        return type(
+            "Response",
+            (),
+            {
+                "message": {
+                    "content": (
+                        "源码事实：PreOrderStatusEnum.MAKING = 2（待制单），"
+                        "MADE = 3（已制单），CANCEL = 4（已作废）。"
                     )
                 }
             },
@@ -828,6 +964,87 @@ class _UnexpectedRegistry:
 
 
 class AgentRuntimeTests(unittest.TestCase):
+    def test_requirement_contract_is_injected_into_runtime_context(self) -> None:
+        _MessageRecordingClient.messages = []
+        with tempfile.TemporaryDirectory() as tmp:
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=Path(tmp).resolve(),
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _MessageRecordingClient):
+                runtime = AgentRuntime(config, show_tool_logs=False)
+                runtime.run("只读代码，请给出源码证据说明登录密码在哪里校验。")
+
+        system_content = "\n".join(
+            str(message.get("content") or "")
+            for message in _MessageRecordingClient.messages
+            if message.get("role") == "system"
+        )
+        self.assertIn("[Requirement contract]", system_content)
+        self.assertIn("Task kind: read-only", system_content)
+        self.assertIn("repository-grounded evidence", system_content)
+
+    def test_tool_choice_queue_restricts_read_only_evidence_task_to_evidence_tools(self) -> None:
+        _ToolSchemaRecordingClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=Path(tmp).resolve(),
+                max_steps=1,
+                budget_seconds=None,
+                approval_mode="yolo",
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _ToolSchemaRecordingClient):
+                runtime = AgentRuntime(config, show_tool_logs=False)
+                runtime.run("不要推测，请给出代码证据说明登录密码在哪里校验。不要修改文件。")
+
+        first_tools = _tool_names_from_schema_call(_ToolSchemaRecordingClient.calls[0]["tools"])
+        self.assertIn("read_file", first_tools)
+        self.assertIn("search_code", first_tools)
+        self.assertIn("lsp_symbols", first_tools)
+        self.assertNotIn("apply_patch", first_tools)
+        self.assertNotIn("run_tests", first_tools)
+        self.assertNotIn("shell", first_tools)
+
+    def test_tool_choice_queue_requires_tests_or_diff_after_workspace_write(self) -> None:
+        _WriteFileThenFinalClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=Path(tmp).resolve(),
+                max_steps=2,
+                budget_seconds=None,
+                approval_mode="yolo",
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _WriteFileThenFinalClient):
+                runtime = AgentRuntime(config, show_tool_logs=False)
+                runtime.run("请实现一个小功能，创建 generated.txt，并补充测试。")
+
+        self.assertGreaterEqual(len(_WriteFileThenFinalClient.calls), 2)
+        second_tools = _tool_names_from_schema_call(_WriteFileThenFinalClient.calls[1]["tools"])
+        self.assertEqual(second_tools, {"git_diff", "run_tests"})
+        second_messages = _WriteFileThenFinalClient.calls[1]["messages"]
+        self.assertTrue(
+            any(
+                message.get("role") == "user"
+                and "[Runtime tool choice queue]" in str(message.get("content") or "")
+                and "implementation_final_hygiene" in str(message.get("content") or "")
+                for message in second_messages
+            )
+        )
+
     def test_runtime_emits_protocol_events_and_records_event_v1(self) -> None:
         _ReadFileThenFinalClient.calls = []
         with tempfile.TemporaryDirectory() as tmp:
@@ -1341,12 +1558,68 @@ class AgentRuntimeTests(unittest.TestCase):
         ]
         self.assertIn("MAKING = 2", result)
         self.assertIn("MADE = 3", result)
-        self.assertNotIn("50", result)
-        self.assertNotIn("60", result)
+        self.assertIn("CANCEL = 4", result)
+        self.assertNotIn("MAKING(1", result)
+        self.assertNotIn("CANCEL(5", result)
         self.assertEqual(len(_ReadEnumThenWrongNumericClient.calls), 3)
         self.assertEqual(_ReadEnumThenWrongNumericClient.calls[2]["tools"], [])
         self.assertEqual(len(steering_records), 1)
         self.assertEqual(runtime._last_run_summary["steering_counts"], {"source_grounded_numeric": 1})
+
+    def test_source_evidence_false_negative_gate_rewrites_incomplete_read_claim(self) -> None:
+        _ReadEnumThenFalseNegativeClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            source_dir = workspace / "src"
+            source_dir.mkdir()
+            (source_dir / "PreOrderStatusEnum.java").write_text(
+                "\n".join(
+                    [
+                        "public enum PreOrderStatusEnum {",
+                        '    MAKING(2, "待制单"),',
+                        '    MADE(3, "已制单"),',
+                        '    CANCEL(4, "已作废");',
+                        "}",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=workspace,
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _ReadEnumThenFalseNegativeClient):
+                runtime = AgentRuntime(config, show_tool_logs=False)
+                result = runtime.run(
+                    "请根据代码证据说明 PreOrderStatusEnum 的 MAKING、MADE、CANCEL 状态"
+                )
+                records = [
+                    json.loads(line)
+                    for line in runtime._session.path.read_text(encoding="utf-8").splitlines()
+                ]
+
+        steering_records = [
+            record
+            for record in records
+            if record.get("event") == "runtime_steering"
+            and record.get("payload", {}).get("kind") == "source_evidence_false_negative"
+        ]
+        self.assertIn("MAKING = 2", result)
+        self.assertIn("CANCEL = 4", result)
+        self.assertNotIn("未找到", result)
+        self.assertEqual(len(_ReadEnumThenFalseNegativeClient.calls), 3)
+        self.assertEqual(_ReadEnumThenFalseNegativeClient.calls[2]["tools"], [])
+        self.assertEqual(len(steering_records), 1)
+        self.assertEqual(
+            runtime._last_run_summary["steering_counts"],
+            {"source_evidence_false_negative": 1},
+        )
 
     def test_evidence_ledger_is_sent_to_provider_context_after_tool_results(self) -> None:
         _ReadFileThenFinalClient.calls = []
@@ -1863,9 +2136,44 @@ class AgentRuntimeTests(unittest.TestCase):
             assistant_messages[-1]["tool_calls"][0]["function"]["name"],
             "__invalid_tool_call",
         )
+        self.assertEqual(
+            assistant_messages[-1]["tool_calls"][0]["function"]["arguments"],
+            "{}",
+        )
         tool_messages = [message for message in runtime._messages if message.get("role") == "tool"]
         self.assertEqual(tool_messages[-1]["tool_call_id"], "call_empty_name")
         self.assertIn("Unknown tool", tool_messages[-1]["content"])
+
+    def test_malformed_tool_call_arguments_are_sanitized_before_next_provider_request(self) -> None:
+        _MalformedToolArgumentsThenFinalClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=Path(tmp).resolve(),
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _MalformedToolArgumentsThenFinalClient):
+                runtime = AgentRuntime(config, show_tool_logs=False)
+                result = runtime.run("hello")
+
+        self.assertEqual(result, "recovered from malformed args")
+        self.assertGreaterEqual(len(_MalformedToolArgumentsThenFinalClient.calls), 2)
+        second_request_messages = _MalformedToolArgumentsThenFinalClient.calls[1]["messages"]
+        assistant_messages = [
+            message
+            for message in second_request_messages
+            if message.get("role") == "assistant" and message.get("tool_calls")
+        ]
+        arguments = assistant_messages[-1]["tool_calls"][0]["function"]["arguments"]
+        self.assertIn("_invalid_arguments", json.loads(arguments))
+        tool_messages = [message for message in runtime._messages if message.get("role") == "tool"]
+        self.assertEqual(tool_messages[-1]["tool_call_id"], "call_bad_args")
+        self.assertIn("Missing required argument(s): path", tool_messages[-1]["content"])
 
     def test_repeated_identical_tool_calls_are_steered_to_final_answer(self) -> None:
         _RepeatingToolClient.calls = 0

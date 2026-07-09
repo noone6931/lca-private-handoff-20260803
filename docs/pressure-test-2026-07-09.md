@@ -932,3 +932,56 @@ LCA 本轮措施：
 
 - 需要复跑 T-105 同类服务费结算只读证据任务，观察 `PreOrderStatusEnum`、状态 60、接口/字段等数字事实是否仍会误报。
 - 如果仍出现事实误报，下一步应考虑更强的 evidence-sufficient reviewer 或要求最终回答引用 structured evidence ledger，而不是只追加自然语言 steering。
+
+### PT-048：T-108 source-grounded numeric / token budget 复测
+
+目标：
+
+- 复测 T-106 source-grounded numeric guard 和 T-107 token budget + reserve。
+- 验证百炼 provider 在坏 tool_call 历史下不再崩溃。
+- 继续观察服务费结算证据型回答是否会在证据不足时过早下结论。
+
+会话：
+
+- 首轮失败 session：`20260709T095404658646Z`
+- 修复后复测 session：`20260709T095626110047Z`
+- cwd：`/Users/chengming/mycode/project/zqylpaymentmaster9d423763`
+- allow dirs：
+  - `/Users/chengming/mycode/project/mpspaymasterce6ca65`
+  - `/Users/chengming/mynote/1_projects/0630_YXR-971_平台通用优化/需求文档-拓展服务费结算`
+- 约束：只读、禁写、禁 shell、禁 run_tests、禁 memory_write。
+
+首轮失败：
+
+| 问题 | 现象 | 影响 | 修复 |
+|---|---|---|---|
+| provider-safe tool_call 参数不完整 | 模型生成空/坏 tool call 后，assistant 历史里 `function.arguments` 为空或畸形 JSON；百炼下一轮返回 HTTP 400：`function.arguments must be a valid JSON string or dict`。 | session 无法继续，压测中断。 | 已在 `src/local_agent/agent.py` 的 provider-safe 边界归一化 tool id/name/arguments；空参数转 `{}`，畸形 JSON 转 `{"_invalid_arguments": ...}`，并补回归测试。 |
+
+修复后源码事实：
+
+| 问题 | 结果 | 证据 |
+|---|---|---|
+| `PreOrderStatusEnum.MAKING` | `2`，`待制单` | `/Users/chengming/mycode/project/zqylpaymentmaster9d423763/src/main/java/com/yljr/payment/payment/base/enums/PreOrderStatusEnum.java` |
+| `PreOrderStatusEnum.MADE` | `3`，`已制单` | 同上 |
+| `PreOrderStatusEnum.CANCEL` | `4`，`已作废` | 同上 |
+| `PlatOrderStatusEnum` | `WAITING_PAY=1 待缴费`、`PAID=2 已缴费`、`CLOSE=3 缴费关闭`、`AUDITING=4 待审核`、`AUDIT_BACK=5 已退回` | `/Users/chengming/mycode/project/zqylpaymentmaster9d423763/src/main/java/com/yljr/payment/payment/base/enums/PlatOrderStatusEnum.java` |
+| `OrderStatusEnum` 是否有业务订单状态 60 | 未找到；当前枚举值为 1/2/3/4/5。 | `/Users/chengming/mycode/project/zqylpaymentmaster9d423763/src/main/java/com/yljr/payment/payment/base/enums/OrderStatusEnum.java` |
+
+仍暴露的问题：
+
+| 问题 | 现象 | OMP 对应思路 | LCA 措施 |
+|---|---|---|---|
+| 搜索结果过大后未继续读关键文件就下结论 | `msp-pay` 关键词搜索返回 20000 字符，但模型没有继续 `read_file` 命中文件，就给出“未定位到拓展服务费结算代码/暂无明确可复用点”。这比 T-105 已读到的前端预制单页面、制单/回退/下载中心证据更弱。 | OMP 的 tool choice / runtime state 会把“必须读关键证据后才能 final”作为队列/steering，而不是只靠 prompt。 | 已完成 T-109 RequirementContract 和 T-111 MiniToolChoiceQueue：每轮注入目标/验收/证据要求，并对只读证据任务、需求文档前置读取、写后测试/diff 做阶段性工具收窄。下一步复跑同类任务验证是否改善。 |
+| 当前仍没有 CompletionAudit | 即使有 contract，最终回答还没有逐项审计“每个验收项是否有证据”。 | OMP 的 reviewer/observer 思路会在最终前做收束检查。 | 新增 T-110：CompletionAudit MVP。 |
+
+结论：
+
+- T-106 数字事实 guard 对枚举状态码场景有效，修复后未再出现 `2/3` 被写成 `50/60`。
+- T-103 原先只处理空工具名，本轮补强为空/畸形 arguments provider-safe 归一化，百炼 400 已关闭。
+- T-108 证明下一类瓶颈已经从“模型说错数字”转为“证据没有读够就下结论”，因此 P10 进入 RequirementContract / MiniToolChoiceQueue / CompletionAudit。
+
+补充复测：
+
+- session `20260709T100822496949Z`：RequirementContract + MiniToolChoiceQueue 生效，先读 allowed-dir 需求文档和 enum 文件；但最终反事实声称“只读取前 6 行/未找到枚举体”。已补 T-110 最小切片：source evidence false-negative gate。
+- session `20260709T101335899977Z`：false-negative 被纠回，但模型又把 `PreOrderStatusEnum` 编成 `1/3/5`，原因是 source numeric guard 把 read_file 行号 `1:` / `5:` 当成源码数字证据。已修复为数字比对前剥离 read_file 行号。
+- session `20260709T101946966882Z`：最终窄复测确认 `PreOrderStatusEnum` 输出 `2/3/4`，`PlatOrderStatusEnum` 输出 `1/2/3/4/5`；中途再次出现畸形 tool_call arguments，但 provider-safe normalization 生效，百炼没有 400。`OrderStatusEnum` 最终结论“无 60”正确，但没有完整列出所有枚举项，说明完整 CompletionAudit 仍需继续增强。

@@ -46,10 +46,14 @@ from .steering.final_answer import FinalStructureSteerer
 from .steering.final_answer import NoEditFinalHygieneSteerer
 from .steering.final_answer import READ_ONLY_EVIDENCE_TOOLS
 from .steering.final_answer import ReadOnlyEvidenceSteerer
+from .steering.final_answer import SourceEvidenceFalseNegativeSteerer
 from .steering.final_answer import request_mentions_todo
 from .steering.final_answer import SourceEvidence
 from .steering.final_answer import SourceGroundedNumericSteerer
 from .steering.final_answer import SteeringDecision
+from .task_contract import generate_requirement_contract
+from .task_contract import render_contract_context
+from .task_contract import RequirementContract
 from .tools import create_default_registry
 from .tools.base import ToolContext
 from .tools.base import ToolResult
@@ -60,6 +64,9 @@ from .tools.relevance import is_code_implementation_request
 from .tools.relevance import is_low_relevance_patch_path
 from .tools.relevance import path_matches_any
 from .tools.relevance import request_mentions_config_or_path
+from .tool_choice_queue import ToolChoiceDecision
+from .tool_choice_queue import ToolChoiceQueue
+from .tool_choice_queue import ToolResultSummary
 
 
 SYSTEM_PROMPT = """You are a local coding agent running inside a user's workspace.
@@ -125,7 +132,9 @@ MAX_SOFT_TOOL_REQUIREMENT_STEERS = 3
 MAX_NO_EDIT_FINAL_HYGIENE_STEERS = 2
 MAX_FINAL_STRUCTURE_STEERS = 2
 MAX_READ_ONLY_EVIDENCE_STEERS = 2
+MAX_SOURCE_EVIDENCE_FALSE_NEGATIVE_STEERS = 2
 MAX_SOURCE_GROUNDED_NUMERIC_STEERS = 2
+MAX_TOOL_CHOICE_QUEUE_STEERS_PER_SIGNATURE = 1
 INVALID_TOOL_CALL_NAME = "__invalid_tool_call"
 WORKFLOW_NUDGE = (
     "For this coding task, infer the tool sequence yourself. "
@@ -299,6 +308,7 @@ class AgentRuntime:
         self._no_edit_final_hygiene_steers = 0
         self._final_structure_steers = 0
         self._read_only_evidence_steers = 0
+        self._source_evidence_false_negative_steers = 0
         self._source_grounded_numeric_steers = 0
         self._read_file_evidence_paths: list[str] = []
         self._source_evidence: list[SourceEvidence] = []
@@ -309,6 +319,13 @@ class AgentRuntime:
         self._read_file_drift_guard_enabled = False
         self._force_final_answer_without_tools = False
         self._temporary_tool_allowlist: set[str] | None = None
+        self._tool_choice_queue = ToolChoiceQueue()
+        self._tool_choice_allowed_tool_names: set[str] | None = None
+        self._tool_choice_steering_signatures: set[str] = set()
+        self._tool_choice_results: list[ToolResultSummary] = []
+        self._tool_choice_tool_names: list[str] = []
+        self._requirement_contract: RequirementContract | None = None
+        self._requirement_contract_context = ""
         self._soft_tool_requirement: SoftToolRequirement | None = None
         self._run_stats: RunStats | None = None
         self._last_run_summary: dict[str, Any] | None = None
@@ -317,6 +334,7 @@ class AgentRuntime:
             ReadOnlyEvidenceSteerer(max_steers=MAX_READ_ONLY_EVIDENCE_STEERS),
             NoEditFinalHygieneSteerer(max_steers=MAX_NO_EDIT_FINAL_HYGIENE_STEERS),
             FinalStructureSteerer(max_steers=MAX_FINAL_STRUCTURE_STEERS),
+            SourceEvidenceFalseNegativeSteerer(max_steers=MAX_SOURCE_EVIDENCE_FALSE_NEGATIVE_STEERS),
             SourceGroundedNumericSteerer(max_steers=MAX_SOURCE_GROUNDED_NUMERIC_STEERS),
         )
         self._state_dir = config.state_dir or config.workspace / ".local-agent"
@@ -381,12 +399,27 @@ class AgentRuntime:
         self._no_edit_final_hygiene_steers = 0
         self._final_structure_steers = 0
         self._read_only_evidence_steers = 0
+        self._source_evidence_false_negative_steers = 0
         self._source_grounded_numeric_steers = 0
         self._source_evidence = []
         self._temporary_tool_allowlist = None
+        self._tool_choice_allowed_tool_names = None
+        self._tool_choice_steering_signatures = set()
+        self._tool_choice_results = []
+        self._tool_choice_tool_names = []
+        self._requirement_contract = generate_requirement_contract(prompt)
+        self._requirement_contract_context = render_contract_context(self._requirement_contract)
         self._messages.append({"role": "user", "content": model_prompt})
         self._session.append("user", {"content": prompt})
         self._events.emit("UserMessage", {"content": prompt})
+        self._session.append(
+            "runtime_steering",
+            {
+                "kind": "requirement_contract",
+                "task_kind": self._requirement_contract.task_kind,
+                "objective": self._requirement_contract.objective,
+            },
+        )
         if model_prompt != prompt:
             self._session.append("workflow_nudge", {"content": WORKFLOW_NUDGE})
         self._read_file_drift_guard_enabled = _should_guard_repeated_read_file(prompt)
@@ -413,6 +446,7 @@ class AgentRuntime:
 
             self._record_llm_request()
             self._session.append("llm_request", {"step": step})
+            self._apply_tool_choice_queue_if_needed()
             messages_for_model = self._messages_for_model(deadline)
             tools_for_model = self._tools_for_model()
             self._events.emit(
@@ -491,6 +525,7 @@ class AgentRuntime:
                     is_error=result.is_error,
                     useless=result.useless,
                 )
+                self._record_tool_choice_result(name, arguments, result)
                 self._record_read_file_evidence(name, arguments, result)
                 self._record_tool_evidence(name, arguments, result)
                 self._observe_soft_tool_requirement(name, arguments, result)
@@ -576,22 +611,67 @@ class AgentRuntime:
     def _tools_for_model(self) -> list[dict[str, Any]]:
         if self._force_final_answer_without_tools:
             return []
+        allowed_names: set[str] | None = None
         if self._temporary_tool_allowlist is not None:
-            allowed_names = self._temporary_tool_allowlist
-            return [
-                schema
-                for schema in self._registry.schemas()
-                if schema.get("function", {}).get("name") in allowed_names
-            ]
+            allowed_names = set(self._temporary_tool_allowlist)
         requirement = self._soft_tool_requirement
         if requirement is not None and not requirement.satisfied:
-            allowed_names = {"list_files", "read_file"}
-            return [
-                schema
-                for schema in self._registry.schemas()
-                if schema.get("function", {}).get("name") in allowed_names
-            ]
-        return self._registry.schemas()
+            allowed_names = _intersect_optional_tool_allowlist(allowed_names, {"list_files", "read_file"})
+        if self._tool_choice_allowed_tool_names is not None:
+            allowed_names = _intersect_optional_tool_allowlist(allowed_names, self._tool_choice_allowed_tool_names)
+        if allowed_names is None:
+            return self._registry.schemas()
+        return [
+            schema
+            for schema in self._registry.schemas()
+            if schema.get("function", {}).get("name") in allowed_names
+        ]
+
+    def _apply_tool_choice_queue_if_needed(self) -> None:
+        contract = self._requirement_contract
+        if contract is None:
+            self._tool_choice_allowed_tool_names = None
+            return
+        decision = self._tool_choice_queue.evaluate(
+            task_kind=contract.task_kind,
+            prompt=self._current_user_request or "",
+            tool_names=self._tool_choice_tool_names,
+            tool_results=self._tool_choice_results,
+            available_tool_names=self._available_registry_tool_names(),
+        )
+        self._tool_choice_allowed_tool_names = set(decision.allowed_tool_names)
+        if not decision.steering_required:
+            return
+        signature = _tool_choice_steering_signature(decision, len(self._tool_choice_results))
+        if signature in self._tool_choice_steering_signatures:
+            return
+        if _tool_choice_signature_count(self._tool_choice_steering_signatures, decision.rule_id) >= (
+            MAX_TOOL_CHOICE_QUEUE_STEERS_PER_SIGNATURE
+        ):
+            return
+        self._tool_choice_steering_signatures.add(signature)
+        content = _tool_choice_steering_message(decision, self._current_user_request)
+        self._messages.append({"role": "user", "content": content})
+        self._session.append(
+            "runtime_steering",
+            {
+                "kind": "tool_choice_queue",
+                "rule_id": decision.rule_id,
+                "missing_requirements": list(decision.missing_requirements),
+                "allowed_tool_names": sorted(decision.allowed_tool_names),
+                "reason": decision.reason,
+            },
+        )
+
+    def _available_registry_tool_names(self) -> tuple[str, ...]:
+        if hasattr(self._registry, "tool_names"):
+            return tuple(self._registry.tool_names())
+        names: list[str] = []
+        for schema in self._registry.schemas():
+            name = schema.get("function", {}).get("name")
+            if isinstance(name, str) and name:
+                names.append(name)
+        return tuple(names)
 
     def approval_summary(self) -> str:
         lines = [
@@ -778,6 +858,7 @@ class AgentRuntime:
             "no_edit_final_hygiene": self._no_edit_final_hygiene_steers,
             "final_structure": self._final_structure_steers,
             "read_only_evidence": self._read_only_evidence_steers,
+            "source_evidence_false_negative": self._source_evidence_false_negative_steers,
             "source_grounded_numeric": self._source_grounded_numeric_steers,
             "soft_tool_requirement": self._soft_tool_requirement.steers if self._soft_tool_requirement else 0,
         }
@@ -878,6 +959,7 @@ class AgentRuntime:
                 self._user_config_dir,
                 self._config.allowed_dirs,
                 self._current_user_request,
+                self._requirement_contract_context,
             )
         )
 
@@ -1331,6 +1413,20 @@ class AgentRuntime:
         self._source_evidence.append(SourceEvidence(display_path, result.content))
         self._source_evidence = self._source_evidence[-40:]
 
+    def _record_tool_choice_result(self, name: str, arguments: str | dict[str, Any], result: ToolResult) -> None:
+        self._tool_choice_tool_names.append(name)
+        self._tool_choice_tool_names = self._tool_choice_tool_names[-80:]
+        self._tool_choice_results.append(
+            ToolResultSummary(
+                name=name,
+                content=_one_line_block(result.content, max_chars=2000),
+                is_error=result.is_error,
+                useless=result.useless,
+                path=_tool_choice_argument_path(arguments),
+            )
+        )
+        self._tool_choice_results = self._tool_choice_results[-80:]
+
     def _record_tool_evidence(self, name: str, arguments: str | dict[str, Any], result: ToolResult) -> None:
         self._record_strong_relevance_paths(name, arguments, result)
         record = _build_tool_evidence_record(
@@ -1505,6 +1601,7 @@ class AgentRuntime:
             "read_only_evidence": self._read_only_evidence_steers,
             "no_edit_final_hygiene": self._no_edit_final_hygiene_steers,
             "final_structure": self._final_structure_steers,
+            "source_evidence_false_negative": self._source_evidence_false_negative_steers,
             "source_grounded_numeric": self._source_grounded_numeric_steers,
         }
 
@@ -1518,6 +1615,9 @@ class AgentRuntime:
         if kind == "final_structure":
             self._final_structure_steers += 1
             return self._final_structure_steers
+        if kind == "source_evidence_false_negative":
+            self._source_evidence_false_negative_steers += 1
+            return self._source_evidence_false_negative_steers
         if kind == "source_grounded_numeric":
             self._source_grounded_numeric_steers += 1
             return self._source_grounded_numeric_steers
@@ -1912,10 +2012,8 @@ def _provider_safe_tool_call(tool_call: Any, index: int) -> dict[str, Any]:
     function = tool_call.get("function")
     function = function if isinstance(function, dict) else {}
     name = function.get("name")
-    name = name.strip() if isinstance(name, str) else ""
-    arguments = function.get("arguments")
-    if not isinstance(arguments, str):
-        arguments = "{}"
+    name = _provider_safe_tool_name(name)
+    arguments = _provider_safe_tool_arguments(function.get("arguments"))
     tool_call_id = tool_call.get("id")
     if not isinstance(tool_call_id, str) or not tool_call_id.strip():
         tool_call_id = f"invalid_tool_call_{index}"
@@ -1923,8 +2021,34 @@ def _provider_safe_tool_call(tool_call: Any, index: int) -> dict[str, Any]:
         **tool_call,
         "id": tool_call_id,
         "type": tool_call.get("type") or "function",
-        "function": {**function, "name": name or INVALID_TOOL_CALL_NAME, "arguments": arguments},
+        "function": {**function, "name": name, "arguments": arguments},
     }
+
+
+def _provider_safe_tool_name(name: Any) -> str:
+    if not isinstance(name, str):
+        return INVALID_TOOL_CALL_NAME
+    try:
+        return _validate_runtime_tool_name(name)
+    except ValueError:
+        return INVALID_TOOL_CALL_NAME
+
+
+def _provider_safe_tool_arguments(arguments: Any) -> str:
+    if isinstance(arguments, dict):
+        return json.dumps(arguments, ensure_ascii=False, sort_keys=True)
+    if not isinstance(arguments, str):
+        return "{}"
+    stripped = arguments.strip()
+    if not stripped:
+        return "{}"
+    try:
+        parsed = json.loads(stripped)
+    except json.JSONDecodeError:
+        return json.dumps({"_invalid_arguments": stripped[:500]}, ensure_ascii=False, sort_keys=True)
+    if not isinstance(parsed, dict):
+        return json.dumps({"_invalid_arguments": parsed}, ensure_ascii=False, sort_keys=True, default=str)
+    return json.dumps(parsed, ensure_ascii=False, sort_keys=True)
 
 
 def _tool_call_event_payload(tool_call: dict[str, Any]) -> dict[str, Any]:
@@ -2543,6 +2667,7 @@ def _messages_with_runtime_context(
     user_config_dir: Path,
     allowed_dirs: tuple[Path, ...] = (),
     current_user_request: str | None = None,
+    requirement_contract_context: str = "",
 ) -> list[dict[str, Any]]:
     updated = list(messages)
     workspace_roots = _workspace_roots_context(workspace, allowed_dirs)
@@ -2551,6 +2676,8 @@ def _messages_with_runtime_context(
     if current_user_request:
         updated = _messages_with_current_task_contract(updated, current_user_request)
         updated = _messages_with_no_edit_final_hygiene(updated, current_user_request, todo_summary)
+    if requirement_contract_context:
+        updated = _messages_with_requirement_contract(updated, requirement_contract_context)
     if evidence_ledger:
         updated = _messages_with_evidence_ledger(updated, evidence_ledger)
     sticky_rules = _load_sticky_rules(workspace, user_config_dir, max_chars=STICKY_RULES_CHAR_LIMIT)
@@ -2590,6 +2717,24 @@ def _messages_with_current_task_contract(messages: list[dict[str, Any]], current
     content = str(base.get("content") or "")
     first_marker = content.find("[Current task contract]")
     last_marker = content.rfind("[Current task contract]")
+    if first_marker != -1 and first_marker != last_marker:
+        base["content"] = content[:last_marker].rstrip()
+    return [base, *non_system]
+
+
+def _messages_with_requirement_contract(messages: list[dict[str, Any]], requirement_contract_context: str) -> list[dict[str, Any]]:
+    block = (
+        "[Requirement contract]\n"
+        "Deterministic local checklist for this run. Use it as the acceptance/evidence boundary; "
+        "do not treat it as repository evidence.\n"
+        f"{requirement_contract_context}"
+    )
+    system_messages = [message for message in messages if message.get("role") == "system"]
+    non_system = [message for message in messages if message.get("role") != "system"]
+    base = _system_message_with_appended_context(system_messages, block)
+    content = str(base.get("content") or "")
+    first_marker = content.find("[Requirement contract]")
+    last_marker = content.rfind("[Requirement contract]")
     if first_marker != -1 and first_marker != last_marker:
         base["content"] = content[:last_marker].rstrip()
     return [base, *non_system]
@@ -3152,6 +3297,61 @@ def _tool_call_signature(name: str, arguments: str | dict[str, Any]) -> str:
         "arguments": normalized_arguments,
     }
     return json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
+
+
+def _intersect_optional_tool_allowlist(
+    current: set[str] | None,
+    next_allowed: set[str] | frozenset[str],
+) -> set[str]:
+    allowed = set(next_allowed)
+    if current is None:
+        return allowed
+    return current.intersection(allowed)
+
+
+def _tool_choice_steering_signature(decision: ToolChoiceDecision, result_count: int) -> str:
+    payload = {
+        "rule_id": decision.rule_id,
+        "missing": decision.missing_requirements,
+        "results": result_count,
+    }
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
+
+
+def _tool_choice_signature_count(signatures: set[str], rule_id: str | None) -> int:
+    prefix = f'"rule_id": "{rule_id}"' if rule_id else '"rule_id": null'
+    return sum(1 for signature in signatures if prefix in signature)
+
+
+def _tool_choice_steering_message(decision: ToolChoiceDecision, current_user_request: str | None) -> str:
+    allowed = ", ".join(sorted(decision.allowed_tool_names)) or "(no tools currently allowed)"
+    preferred = ", ".join(decision.preferred_tool_names) or "(none)"
+    missing = ", ".join(decision.missing_requirements) or "(none)"
+    request = _one_line(current_user_request or "", max_chars=800)
+    return (
+        "[Runtime tool choice queue]\n"
+        "A required workflow gate is not satisfied yet. Use the allowed tool set for the next step; "
+        "do not answer as final until the missing requirement is satisfied or you can explicitly explain why it cannot be satisfied.\n"
+        f"- rule: {decision.rule_id or 'unknown'}\n"
+        f"- missing: {missing}\n"
+        f"- preferred next tools: {preferred}\n"
+        f"- allowed tools now: {allowed}\n"
+        f"- reason: {decision.reason}\n"
+        f"- original request: {request}"
+    )
+
+
+def _tool_choice_argument_path(arguments: str | dict[str, Any]) -> str | None:
+    parsed: Any = arguments
+    if isinstance(arguments, str):
+        try:
+            parsed = json.loads(arguments or "{}")
+        except json.JSONDecodeError:
+            return None
+    if not isinstance(parsed, dict):
+        return None
+    path = parsed.get("path")
+    return str(path) if path is not None else None
 
 
 def _search_pattern_key(name: str, arguments: str | dict[str, Any]) -> str | None:

@@ -140,6 +140,33 @@ SOURCE_NOT_FOUND_MARKERS = {
     "no evidence",
     "not located",
 }
+SOURCE_INCOMPLETE_READ_MARKERS = {
+    "仅读取",
+    "仅部分源码",
+    "读取不完整",
+    "未包含",
+    "未在当前截获内容",
+    "需补充读取",
+    "需要补充读取",
+    "only read",
+    "partial source",
+    "incomplete read",
+}
+SOURCE_FALSE_NEGATIVE_STOPWORDS = {
+    "agent",
+    "api",
+    "budget",
+    "code",
+    "context",
+    "final",
+    "guard",
+    "mini",
+    "msp",
+    "pay",
+    "source",
+    "test",
+    "token",
+}
 EVIDENCE_STATUS_REQUEST_KEYWORDS = {
     "已验证",
     "推断",
@@ -359,6 +386,45 @@ class SourceGroundedNumericSteerer:
         )
 
 
+class SourceEvidenceFalseNegativeSteerer:
+    kind = "source_evidence_false_negative"
+
+    def __init__(self, *, max_steers: int) -> None:
+        self._max_steers = max_steers
+
+    def decide(self, context: FinalAnswerContext) -> SteeringDecision | None:
+        if context.steer_counts.get(self.kind, 0) >= self._max_steers:
+            return None
+        if not context.source_evidence:
+            return None
+        if not request_needs_read_only_code_evidence(context.request):
+            return None
+        if not content_claims_source_missing_or_incomplete(context.content):
+            return None
+        issues = source_false_negative_issues(context.request or "", context.content, context.source_evidence)
+        if not issues:
+            return None
+        issue_lines: list[str] = []
+        for issue in issues[:5]:
+            issue_lines.append(f"- Claimed missing/incomplete, but evidence contains: {', '.join(issue['terms'])}")
+            issue_lines.append(f"  Evidence file: {issue['path']}")
+            for snippet in issue["snippets"][:8]:
+                issue_lines.append(f"  {snippet}")
+        steering = (
+            "Runtime steering: the previous final answer said source evidence was missing or incomplete, but "
+            "the already-read source snippets below contain requested symbols/facts. Do not call tools. Rewrite "
+            "the final answer from these snippets; only mark a specific item 未找到/未确认 when it is absent from "
+            "the evidence below.\n"
+            + "\n".join(issue_lines)
+            + final_answer_request_summary(context.request)
+        )
+        return SteeringDecision(
+            kind=self.kind,
+            message=steering,
+            payload={"issues": [issue["summary"] for issue in issues[:5]]},
+        )
+
+
 def final_answer_request_summary(request: str | None) -> str:
     if not request:
         return ""
@@ -499,6 +565,58 @@ def content_reports_no_source_evidence(content: str) -> bool:
     return any(marker.lower() in lowered for marker in SOURCE_NOT_FOUND_MARKERS)
 
 
+def content_claims_source_missing_or_incomplete(content: str) -> bool:
+    lowered = content.lower()
+    return any(marker.lower() in lowered for marker in SOURCE_NOT_FOUND_MARKERS | SOURCE_INCOMPLETE_READ_MARKERS)
+
+
+def source_false_negative_issues(
+    request: str,
+    content: str,
+    evidence: list[SourceEvidence],
+) -> list[dict[str, Any]]:
+    terms = request_source_terms(request)
+    if not terms:
+        return []
+    lowered_content = content.lower()
+    issues: list[dict[str, Any]] = []
+    for item in evidence:
+        lowered_source = item.content.lower()
+        matched_terms = [
+            term
+            for term in terms
+            if term.lower() in lowered_source
+            and (term.lower() in lowered_content or content_claims_source_missing_or_incomplete(content))
+        ]
+        if not matched_terms:
+            continue
+        snippets = _source_snippets_for_terms(item.content, matched_terms)
+        if not snippets:
+            continue
+        issues.append(
+            {
+                "path": item.path,
+                "terms": matched_terms[:8],
+                "snippets": snippets,
+                "summary": f"{item.path}: evidence contains {', '.join(matched_terms[:5])}",
+            }
+        )
+    return issues
+
+
+def request_source_terms(request: str) -> list[str]:
+    raw_terms = re.findall(r"[A-Za-z_][A-Za-z0-9_]{2,}", request or "")
+    seen: set[str] = set()
+    terms: list[str] = []
+    for term in raw_terms:
+        lowered = term.lower()
+        if lowered in seen or lowered in SOURCE_FALSE_NEGATIVE_STOPWORDS:
+            continue
+        seen.add(lowered)
+        terms.append(term)
+    return terms[:24]
+
+
 def request_mentions_todo(content: str | None) -> bool:
     lowered = (content or "").lower()
     return any(keyword in lowered for keyword in TODO_REQUEST_KEYWORDS)
@@ -584,6 +702,13 @@ def _matching_evidence(claim: str, evidence_by_key: dict[str, SourceEvidence]) -
     for key, item in evidence_by_key.items():
         if key and key in lowered_claim and item not in matched:
             matched.append(item)
+    claim_identifiers = _claim_identifiers(claim)
+    for item in evidence_by_key.values():
+        if item in matched:
+            continue
+        lowered_source = item.content.lower()
+        if any(identifier in lowered_source for identifier in claim_identifiers):
+            matched.append(item)
     return matched
 
 
@@ -593,9 +718,32 @@ def _numeric_claim_lines(content: str) -> list[str]:
         stripped = line.strip()
         if not stripped or not any(char.isdigit() for char in stripped):
             continue
-        if any(token in stripped for token in {"Enum", "Status", "状态", "code", "接口", "字段", "Controller"}):
+        if (
+            any(token in stripped for token in {"Enum", "Status", "状态", "枚举", "code", "接口", "字段", "Controller"})
+            or _claim_identifiers(stripped)
+            or _looks_like_numeric_table_row(stripped)
+        ):
             claims.append(stripped)
     return claims
+
+
+def _claim_identifiers(claim: str) -> set[str]:
+    identifiers: set[str] = set()
+    for token in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", claim):
+        if len(token) < 3:
+            continue
+        if token.lower() in SOURCE_FALSE_NEGATIVE_STOPWORDS:
+            continue
+        if token.isupper() or "_" in token or any(char.isupper() for char in token[1:]):
+            identifiers.add(token.lower())
+    return identifiers
+
+
+def _looks_like_numeric_table_row(line: str) -> bool:
+    if not (line.startswith("|") and line.endswith("|")):
+        return False
+    cells = [cell.strip() for cell in line.strip("|").split("|")]
+    return any(re.fullmatch(r"-?\d+", cell) for cell in cells)
 
 
 def _number_tokens(content: str) -> set[str]:
@@ -604,7 +752,8 @@ def _number_tokens(content: str) -> set[str]:
         "",
         content,
     )
-    return set(re.findall(r"(?<![\w.])-?\d+(?![\w.])", without_path_lines))
+    without_read_file_line_numbers = re.sub(r"(?m)^\s*\d+:", "", without_path_lines)
+    return set(re.findall(r"(?<![\w.])-?\d+(?![\w.])", without_read_file_line_numbers))
 
 
 def _source_snippets_for_claim(source_content: str, claim: str) -> list[str]:
@@ -621,6 +770,22 @@ def _source_snippets_for_claim(source_content: str, claim: str) -> list[str]:
         if len(snippets) >= 12:
             break
     return snippets or source_content.splitlines()[:8]
+
+
+def _source_snippets_for_terms(source_content: str, terms: list[str]) -> list[str]:
+    lowered_terms = [term.lower() for term in terms if term]
+    snippets: list[str] = []
+    lines = source_content.splitlines()
+    for index, line in enumerate(lines):
+        lowered = line.lower()
+        if not any(term in lowered for term in lowered_terms):
+            continue
+        start = max(0, index - 2)
+        end = min(len(lines), index + 3)
+        for snippet in lines[start:end]:
+            if snippet not in snippets:
+                snippets.append(snippet)
+    return snippets[:12] or source_content.splitlines()[:8]
 
 
 def one_line(content: str, *, max_chars: int = 240) -> str:
