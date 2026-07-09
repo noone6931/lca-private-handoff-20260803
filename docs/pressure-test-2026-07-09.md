@@ -455,5 +455,5 @@ OMP 对应思路：
 
 LCA 措施：
 
-- T-087 候选：增强 final structure gate，对“项目表/证据表/不确定项”等用户显式结构做更严格检查。
-- T-088 候选：增加 final evidence hygiene，要求模型把“类作用/启动类/配置类”等非直接证据标为推断。
+- T-087 已完成：增强 final structure / evidence hygiene。项目范围表必须包含项目/服务列；用户要求证据状态或回答含推断性表达时，final gate 会要求已验证/推断标签。
+- T-088 仍保留给 read-only evidence gate：解决“最终回答前必须先找代码证据，而不是先给推测型答案”的问题。

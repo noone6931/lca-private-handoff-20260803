@@ -79,6 +79,68 @@ class _FinalStructureThenTableClient:
         )()
 
 
+class _FinalProjectScopeTableClient:
+    calls: list[dict] = []
+
+    def __init__(self, config: AgentConfig):
+        self.config = config
+
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
+        if len(type(self).calls) == 1:
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": (
+                            "| 分类 | 表名 |\n"
+                            "|---|---|\n"
+                            "| 必须关注 | intention_config |\n"
+                            "| 可能关注 | user_extend |\n"
+                            "| 暂不关注 | audit_log |\n"
+                        )
+                    }
+                },
+            )()
+        return type(
+            "Response",
+            (),
+            {
+                "message": {
+                    "content": (
+                        "| 分类 | 项目/服务 | 证据状态 | 依据 |\n"
+                        "|---|---|---|---|\n"
+                        "| 必须关注 | zqyl-plan | 已验证 | SQL 和 Controller 证据 |\n"
+                        "| 可能关注 | user-center | 推断 | 需要用户确认 |\n"
+                        "| 暂不关注 | zqyl-nlp | 已验证 | 未命中需求关键词 |\n"
+                    )
+                }
+            },
+        )()
+
+
+class _FinalEvidenceStatusClient:
+    calls: list[dict] = []
+
+    def __init__(self, config: AgentConfig):
+        self.config = config
+
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
+        if len(type(self).calls) == 1:
+            return type(
+                "Response",
+                (),
+                {"message": {"content": "IntentionConfigApplication 可能是 Spring Boot 启动配置类。"}},
+            )()
+        return type(
+            "Response",
+            (),
+            {"message": {"content": "已验证：文件被读取并包含 IntentionConfigApplication。推断：其具体运行角色仍需继续确认。"}},
+        )()
+
+
 class _ReadFileThenFinalClient:
     calls: list[dict] = []
 
@@ -869,6 +931,69 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertIn("| 必须关注 | zqyl-charge |", result)
         self.assertEqual(len(_FinalStructureThenTableClient.calls), 2)
         self.assertEqual(_FinalStructureThenTableClient.calls[1]["tools"], [])
+
+    def test_final_structure_gate_requires_project_scope_column(self) -> None:
+        _FinalProjectScopeTableClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=workspace,
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _FinalProjectScopeTableClient):
+                runtime = AgentRuntime(config, show_tool_logs=False)
+                result = runtime.run(
+                    "最终必须输出项目范围表，包含：必须关注、可能关注、暂不关注项目，并标注证据状态。"
+                )
+                records = [json.loads(line) for line in runtime._session.path.read_text(encoding="utf-8").splitlines()]
+
+        steering_records = [
+            record
+            for record in records
+            if record.get("event") == "runtime_steering"
+            and record.get("payload", {}).get("kind") == "final_structure"
+        ]
+        self.assertIn("| 分类 | 项目/服务 | 证据状态 | 依据 |", result)
+        self.assertEqual(len(_FinalProjectScopeTableClient.calls), 2)
+        self.assertEqual(_FinalProjectScopeTableClient.calls[1]["tools"], [])
+        self.assertIn("missing_project_or_service_table_column", steering_records[0]["payload"]["issues"])
+
+    def test_final_structure_gate_requires_evidence_status_labels(self) -> None:
+        _FinalEvidenceStatusClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=workspace,
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _FinalEvidenceStatusClient):
+                runtime = AgentRuntime(config, show_tool_logs=False)
+                result = runtime.run("请根据代码证据回答，并把每条结论标为已验证或推断。")
+                records = [json.loads(line) for line in runtime._session.path.read_text(encoding="utf-8").splitlines()]
+
+        steering_records = [
+            record
+            for record in records
+            if record.get("event") == "runtime_steering"
+            and record.get("payload", {}).get("kind") == "final_structure"
+        ]
+        self.assertIn("已验证：", result)
+        self.assertIn("推断：", result)
+        self.assertEqual(len(_FinalEvidenceStatusClient.calls), 2)
+        self.assertEqual(_FinalEvidenceStatusClient.calls[1]["tools"], [])
+        self.assertIn("missing_evidence_status_labels", steering_records[0]["payload"]["issues"])
 
     def test_evidence_ledger_is_sent_to_provider_context_after_tool_results(self) -> None:
         _ReadFileThenFinalClient.calls = []

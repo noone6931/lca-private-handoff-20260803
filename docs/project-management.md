@@ -212,7 +212,7 @@ python3 scripts/sync_project_excel.py
 | T-084 | P0 | P9 | qwen3-coder-next 只读源码验证压测 | 已完成并记录问题 | Agent | 切换编码模型后，需要验证真实企业项目只读链路是否仍能收束 | session `20260709T071219747931Z` 正常 final：153 秒、35 次 LLM 请求、78 次工具调用、33 次 compaction、18 次 LLM summary；读 YXK-397 SQL 并定位 `IntentionConfig*` 证据链；新增 PT-030~PT-032。 |
 | T-085 | P1 | P9 | todo 工具误参纠偏 | 已完成 | Agent | T-084 中模型用 `key/content` 调 `todo_add`、用错误 id 调 `todo_update` | 已兼容 `key -> id`、`content -> task`，成功结果提示下次使用规范参数；缺参、未知 id、无更新字段错误会返回正确示例和已知 todo id。 |
 | T-086 | P0 | P9 | evidence-aware read repetition guard | 已完成 | Agent | T-084 中 `read_file` 54 次，同一路径重复读但 `guard_hits=0` | 已参考 OMP pruning / soft escalation：只读/分析任务中，同路径同范围成功读取超过阈值后返回 evidence 摘要并触发 final-answer steering；编辑任务不启用该 guard。 |
-| T-087 | P1 | P9 | final structure / evidence hygiene 增强 | 候选 | Agent | T-084 最终把“项目表”退化成“表名表”，并对类作用有过度断言 | 增强 Current task contract / final gate，检查用户显式输出结构；类作用类结论必须标 verified 或 inferred。 |
+| T-087 | P1 | P9 | final structure / evidence hygiene 增强 | 已完成 | Agent | T-084 最终把“项目表”退化成“表名表”，并对类作用有过度断言 | 已增强 Current task contract / final gate：项目范围表必须含项目/服务列；证据状态要求会触发已验证/推断标签检查。 |
 | T-088 | P0 | P9 | read-only evidence gate | 候选 | Agent | 密码加密问答压测中，模型未读关键登录/密码文件前先给推测型答案 | 参考 OMP current task / evidence context：用户要求“代码证据/不推测/找到实现”时，必须先读关键命中文件或明确缺证据，禁止先行业惯例推断。 |
 | T-089 | P0 | P9 | semantic exploration guard | 候选 | Agent | 密码加密问答压测中，用户纠正后出现同模块/父子目录/Path not found 扩散，exact duplicate guard 太晚 | 参考 OMP soft escalation / pruning：按模块、父目录、Path-not-found pattern 计数，超过阈值后要求改用 search_code 命中文件或收束回答。 |
 | T-090 | P1 | P9/P10 | terminal input/output isolation | 候选 | Agent | 压测日志出现用户键盘输入混入工具日志，如 `33333333333[tool:start]` | Terminal Frontend 继续强化 centralized renderer 和运行中输入管理；一次性 CLI 提示运行中不要直接敲字，推荐 `./agent --chat`。 |
@@ -262,7 +262,7 @@ python3 scripts/sync_project_excel.py
 | 风险 | R-040 | 中 | 过早大拆 `agent.py` 可能打断真实使用验证 | 新增，受控 | Claude review 指出 `agent.py` 已大，但 P0 大拆分会扩大回归面，影响今天可用目标 | 接受架构方向但调整顺序：先做 run summary/coverage 和真实压测，再按 startup_context/evidence/compaction/memory_consolidation/steering 分批抽模块。 |
 | 风险 | R-041 | 中 | 压测复盘缺少结构化 run coverage | 已关闭 MVP 版 | 只有 session 原文和最终回答时，很难判断模型卡在哪个 guard、用了多少工具、是否触发 compaction 或为什么结束 | 已参考 OMP run-collector 思路，新增每轮 `run_summary`：工具次数、guard/steering、compaction、termination reason 统一落 session 和事件流。 |
 | 风险 | R-042 | 中 | 只读源码验证中重复读取过多 | 已缓解 | T-084 中 `read_file` 54 次、`list_files` 10 次，重复读取同一批证据文件但没有 guard/steering 命中 | 已参考 OMP pruning / soft escalation / evidence sufficiency：对已读同范围做 evidence-aware repetition guard，达到阈值后返回已有 evidence 摘要并触发 final-answer steering。 |
-| 风险 | R-043 | 中 | 最终回答轻微结构漂移和过度断言 | 新增 | T-084 要求项目表，但最终输出表名表；还把 `IntentionConfigApplication` 表述为 Spring Boot 启动/配置类，证据不足 | 增强 Current task contract 的 final structure gate 和 final evidence hygiene，要求输出结构匹配用户字段，类作用类结论必须标 verified 或 inferred。 |
+| 风险 | R-043 | 中 | 最终回答轻微结构漂移和过度断言 | 已缓解 | T-084 要求项目表，但最终输出表名表；还把 `IntentionConfigApplication` 表述为 Spring Boot 启动/配置类，证据不足 | 已增强 Current task contract 和 final gate：项目范围表必须含项目/服务列；证据状态要求会触发已验证/推断标签检查。 |
 | 风险 | R-044 | 高 | 证据型只读问题先输出推测 | 新增 | “前端密码加密/后端怎么处理”问题中，模型未读关键登录/密码文件就先给“可能 HTTPS 明文 + 后端哈希”的推测 | T-088：read-only evidence gate；最终回答必须绑定具体 read_file/search_code/lsp 证据，否则继续查或明确未找到。 |
 | 风险 | R-045 | 高 | 语义级路径探索扩散 | 新增 | 用户纠正后出现大量相似目录 list_files、父子目录扩散、Path not found 和大目录读取；exact duplicate guard 太晚命中 | T-089：semantic exploration guard；按模块/父目录/Path-not-found pattern 小上限收束，并引导回 search_code 命中文件。 |
 | 风险 | R-046 | 中 | 终端输出被用户输入污染 | 新增 | 日志出现 `33333333333[tool:start]`，说明一次性 CLI 运行中键盘输入被终端 echo 到 transcript | T-090：强化 Terminal Frontend renderer/输入管理；一次性 CLI 增加提示，推荐长交互用 `./agent --chat`。 |
@@ -300,12 +300,12 @@ python3 scripts/sync_project_excel.py
 
 | 项目 | 结论 | 依据 | 后续 |
 |---|---|---|---|
-| 阶段判断 | P9 真实需求使用准备进行中 | T-076/T-077 已让 Runtime 产出 typed events，并提供 terminal-native 交互入口；T-078 已把项目边界分析沉淀为本机 memory/skill 和通用 runtime gate；T-084 已完成新模型只读源码验证压测；T-085/T-086 已补 todo 参数纠偏和重复读收束；新 review 暴露 evidence-first 与语义探索 guard 缺口 | 先补 T-087/T-088，再继续真实需求“范围确认 → 源码验证 → 实现设计/小改” |
+| 阶段判断 | P9 真实需求使用准备进行中 | T-076/T-077 已让 Runtime 产出 typed events，并提供 terminal-native 交互入口；T-078 已把项目边界分析沉淀为本机 memory/skill 和通用 runtime gate；T-084 已完成新模型只读源码验证压测；T-085/T-086/T-087 已补 todo 参数纠偏、重复读收束和最终结构/证据卫生；新 review 暴露 evidence-first 与语义探索 guard 缺口 | 先补 T-088，再继续真实需求“范围确认 → 源码验证 → 实现设计/小改” |
 | 与 OMP 的主要差距 | 差距集中在高级工程化，不阻塞低风险实战 | 完整 ToolChoiceQueue、reviewer/subagents、完整 LSP/DAP、browser/TUI、AST edit、managed skills 仍后置 | 由压测失败形态触发 |
 | 已关闭风险 | P0/P1 runtime 风险已基本收口 | Python 3.12 patch、非交互审批、orphan tool_calls、max_steps、allowed-dir、重复工具、证据漂移、diff 混淆等均已有修复或缓解 | 继续用真实任务验证 |
 | reviewer 决策 | 先保留轻量实现质量 gate | T-074 已补 no-comment-only reviewer，复跑未再产生伪实现 | 继续用真实任务验证；若后续出现更复杂 patch 质量问题，再补完整 reviewer/subagent |
 | ToolChoiceQueue 决策 | 暂不先做完整 ToolChoiceQueue | 已有 allowed-dir soft requirement、duplicate forced-final、todo steering、pruning；还缺“关键工具长期不用/乱用”的新失败样本 | 若 T-072 暴露工具选择失控，再按 OMP 裁剪 ToolChoiceQueue |
-| 下一步 | 补齐 T-087/T-088 后继续真实需求链路 | T-084 已证明新模型能跑通只读链路；重复读和 todo 参数问题已补；密码加密问答 review 证明 evidence-first 仍需加强 | 先做 final gate 和 evidence gate 小修，再进入用户真实需求的项目范围确认和源码验证 |
+| 下一步 | 补齐 T-088 后继续真实需求链路 | T-084 已证明新模型能跑通只读链路；重复读、todo 参数和最终结构/证据卫生问题已补；密码加密问答 review 证明 evidence-first 仍需加强 | 先做 read-only evidence gate，再进入用户真实需求的项目范围确认和源码验证 |
 
 ## P7 综合压测问题
 
@@ -342,7 +342,7 @@ python3 scripts/sync_project_excel.py
 | PT-029 | P1 | 已关闭 MVP 版 | T-074 复跑中模型正确判断当前 `crcl-open` 只是 `zqyl-investment-plan` 调用方并停止，但没有维护 todo，也没有调用 `git_diff` 证明无改动。 | OMP 会持续注入 current task / todo / tool evidence，并通过 tool-choice steering 约束最终回答前的必要收束步骤。 | T-075 已实现 no-edit final hygiene：实现任务准备无改动停止时，会先要求 todo/git 收束；测试覆盖过早 final 被 steering 到 `todo_add` + `git_status`。 |
 | PT-030 | P1 | 已缓解 | T-084 中模型首次用 `key/content/status` 调 `todo_add`，后续又用错误 id 调 `todo_update`；任务最终完成，但 todo 台账不可靠。 | OMP 的高频状态工具需要强 schema 提示、UI 可见性和可行动错误。 | T-085 已完成：兼容 `key -> id`、`content -> task`，同时继续提示规范参数名；未知 id 错误会列出已知 todo id 和正确调用示例。 |
 | PT-031 | P0 | 已缓解 | T-084 中 153 秒内调用 78 次工具，其中 `read_file` 54 次，同一批 SQL/Java/XML 文件多次重复读取，但 `guard_hits=0`、`steering_counts=0`。 | OMP 将 tool result pruning、soft escalation、task state 和 evidence sufficiency 组合，用小上限把低价值重复探索切回回答。 | T-086 已完成：同路径同范围成功读取多次后返回已读 evidence 摘要并触发 final-answer steering；只读/分析任务启用，编辑任务不启用。 |
-| PT-032 | P1 | 新增 | T-084 要求输出“必须关注/可能关注/暂不关注项目表”，最终变成“表名表”；对 `IntentionConfigApplication` 的作用也有过度断言。 | OMP 持续注入 current task contract 和 runtime evidence；成熟 reviewer/final check 会要求 verified fact 与 inference 分开。 | T-087 候选：增强 final structure gate 和 final evidence hygiene，检查显式输出结构，要求类作用类结论标 verified/inferred。 |
+| PT-032 | P1 | 已缓解 | T-084 要求输出“必须关注/可能关注/暂不关注项目表”，最终变成“表名表”；对 `IntentionConfigApplication` 的作用也有过度断言。 | OMP 持续注入 current task contract 和 runtime evidence；成熟 reviewer/final check 会要求 verified fact 与 inference 分开。 | T-087 已完成：项目范围表必须含项目/服务列；用户要求证据状态或回答含推断性表达时，final gate 要求已验证/推断标签。 |
 
 ## P5 收口结论
 

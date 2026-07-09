@@ -259,6 +259,57 @@ FINAL_LABEL_CANDIDATES = (
     "可能关心",
     "暂不关心",
 )
+PROJECT_SCOPE_TABLE_REQUEST_KEYWORDS = {
+    "项目表",
+    "项目范围",
+    "项目清单",
+    "服务范围",
+    "关注项目",
+    "关心项目",
+    "需要关注哪些项目",
+    "project scope",
+    "service scope",
+}
+PROJECT_SCOPE_TABLE_COLUMN_KEYWORDS = {
+    "项目",
+    "服务",
+    "project",
+    "service",
+}
+EVIDENCE_REQUEST_KEYWORDS = {
+    "代码证据",
+    "证据",
+    "依据",
+    "evidence",
+}
+EVIDENCE_STATUS_REQUEST_KEYWORDS = {
+    "已验证",
+    "推断",
+    "证据状态",
+    "verified",
+    "inferred",
+}
+INFERENCE_MARKERS = {
+    "可能",
+    "推测",
+    "猜测",
+    "大概",
+    "应该",
+    "未验证",
+    "likely",
+    "possibly",
+    "probably",
+    "inferred",
+    "guess",
+}
+EVIDENCE_STATUS_LABELS = {
+    "已验证",
+    "推断",
+    "verified",
+    "inferred",
+    "证据支持",
+    "未验证",
+}
 TODO_REQUEST_KEYWORDS = {
     "todo",
     "task list",
@@ -2510,7 +2561,8 @@ def _messages_with_current_task_contract(messages: list[dict[str, Any]], current
         "analysis with a summary of the last file you read; if evidence is incomplete, answer in the requested "
         "structure and state the uncertainty explicitly. File paths in final answers must be evidence-backed by "
         "tool results; label guessed class/file names as unverified candidates instead of presenting them as "
-        "existing evidence paths.\n"
+        "existing evidence paths. For evidence-heavy answers, separate directly verified facts from inference "
+        "instead of stating inferred class/file roles as proven facts.\n"
         f"- {request}"
     )
     system_messages = [message for message in messages if message.get("role") == "system"]
@@ -2896,6 +2948,15 @@ def _final_structure_issues(request: str | None, content: str) -> list[str]:
     ]
     if missing_labels:
         issues.append("missing_labels:" + ",".join(missing_labels))
+    if _request_asks_for_project_scope_table(request_text) and not _markdown_table_has_any_column(
+        content_text,
+        PROJECT_SCOPE_TABLE_COLUMN_KEYWORDS,
+    ):
+        issues.append("missing_project_or_service_table_column")
+    if _request_needs_evidence_status_labels(request_text, content_text) and not _content_has_evidence_status_label(
+        content_text
+    ):
+        issues.append("missing_evidence_status_labels")
     return issues
 
 
@@ -2912,6 +2973,42 @@ def _has_markdown_table(content: str) -> bool:
         for line in lines
     )
     return has_row and has_separator
+
+
+def _request_asks_for_project_scope_table(request: str) -> bool:
+    lowered = request.lower()
+    asks_for_scope = any(keyword.lower() in lowered for keyword in PROJECT_SCOPE_TABLE_REQUEST_KEYWORDS)
+    asks_for_table_shape = _request_asks_for_table(request) or "表" in request or "清单" in request
+    return asks_for_scope and asks_for_table_shape
+
+
+def _markdown_table_has_any_column(content: str, keywords: set[str]) -> bool:
+    lowered_keywords = {keyword.lower() for keyword in keywords}
+    for line in content.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("|") or not stripped.endswith("|"):
+            continue
+        if "---" in stripped:
+            continue
+        cells = [cell.strip().lower() for cell in stripped.strip("|").split("|")]
+        if any(any(keyword in cell for keyword in lowered_keywords) for cell in cells):
+            return True
+    return False
+
+
+def _request_needs_evidence_status_labels(request: str, content: str) -> bool:
+    lowered_request = request.lower()
+    lowered_content = content.lower()
+    if any(keyword.lower() in lowered_request for keyword in EVIDENCE_STATUS_REQUEST_KEYWORDS):
+        return True
+    asks_for_evidence = any(keyword.lower() in lowered_request for keyword in EVIDENCE_REQUEST_KEYWORDS)
+    has_inference = any(marker.lower() in lowered_content for marker in INFERENCE_MARKERS)
+    return asks_for_evidence and has_inference
+
+
+def _content_has_evidence_status_label(content: str) -> bool:
+    lowered = content.lower()
+    return any(label.lower() in lowered for label in EVIDENCE_STATUS_LABELS)
 
 
 def _request_mentions_todo(content: str | None) -> bool:
