@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from local_agent.agent import AgentRuntime
-from local_agent.agent import _resolve_compaction_threshold_chars
+from local_agent.compaction import resolve_compaction_threshold_chars
 from local_agent.config import AgentConfig
 from local_agent.protocol.events import ListEventSink
 
@@ -2527,8 +2527,8 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertTrue(any(record.get("event") == "memory_consolidation_error" for record in records))
 
     def test_compaction_threshold_reserves_at_least_fifteen_percent(self) -> None:
-        self.assertEqual(_resolve_compaction_threshold_chars(1200), 1020)
-        self.assertEqual(_resolve_compaction_threshold_chars(100000), 34464)
+        self.assertEqual(resolve_compaction_threshold_chars(1200), 1020)
+        self.assertEqual(resolve_compaction_threshold_chars(100000), 34464)
 
     def test_workflow_nudge_is_added_for_coding_tasks(self) -> None:
         _MessageRecordingClient.messages = []

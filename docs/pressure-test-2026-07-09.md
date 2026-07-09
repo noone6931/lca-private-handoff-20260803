@@ -492,3 +492,57 @@ LCA 措施：
 
 - T-090 已完成：新增 `terminal_io`，一次性 CLI、REPL 和 terminal chat 在 `runtime.run()` 期间临时关闭 TTY echo。
 - approval / ask_user 进入真实输入阶段时会临时恢复 echo，并 flush 运行期间误敲的输入缓冲；结束后重新静默，最终退出时恢复终端原状态。
+
+### PT-035：Vue 模板改动被 comment-only reviewer 误判风险
+
+现象：
+
+- 外部 review 指出 implementation-quality reviewer 的 `_looks_like_comment_line` 使用全局规则，可能把 `.vue` `<template>` 中的 `<p>` / `<li>` 等模板 markup 当成注释-only。
+- 这会导致真实 Vue UI/模板改动被误报为“只改注释/文档”，影响后续实现质量判断。
+
+OMP 对应思路：
+
+- OMP 的 reviewer / tool result 判断会结合工具类型、文件类型和上下文，不应把不同语言的语法规则混成一个全局判断。
+- 对“实现是否有效”的判断应尽量基于 language-aware evidence；没有完整语言能力时，也要避免过度泛化的误报。
+
+LCA 措施：
+
+- T-091 已完成：comment-only 判断改为按文件后缀区分。
+- JavaDoc markup 如 `<p>` / `<li>` 只在 `.java` 文件中按注释辅助标记处理；`.vue` 模板 markup 不再算 comment-only。
+- 新增回归测试：Vue `<p>{{ oldTitle }}</p>` 替换为 `<p>{{ title }}</p>` 不再触发 implementation-quality warning。
+
+### PT-036：`agent.py` 继续膨胀，compaction 关注点未分离
+
+现象：
+
+- 外部 review 按 OMP 架构原则指出：LCA 的 `agent.py` 同时承担主循环、compaction、evidence、memory、steering、startup context、run summary 等职责。
+- 这会让后续继续补 LSP、reviewer、ToolChoiceQueue 时越来越难控制回归面。
+
+OMP 对应思路：
+
+- OMP 不是把所有能力塞进一个循环文件，而是把 compaction/tokenizer/context、telemetry/run-collector、LSP clients、tool handling 等拆成独立模块，主循环只负责调度。
+- 大型运行时能力应按“一职责一文件”渐进拆分，并用测试守住行为不变。
+
+LCA 措施：
+
+- T-092 已完成第一步渐进拆分：新增 `src/local_agent/compaction.py`。
+- 已迁出压缩阈值/reserve、provider-safe 消息清理、tool output pruning、recent message 修剪、summary transcript、LLM summary request formatting 和 summary cache key 等纯函数。
+- `agent.py` 保留主循环编排与 runtime 状态；后续继续按低风险边界拆 `evidence.py`、`run_collector.py`、`startup_context.py` 和 `memory_consolidation.py`，暂不一次性重写 Steerer 协议。
+
+### PT-037：Java/Vue 轻量 LSP 与 Python AST 输出无置信度区分
+
+现象：
+
+- 外部 review 指出：Python LSP 使用 AST 真解析，而 Java/Vue 当前只是 regex/delimiter fallback，但工具输出格式没有提示差异。
+- 模型可能把 Java/Vue 轻量结果当成完整 LSP server 的精确结论，进而过度断言“无引用/无定义”。
+
+OMP 对应思路：
+
+- OMP 把 LSP 做成独立子系统和语言 client，诊断/定义/引用能力来自实际 language server 或明确的能力边界。
+- 如果 LCA 先保留无依赖轻量实现，就必须在工具结果里暴露 confidence，避免模型过度相信 fallback。
+
+LCA 措施：
+
+- T-092 已完成 MVP 修复：Java/JavaScript/TypeScript/Vue 的 `lsp_symbols`、`lsp_definition`、`lsp_references`、`lsp_diagnostics` 命中结果前会追加 `[lsp confidence]`。
+- 提示说明 Python 使用 AST，Java/JS/TS/Vue 使用 lightweight regex/delimiter fallback，结果是 best-effort、可能漏报。
+- 后续若继续贴近 OMP，再拆 `lsp/clients` provider，并评估可选 tree-sitter / 外部 LSP server adapter。

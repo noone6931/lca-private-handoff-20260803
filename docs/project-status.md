@@ -30,7 +30,7 @@
 
 ## 当前进度
 
-当前项目已完成 P8 前端协议与交互基础 MVP，并进入 P9 真实需求使用准备：P5 的安全与恢复增强 MVP 已收口；P6 默认工作流 MVP 已落地，用户可以用自然语言描述任务，而不是每次手写 `list_files/read_file/dry_run/run_tests/git_diff` 工具顺序；P7 已完成 OMP 风格 auto summary、多语言轻量 LSP、multi-root `--allow-dir`、workspace roots 注入、Markdown memory 启动注入、`learn` 工具、可选 session memory consolidation、authored skills discovery、重复工具调用熔断、duplicate-tool forced-final steering、tool result pruning、todo steering、跨项目 `--env-file` / launcher 安装目录 `.env` 加载、OMP 风格用户级 `--state-dir` runtime state 分层、Evidence Ledger、relevance gate、implementation-quality gate 和 no-edit final hygiene。2026-07-09 已完成 T-076 Event/Command Protocol v1、T-077/T-080 Terminal Frontend MVP 与命令可发现性、T-078 项目边界分析 MVP、T-081 Claude review 行动计划、T-082 run summary / coverage MVP，并新增 T-083 真实需求压测模板。模型默认已切到 `qwen3-coder-next`，已完成 T-084 企业项目只读源码验证压测，并已落地 T-085 todo 工具误参纠偏、T-086 evidence-aware read repetition guard、T-087 final structure / evidence hygiene、T-088 read-only evidence gate、T-089 semantic exploration guard 和 T-090 terminal input/output isolation：Runtime 能产出 typed events，CLI/session/tool 日志和 terminal frontend 共用事件流，session JSONL 追加 `event_v1` 供后续 replay；analysis-only 任务不会套用代码实现类 hygiene，点名 authored skill 时会先软性要求读取对应 `SKILL.md`，最终回答结构不完整时会强制无工具重答；每轮结束会写入结构化 `run_summary`，用于压测复盘和 `/status` 展示。
+当前项目已完成 P8 前端协议与交互基础 MVP，并进入 P9 真实需求使用准备：P5 的安全与恢复增强 MVP 已收口；P6 默认工作流 MVP 已落地，用户可以用自然语言描述任务，而不是每次手写 `list_files/read_file/dry_run/run_tests/git_diff` 工具顺序；P7 已完成 OMP 风格 auto summary、多语言轻量 LSP、multi-root `--allow-dir`、workspace roots 注入、Markdown memory 启动注入、`learn` 工具、可选 session memory consolidation、authored skills discovery、重复工具调用熔断、duplicate-tool forced-final steering、tool result pruning、todo steering、跨项目 `--env-file` / launcher 安装目录 `.env` 加载、OMP 风格用户级 `--state-dir` runtime state 分层、Evidence Ledger、relevance gate、implementation-quality gate 和 no-edit final hygiene。2026-07-09 已完成 T-076 Event/Command Protocol v1、T-077/T-080 Terminal Frontend MVP 与命令可发现性、T-078 项目边界分析 MVP、T-081 Claude review 行动计划、T-082 run summary / coverage MVP，并新增 T-083 真实需求压测模板。模型默认已切到 `qwen3-coder-next`，已完成 T-084 企业项目只读源码验证压测，并已落地 T-085 todo 工具误参纠偏、T-086 evidence-aware read repetition guard、T-087 final structure / evidence hygiene、T-088 read-only evidence gate、T-089 semantic exploration guard、T-090 terminal input/output isolation、T-091 Vue diff reviewer 误报修复和 T-092 compaction 渐进模块化 / LSP 置信度提示：Runtime 能产出 typed events，CLI/session/tool 日志和 terminal frontend 共用事件流，session JSONL 追加 `event_v1` 供后续 replay；analysis-only 任务不会套用代码实现类 hygiene，点名 authored skill 时会先软性要求读取对应 `SKILL.md`，最终回答结构不完整时会强制无工具重答；每轮结束会写入结构化 `run_summary`，用于压测复盘和 `/status` 展示。
 
 已具备的核心能力：
 
@@ -43,7 +43,7 @@
 - `apply_patch` 已支持 `replace`、`insert_before`、`insert_after`，并兼容 Python 3.12。
 - 非交互审批、LLM 非 JSON 响应、session 恢复坏尾部、search_code 绝对路径泄漏等问题已经修复。
 - 已完成 Agent 自举测试：能够通过百炼模型调用工具读取、修改、测试和查看 diff。
-- 测试基线：202 个测试在正常本地环境通过。
+- 测试基线：203 个测试在正常本地环境通过。
 
 当前已具备：
 
@@ -60,7 +60,7 @@
 - OMP 默认工作流源码依据已固化：system prompt、project prompt、tool registry、tool descriptions、todo reminders、ToolChoiceQueue、agent-loop 的具体实现已写入 `docs/omp-core-architecture-notes.md`。
 - LCA 默认工作流已沉到 system prompt 和 runtime workflow reminder：自然语言代码任务会默认先理解、必要时 todo、修改前读取、patch 写入、修改后测试和 diff。
 - OMP 风格 auto summary 已落地：默认 `--summary-mode auto`，小历史不摘要，超过 reserve 阈值后调用当前 provider 生成语义摘要，失败回退本地摘要；`local` / `llm` 仍可显式指定。
-- 轻量 LSP 风格工具已落地：`lsp_symbols`、`lsp_workspace_symbols`、`lsp_document_symbols`、`lsp_definition`、`lsp_references`、`lsp_diagnostics`，覆盖 Python、Java、JavaScript、TypeScript、Vue，不启动外部语言服务器；workspace/document symbols 是兼容别名。
+- 轻量 LSP 风格工具已落地：`lsp_symbols`、`lsp_workspace_symbols`、`lsp_document_symbols`、`lsp_definition`、`lsp_references`、`lsp_diagnostics`，覆盖 Python、Java、JavaScript、TypeScript、Vue，不启动外部语言服务器；workspace/document symbols 是兼容别名；Java/JavaScript/TypeScript/Vue 输出会带 `[lsp confidence]` best-effort 提示，避免把轻量正则结果当完整 LSP server。
 - Multi-root workspace 已落地：`--allow-dir` / `AGENT_ALLOWED_DIRS` 可显式授权额外目录给文件、搜索、LSP 和 patch 工具；system prompt、`list_files` 根目录输出、path-not-found 错误和带 allowed-dir 的空搜索会列出 primary `--cwd` 和 allowed dirs；需求/文档类任务会触发 OMP 风格 soft tool requirement，先要求 `read_file` allowed-dir 文档，再释放完整工具集；shell、git、显式项目 memory/skills 仍锚定 `--cwd`，session/todo/patch logs 和默认 consolidation memory 走 state dir。
 - 跨项目 env-file 已落地：CLI 支持显式 `--env-file`，`./agent` 会自动把 LCA 安装目录 `.env` 作为 env-file 加载，使 token/provider 配置与目标 `--cwd` 解耦。优先级是：真实环境变量 > 显式 env-file > 目标 workspace `.env`。
 - 用户级 / 项目级常驻上下文已落地：新 session 会读取用户级 `AGENTS.md` 和项目级 `.local-agent/AGENTS.md`，作为 advisory context 注入。
@@ -95,6 +95,8 @@
 - T-088 read-only evidence gate 已落地：代码证据/源码/不推测/怎么实现/怎么处理类问题若准备无工具回答且本轮没有成功 `read_file`，runtime 会要求先用 `search_code` / LSP 定位并 `read_file` 关键实现文件；如果 search/LSP 已给出 no-match 且最终明确“未找到代码证据”，允许负向结论。
 - T-089 semantic exploration guard 已落地：`list_files` 会按模块/父目录归一语义探索 key，同一模块或同一 Path-not-found 父路径反复扩散超过小上限后跳过目录猜测，并临时只开放 `search_code` / `read_file` / LSP 证据工具，要求模型回到代码证据或收束回答。
 - T-090 terminal input/output isolation 已落地：一次性 CLI、REPL 和 terminal chat 在 `runtime.run()` 期间会临时关闭 TTY echo；approval / ask_user 会临时恢复输入并 flush 运行期间误敲的缓冲，减少用户键盘输入混入工具日志。
+- T-091 Vue diff reviewer 误报修复已落地：implementation-quality reviewer 的 comment-only 判断改为按文件类型处理，JavaDoc `<p>/<li>` 仅在 Java 中按注释处理，Vue 模板 markup 不再误触 comment-only 警告。
+- T-092 compaction 渐进模块化已落地：`src/local_agent/compaction.py` 承载压缩阈值、provider-safe 清理、tool output pruning、recent message 修剪、summary transcript/cache 等纯函数；`agent.py` 保留主循环编排，开始按 OMP 一职责一文件方向降低上帝对象风险。
 
 真实缺口：
 
@@ -114,6 +116,8 @@
 - 2026-07-09 密码加密问答压测 review 暴露：证据型问题先输出推测已用 T-088 缓解；用户纠正后路径探索扩散已用 T-089 缓解；终端运行中用户输入混入工具日志已用 T-090 缓解，后续继续观察是否需要完整异步 command bus。
 - 目标服务接入/真实实现压测仍保留为后续任务：T-075 已补 no-edit 收束规范；后续用户会给项目边界定义，再让 LCA 分析具体需要哪些项目，随后接入目标项目做需求实现设计。
 - LSP 目前是多语言轻量静态工具，不是完整 LSP server，不支持 rename / code action / DAP。
+- Java/JavaScript/TypeScript/Vue LSP 目前仍是 regex/delimiter fallback，已标注 best-effort；后续若继续靠近 OMP，应拆成 `lsp/clients` 风格 provider，并可选接入 tree-sitter 或外部 LSP server。
+- `agent.py` 已开始拆出 `compaction.py`，但 Evidence Ledger、run collector、startup context、memory consolidation 和 steering 仍在主文件内；后续继续按低风险模块边界拆分。
 - 完整异步 Command Bus 尚未实现；当前 Terminal Frontend 复用同步 `AgentRuntime.run()`，approval prompt 仍由工具层同步读取 stdin，但已经产生 approval events。后续只有在真实交互压测显示需要取消/并发/远程 UI 时，再升级为完整 async permission command bus。
 - provider 请求失败发生在 assistant tool_call 之前，当前会以 `LlmError` 停止；后续可继续优化用户提示。
 
@@ -186,7 +190,7 @@
 | Terminal Frontend | 已完成 MVP 版 | `src/local_agent/frontends/terminal/` 提供 append-only terminal frontend；`./agent`、`./agent --chat`、`./agent chat` 可进入交互；支持 `/help`、`/status`、`/tools`、`/approval`；可选 `prompt_toolkit` / `rich` 增强输入和输出，缺失时降级。 |
 | Terminal Input Isolation | 已完成 MVP 版 | `src/local_agent/terminal_io.py` 在 agent run 期间关闭 TTY echo；approval / ask_user 通过 `terminal_input_prompt` 恢复输入并 flush 误敲缓冲。 |
 | Run summary / coverage | 已完成 MVP 版 | `src/local_agent/agent.py` 在每轮结束产出 `RunSummary` event 和 `run_summary` session 记录；`/status` 展示最近一轮摘要。 |
-| 测试基线 | 已完成 | 本地正常环境下 202 个测试通过。 |
+| 测试基线 | 已完成 | 本地正常环境下 203 个测试通过。 |
 
 ## 下一步 Todo
 
@@ -361,7 +365,7 @@
 | 项目 | 结论 | 依据 |
 |---|---|---|
 | 主链路 | 通过 | 百炼真实小改复测已跑通 todo、dry_run、apply_patch、session allow、rollback、run_tests、git_diff。 |
-| 测试 | 通过 | P5 收口时 90 个 unittest、compileall、xlsx 检查、diff check 均通过；P9 当前代码已跑通 202 个 unittest、compileall 和 diff check。 |
+| 测试 | 通过 | P5 收口时 90 个 unittest、compileall、xlsx 检查、diff check 均通过；P9 当前代码已跑通 203 个 unittest、compileall 和 diff check。 |
 | 日用入口 | 通过 | README 已补只读分析和小改任务命令模板。 |
 | 开放风险 | 可接受 | shell 仍非沙箱、prompt injection 仍需靠审批和封闭 VM；token budget / output reserve / managed skills 留到后续评估。 |
 | 下一阶段 | 真实需求设计与实现压测 | 企业项目联网压测已获用户允许并由 Agent 代跑；跨项目 env-file、轻量 pruning / todo steering、memory consolidation、duplicate-tool forced-final steering、allowed-dir soft tool requirement、repeated read_file guard、空搜索词 guard、path escape roots hint、LSP 空 query guard、semantic exploration guard、terminal input isolation、Current task contract、Evidence Ledger、relevance gate、implementation-quality reviewer、no-edit final hygiene、Terminal Frontend MVP 和项目边界分析 MVP 已完成。下一步用真实需求跑“边界圈定 → 用户确认项目范围 → 源码验证 → 实现设计/小改”。 |

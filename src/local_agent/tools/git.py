@@ -3,7 +3,7 @@ from __future__ import annotations
 import subprocess
 from dataclasses import dataclass, field
 from os import PathLike
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from .base import Tool, ToolContext, ToolResult
@@ -332,7 +332,7 @@ def _comment_only_code_patch_paths(raw_diff: str, patch_paths: set[str]) -> list
         if path not in patch_paths or not is_source_code_path(path):
             continue
         meaningful = [line for line in changed_lines if line.strip()]
-        if meaningful and all(_looks_like_comment_line(line) for line in meaningful):
+        if meaningful and all(_looks_like_comment_line(path, line) for line in meaningful):
             comment_only.append(path)
     return sorted(comment_only)
 
@@ -365,7 +365,7 @@ def _changed_code_lines_by_file(raw_diff: str) -> dict[str, list[str]]:
     return files
 
 
-def _looks_like_comment_line(line: str) -> bool:
+def _looks_like_comment_line(path: str, line: str) -> bool:
     stripped = line.strip()
     if not stripped:
         return True
@@ -373,11 +373,18 @@ def _looks_like_comment_line(line: str) -> bool:
         return True
     if stripped.startswith(("//", "#", "*", "/*", "<!--", "-->", "{/*", "*/")):
         return True
-    if stripped.startswith(("<p>", "</p>", "<ul>", "</ul>", "<li>", "</li>")):
+    if _is_javadoc_markup_line(path, stripped):
         return True
     if stripped.endswith("-->"):
         return True
     return False
+
+
+def _is_javadoc_markup_line(path: str, stripped: str) -> bool:
+    suffix = PurePosixPath(path).suffix.lower()
+    if suffix != ".java":
+        return False
+    return stripped.startswith(("<p>", "</p>", "<ul>", "</ul>", "<li>", "</li>"))
 
 
 def _baseline_paths(baseline: dict[str, Any], *, staged: bool) -> set[str]:

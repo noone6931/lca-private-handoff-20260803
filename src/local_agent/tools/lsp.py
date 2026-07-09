@@ -19,6 +19,11 @@ MAX_RESULT_LINE_CHARS = 240
 
 SUPPORTED_SUFFIXES = {".py", ".java", ".js", ".jsx", ".ts", ".tsx", ".vue"}
 JS_TS_SUFFIXES = {".js", ".jsx", ".ts", ".tsx", ".vue"}
+BEST_EFFORT_SUFFIXES = SUPPORTED_SUFFIXES - {".py"}
+BEST_EFFORT_NOTICE = (
+    "[lsp confidence] Python uses AST parsing. Java/JavaScript/TypeScript/Vue use lightweight "
+    "regex and delimiter fallback, so results are best-effort and may miss cases."
+)
 IDENTIFIER_RE = r"[$A-Za-z_][\w$]*"
 SYMBOL_RE = re.compile(rf"^{IDENTIFIER_RE}(?:\.{IDENTIFIER_RE})*$")
 
@@ -174,17 +179,19 @@ def lsp_symbols(args: dict[str, Any], context: ToolContext) -> ToolResult:
     query = str(args.get("query") or "").strip()
     max_results = _max_results(args, default=80, upper=200)
     results: list[str] = []
+    matched_suffixes: set[str] = set()
     for record in _iter_symbol_records(root, context.workspace, context.allowed_dirs):
         rendered = record.render(context.workspace, context.allowed_dirs)
         if query and query.lower() not in rendered.lower():
             continue
         results.append(rendered)
+        matched_suffixes.add(record.path.suffix)
         if len(results) >= max_results:
             results.append(f"... truncated after {max_results} symbols")
             break
     if not results:
         return ToolResult("No supported code symbols found.", useless=True)
-    return ToolResult("\n".join(results))
+    return ToolResult(_render_lsp_results(results, matched_suffixes))
 
 
 def lsp_definition(args: dict[str, Any], context: ToolContext) -> ToolResult:
@@ -196,15 +203,17 @@ def lsp_definition(args: dict[str, Any], context: ToolContext) -> ToolResult:
         return root
     max_results = _max_results(args, default=40, upper=100)
     matches: list[str] = []
+    matched_suffixes: set[str] = set()
     for record in _iter_symbol_records(root, context.workspace, context.allowed_dirs):
         if record.name == symbol or (record.container and f"{record.container}.{record.name}" == symbol):
             matches.append(record.render(context.workspace, context.allowed_dirs))
+            matched_suffixes.add(record.path.suffix)
             if len(matches) >= max_results:
                 matches.append(f"... truncated after {max_results} definitions")
                 break
     if not matches:
         return ToolResult(f"No definition found for: {symbol}", useless=True)
-    return ToolResult("\n".join(matches))
+    return ToolResult(_render_lsp_results(matches, matched_suffixes))
 
 
 def lsp_references(args: dict[str, Any], context: ToolContext) -> ToolResult:
@@ -217,6 +226,7 @@ def lsp_references(args: dict[str, Any], context: ToolContext) -> ToolResult:
     max_results = _max_results(args, default=80, upper=200)
     pattern = re.compile(rf"(?<![\w$]){re.escape(symbol)}(?![\w$])")
     results: list[str] = []
+    matched_suffixes: set[str] = set()
     for path in _iter_supported_files(root):
         text = _read_text(path)
         if text is None:
@@ -230,12 +240,13 @@ def lsp_references(args: dict[str, Any], context: ToolContext) -> ToolResult:
             if len(snippet) > MAX_RESULT_LINE_CHARS:
                 snippet = snippet[: MAX_RESULT_LINE_CHARS - 14] + "...<truncated>"
             results.append(f"{rel}:{line_number}:{match.start() + 1}: {snippet}")
+            matched_suffixes.add(path.suffix)
             if len(results) >= max_results:
                 results.append(f"... truncated after {max_results} references")
-                return ToolResult("\n".join(results))
+                return ToolResult(_render_lsp_results(results, matched_suffixes))
     if not results:
         return ToolResult(f"No references found for: {symbol}", useless=True)
-    return ToolResult("\n".join(results))
+    return ToolResult(_render_lsp_results(results, matched_suffixes))
 
 
 def lsp_diagnostics(args: dict[str, Any], context: ToolContext) -> ToolResult:
@@ -244,6 +255,7 @@ def lsp_diagnostics(args: dict[str, Any], context: ToolContext) -> ToolResult:
         return root
     max_results = _max_results(args, default=80, upper=200)
     diagnostics: list[str] = []
+    matched_suffixes: set[str] = set()
     for path in _iter_supported_files(root):
         text = _read_text(path)
         if text is None:
@@ -254,12 +266,13 @@ def lsp_diagnostics(args: dict[str, Any], context: ToolContext) -> ToolResult:
             diagnostic = _delimiter_diagnostic(path, context.workspace, context.allowed_dirs, text)
         if diagnostic:
             diagnostics.append(diagnostic)
+            matched_suffixes.add(path.suffix)
             if len(diagnostics) >= max_results:
                 diagnostics.append(f"... truncated after {max_results} diagnostics")
                 break
     if not diagnostics:
         return ToolResult("No lightweight diagnostics.", useless=True)
-    return ToolResult("\n".join(diagnostics))
+    return ToolResult(_render_lsp_results(diagnostics, matched_suffixes))
 
 
 def _resolve_lsp_root(args: dict[str, Any], context: ToolContext) -> Path | ToolResult:
@@ -283,6 +296,12 @@ def _max_results(args: dict[str, Any], *, default: int, upper: int) -> int:
 def _clean_symbol(symbol: str) -> str | None:
     cleaned = symbol.strip()
     return cleaned if SYMBOL_RE.fullmatch(cleaned) else None
+
+
+def _render_lsp_results(results: list[str], suffixes: set[str]) -> str:
+    if suffixes.intersection(BEST_EFFORT_SUFFIXES):
+        return "\n".join([BEST_EFFORT_NOTICE, *results])
+    return "\n".join(results)
 
 
 def _iter_symbol_records(root: Path, workspace: Path, allowed_roots: tuple[Path, ...]) -> Iterable[SymbolRecord]:

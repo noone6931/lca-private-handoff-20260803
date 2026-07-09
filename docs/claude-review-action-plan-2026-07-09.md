@@ -55,3 +55,13 @@ LCA 与 OMP 的架构原则继续靠拢，但不把 OMP 的完整产品形态搬
 第二轮 review 再次指出 `agent.py` 行数继续上升、Java/Vue LSP 仍是轻量正则、token budget 仍是字符近似。这个警告有效：后续新增 steering/guard 时应优先考虑抽到独立模块，避免继续把所有控制逻辑塞进 `agent.py`。
 
 但执行顺序仍不调整为“立刻 P0 大拆分”。最新真实压测暴露的是 evidence-first、语义级探索扩散和最终回答结构/证据卫生，这些是今天能否用起来的直接问题。当前策略是：先用小而可测的 runtime gate 关闭 P9 实战缺口；一旦 T-087/T-088/T-089 收束，再开始第一批低风险模块化（优先 `evidence.py`、`compaction.py`、`run_collector.py`），并把 Java/Vue LSP provider 拆分列入下一阶段。
+
+## 2026-07-09 执行进展
+
+T-091/T-092 已开始关闭上述 review 项：
+
+- 已修复 `.vue` 模板 markup 被 implementation-quality reviewer 误判 comment-only 的风险；JavaDoc markup 规则只在 `.java` 中生效。
+- 已新增 `src/local_agent/compaction.py`，先抽出 context compaction 的纯函数、provider-safe 清理、tool output pruning、recent message 修剪和 summary helpers，保持主循环行为不变。
+- 已给 Java/JavaScript/TypeScript/Vue LSP 输出增加 `[lsp confidence]`，明确这些结果来自 lightweight regex/delimiter fallback；完整 `lsp/clients` provider 分包和 optional parser 仍在下一阶段。
+
+下一步继续按低风险边界拆 `evidence.py`、`run_collector.py`、`startup_context.py` 或 `memory_consolidation.py`，同时保留真实需求压测优先级。

@@ -108,8 +108,10 @@ class ToolTests(unittest.TestCase):
             definition = lsp_definition({"symbol": "helper", "path": "pkg"}, context)
 
         self.assertFalse(symbols.is_error)
+        self.assertNotIn("[lsp confidence]", symbols.content)
         self.assertIn("pkg/module.py:1:1: class Service", symbols.content)
         self.assertFalse(definition.is_error)
+        self.assertNotIn("[lsp confidence]", definition.content)
         self.assertIn("pkg/module.py:5:1: function helper", definition.content)
 
     def test_lsp_symbol_aliases_are_registered_and_match_lsp_symbols(self) -> None:
@@ -196,10 +198,13 @@ class ToolTests(unittest.TestCase):
             diagnostics = lsp_diagnostics({"path": "src"}, context)
 
         self.assertFalse(symbols.is_error)
+        self.assertIn("[lsp confidence]", symbols.content)
         self.assertIn("UserService.java:3:14: class UserService", symbols.content)
         self.assertFalse(definition.is_error)
+        self.assertIn("[lsp confidence]", definition.content)
         self.assertIn("UserService.java:4:17: method UserService.findUser", definition.content)
         self.assertFalse(diagnostics.is_error)
+        self.assertIn("[lsp confidence]", diagnostics.content)
         self.assertIn("DelimiterError", diagnostics.content)
 
     def test_lsp_supports_vue_symbols_and_references(self) -> None:
@@ -226,8 +231,10 @@ class ToolTests(unittest.TestCase):
             references = lsp_references({"symbol": "saveUser", "path": "src"}, context)
 
         self.assertFalse(symbols.is_error)
+        self.assertIn("[lsp confidence]", symbols.content)
         self.assertIn("UserCard.vue:7:10: function saveUser", symbols.content)
         self.assertFalse(references.is_error)
+        self.assertIn("[lsp confidence]", references.content)
         self.assertIn("UserCard.vue:2:19:", references.content)
         self.assertIn("UserCard.vue:6:24:", references.content)
 
@@ -1565,6 +1572,52 @@ class ToolTests(unittest.TestCase):
         self.assertIn("implementation-quality warning", result.content)
         self.assertIn("src/ExemptCompanyDto.java", result.content)
         self.assertIn("do not claim behavior", result.content)
+
+    def test_git_diff_does_not_treat_vue_template_markup_as_comment_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            target = workspace / "src" / "UserCard.vue"
+            target.parent.mkdir()
+            subprocess.run(["git", "init"], cwd=workspace, text=True, capture_output=True, check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=workspace, check=True)
+            subprocess.run(["git", "config", "user.name", "Test User"], cwd=workspace, check=True)
+            original = (
+                "<template>\n"
+                "  <p>{{ oldTitle }}</p>\n"
+                "</template>\n"
+                "<script setup>\n"
+                "const oldTitle = 'old'\n"
+                "</script>\n"
+            )
+            target.write_text(original, encoding="utf-8")
+            subprocess.run(["git", "add", "."], cwd=workspace, check=True)
+            subprocess.run(["git", "commit", "-m", "init"], cwd=workspace, text=True, capture_output=True, check=True)
+            baseline = capture_git_baseline(workspace)
+            context = ToolContext(
+                workspace=workspace,
+                approval_mode="yolo",
+                state_dir=workspace / ".agent-state",
+                session_id="session-1",
+                git_baseline=baseline,
+                current_user_request="实现 Vue 标题展示需求",
+            )
+
+            patch_file(
+                {
+                    "path": "src/UserCard.vue",
+                    "tag": hash_text(original),
+                    "start_line": 2,
+                    "end_line": 2,
+                    "old_text": "  <p>{{ oldTitle }}</p>",
+                    "new_text": "  <p>{{ title }}</p>",
+                },
+                context,
+            )
+            result = git_diff({}, context)
+
+        self.assertFalse(result.is_error)
+        self.assertIn("src/UserCard.vue", result.content)
+        self.assertNotIn("implementation-quality warning", result.content)
 
     def test_tool_registry_validates_required_enum_and_extra_args(self) -> None:
         calls: list[dict] = []
