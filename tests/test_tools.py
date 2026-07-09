@@ -580,6 +580,33 @@ class ToolTests(unittest.TestCase):
         self.assertIn("[lsp confidence]", diagnostics.content)
         self.assertIn("DelimiterError", diagnostics.content)
 
+    def test_lsp_query_prioritizes_matching_paths_beyond_file_cap(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            src = workspace / "src" / "main" / "java"
+            for index in range(320):
+                dummy = src / "aaa" / f"Dummy{index:03d}.java"
+                dummy.parent.mkdir(parents=True, exist_ok=True)
+                dummy.write_text(f"package demo;\npublic class Dummy{index:03d} {{}}\n", encoding="utf-8")
+            target = src / "zzz" / "IntentionConfigManagerController.java"
+            target.parent.mkdir(parents=True)
+            target.write_text(
+                "package demo;\n"
+                "public class IntentionConfigManagerController {\n"
+                "    public void addIntentionConfig() {}\n"
+                "}\n",
+                encoding="utf-8",
+            )
+            context = ToolContext(workspace=workspace, approval_mode="yolo")
+
+            symbols = lsp_symbols({"path": "src", "query": "IntentionConfigManagerController"}, context)
+            definition = lsp_definition({"path": "src", "symbol": "IntentionConfigManagerController"}, context)
+
+        self.assertFalse(symbols.is_error)
+        self.assertIn("IntentionConfigManagerController.java:2:14: class IntentionConfigManagerController", symbols.content)
+        self.assertFalse(definition.is_error)
+        self.assertIn("IntentionConfigManagerController.java:2:14: class IntentionConfigManagerController", definition.content)
+
     def test_lsp_supports_vue_symbols_and_references(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp).resolve()

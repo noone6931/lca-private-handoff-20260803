@@ -237,7 +237,7 @@ def lsp_symbols(args: dict[str, Any], context: ToolContext) -> ToolResult:
         root,
         workspace=context.workspace,
         allowed_roots=context.allowed_dirs,
-        supported_files=_iter_supported_files(root),
+        supported_files=_iter_supported_files(root, query=query),
         query=query,
         max_results=max_results,
     )
@@ -245,7 +245,7 @@ def lsp_symbols(args: dict[str, Any], context: ToolContext) -> ToolResult:
         return ToolResult(external.content)
     results: list[str] = []
     matched_suffixes: set[str] = set()
-    for record in _iter_symbol_records(root, context.workspace, context.allowed_dirs):
+    for record in _iter_symbol_records(root, context.workspace, context.allowed_dirs, query=query):
         rendered = record.render(context.workspace, context.allowed_dirs)
         if query and query.lower() not in rendered.lower():
             continue
@@ -273,7 +273,7 @@ def lsp_definition(args: dict[str, Any], context: ToolContext) -> ToolResult:
         root,
         workspace=context.workspace,
         allowed_roots=context.allowed_dirs,
-        supported_files=_iter_supported_files(root),
+        supported_files=_iter_supported_files(root, query=symbol),
         symbol=symbol,
         max_results=max_results,
     )
@@ -281,7 +281,7 @@ def lsp_definition(args: dict[str, Any], context: ToolContext) -> ToolResult:
         return ToolResult(external.content)
     matches: list[str] = []
     matched_suffixes: set[str] = set()
-    for record in _iter_symbol_records(root, context.workspace, context.allowed_dirs):
+    for record in _iter_symbol_records(root, context.workspace, context.allowed_dirs, query=symbol):
         if record.name == symbol or (record.container and f"{record.container}.{record.name}" == symbol):
             matches.append(record.render(context.workspace, context.allowed_dirs))
             matched_suffixes.add(record.path.suffix)
@@ -774,8 +774,14 @@ def _java_source_path_entries(source_paths: Any) -> list[str]:
     return entries
 
 
-def _iter_symbol_records(root: Path, workspace: Path, allowed_roots: tuple[Path, ...]) -> Iterable[SymbolRecord]:
-    for path in _iter_supported_files(root):
+def _iter_symbol_records(
+    root: Path,
+    workspace: Path,
+    allowed_roots: tuple[Path, ...],
+    *,
+    query: str | None = None,
+) -> Iterable[SymbolRecord]:
+    for path in _iter_supported_files(root, query=query):
         text = _read_text(path)
         if text is None:
             continue
@@ -922,10 +928,30 @@ def _js_ts_vue_symbol_records(path: Path, text: str) -> Iterable[SymbolRecord]:
     return records
 
 
-def _iter_supported_files(root: Path) -> Iterable[Path]:
+def _iter_supported_files(root: Path, *, query: str | None = None) -> Iterable[Path]:
     if root.is_file():
         if root.suffix in SUPPORTED_SUFFIXES and _safe_file_size(root):
             yield root
+        return
+    if query:
+        matches: list[Path] = []
+        fallback: list[Path] = []
+        for path in _walk_supported_files(root):
+            if not _safe_file_size(path):
+                continue
+            if _path_matches_query(path, query):
+                matches.append(path)
+                if len(matches) >= MAX_LSP_FILES:
+                    break
+            elif len(fallback) < MAX_LSP_FILES:
+                fallback.append(path)
+        for path in matches:
+            yield path
+        remaining = MAX_LSP_FILES - len(matches)
+        if remaining <= 0:
+            return
+        for path in fallback[:remaining]:
+            yield path
         return
     yielded = 0
     for path in _walk_supported_files(root):
@@ -935,6 +961,17 @@ def _iter_supported_files(root: Path) -> Iterable[Path]:
         yielded += 1
         if yielded >= MAX_LSP_FILES:
             return
+
+
+def _path_matches_query(path: Path, query: str) -> bool:
+    lowered = query.strip().lower()
+    if not lowered:
+        return False
+    parts = [part for part in re.split(r"[^a-z0-9_$]+", lowered) if part]
+    candidates = {lowered, lowered.rsplit(".", 1)[-1], *parts}
+    path_text = str(path).lower()
+    stem = path.stem.lower()
+    return any(candidate and (candidate in stem or candidate in path_text) for candidate in candidates)
 
 
 def _walk_supported_files(root: Path) -> Iterable[Path]:

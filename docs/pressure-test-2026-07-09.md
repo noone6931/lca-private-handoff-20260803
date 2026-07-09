@@ -669,3 +669,47 @@ LCA 措施：
 
 - 若要做到真正 type-aware Java navigation，必须补齐本机 Maven 私服配置、公司 parent POM 和依赖缓存；这是环境条件，不是 Agent 代码可以单独绕过的。
 - 后续可选增强：暴露 `lsp_request` / `lsp_capabilities` 调试工具；`lsp_status` 已能报告 jdtls project import/source path 状态、Maven parent 缺口和 Maven 环境摘要。
+
+### PT-042：Java LSP fallback 真实使用复测
+
+目标：
+
+- 在企业项目 Maven parent 仍缺失、jdtls 无法完整导入 Java project 的情况下，验证 LCA 是否能先报告 external LSP 边界，再用 fallback / search / read_file 收束到源码证据。
+
+第一轮复测：
+
+- session：`20260709T090514754843Z`
+- cwd：`/Users/chengming/mycode/project/crcl-open/crcl-open`
+- 模式：`AGENT_LSP_MODE=external`
+- 任务：围绕 `IntentionConfigManagerController.addIntentionConfig` / `updateIntentionConfig` 分析调用链。
+
+观察：
+
+- LCA 先调用 `lsp_status probe=true`，正确报告 jdtls project health incomplete、缺 `com.yljr:parent:0.0.5-SNAPSHOT` 和 Maven environment 摘要。
+- 在 strict external 模式下，`lsp_symbols` / `lsp_document_symbols` 对根目录查询返回 external unavailable，随后模型用 `search_code` 和 `read_file` 读取 `IntentionConfigManagerController.java`、`IntentionConfigApplication.java`、`IntentionConfigService.java`、`IntentionConfigServiceImpl.java` 并输出调用链。
+- run summary：33.8s、11 次 LLM 请求、14 次工具调用、2 次 tool error、0 次 compaction。
+
+暴露问题：
+
+- 大仓库从根目录做 lightweight fallback 时，`_iter_supported_files` 受 `MAX_LSP_FILES=300` 限制；即使查询的是明确类名，目标文件也可能因为目录顺序靠后而没进 fallback 扫描窗口。
+- 这会导致模型虽然能靠 `search_code/read_file` 收束，但没有真正拿到 “external unavailable + fallback symbols” 的 LSP 多来源证据。
+
+LCA 措施：
+
+- T-101 已完成 query-aware LSP fallback：`lsp_symbols` / `lsp_definition` 在带 query/symbol 时，会优先扫描文件名或路径匹配查询词的候选文件，再补普通前 300 个文件。
+- 新增回归测试构造 320 个 dummy Java 文件，把目标类放在排序靠后的目录，验证从根路径查询仍能定位。
+
+第二轮复测：
+
+- session：`20260709T090748481226Z`
+- 模式：`AGENT_LSP_MODE=auto`
+- 结果：
+  - `lsp_status probe=true` 正确报告 jdtls project/source path 为空、Maven settings 存在、缺 parent POM。
+  - `lsp_symbols query=IntentionConfigManagerController` 直接返回 fallback 类和方法证据：类在 `IntentionConfigManagerController.java:40`，`addIntentionConfig` 在第 62 行，`updateIntentionConfig` 在第 84 行。
+  - `lsp_definition symbol=IntentionConfigManagerController` 返回 fallback 类定义。
+  - 模型随后用 `read_file` 读取 Controller 和 Application，并给出 Controller → Application → Service/Method/ExemptCompany 的调用链。
+
+结论：
+
+- 第二轮已达到本阶段目标：external jdtls 不完整时，LCA 能明确说明 provider 边界，同时用 LSP fallback、`search_code` 和 `read_file` 三类证据收束。
+- 这更接近 OMP 的多来源证据收敛：语言服务器能用则优先，不能用时工具层把 no-result 边界说清楚，并继续提供可审计 fallback evidence。
