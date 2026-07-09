@@ -209,6 +209,34 @@ class _ReadOnlyEvidenceNoMatchClient:
         return type("Response", (), {"message": {"content": "未找到代码证据：search_code 没有匹配 MissingPasswordEncryptor。"}})()
 
 
+class _InvalidToolCallThenFinalClient:
+    calls: list[dict] = []
+
+    def __init__(self, config: AgentConfig):
+        self.config = config
+
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
+        if len(type(self).calls) == 1:
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "call_empty_name",
+                                "type": "function",
+                                "function": {"name": "", "arguments": "{}"},
+                            }
+                        ],
+                    }
+                },
+            )()
+        return type("Response", (), {"message": {"content": "recovered"}})()
+
+
 class _ReadFileThenFinalClient:
     calls: list[dict] = []
 
@@ -1698,6 +1726,39 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertIn("finish_reason=length", result)
         self.assertEqual([message["tool_call_id"] for message in tool_messages], ["call_1", "call_2"])
         self.assertTrue(all("output token limit" in message["content"] for message in tool_messages))
+
+    def test_invalid_tool_call_name_is_sanitized_before_next_provider_request(self) -> None:
+        _InvalidToolCallThenFinalClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=Path(tmp).resolve(),
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _InvalidToolCallThenFinalClient):
+                runtime = AgentRuntime(config, show_tool_logs=False)
+                result = runtime.run("hello")
+
+        self.assertEqual(result, "recovered")
+        self.assertGreaterEqual(len(_InvalidToolCallThenFinalClient.calls), 2)
+        second_request_messages = _InvalidToolCallThenFinalClient.calls[1]["messages"]
+        assistant_messages = [
+            message
+            for message in second_request_messages
+            if message.get("role") == "assistant" and message.get("tool_calls")
+        ]
+        self.assertEqual(
+            assistant_messages[-1]["tool_calls"][0]["function"]["name"],
+            "__invalid_tool_call",
+        )
+        tool_messages = [message for message in runtime._messages if message.get("role") == "tool"]
+        self.assertEqual(tool_messages[-1]["tool_call_id"], "call_empty_name")
+        self.assertIn("Unknown tool", tool_messages[-1]["content"])
 
     def test_repeated_identical_tool_calls_are_steered_to_final_answer(self) -> None:
         _RepeatingToolClient.calls = 0

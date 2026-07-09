@@ -124,6 +124,7 @@ READ_ONLY_EVIDENCE_TOOLS = {
     "lsp_references",
     "lsp_diagnostics",
 }
+INVALID_TOOL_CALL_NAME = "__invalid_tool_call"
 WORKFLOW_NUDGE = (
     "For this coding task, infer the tool sequence yourself. "
     "Use local inspection and lsp_* code navigation before editing; use todo for multi-step work; use ask_user only when ambiguity affects the outcome; "
@@ -582,7 +583,7 @@ class AgentRuntime:
             )
             if force_final_answer:
                 self._session.append("runtime_steering", {"kind": "forced_final_answer", "step": step})
-            message = {**response.message, "role": "assistant"}
+            message = _provider_safe_assistant_message({**response.message, "role": "assistant"})
             self._messages.append(message)
             self._session.append("assistant", message)
             self._events.emit("AssistantMessage", _assistant_event_payload(message))
@@ -2090,6 +2091,39 @@ def _assistant_event_payload(message: dict[str, Any]) -> dict[str, Any]:
     return {
         "content": message.get("content") or "",
         "tool_calls": [_tool_call_event_payload(tool_call) for tool_call in tool_calls if isinstance(tool_call, dict)],
+    }
+
+
+def _provider_safe_assistant_message(message: dict[str, Any]) -> dict[str, Any]:
+    tool_calls = message.get("tool_calls")
+    if not isinstance(tool_calls, list):
+        return message
+    safe_tool_calls = [_provider_safe_tool_call(tool_call, index) for index, tool_call in enumerate(tool_calls)]
+    return {**message, "tool_calls": safe_tool_calls}
+
+
+def _provider_safe_tool_call(tool_call: Any, index: int) -> dict[str, Any]:
+    if not isinstance(tool_call, dict):
+        return {
+            "id": f"invalid_tool_call_{index}",
+            "type": "function",
+            "function": {"name": INVALID_TOOL_CALL_NAME, "arguments": "{}"},
+        }
+    function = tool_call.get("function")
+    function = function if isinstance(function, dict) else {}
+    name = function.get("name")
+    name = name.strip() if isinstance(name, str) else ""
+    arguments = function.get("arguments")
+    if not isinstance(arguments, str):
+        arguments = "{}"
+    tool_call_id = tool_call.get("id")
+    if not isinstance(tool_call_id, str) or not tool_call_id.strip():
+        tool_call_id = f"invalid_tool_call_{index}"
+    return {
+        **tool_call,
+        "id": tool_call_id,
+        "type": tool_call.get("type") or "function",
+        "function": {**function, "name": name or INVALID_TOOL_CALL_NAME, "arguments": arguments},
     }
 
 

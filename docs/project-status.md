@@ -30,7 +30,7 @@
 
 ## 当前进度
 
-当前项目已完成 P8 前端协议与交互基础 MVP，并进入 P9 真实需求使用准备：P5 的安全与恢复增强 MVP 已收口；P6 默认工作流 MVP 已落地，用户可以用自然语言描述任务，而不是每次手写 `list_files/read_file/dry_run/run_tests/git_diff` 工具顺序；P7 已完成 OMP 风格 auto summary、多语言 LSP/light fallback、multi-root `--allow-dir`、workspace roots 注入、Markdown memory 启动注入、`learn` 工具、可选 session memory consolidation、authored skills discovery、重复工具调用熔断、duplicate-tool forced-final steering、tool result pruning、todo steering、跨项目 `--env-file` / launcher 安装目录 `.env` 加载、OMP 风格用户级 `--state-dir` runtime state 分层、Evidence Ledger、relevance gate、implementation-quality gate 和 no-edit final hygiene。2026-07-09 已完成 T-076 Event/Command Protocol v1、T-077/T-080 Terminal Frontend MVP 与命令可发现性、T-078 项目边界分析 MVP、T-081 Claude review 行动计划、T-082 run summary / coverage MVP，并新增 T-083 真实需求压测模板。模型默认已切到 `qwen3-coder-next`，已完成 T-084 企业项目只读源码验证压测，并已落地 T-085 todo 工具误参纠偏、T-086 evidence-aware read repetition guard、T-087 final structure / evidence hygiene、T-088 read-only evidence gate、T-089 semantic exploration guard、T-090 terminal input/output isolation、T-091 Vue diff reviewer 误报修复、T-092 compaction 渐进模块化 / LSP 置信度提示、T-093 可选外部 LSP adapter、T-094 真实项目 LSP 可用性压测、T-095 jdtls 预置/strict external 复测、T-096 Java LSP 韧性对齐 OMP、T-097 Java project health 探针、T-098 Maven parent probe、T-099 Maven environment probe、T-100 Java LSP fallback 真实复测和 T-101 query-aware LSP fallback：Runtime 能产出 typed events，CLI/session/tool 日志和 terminal frontend 共用事件流，session JSONL 追加 `event_v1` 供后续 replay；analysis-only 任务不会套用代码实现类 hygiene，点名 authored skill 时会先软性要求读取对应 `SKILL.md`，最终回答结构不完整时会强制无工具重答；每轮结束会写入结构化 `run_summary`，用于压测复盘和 `/status` 展示。
+当前项目已完成 P8 前端协议与交互基础 MVP，并进入 P9 真实需求使用准备：P5 的安全与恢复增强 MVP 已收口；P6 默认工作流 MVP 已落地，用户可以用自然语言描述任务，而不是每次手写 `list_files/read_file/dry_run/run_tests/git_diff` 工具顺序；P7 已完成 OMP 风格 auto summary、多语言 LSP/light fallback、multi-root `--allow-dir`、workspace roots 注入、Markdown memory 启动注入、`learn` 工具、可选 session memory consolidation、authored skills discovery、重复工具调用熔断、duplicate-tool forced-final steering、tool result pruning、todo steering、跨项目 `--env-file` / launcher 安装目录 `.env` 加载、OMP 风格用户级 `--state-dir` runtime state 分层、Evidence Ledger、relevance gate、implementation-quality gate 和 no-edit final hygiene。2026-07-09 已完成 T-076 Event/Command Protocol v1、T-077/T-080 Terminal Frontend MVP 与命令可发现性、T-078 项目边界分析 MVP、T-081 Claude review 行动计划、T-082 run summary / coverage MVP，并新增 T-083 真实需求压测模板。模型默认已切到 `qwen3-coder-next`，已完成 T-084 企业项目只读源码验证压测，并已落地 T-085 todo 工具误参纠偏、T-086 evidence-aware read repetition guard、T-087 final structure / evidence hygiene、T-088 read-only evidence gate、T-089 semantic exploration guard、T-090 terminal input/output isolation、T-091 Vue diff reviewer 误报修复、T-092 compaction 渐进模块化 / LSP 置信度提示、T-093 可选外部 LSP adapter、T-094 真实项目 LSP 可用性压测、T-095 jdtls 预置/strict external 复测、T-096 Java LSP 韧性对齐 OMP、T-097 Java project health 探针、T-098 Maven parent probe、T-099 Maven environment probe、T-100 Java LSP fallback 真实复测、T-101 query-aware LSP fallback、T-102 拓展服务费结算真实需求链路压测和 T-103 provider-safe invalid tool_call normalization：Runtime 能产出 typed events，CLI/session/tool 日志和 terminal frontend 共用事件流，session JSONL 追加 `event_v1` 供后续 replay；analysis-only 任务不会套用代码实现类 hygiene，点名 authored skill 时会先软性要求读取对应 `SKILL.md`，最终回答结构不完整时会强制无工具重答；每轮结束会写入结构化 `run_summary`，用于压测复盘和 `/status` 展示。
 
 已具备的核心能力：
 
@@ -43,7 +43,7 @@
 - `apply_patch` 已支持 `replace`、`insert_before`、`insert_after`，并兼容 Python 3.12。
 - 非交互审批、LLM 非 JSON 响应、session 恢复坏尾部、search_code 绝对路径泄漏等问题已经修复。
 - 已完成 Agent 自举测试：能够通过百炼模型调用工具读取、修改、测试和查看 diff。
-- 测试基线：213 个测试在正常本地环境通过。
+- 测试基线：214 个测试在正常本地环境通过。
 
 当前已具备：
 
@@ -105,6 +105,8 @@
 - T-098 Maven parent probe 已落地：`lsp_status probe=true` 会静态解析最近 `pom.xml` 的 parent 链，检查 `relativePath` 与本地 `~/.m2/repository` parent POM；真实企业项目已定位 `crcl-open` 缺 `com.yljr:parent:0.0.5-SNAPSHOT`，`zqyl-user-center-service` 缺 `com.yljr:parent:0.0.4-SNAPSHOT`。
 - T-099 Maven environment probe 已落地：`lsp_status probe=true` 会报告 `mvn` 可用性、`settings.xml` 是否存在、本地 Maven 仓库位置，以及 mirror/server/profile/repository/activeProfile 数量；不会输出私服 URL、账号或密码。
 - T-100/T-101 Java LSP fallback 真实复测与修复已落地：`crcl-open` session `20260709T090748481226Z` 证明 jdtls project incomplete 时，`lsp_symbols` / `lsp_definition` 能从项目根返回 fallback 类/方法证据；fallback 现在会优先扫描文件名/路径匹配 query/symbol 的候选文件，避免大仓库前 300 文件窗口漏掉目标类。
+- T-102 拓展服务费结算真实需求链路压测已完成范围判断和源码只读验证：scope analysis 输出 `zqyl-manager`、`zqyl-loan-application`、`ysd-provider` 为主候选；当前本机只有 `crcl-open`、`zqyl-user-center-service`、`zqylpaymentmaster9d423763`、`mpspaymasterce6ca65`，源码验证仅发现弱相关证据，不能进入实现设计，需补主候选源码。
+- T-103 provider-safe invalid tool_call normalization 已落地：模型生成空工具名时，assistant message 入历史前会把无效 tool_call 规范成 `__invalid_tool_call` 并保持 tool_result 配对，避免下一轮百炼因空 `function.name` 返回 400。
 
 真实缺口：
 
@@ -199,7 +201,7 @@
 | Terminal Frontend | 已完成 MVP 版 | `src/local_agent/frontends/terminal/` 提供 append-only terminal frontend；`./agent`、`./agent --chat`、`./agent chat` 可进入交互；支持 `/help`、`/status`、`/tools`、`/approval`；可选 `prompt_toolkit` / `rich` 增强输入和输出，缺失时降级。 |
 | Terminal Input Isolation | 已完成 MVP 版 | `src/local_agent/terminal_io.py` 在 agent run 期间关闭 TTY echo；approval / ask_user 通过 `terminal_input_prompt` 恢复输入并 flush 误敲缓冲。 |
 | Run summary / coverage | 已完成 MVP 版 | `src/local_agent/agent.py` 在每轮结束产出 `RunSummary` event 和 `run_summary` session 记录；`/status` 展示最近一轮摘要。 |
-| 测试基线 | 已完成 | 本地正常环境下 213 个测试通过。 |
+| 测试基线 | 已完成 | 本地正常环境下 214 个测试通过。 |
 
 ## 下一步 Todo
 
@@ -293,6 +295,8 @@
 | T-099 | Maven environment probe | 已完成 | P9/P10 | `lsp_status probe=true` 会报告 `mvn`、Maven settings、本地仓库和 mirror/server/profile/repository/activeProfile 数量，帮助判断缺 parent 是缓存缺失还是私服配置未准备；不输出私服 URL、账号或密码。 |
 | T-100 | Java LSP fallback 真实复测 | 已完成 | P9/P10 | session `20260709T090514754843Z` / `20260709T090748481226Z` 证明 LCA 能先报告 jdtls/Maven 边界，再用 LSP fallback、search_code、read_file 收束 `IntentionConfigManagerController` 调用链。 |
 | T-101 | query-aware LSP fallback | 已完成 | P9/P10 | `lsp_symbols` / `lsp_definition` 带 query/symbol 时优先扫描文件名/路径匹配候选，避免大仓库根目录 fallback 因 `MAX_LSP_FILES=300` 漏掉目标类；新增 320 dummy Java 文件回归测试。 |
+| T-102 | 拓展服务费结算真实需求链路压测 | 已完成阶段 1-3 | P9 | 已用 `需求文档-拓展服务费结算V1.3.md` 跑“范围判断 → 本机源码可用性核对 → 源码只读验证”；结论是当前源码不足，需补 `zqyl-manager`、`zqyl-loan-application`、`ysd-provider` 后再进入实现设计。 |
+| T-103 | provider-safe invalid tool_call normalization | 已完成 | P9/P10 | T-102 首轮源码验证暴露空工具名 tool_call 会导致下一轮百炼 400；已在 assistant message 入历史前规范化无效 tool_call，并补回归测试。 |
 
 ## 风险清单
 
@@ -385,10 +389,10 @@
 | 项目 | 结论 | 依据 |
 |---|---|---|
 | 主链路 | 通过 | 百炼真实小改复测已跑通 todo、dry_run、apply_patch、session allow、rollback、run_tests、git_diff。 |
-| 测试 | 通过 | P5 收口时 90 个 unittest、compileall、xlsx 检查、diff check 均通过；P9 当前代码已跑通 213 个 unittest、compileall 和 diff check。 |
+| 测试 | 通过 | P5 收口时 90 个 unittest、compileall、xlsx 检查、diff check 均通过；P9 当前代码已跑通 214 个 unittest、compileall 和 diff check。 |
 | 日用入口 | 通过 | README 已补只读分析和小改任务命令模板。 |
 | 开放风险 | 可接受 | shell 仍非沙箱、prompt injection 仍需靠审批和封闭 VM；token budget / output reserve / managed skills 留到后续评估。 |
-| 下一阶段 | 真实需求设计与实现压测 | 企业项目联网压测已获用户允许并由 Agent 代跑；跨项目 env-file、轻量 pruning / todo steering、memory consolidation、duplicate-tool forced-final steering、allowed-dir soft tool requirement、repeated read_file guard、空搜索词 guard、path escape roots hint、LSP 空 query guard、semantic exploration guard、terminal input isolation、Current task contract、Evidence Ledger、relevance gate、implementation-quality reviewer、no-edit final hygiene、Terminal Frontend MVP 和项目边界分析 MVP 已完成。下一步用真实需求跑“边界圈定 → 用户确认项目范围 → 源码验证 → 实现设计/小改”。 |
+| 下一阶段 | 真实需求设计与实现压测 | T-102 已证明“边界圈定 → 源码验证”可以跑通并诚实收束，但当前拓展服务费结算缺主候选源码。下一步需要用户补充 `zqyl-manager`、`zqyl-loan-application`、`ysd-provider` 或确认替代项目后，才能进入实现设计/小改。 |
 
 ## 推荐工作流
 

@@ -713,3 +713,96 @@ LCA 措施：
 
 - 第二轮已达到本阶段目标：external jdtls 不完整时，LCA 能明确说明 provider 边界，同时用 LSP fallback、`search_code` 和 `read_file` 三类证据收束。
 - 这更接近 OMP 的多来源证据收敛：语言服务器能用则优先，不能用时工具层把 no-result 边界说清楚，并继续提供可审计 fallback evidence。
+
+### PT-043：T-102 拓展服务费结算真实需求链路压测
+
+目标：
+
+- 用 `需求文档-拓展服务费结算V1.3.md` 跑通“需求 → 项目范围 → 源码只读验证 → 是否可进入实现设计”的真实链路。
+
+阶段 1：范围判断
+
+- session：`20260709T091245311094Z`
+- cwd：`/Users/chengming/mycode/self/local-coding-agent`
+- 只读取：
+  - `.local-agent/skills/project-scope-analysis/SKILL.md`
+  - `.local-agent/memory/enterprise-service-boundary.md`
+  - `需求文档-拓展服务费结算V1.3.md`
+- run summary：50.2s、4 次 LLM 请求、3 次工具调用、0 tool error、0 compaction、`final_structure` steering 2 次。
+
+阶段 1 结论：
+
+- LCA 遵守了“不扫源码”，只基于需求和边界表输出项目范围。
+- 必须关注被判断为：
+  - `zqyl-manager`：平台费用 / 管理端菜单 / 制单页签。
+  - `zqyl-loan-application`：融资订单、直接保理、订单状态 60、拓展服务费字段。
+  - `ysd-provider`：下载中心/预约下载相关支撑。
+- 可能关注包括：`zqyl-loan-base`、`zqyl-clearing`、模板/文件服务、支付/中台费用相关服务。
+
+阶段 2：本机源码可用性核对
+
+- 本机 `/Users/chengming/mycode/project` 实际可用源码：
+  - `crcl-open/crcl-open`
+  - `zqyl-user-center-service`
+  - `zqylpaymentmaster9d423763`
+  - `mpspaymasterce6ca65`
+- 阶段 1 的主候选 `zqyl-manager`、`zqyl-loan-application`、`ysd-provider` 当前不在本机源码目录中。
+
+阶段 3：源码只读验证
+
+- 首轮 session：`20260709T091405931143Z`
+- 结果：模型生成了一个空工具名 tool_call，LCA 把 tool error 回灌后，下一轮 provider 因 assistant message 中仍含空 `function.name` 返回 HTTP 400。该问题见 PT-044。
+- 复跑 session：`20260709T091548581832Z`
+- cwd：`/Users/chengming/mycode/project/crcl-open/crcl-open`
+- allow dirs：
+  - 需求文档目录
+  - `zqyl-user-center-service`
+  - `zqylpaymentmaster9d423763`
+  - `mpspaymasterce6ca65`
+- run summary：43.1s、14 次 LLM 请求、13 次工具调用、3 tool errors、9 次 compaction。
+
+复跑源码证据结论：
+
+| 项目 | 证据 | 判断 |
+|---|---|---|
+| `crcl-open` | `TradeBgIBillDto.java` 中有 `billKind=09结算单` 注释 | 弱相关，仅证明存在“结算单”字段语义，不是拓展服务费结算模块。 |
+| `zqyl-user-center-service` | 命中人脸比对/签署相关“结算单”场景 | 弱相关，不是本需求核心业务。 |
+| `zqylpaymentmaster9d423763` | 命中 `平台费用`、退费制单、支付单等词 | 弱相关，像支付/费用框架，不等于拓展服务费结算单。 |
+| `mpspaymasterce6ca65` | 前端命中平台费用、预制单、单笔/合并制单按钮 | 弱相关，可能可借鉴前端制单交互，但不是核心数据源。 |
+
+当前无法确认：
+
+- `拓展服务费` 字段。
+- `投资方式=直接保理` 字段/枚举。
+- `订单状态=60-已放款` 枚举。
+- 结算单主表/明细表、编号流水、制单/回退/下载 Word 的核心实现。
+- 下载中心真实后端接口。
+
+结论：
+
+- T-102 范围判断通过，源码只读验证也能诚实收束。
+- 当前本机源码不足以进入实现设计；必须补充 `zqyl-manager`、`zqyl-loan-application`、`ysd-provider`，至少先补前两个。
+- 在未补齐主候选源码前，不应让 LCA 做小改实现，否则容易再次退化为弱相关项目里的伪实现。
+
+### PT-044：空 tool_call 名导致 provider 400
+
+现象：
+
+- T-102 首轮源码验证 session `20260709T091405931143Z` 中，模型生成了一个空工具名 tool_call。
+- LCA 当轮能把它作为未知工具返回 tool error，但下一轮把 assistant message 原样发回百炼。
+- 百炼拒绝该历史消息：`messages[5].tool_calls: function.name is required, but found empty or missing tool_call`。
+
+OMP 对应机制：
+
+- OMP 对 abort/error/skipped/length 等异常 tool call 会补 synthetic tool result，并保证回灌给 provider 的消息结构合法。
+- 这类问题不应交给模型自行修正；runtime 边界必须把 provider-bound message 规范化。
+
+LCA 措施：
+
+- T-103 已完成 provider-safe assistant tool_call normalization：
+  - assistant message 入历史前会规范化 `tool_calls`。
+  - 空/缺失 `function.name` 会替换为 `__invalid_tool_call`。
+  - 缺失 `id` 会生成稳定占位 id。
+  - 非字符串 `arguments` 会替换为 `{}`。
+  - 仍保留 tool_result 配对，让模型看到“未知/无效工具”错误，但下一轮 provider 请求不再 400。
+- 已新增回归测试：模拟空 tool name，确认第二轮 provider request 中 tool_call name 已被规范化，且 tool result 保持原 call id 配对。
