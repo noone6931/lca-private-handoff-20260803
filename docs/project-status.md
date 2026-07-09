@@ -30,7 +30,7 @@
 
 ## 当前进度
 
-当前项目已完成 P8 前端协议与交互基础 MVP，并进入 P9 真实需求使用准备：P5 的安全与恢复增强 MVP 已收口；P6 默认工作流 MVP 已落地，用户可以用自然语言描述任务，而不是每次手写 `list_files/read_file/dry_run/run_tests/git_diff` 工具顺序；P7 已完成 OMP 风格 auto summary、多语言轻量 LSP、multi-root `--allow-dir`、workspace roots 注入、Markdown memory 启动注入、`learn` 工具、可选 session memory consolidation、authored skills discovery、重复工具调用熔断、duplicate-tool forced-final steering、tool result pruning、todo steering、跨项目 `--env-file` / launcher 安装目录 `.env` 加载、OMP 风格用户级 `--state-dir` runtime state 分层、Evidence Ledger、relevance gate、implementation-quality gate 和 no-edit final hygiene。2026-07-09 已完成 T-076 Event/Command Protocol v1、T-077/T-080 Terminal Frontend MVP 与命令可发现性、T-078 项目边界分析 MVP、T-081 Claude review 行动计划：Runtime 产出 typed events，CLI/session/tool 日志和 terminal frontend 共用事件流，session JSONL 追加 `event_v1` 供后续 replay；analysis-only 任务不会套用代码实现类 hygiene，点名 authored skill 时会先软性要求读取对应 `SKILL.md`，最终回答结构不完整时会强制无工具重答。
+当前项目已完成 P8 前端协议与交互基础 MVP，并进入 P9 真实需求使用准备：P5 的安全与恢复增强 MVP 已收口；P6 默认工作流 MVP 已落地，用户可以用自然语言描述任务，而不是每次手写 `list_files/read_file/dry_run/run_tests/git_diff` 工具顺序；P7 已完成 OMP 风格 auto summary、多语言轻量 LSP、multi-root `--allow-dir`、workspace roots 注入、Markdown memory 启动注入、`learn` 工具、可选 session memory consolidation、authored skills discovery、重复工具调用熔断、duplicate-tool forced-final steering、tool result pruning、todo steering、跨项目 `--env-file` / launcher 安装目录 `.env` 加载、OMP 风格用户级 `--state-dir` runtime state 分层、Evidence Ledger、relevance gate、implementation-quality gate 和 no-edit final hygiene。2026-07-09 已完成 T-076 Event/Command Protocol v1、T-077/T-080 Terminal Frontend MVP 与命令可发现性、T-078 项目边界分析 MVP、T-081 Claude review 行动计划、T-082 run summary / coverage MVP：Runtime 产出 typed events，CLI/session/tool 日志和 terminal frontend 共用事件流，session JSONL 追加 `event_v1` 供后续 replay；analysis-only 任务不会套用代码实现类 hygiene，点名 authored skill 时会先软性要求读取对应 `SKILL.md`，最终回答结构不完整时会强制无工具重答；每轮结束会写入结构化 `run_summary`，用于压测复盘和 `/status` 展示。
 
 已具备的核心能力：
 
@@ -86,6 +86,7 @@
 - T-077/T-080 Terminal Frontend MVP 已落地：`./agent`、`./agent --chat`、`./agent chat` 会进入 terminal-native 交互前端；可选 `prompt_toolkit` 负责历史/多行输入，`rich` 负责结构化输出，未安装时降级为普通终端输入输出；支持 `/help`、`/status`、`/tools`、`/approval`；approval prompt 仍是同步 stdin，但会写入 `ApprovalRequested` / `ApprovalResult` 事件。
 - T-078 项目边界分析 MVP 已落地：本机 `.local-agent/memory/enterprise-service-boundary.md` 保存企业服务边界，`.local-agent/skills/project-scope-analysis/SKILL.md` 保存只读分析工作流；代码层新增 analysis-only 任务识别、named skill soft requirement、自定义 memory_read 安全读取和 final structure gate，避免“范围分类”被实现任务 no-edit hygiene 带偏，并防止模型只说“ready to output”不输出表格。
 - T-081 Claude review 行动计划已落地：见 `docs/claude-review-action-plan-2026-07-09.md`；结论是接受 OMP 架构原则，但不先做 P0 大拆分，优先 run summary/coverage、真实压测和渐进模块化。
+- T-082 Run summary / coverage MVP 已落地：每轮结束写 session `run_summary` 和 typed `RunSummary` event，包含终止原因、耗时、LLM 请求数、工具调用/错误/无效结果、synthetic result、compaction、tool counts、guard hits 和 steering counts；`/status` 会显示最近一轮摘要。
 
 真实缺口：
 
@@ -171,6 +172,7 @@
 | Synthetic Tool Result | 已完成 MVP 版 | deadline 到期、用户中断、`finish_reason=length` 时会补齐剩余 tool_call 的 tool result。 |
 | Event/Command Protocol | 已完成 MVP 版 | `src/local_agent/protocol/events.py` / `commands.py` 定义 dataclass event/command；Runtime 通过 `EventSink` 产出事件，CLI 通过 `StderrEventSink` 渲染 session/tool 日志；session JSONL 写入 `event_v1`。 |
 | Terminal Frontend | 已完成 MVP 版 | `src/local_agent/frontends/terminal/` 提供 append-only terminal frontend；`./agent`、`./agent --chat`、`./agent chat` 可进入交互；支持 `/help`、`/status`、`/tools`、`/approval`；可选 `prompt_toolkit` / `rich` 增强输入和输出，缺失时降级。 |
+| Run summary / coverage | 已完成 MVP 版 | `src/local_agent/agent.py` 在每轮结束产出 `RunSummary` event 和 `run_summary` session 记录；`/status` 展示最近一轮摘要。 |
 | 测试基线 | 已完成 | 本地正常环境下 188 个测试通过。 |
 
 ## 下一步 Todo
@@ -245,6 +247,7 @@
 | T-078 | 项目边界驱动的项目清单分析压测 | 已完成 MVP 版 | P8/P9 | 已按 OMP authored skills / memory 思路落地为本机上下文，不新增专用工具：企业服务边界放入 `.local-agent/memory/enterprise-service-boundary.md`，范围分析工作流放入 `.local-agent/skills/project-scope-analysis/SKILL.md`；runtime 新增 analysis-only 任务识别、named skill soft requirement、自定义 memory_read 安全读取和 final structure gate。下一步用用户给定真实需求跑“项目范围确认 → 源码验证 → 实现设计”。 |
 | T-080 | Terminal Frontend 命令可发现性 | 已完成 MVP 版 | P8/P9 | 已按 `docs/architecture.md` 的 terminal-native 设计补 `/help`、`/status`、`/tools` 和启动提示；不引入 fullscreen，不改变同步 runtime。 |
 | T-081 | Claude review 行动计划 | 已完成 | P9 | 新增 `docs/claude-review-action-plan-2026-07-09.md`，明确接受 agent.py 拆分、token budget、LSP provider、run collector 等方向，但先做日用压测和 run summary，再渐进拆模块。 |
+| T-082 | Run summary / coverage MVP | 已完成 | P9 | Runtime 已记录 `run_summary` 和 `RunSummary` event，包含终止原因、耗时、LLM 请求数、工具调用/错误/无效结果、synthetic result、compaction、tool counts、guard hits 和 steering counts；`/status` 展示最近一轮摘要。 |
 
 ## 风险清单
 
@@ -290,6 +293,7 @@
 | R-038 | 点名 authored skill 但模型不读正文 | 已关闭 MVP 版 | T-078 压测中，模型能看到 skill metadata，但曾未主动读取 `project-scope-analysis/SKILL.md`，导致规则只停留在描述层。 | 已参考 OMP soft tool requirement 思路：prompt 点名已发现的 project skill 时，runtime 会软性要求先 `read_file` 对应 `SKILL.md`，读完后再继续。 |
 | R-039 | TUI 命令不可发现会降低日用体验 | 已关闭 MVP 版 | 交互入口已有，但用户需要记 `/approval` 等命令，且缺少当前 runtime 状态视图。 | 已参考 terminal frontend 设计文档，在 append-only 前端内新增 `/help`、`/status`、`/tools`，不做 fullscreen。 |
 | R-040 | 过早大拆 `agent.py` 可能打断真实使用验证 | 新增，受控 | Claude review 指出 `agent.py` 已大，但 P0 大拆分会扩大回归面，影响今天可用目标。 | 接受架构方向但调整顺序：先做 run summary/coverage 和真实压测，再按 startup_context/evidence/compaction/memory_consolidation/steering 分批抽模块。 |
+| R-041 | 压测复盘缺少结构化 run coverage | 已关闭 MVP 版 | 只有 session 原文和最终回答时，很难判断模型卡在哪个 guard、用了多少工具、是否触发 compaction 或为什么结束。 | 已参考 OMP run-collector 思路，新增每轮 `run_summary`：工具次数、guard/steering、compaction、termination reason 统一落 session 和事件流。 |
 
 ## 架构决策
 
@@ -315,6 +319,7 @@
 | ADR-025 | Terminal Frontend MVP 保持同步 runtime，先不引入完整 async command bus。 | 已落地 T-077；`./agent` / `--chat` / `chat` 共用事件 sink，approval 仍走同步 stdin 但发 approval events；可选 `prompt_toolkit` / `rich` 增强体验，缺依赖时降级，符合封闭 VM 可预置依赖原则。 |
 | ADR-026 | 企业服务边界用 memory/skill 承载，不新增专用工具。 | 已落地 T-078；这类组织边界是用户个人长期上下文，不是通用 Agent tool。参考 OMP authored skills / project memory 思路，把边界表放本机 `.local-agent/memory`，把“如何用边界分析需求范围”放 `.local-agent/skills`，代码只补通用 analysis-only、named skill soft requirement、custom memory read 和 final-structure runtime 能力。 |
 | ADR-027 | Claude review 先转为行动计划，不立即做 P0 大拆分。 | 已落地 T-081；OMP 架构原则继续作为方向，但 LCA 当前以真实日用闭环为先。先补 TUI 可发现性和 run summary/coverage，再用压测数据驱动模块拆分、token budget 和 LSP provider 增强。 |
+| ADR-028 | Run summary 先做 runtime 内轻量 collector，暂不拆大模块。 | 已落地 T-082；参考 OMP run-collector 的可观测性原则，但当前先把计数和终止原因汇总到 `RunSummary` / `run_summary`，服务压测和 `/status`；等数据稳定后再抽 `run_collector.py` 或 Steerer 协议。 |
 | ADR-015 | 人工上下文按 AGENTS/RULES 分层。 | 参照 Claude Code 与 OMP 的上下文文件/Sticky rules 分层：`AGENTS.md` 作为启动背景，`RULES.md` 作为短规则每轮注入；二者不同于长期 memory 和 session summary。 |
 | ADR-016 | Session memory consolidation 默认关闭；开启后默认写 state memory。 | 这一步不同于只发给模型的 context compaction；默认 off 可以保护只读分析，开启后默认写用户级 state dir，只有显式 `memory_scope=project` 才写项目 `.local-agent/memory`。 |
 | ADR-003 | Excel 作为人工视图，Markdown 作为开发协作 Agent 可读事实源。 | 这套文档服务于开发 LCA 的过程；`.xlsx` 是二进制展示产物，不适合作为协作 Agent 的事实源。 |

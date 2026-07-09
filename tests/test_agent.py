@@ -529,14 +529,33 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertIn("ToolStarted", event_types)
         self.assertIn("ToolOutput", event_types)
         self.assertIn("ToolFinished", event_types)
+        self.assertIn("RunSummary", event_types)
         self.assertIn("SessionFinished", event_types)
         self.assertTrue(all(event.session_id == runtime._session.session_id for event in sink.events))
         self.assertTrue(any(event.run_id for event in sink.events if event.type != "SessionStarted"))
+        run_summary_events = [event for event in sink.events if event.type == "RunSummary"]
+        self.assertEqual(len(run_summary_events), 1)
+        self.assertEqual(run_summary_events[0].payload["termination_reason"], "final")
+        self.assertEqual(run_summary_events[0].payload["llm_requests"], 2)
+        self.assertEqual(run_summary_events[0].payload["tool_calls"], 1)
+        self.assertEqual(run_summary_events[0].payload["tool_counts"], {"read_file": 1})
+        status = runtime.status_summary()
+        self.assertIn("- last_run:", status)
+        self.assertIn("read_file=1", status)
+        session_finished = [event for event in sink.events if event.type == "SessionFinished"][-1]
+        self.assertEqual(session_finished.payload["run_summary"]["termination_reason"], "final")
         self.assertTrue(
             any(
                 record.get("event") == "event_v1"
                 and record.get("payload", {}).get("type") == "ToolStarted"
                 and record.get("payload", {}).get("payload", {}).get("name") == "read_file"
+                for record in records
+            )
+        )
+        self.assertTrue(
+            any(
+                record.get("event") == "run_summary"
+                and record.get("payload", {}).get("tool_counts") == {"read_file": 1}
                 for record in records
             )
         )
@@ -657,6 +676,7 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertIn("- provider: openai-compatible", status)
         self.assertIn("- model: model", status)
         self.assertIn("- approval_mode: yolo", status)
+        self.assertIn("- last_run: none", status)
         self.assertIn("Available tools:", tools)
         self.assertIn("- read_file", tools)
         self.assertIn("- apply_patch", tools)

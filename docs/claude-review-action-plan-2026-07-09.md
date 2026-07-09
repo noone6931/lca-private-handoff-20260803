@@ -4,7 +4,7 @@
 
 ## 结论
 
-Claude review 的方向基本成立：`agent.py` 已经偏大，context budget 仍是字符近似，Java/Vue LSP 只是轻量静态扫描，run summary/coverage 还不够结构化。
+Claude review 的方向基本成立：`agent.py` 已经偏大，context budget 仍是字符近似，Java/Vue LSP 只是轻量静态扫描。run summary/coverage 已完成 MVP 版，但还未拆成独立 run collector 模块。
 
 但执行顺序不采用“先 P0 大拆分”。当前首要目标是让 LCA 今天能稳定用于真实需求分析和小改实现；因此先做低风险、可验证、直接改善日用体验的改动，再在真实压测暴露稳定失败形态后拆模块。
 
@@ -17,6 +17,7 @@ Claude review 的方向基本成立：`agent.py` 已经偏大，context budget �
 | Authored skill 只靠 metadata 不够 | 已采纳 | 点名已发现 skill 时，runtime 会软性要求先读取对应 `SKILL.md`。 |
 | 自定义 memory 需要参与项目边界分析 | 已采纳 | `memory_read` 支持安全命名的自定义 memory 文件；写入仍限制在内置桶。 |
 | 纯分析任务不应走实现 hygiene | 已采纳 | analysis-only 不加 coding workflow nudge、不触发 no-edit hygiene；纯只读分析默认跳过 todo。 |
+| run summary / coverage 需要结构化 | 已采纳 MVP 版 | 每轮结束写 `run_summary` session 事件和 `RunSummary` typed event；`/status` 展示最近一轮摘要。 |
 
 ## 接受但后置
 
@@ -26,7 +27,7 @@ Claude review 的方向基本成立：`agent.py` 已经偏大，context budget �
 | Steerer 协议 | 接受 | 当前已有多个 guard/steering，值得统一，但要先保留行为测试 | 新增 run summary 后能看清哪些 steerer 最常触发，再抽接口。 |
 | token + reserve budget | 接受 | 当前 char budget 可用，但长任务需要更准 | 真实长任务出现预算误判、上下文超限或过早压缩时优先做。 |
 | Java/Vue LSP provider 拆分 | 接受 | 企业项目会用到，但不应默认引入重依赖 | 先增强 best-effort 输出和置信度；可选 parser extra 后置。 |
-| run collector / coverage | 接受且优先级较高 | 改动小，能直接提升压测复盘 | 下一阶段可先做 run summary，不必等大重构。 |
+| 独立 run collector 模块 | 接受 | MVP 统计已落在 runtime 内，先服务压测；独立模块化可等数据形态稳定 | 当 `agent.py` 拆分开始时，把 `RunStats` / summary 逻辑平移到 `run_collector.py`。 |
 
 ## 明确非目标
 
@@ -41,10 +42,9 @@ Claude review 的方向基本成立：`agent.py` 已经偏大，context budget �
 ## 推荐顺序
 
 1. 继续真实需求链路压测：边界圈定 -> 用户确认 -> 源码只读验证 -> 小改实现。
-2. 做 run summary / coverage：每轮记录工具次数、guard 命中、compaction 次数、终止原因。
-3. 结合 run summary 数据，拆出第一批小模块：`startup_context.py`、`evidence.py`、`compaction.py`。
-4. 增强 Java/Vue LSP：先拆 provider 文件和置信度输出，再评估 optional parser extra。
-5. 最后才做统一 Steerer 协议和更完整 ToolChoiceQueue。
+2. 结合 run summary 数据，拆出第一批小模块：`startup_context.py`、`evidence.py`、`compaction.py`。
+3. 增强 Java/Vue LSP：先拆 provider 文件和置信度输出，再评估 optional parser extra。
+4. 最后才做统一 Steerer 协议和更完整 ToolChoiceQueue。
 
 ## 当前判断
 

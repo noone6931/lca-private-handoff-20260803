@@ -116,6 +116,8 @@ python3 -m pip install -e ".[terminal]"
 /exit
 ```
 
+`/status` 会显示当前 session、workspace、provider、approval 配置，以及最近一轮的 run summary（LLM 请求数、工具调用数、终止原因、guard/steering 触发等）。
+
 安装成包后也可以用：
 
 ```bash

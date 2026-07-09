@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import datetime, timezone
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 import time
 from typing import Any
@@ -289,6 +289,24 @@ class EvidenceRecord:
         return f"- [{self.status}] {self.tool} {self.subject}: {self.summary}"
 
 
+@dataclass
+class RunStats:
+    run_id: str
+    prompt_chars: int
+    started_monotonic: float
+    llm_requests: int = 0
+    tool_calls: int = 0
+    tool_errors: int = 0
+    useless_tool_results: int = 0
+    synthetic_tool_results: int = 0
+    compactions: int = 0
+    llm_context_summaries: int = 0
+    local_context_summaries: int = 0
+    tool_counts: dict[str, int] = field(default_factory=dict)
+    guard_start: dict[str, int] = field(default_factory=dict)
+    steer_start: dict[str, int] = field(default_factory=dict)
+
+
 class AgentRuntime:
     def __init__(
         self,
@@ -327,6 +345,9 @@ class AgentRuntime:
         self._force_final_answer_without_tools = False
         self._temporary_tool_allowlist: set[str] | None = None
         self._soft_tool_requirement: SoftToolRequirement | None = None
+        self._run_stats: RunStats | None = None
+        self._last_run_summary: dict[str, Any] | None = None
+        self._pending_compaction_summary_mode: str | None = None
         self._state_dir = config.state_dir or config.workspace / ".local-agent"
         self._session = JsonlSessionStore(
             config.workspace,
@@ -373,9 +394,11 @@ class AgentRuntime:
         )
 
     def run(self, prompt: str) -> str:
-        self._events.start_run()
+        run_id = self._events.start_run()
+        started_monotonic = time.monotonic()
+        self._run_stats = self._new_run_stats(run_id, prompt, started_monotonic)
         deadline = (
-            time.monotonic() + self._config.budget_seconds
+            started_monotonic + self._config.budget_seconds
             if self._config.budget_seconds is not None
             else None
         )
@@ -414,6 +437,7 @@ class AgentRuntime:
             if self._deadline_exceeded(deadline):
                 return self._stop_for_budget(deadline, run_start_index)
 
+            self._record_llm_request()
             self._session.append("llm_request", {"step": step})
             messages_for_model = self._messages_for_model(deadline)
             tools_for_model = self._tools_for_model()
@@ -453,6 +477,7 @@ class AgentRuntime:
                         self._soft_tool_requirement_stop_message(),
                         deadline,
                         run_start_index,
+                        reason="soft_tool_requirement",
                     )
                 content = message.get("content") or ""
                 if self._should_steer_no_edit_final_hygiene(content, run_start_index):
@@ -554,7 +579,12 @@ class AgentRuntime:
                     return self._stop_for_budget(deadline, run_start_index)
             step += 1
 
-        return self._finish_run(f"Stopped after reaching max_steps={self._config.max_steps}.", deadline, run_start_index)
+        return self._finish_run(
+            f"Stopped after reaching max_steps={self._config.max_steps}.",
+            deadline,
+            run_start_index,
+            reason="max_steps",
+        )
 
     def _tools_for_model(self) -> list[dict[str, Any]]:
         if self._force_final_answer_without_tools:
@@ -623,6 +653,10 @@ class AgentRuntime:
             )
         else:
             lines.append("- configured tool policies: none")
+        if self._last_run_summary is not None:
+            lines.extend(_format_last_run_status(self._last_run_summary))
+        else:
+            lines.append("- last_run: none")
         return "\n".join(lines)
 
     def tool_summary(self) -> str:
@@ -654,6 +688,123 @@ class AgentRuntime:
             known = ", ".join(self._registry.tool_names())
             raise ValueError(f"unknown tool: {normalized}. Known tools: {known}")
         return normalized
+
+    def _new_run_stats(self, run_id: str, prompt: str, started_monotonic: float) -> RunStats:
+        return RunStats(
+            run_id=run_id,
+            prompt_chars=len(prompt),
+            started_monotonic=started_monotonic,
+            guard_start={
+                "duplicate_tool": self._duplicate_tool_guard_hits,
+                "useless_search_pattern": self._useless_search_pattern_guard_hits,
+                "useless_lsp_symbol": self._useless_lsp_symbol_guard_hits,
+                "repeated_read_file": self._repeated_read_file_guard_hits,
+            },
+            steer_start={
+                "duplicate_tool_final_answer": self._duplicate_tool_final_answer_steers,
+                "useless_search_pattern_final_answer": self._useless_search_pattern_final_answer_steers,
+                "useless_lsp_symbol_final_answer": self._useless_lsp_symbol_final_answer_steers,
+                "repeated_read_file_final_answer": self._repeated_read_file_final_answer_steers,
+            },
+        )
+
+    def _record_llm_request(self) -> None:
+        if self._run_stats is not None:
+            self._run_stats.llm_requests += 1
+
+    def _record_context_compaction(self) -> None:
+        if self._run_stats is not None:
+            self._run_stats.compactions += 1
+            if self._pending_compaction_summary_mode == "llm":
+                self._run_stats.llm_context_summaries += 1
+            elif self._pending_compaction_summary_mode == "local":
+                self._run_stats.local_context_summaries += 1
+        self._pending_compaction_summary_mode = None
+
+    def _record_llm_context_summary(self) -> None:
+        self._pending_compaction_summary_mode = "llm"
+
+    def _record_local_context_summary(self) -> None:
+        self._pending_compaction_summary_mode = "local"
+
+    def _record_tool_started_for_run(self, name: str) -> None:
+        if self._run_stats is None:
+            return
+        self._run_stats.tool_calls += 1
+        self._run_stats.tool_counts[name] = self._run_stats.tool_counts.get(name, 0) + 1
+
+    def _record_tool_finished_for_run(self, *, is_error: bool) -> None:
+        if self._run_stats is not None and is_error:
+            self._run_stats.tool_errors += 1
+
+    def _record_tool_result_for_run(self, *, is_error: bool, useless: bool) -> None:
+        if self._run_stats is not None and useless and not is_error:
+            self._run_stats.useless_tool_results += 1
+
+    def _record_synthetic_tool_result_for_run(self) -> None:
+        if self._run_stats is None:
+            return
+        self._run_stats.synthetic_tool_results += 1
+        self._run_stats.tool_errors += 1
+
+    def _finish_run_summary(self, reason: str) -> dict[str, Any]:
+        stats = self._run_stats
+        if stats is None:
+            return {"termination_reason": reason}
+        guard_hits = {
+            "duplicate_tool": self._duplicate_tool_guard_hits - stats.guard_start.get("duplicate_tool", 0),
+            "useless_search_pattern": (
+                self._useless_search_pattern_guard_hits - stats.guard_start.get("useless_search_pattern", 0)
+            ),
+            "useless_lsp_symbol": (
+                self._useless_lsp_symbol_guard_hits - stats.guard_start.get("useless_lsp_symbol", 0)
+            ),
+            "repeated_read_file": (
+                self._repeated_read_file_guard_hits - stats.guard_start.get("repeated_read_file", 0)
+            ),
+        }
+        steering_counts = {
+            "duplicate_tool_final_answer": (
+                self._duplicate_tool_final_answer_steers
+                - stats.steer_start.get("duplicate_tool_final_answer", 0)
+            ),
+            "useless_search_pattern_final_answer": (
+                self._useless_search_pattern_final_answer_steers
+                - stats.steer_start.get("useless_search_pattern_final_answer", 0)
+            ),
+            "useless_lsp_symbol_final_answer": (
+                self._useless_lsp_symbol_final_answer_steers
+                - stats.steer_start.get("useless_lsp_symbol_final_answer", 0)
+            ),
+            "repeated_read_file_final_answer": (
+                self._repeated_read_file_final_answer_steers
+                - stats.steer_start.get("repeated_read_file_final_answer", 0)
+            ),
+            "no_edit_final_hygiene": self._no_edit_final_hygiene_steers,
+            "final_structure": self._final_structure_steers,
+            "soft_tool_requirement": self._soft_tool_requirement.steers if self._soft_tool_requirement else 0,
+        }
+        payload: dict[str, Any] = {
+            "run_id": stats.run_id,
+            "termination_reason": reason,
+            "elapsed_ms": _elapsed_ms_since(stats.started_monotonic),
+            "prompt_chars": stats.prompt_chars,
+            "llm_requests": stats.llm_requests,
+            "tool_calls": stats.tool_calls,
+            "tool_errors": stats.tool_errors,
+            "useless_tool_results": stats.useless_tool_results,
+            "synthetic_tool_results": stats.synthetic_tool_results,
+            "compactions": stats.compactions,
+            "llm_context_summaries": stats.llm_context_summaries,
+            "local_context_summaries": stats.local_context_summaries,
+            "tool_counts": dict(sorted(stats.tool_counts.items())),
+            "guard_hits": {key: value for key, value in guard_hits.items() if value},
+            "steering_counts": {key: value for key, value in steering_counts.items() if value},
+        }
+        self._last_run_summary = payload
+        self._session.append("run_summary", payload)
+        self._events.emit("RunSummary", payload)
+        return payload
 
     def _messages_for_model(self, deadline: float | None = None) -> list[dict[str, Any]]:
         todo_summary = self._open_todo_summary()
@@ -688,6 +839,7 @@ class AgentRuntime:
                         "threshold_chars": threshold,
                     },
                 )
+                self._record_context_compaction()
                 return self._provider_safe_runtime_messages(compacted, todo_summary)
             recent_count = max(6, recent_count // 2)
         return self._provider_safe_runtime_messages(self._messages, todo_summary)
@@ -729,6 +881,7 @@ class AgentRuntime:
         current_user_request: str | None,
         todo_summary: list[str],
     ) -> str:
+        self._record_local_context_summary()
         lines = [
             "Earlier conversation was compacted locally to stay within the context budget.",
             "Preserve these facts while continuing the current task.",
@@ -807,6 +960,7 @@ class AgentRuntime:
             todo_summary,
         )
         self._summary_cache[cache_key] = summary
+        self._record_llm_context_summary()
         self._session.append(
             "context_summary",
             {
@@ -1382,15 +1536,24 @@ class AgentRuntime:
     def _budget_stop_message(self) -> str:
         return f"Stopped after reaching budget_seconds={self._config.budget_seconds}."
 
-    def _finish_run(self, content: str, deadline: float | None, run_start_index: int) -> str:
+    def _finish_run(
+        self,
+        content: str,
+        deadline: float | None,
+        run_start_index: int,
+        *,
+        reason: str = "final",
+    ) -> str:
         self._session.append("final", {"content": content})
         run_messages = self._messages[run_start_index:]
         self._maybe_consolidate_session_memory(run_messages, content, deadline)
+        run_summary = self._finish_run_summary(reason)
         self._events.emit(
             "SessionFinished",
             {
                 "content": content,
-                "reason": "final",
+                "reason": reason,
+                "run_summary": run_summary,
             },
         )
         return content
@@ -1492,7 +1655,7 @@ class AgentRuntime:
 
     def _stop_for_budget(self, deadline: float | None, run_start_index: int) -> str:
         content = self._budget_stop_message()
-        return self._finish_run(content, deadline, run_start_index)
+        return self._finish_run(content, deadline, run_start_index, reason="budget")
 
     def _duplicate_tool_stop_message(self) -> str:
         return "the assistant repeated identical tool calls too many times."
@@ -1502,14 +1665,14 @@ class AgentRuntime:
             "Stopped because the assistant repeated identical tool calls too many times. "
             "Retry with a narrower request or ask it to answer from the evidence already collected."
         )
-        return self._finish_run(content, deadline, run_start_index)
+        return self._finish_run(content, deadline, run_start_index, reason="duplicate_tool_guard")
 
     def _stop_for_repeated_read_file(self, deadline: float | None, run_start_index: int) -> str:
         content = (
             "Stopped because the assistant kept reading adjacent ranges from the same file. "
             "Retry with a narrower request or ask it to answer from the evidence already collected."
         )
-        return self._finish_run(content, deadline, run_start_index)
+        return self._finish_run(content, deadline, run_start_index, reason="repeated_read_file_guard")
 
     def _useless_search_pattern_stop_message(self) -> str:
         return (
@@ -1522,7 +1685,7 @@ class AgentRuntime:
             "Stopped because the assistant kept searching the same no-match pattern across paths. "
             "Retry with a narrower request or ask it to answer from the evidence already collected."
         )
-        return self._finish_run(content, deadline, run_start_index)
+        return self._finish_run(content, deadline, run_start_index, reason="useless_search_pattern_guard")
 
     def _useless_lsp_symbol_stop_message(self) -> str:
         return (
@@ -1535,16 +1698,18 @@ class AgentRuntime:
             "Stopped because the assistant kept guessing lsp symbol queries with no matches. "
             "Retry with a narrower request or ask it to answer from the evidence already collected."
         )
-        return self._finish_run(content, deadline, run_start_index)
+        return self._finish_run(content, deadline, run_start_index, reason="useless_lsp_symbol_guard")
 
     def _stop_for_interrupt(self) -> str:
         content = "Stopped after user interrupt."
         self._session.append("final", {"content": content})
+        run_summary = self._finish_run_summary("interrupt")
         self._events.emit(
             "SessionFinished",
             {
                 "content": content,
                 "reason": "interrupt",
+                "run_summary": run_summary,
             },
         )
         return content
@@ -1560,7 +1725,7 @@ class AgentRuntime:
             "Stopped because the LLM response hit finish_reason=length. "
             "Retry with a smaller request or continue in smaller steps."
         )
-        return self._finish_run(content, deadline, run_start_index)
+        return self._finish_run(content, deadline, run_start_index, reason="length")
 
     def _append_tool_result(
         self,
@@ -1571,6 +1736,7 @@ class AgentRuntime:
         is_error: bool,
         useless: bool = False,
     ) -> None:
+        self._record_tool_result_for_run(is_error=is_error, useless=useless)
         self._session.append(
             "tool_result",
             {
@@ -1608,12 +1774,15 @@ class AgentRuntime:
             function = tool_call.get("function") or {}
             name = function.get("name") or ""
             result = f"Tool call was not executed because {content}"
+            self._record_synthetic_tool_result_for_run()
             self._append_tool_result(tool_call, name, result, is_error=True)
 
     def _log_tool_start(self, name: str, arguments: Any) -> None:
+        self._record_tool_started_for_run(name)
         self._events.emit("ToolStarted", {"name": name, "arguments": arguments})
 
     def _log_tool_end(self, name: str, is_error: bool, content_length: int) -> None:
+        self._record_tool_finished_for_run(is_error=is_error)
         self._events.emit(
             "ToolFailed" if is_error else "ToolFinished",
             {"name": name, "content_length": content_length},
@@ -2614,6 +2783,38 @@ def _one_line(content: str, *, max_chars: int = 240) -> str:
 
 def _display_optional_int(value: int | None) -> str:
     return "disabled" if value is None else str(value)
+
+
+def _elapsed_ms_since(started_monotonic: float) -> int:
+    try:
+        return max(0, int((time.monotonic() - started_monotonic) * 1000))
+    except Exception:  # noqa: BLE001 - run summary must never break task completion.
+        return 0
+
+
+def _format_last_run_status(summary: dict[str, Any]) -> list[str]:
+    lines = [
+        "- last_run:",
+        f"  - reason: {summary.get('termination_reason', 'unknown')}",
+        f"  - elapsed_ms: {summary.get('elapsed_ms', 0)}",
+        f"  - llm_requests: {summary.get('llm_requests', 0)}",
+        f"  - tool_calls: {summary.get('tool_calls', 0)}",
+        f"  - tool_errors: {summary.get('tool_errors', 0)}",
+        f"  - compactions: {summary.get('compactions', 0)}",
+    ]
+    tool_counts = summary.get("tool_counts")
+    if isinstance(tool_counts, dict) and tool_counts:
+        rendered_tools = ", ".join(f"{name}={count}" for name, count in sorted(tool_counts.items()))
+        lines.append(f"  - tools: {rendered_tools}")
+    guard_hits = summary.get("guard_hits")
+    if isinstance(guard_hits, dict) and guard_hits:
+        rendered_guards = ", ".join(f"{name}={count}" for name, count in sorted(guard_hits.items()))
+        lines.append(f"  - guards: {rendered_guards}")
+    steering_counts = summary.get("steering_counts")
+    if isinstance(steering_counts, dict) and steering_counts:
+        rendered_steers = ", ".join(f"{name}={count}" for name, count in sorted(steering_counts.items()))
+        lines.append(f"  - steering: {rendered_steers}")
+    return lines
 
 
 def _with_workflow_nudge(prompt: str) -> str:

@@ -23,6 +23,7 @@ EVENT_TYPES = {
     "ApprovalResult",
     "TodoUpdated",
     "ContextUpdated",
+    "RunSummary",
     "RuntimeSteering",
     "ErrorEvent",
 }
