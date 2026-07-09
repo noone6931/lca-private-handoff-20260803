@@ -437,8 +437,8 @@ OMP 对应思路：
 
 LCA 措施：
 
-- T-086 候选：增加 evidence-aware read repetition guard。对同一路径同范围成功读取多次后，返回带 evidence 摘要的 tool error 或 steering。
-- 只读分析任务中，若已满足用户要求的输出结构和证据数量，可以触发“evidence sufficient” final-answer steering。
+- T-086 已完成：增加 evidence-aware read repetition guard。只读/分析任务中，对同一路径同范围成功读取多次后，后续重复读取会返回带 evidence 摘要的 tool error，并触发 final-answer steering。
+- 编辑任务不启用该 guard，避免影响实现前必要读取；后续压测再观察是否需要更强的“evidence sufficient” final-answer steering。
 
 ### PT-032：最终回答存在轻微结构漂移和证据过度断言
 

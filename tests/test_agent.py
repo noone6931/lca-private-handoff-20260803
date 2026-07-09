@@ -479,6 +479,40 @@ class _RepeatedReadFileRangeClient:
         )()
 
 
+class _RepeatedReadFileSameRangeClient:
+    calls = 0
+    tools_seen: list[int] = []
+    file_path: str = ""
+
+    def __init__(self, config: AgentConfig):
+        self.config = config
+
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).calls += 1
+        type(self).tools_seen.append(len(tools))
+        if not tools:
+            return type("Response", (), {"message": {"content": "final answer after repeated same file evidence"}})()
+        return type(
+            "Response",
+            (),
+            {
+                "message": {
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": f"call_{type(self).calls}",
+                            "type": "function",
+                            "function": {
+                                "name": "read_file",
+                                "arguments": json.dumps({"path": type(self).file_path}),
+                            },
+                        }
+                    ],
+                }
+            },
+        )()
+
+
 class _InterruptingRegistry:
     def schemas(self):
         return []
@@ -1462,6 +1496,46 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertEqual(_RepeatedReadFileRangeClient.tools_seen[-1], 0)
         self.assertEqual(len(repeated_messages), 1)
         self.assertGreaterEqual(len(steering_messages), 1)
+
+    def test_repeated_same_read_file_range_is_steered_to_final_answer(self) -> None:
+        _RepeatedReadFileSameRangeClient.calls = 0
+        _RepeatedReadFileSameRangeClient.tools_seen = []
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            target = workspace / "service.java"
+            target.write_text("class Service {}\n", encoding="utf-8")
+            _RepeatedReadFileSameRangeClient.file_path = "service.java"
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=workspace,
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+                context_char_budget=0,
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _RepeatedReadFileSameRangeClient):
+                runtime = AgentRuntime(config, show_tool_logs=False)
+                result = runtime.run("只读分析这个项目并输出证据表")
+
+        tool_messages = [message for message in runtime._messages if message.get("role") == "tool"]
+        repeated_messages = [
+            message for message in tool_messages if "service.java from line 1" in message["content"]
+        ]
+        steering_messages = [
+            str(message.get("content"))
+            for message in runtime._messages
+            if "repeated read_file slices from the same file" in str(message.get("content"))
+        ]
+        self.assertEqual(result, "final answer after repeated same file evidence")
+        self.assertEqual(_RepeatedReadFileSameRangeClient.tools_seen[-1], 0)
+        self.assertEqual(len(repeated_messages), 1)
+        self.assertIn("Existing evidence:", repeated_messages[0]["content"])
+        self.assertGreaterEqual(len(steering_messages), 1)
+        self.assertEqual(runtime._last_run_summary["guard_hits"], {"repeated_read_file": 1})
+        self.assertEqual(runtime._last_run_summary["steering_counts"], {"repeated_read_file_final_answer": 1})
 
     def test_repeated_read_file_guard_does_not_force_final_for_edit_tasks(self) -> None:
         _RepeatedReadFileRangeClient.calls = 0

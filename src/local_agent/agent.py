@@ -92,6 +92,7 @@ MAX_USELESS_LSP_SYMBOL_GUARD_HITS = 4
 MAX_USELESS_LSP_SYMBOL_FINAL_ANSWER_STEERS = 2
 MAX_READ_FILE_CALLS_PER_FILE_IN_RECENT_WINDOW = 8
 READ_FILE_PATH_WINDOW = 14
+MAX_READ_FILE_SUCCESSES_PER_RANGE_IN_RUN = 3
 MAX_REPEATED_READ_FILE_GUARD_HITS = 4
 MAX_REPEATED_READ_FILE_FINAL_ANSWER_STEERS = 2
 MAX_SOFT_TOOL_REQUIREMENT_STEERS = 3
@@ -326,6 +327,7 @@ class AgentRuntime:
         self._recent_useless_search_pattern_keys: list[str] = []
         self._recent_useless_lsp_symbol_query_keys: list[str] = []
         self._recent_read_file_path_keys: list[str] = []
+        self._read_file_range_counts: dict[tuple[str, int, str], int] = {}
         self._duplicate_tool_guard_hits = 0
         self._duplicate_tool_final_answer_steers = 0
         self._useless_search_pattern_guard_hits = 0
@@ -1014,6 +1016,24 @@ class AgentRuntime:
             if self._read_file_drift_guard_enabled
             else None
         )
+        read_file_range_key = (
+            _read_file_range_key(name, arguments, self._config.workspace, self._config.allowed_dirs)
+            if self._read_file_drift_guard_enabled
+            else None
+        )
+        if read_file_range_key is not None:
+            range_count = self._read_file_range_counts.get(read_file_range_key, 0)
+            if range_count >= MAX_READ_FILE_SUCCESSES_PER_RANGE_IN_RUN:
+                self._repeated_read_file_guard_hits += 1
+                return self._repeated_read_file_result(
+                    _display_read_file_range_key(
+                        read_file_range_key,
+                        self._config.workspace,
+                        self._config.allowed_dirs,
+                    ),
+                    range_count,
+                    evidence=self._evidence_for_read_file_range(read_file_range_key),
+                )
         if read_file_key is not None:
             recent_path_count = self._recent_read_file_path_keys.count(read_file_key)
             self._recent_read_file_path_keys.append(read_file_key)
@@ -1058,14 +1078,20 @@ class AgentRuntime:
                 ]
             else:
                 self._recent_useless_lsp_symbol_query_keys = []
+        if read_file_range_key is not None and not result.is_error:
+            self._read_file_range_counts[read_file_range_key] = (
+                self._read_file_range_counts.get(read_file_range_key, 0) + 1
+            )
         return result
 
-    def _repeated_read_file_result(self, path_key: str, prior_count: int) -> ToolResult:
+    def _repeated_read_file_result(self, path_key: str, prior_count: int, *, evidence: str = "") -> ToolResult:
+        evidence_note = f"\nExisting evidence:\n{evidence}" if evidence else ""
         return ToolResult(
             (
-                f"Tool call skipped: read_file has already read '{path_key}' {prior_count} times recently. "
+                f"Tool call skipped: read_file has already read '{path_key}' {prior_count} times in this run. "
                 "Use the collected evidence and provide the requested final answer, "
                 "or switch to a different, more targeted file only if new evidence is truly necessary."
+                f"{evidence_note}"
             ),
             is_error=True,
         )
@@ -1336,6 +1362,15 @@ class AgentRuntime:
             "If one of these files still needs deeper implementation review, say it was already read and specify the missing detail.",
         ]
         return "\n".join(lines)
+
+    def _evidence_for_read_file_range(self, range_key: tuple[str, int, str]) -> str:
+        subject = _display_read_file_range_subject(range_key, self._config.workspace, self._config.allowed_dirs)
+        matches = [
+            record.render()
+            for record in reversed(self._evidence_records)
+            if record.tool == "read_file" and record.subject == subject
+        ]
+        return "\n".join(reversed(matches[:3]))
 
     def _evidence_ledger_summary(self) -> str:
         if not self._evidence_records:
@@ -3465,6 +3500,72 @@ def _read_file_path_key(
     except PatchError:
         return raw_path
     return str(path)
+
+
+def _read_file_range_key(
+    name: str,
+    arguments: str | dict[str, Any],
+    workspace: Path,
+    allowed_dirs: tuple[Path, ...],
+) -> tuple[str, int, str] | None:
+    if name != "read_file":
+        return None
+    parsed = _parse_tool_arguments(arguments)
+    raw_path = parsed.get("path")
+    if not isinstance(raw_path, str) or not raw_path.strip():
+        return None
+    start_line = _read_file_line_number(parsed.get("start_line"), default=1)
+    if start_line is None:
+        return None
+    end_value = parsed.get("end_line")
+    if end_value is None:
+        end_key = "default"
+    else:
+        end_line = _read_file_line_number(end_value, default=1)
+        if end_line is None or end_line < start_line:
+            return None
+        end_key = str(end_line)
+    try:
+        path = resolve_workspace_path(workspace, raw_path, allowed_dirs)
+    except PatchError:
+        path_key = raw_path
+    else:
+        path_key = str(path)
+    return (path_key, start_line, end_key)
+
+
+def _read_file_line_number(value: object, *, default: int) -> int | None:
+    if value is None:
+        return default
+    try:
+        line_number = int(value)
+    except (TypeError, ValueError):
+        return None
+    return line_number if line_number >= 1 else None
+
+
+def _display_read_file_range_key(
+    range_key: tuple[str, int, str],
+    workspace: Path,
+    allowed_dirs: tuple[Path, ...],
+) -> str:
+    subject = _display_read_file_range_subject(range_key, workspace, allowed_dirs)
+    _, start_line, end_key = range_key
+    if end_key == "default":
+        return f"{subject} from line {start_line}"
+    return f"{subject} lines {start_line}-{end_key}"
+
+
+def _display_read_file_range_subject(
+    range_key: tuple[str, int, str],
+    workspace: Path,
+    allowed_dirs: tuple[Path, ...],
+) -> str:
+    path_key = range_key[0]
+    try:
+        return display_workspace_path(workspace, Path(path_key), allowed_dirs)
+    except (OSError, RuntimeError, ValueError):
+        return path_key
 
 
 def _validate_runtime_tool_name(tool: str) -> str:

@@ -30,7 +30,7 @@
 
 ## 当前进度
 
-当前项目已完成 P8 前端协议与交互基础 MVP，并进入 P9 真实需求使用准备：P5 的安全与恢复增强 MVP 已收口；P6 默认工作流 MVP 已落地，用户可以用自然语言描述任务，而不是每次手写 `list_files/read_file/dry_run/run_tests/git_diff` 工具顺序；P7 已完成 OMP 风格 auto summary、多语言轻量 LSP、multi-root `--allow-dir`、workspace roots 注入、Markdown memory 启动注入、`learn` 工具、可选 session memory consolidation、authored skills discovery、重复工具调用熔断、duplicate-tool forced-final steering、tool result pruning、todo steering、跨项目 `--env-file` / launcher 安装目录 `.env` 加载、OMP 风格用户级 `--state-dir` runtime state 分层、Evidence Ledger、relevance gate、implementation-quality gate 和 no-edit final hygiene。2026-07-09 已完成 T-076 Event/Command Protocol v1、T-077/T-080 Terminal Frontend MVP 与命令可发现性、T-078 项目边界分析 MVP、T-081 Claude review 行动计划、T-082 run summary / coverage MVP，并新增 T-083 真实需求压测模板。模型默认已切到 `qwen3-coder-next` 并完成 T-084 企业项目只读源码验证压测：Runtime 能产出 typed events，CLI/session/tool 日志和 terminal frontend 共用事件流，session JSONL 追加 `event_v1` 供后续 replay；analysis-only 任务不会套用代码实现类 hygiene，点名 authored skill 时会先软性要求读取对应 `SKILL.md`，最终回答结构不完整时会强制无工具重答；每轮结束会写入结构化 `run_summary`，用于压测复盘和 `/status` 展示。
+当前项目已完成 P8 前端协议与交互基础 MVP，并进入 P9 真实需求使用准备：P5 的安全与恢复增强 MVP 已收口；P6 默认工作流 MVP 已落地，用户可以用自然语言描述任务，而不是每次手写 `list_files/read_file/dry_run/run_tests/git_diff` 工具顺序；P7 已完成 OMP 风格 auto summary、多语言轻量 LSP、multi-root `--allow-dir`、workspace roots 注入、Markdown memory 启动注入、`learn` 工具、可选 session memory consolidation、authored skills discovery、重复工具调用熔断、duplicate-tool forced-final steering、tool result pruning、todo steering、跨项目 `--env-file` / launcher 安装目录 `.env` 加载、OMP 风格用户级 `--state-dir` runtime state 分层、Evidence Ledger、relevance gate、implementation-quality gate 和 no-edit final hygiene。2026-07-09 已完成 T-076 Event/Command Protocol v1、T-077/T-080 Terminal Frontend MVP 与命令可发现性、T-078 项目边界分析 MVP、T-081 Claude review 行动计划、T-082 run summary / coverage MVP，并新增 T-083 真实需求压测模板。模型默认已切到 `qwen3-coder-next`，已完成 T-084 企业项目只读源码验证压测，并已落地 T-086 evidence-aware read repetition guard：Runtime 能产出 typed events，CLI/session/tool 日志和 terminal frontend 共用事件流，session JSONL 追加 `event_v1` 供后续 replay；analysis-only 任务不会套用代码实现类 hygiene，点名 authored skill 时会先软性要求读取对应 `SKILL.md`，最终回答结构不完整时会强制无工具重答；每轮结束会写入结构化 `run_summary`，用于压测复盘和 `/status` 展示。
 
 已具备的核心能力：
 
@@ -43,7 +43,7 @@
 - `apply_patch` 已支持 `replace`、`insert_before`、`insert_after`，并兼容 Python 3.12。
 - 非交互审批、LLM 非 JSON 响应、session 恢复坏尾部、search_code 绝对路径泄漏等问题已经修复。
 - 已完成 Agent 自举测试：能够通过百炼模型调用工具读取、修改、测试和查看 diff。
-- 测试基线：188 个测试在正常本地环境通过。
+- 测试基线：189 个测试在正常本地环境通过。
 
 当前已具备：
 
@@ -89,6 +89,7 @@
 - T-082 Run summary / coverage MVP 已落地：每轮结束写 session `run_summary` 和 typed `RunSummary` event，包含终止原因、耗时、LLM 请求数、工具调用/错误/无效结果、synthetic result、compaction、tool counts、guard hits 和 steering counts；`/status` 会显示最近一轮摘要。
 - T-083 真实需求范围确认到源码验证压测模板已落地：`docs/real-requirement-pressure-test-template.md` 把“范围判断 → 用户确认 → 源码只读验证 → 实现设计 → 小改压测 → run summary”固化成可复用模板。
 - T-084 qwen3-coder-next 只读源码验证压测已完成：session `20260709T071219747931Z` 从 `YXK-397 云信通用优化25.1` SQL 线索定位 `IntentionConfig*` 实体、Mapper、Controller 和 user-center 辅助文档，最终正常收束；新暴露 todo 参数误用、重复读取过多和最终回答轻微结构漂移问题。
+- T-086 evidence-aware read repetition guard 已落地：只读/分析任务中，同一路径同范围成功 `read_file` 多次后，后续重复读取会返回已有 evidence 摘要并触发 forced-final steering；编辑类任务仍不启用该 guard，避免影响实现前必要读取。
 
 真实缺口：
 
@@ -103,7 +104,7 @@
 - 百炼真实小改复测会话 `20260707T094246132064Z` 已验证 todo、dry_run、apply_patch、session allow、rollback、run_tests、git_diff 主链路可跑通；最终仅新增一个测试 docstring。
 - 还没有基于模型 context window 的精确 token 预算；当前用字符窗口近似 OMP reserve 策略。
 - 还没有完整 OMP ToolChoiceQueue；当前只为 allowed-dir 需求文档读取实现了轻量 soft tool requirement，其余场景仍用 system/tool 描述、runtime reminder、todo reminder、pruning、重复工具熔断、forced-final steering 和 relevance gate 做本地版。T-073 复跑暂未证明必须立即上完整 ToolChoiceQueue。
-- T-084 暴露只读分析任务中同一路径整文件重复读取仍偏多；需要补 evidence-aware read repetition guard 或 evidence-sufficient final steering。
+- T-084 暴露的同路径整文件重复读取已用 T-086 缓解；后续真实压测继续观察是否还需要更强的 evidence-sufficient final steering。
 - T-084 暴露最终回答仍可能轻微结构漂移和过度断言；需要增强 final structure gate / final evidence hygiene。
 - 目标服务接入/真实实现压测仍保留为后续任务：T-075 已补 no-edit 收束规范；后续用户会给项目边界定义，再让 LCA 分析具体需要哪些项目，随后接入目标项目做需求实现设计。
 - LSP 目前是多语言轻量静态工具，不是完整 LSP server，不支持 rename / code action / DAP。
@@ -255,7 +256,7 @@
 | T-083 | 真实需求范围确认到源码验证压测模板 | 已完成 | P9 | 新增 `docs/real-requirement-pressure-test-template.md`，把真实需求从范围判断推进到源码验证和小改压测的步骤、命令、验收和问题记录固化下来。 |
 | T-084 | qwen3-coder-next 只读源码验证压测 | 已完成并记录问题 | P9 | session `20260709T071219747931Z` 正常收束：153 秒、35 次 LLM 请求、78 次工具调用、33 次 compaction、18 次 LLM summary；读到 YXK-397 SQL 并定位 `IntentionConfig*` 证据链。新增 PT-030~PT-032。 |
 | T-085 | todo 工具误参纠偏 | 候选 | P9 | T-084 中模型用 `key/content` 调 `todo_add`、用错误 id 调 `todo_update`；可在工具错误中返回正确示例，或兼容 `key -> id` / `content -> task`。 |
-| T-086 | evidence-aware read repetition guard | 候选 | P9 | T-084 中 `read_file` 54 次，多次重复读取同一路径但 `guard_hits=0`；参考 OMP soft escalation/pruning，对已读同范围返回 evidence 摘要并收束。 |
+| T-086 | evidence-aware read repetition guard | 已完成 | P9 | T-084 中 `read_file` 54 次，多次重复读取同一路径但 `guard_hits=0`；已参考 OMP soft escalation/pruning，对同路径同范围成功读取超过阈值后返回 evidence 摘要并 forced-final。 |
 | T-087 | final structure / evidence hygiene 增强 | 候选 | P9 | T-084 最终把“项目表”退化为“表名表”，并对类作用有过度断言；需要 final gate 检查用户显式输出结构和 verified/inferred 标注。 |
 
 ## 风险清单
@@ -303,7 +304,7 @@
 | R-039 | TUI 命令不可发现会降低日用体验 | 已关闭 MVP 版 | 交互入口已有，但用户需要记 `/approval` 等命令，且缺少当前 runtime 状态视图。 | 已参考 terminal frontend 设计文档，在 append-only 前端内新增 `/help`、`/status`、`/tools`，不做 fullscreen。 |
 | R-040 | 过早大拆 `agent.py` 可能打断真实使用验证 | 新增，受控 | Claude review 指出 `agent.py` 已大，但 P0 大拆分会扩大回归面，影响今天可用目标。 | 接受架构方向但调整顺序：先做 run summary/coverage 和真实压测，再按 startup_context/evidence/compaction/memory_consolidation/steering 分批抽模块。 |
 | R-041 | 压测复盘缺少结构化 run coverage | 已关闭 MVP 版 | 只有 session 原文和最终回答时，很难判断模型卡在哪个 guard、用了多少工具、是否触发 compaction 或为什么结束。 | 已参考 OMP run-collector 思路，新增每轮 `run_summary`：工具次数、guard/steering、compaction、termination reason 统一落 session 和事件流。 |
-| R-042 | 只读源码验证中重复读取过多 | 新增，中 | T-084 中 `read_file` 54 次、`list_files` 10 次，重复读取同一批证据文件但没有 guard/steering 命中。 | 参考 OMP pruning / soft escalation / evidence sufficiency：对已读同范围做 evidence-aware repetition guard，达到证据足够时触发 final-answer steering。 |
+| R-042 | 只读源码验证中重复读取过多 | 已缓解 | T-084 中 `read_file` 54 次、`list_files` 10 次，重复读取同一批证据文件但没有 guard/steering 命中。 | 已参考 OMP pruning / soft escalation / evidence sufficiency：对已读同范围做 evidence-aware repetition guard，达到阈值后返回已有 evidence 摘要并触发 final-answer steering；编辑任务不启用该 guard。 |
 | R-043 | 最终回答轻微结构漂移和过度断言 | 新增，中 | T-084 要求项目表，但最终输出表名表；还把 `IntentionConfigApplication` 表述为 Spring Boot 启动/配置类，证据不足。 | 增强 Current task contract 的 final structure gate 和 final evidence hygiene，要求输出结构匹配用户字段，类作用类结论必须标 verified 或 inferred。 |
 
 ## 架构决策
@@ -384,7 +385,7 @@
 
 用户确认本文件后，建议按以下顺序继续：
 
-1. 优先做 T-085~T-087：todo 工具误参纠偏、evidence-aware read repetition guard、final structure/evidence hygiene。
+1. 优先做 T-085 和 T-087：todo 工具误参纠偏、final structure/evidence hygiene。
 2. 继续执行真实需求使用链路：基于用户给出的需求，先让 LCA 用服务边界圈项目范围；用户确认后再接具体项目源码做实现设计。
 3. 接入真实目标服务继续压测：优先找到 `zqyl-investment-plan` 或对应投资方案服务目录，作为 `--cwd` 或 `--allow-dir` 与需求文档一起跑实现切片。
 4. 观察是否仍出现关键工具不用/乱用；若出现，再按 OMP 思路补更完整的 ToolChoiceQueue 或 reviewer。

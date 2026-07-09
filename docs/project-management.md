@@ -211,7 +211,7 @@ python3 scripts/sync_project_excel.py
 | T-083 | P1 | P9 | 真实需求压测模板 | 已完成 | Agent | 真实需求链路需要可复用步骤，否则每次压测都靠聊天记忆 | 新增 `docs/real-requirement-pressure-test-template.md`，覆盖范围判断、用户确认、源码只读验证、实现设计、小改压测、run summary 和问题记录。 |
 | T-084 | P0 | P9 | qwen3-coder-next 只读源码验证压测 | 已完成并记录问题 | Agent | 切换编码模型后，需要验证真实企业项目只读链路是否仍能收束 | session `20260709T071219747931Z` 正常 final：153 秒、35 次 LLM 请求、78 次工具调用、33 次 compaction、18 次 LLM summary；读 YXK-397 SQL 并定位 `IntentionConfig*` 证据链；新增 PT-030~PT-032。 |
 | T-085 | P1 | P9 | todo 工具误参纠偏 | 候选 | Agent | T-084 中模型用 `key/content` 调 `todo_add`、用错误 id 调 `todo_update` | 工具错误返回正确参数示例；可选兼容 `key -> id`、`content -> task`，但继续提示规范 schema。 |
-| T-086 | P0 | P9 | evidence-aware read repetition guard | 候选 | Agent | T-084 中 `read_file` 54 次，同一路径重复读但 `guard_hits=0` | 参考 OMP pruning / soft escalation：同路径同范围已读多次后返回 evidence 摘要并触发 final-answer steering。 |
+| T-086 | P0 | P9 | evidence-aware read repetition guard | 已完成 | Agent | T-084 中 `read_file` 54 次，同一路径重复读但 `guard_hits=0` | 已参考 OMP pruning / soft escalation：只读/分析任务中，同路径同范围成功读取超过阈值后返回 evidence 摘要并触发 final-answer steering；编辑任务不启用该 guard。 |
 | T-087 | P1 | P9 | final structure / evidence hygiene 增强 | 候选 | Agent | T-084 最终把“项目表”退化成“表名表”，并对类作用有过度断言 | 增强 Current task contract / final gate，检查用户显式输出结构；类作用类结论必须标 verified 或 inferred。 |
 
 ## 风险与决策
@@ -258,7 +258,7 @@ python3 scripts/sync_project_excel.py
 | 风险 | R-039 | 中 | TUI 命令不可发现会降低日用体验 | 已关闭 MVP 版 | 交互入口已有，但用户需要记 `/approval` 等命令，且缺少当前 runtime 状态视图 | 已参考 terminal frontend 设计文档，在 append-only 前端内新增 `/help`、`/status`、`/tools`，不做 fullscreen。 |
 | 风险 | R-040 | 中 | 过早大拆 `agent.py` 可能打断真实使用验证 | 新增，受控 | Claude review 指出 `agent.py` 已大，但 P0 大拆分会扩大回归面，影响今天可用目标 | 接受架构方向但调整顺序：先做 run summary/coverage 和真实压测，再按 startup_context/evidence/compaction/memory_consolidation/steering 分批抽模块。 |
 | 风险 | R-041 | 中 | 压测复盘缺少结构化 run coverage | 已关闭 MVP 版 | 只有 session 原文和最终回答时，很难判断模型卡在哪个 guard、用了多少工具、是否触发 compaction 或为什么结束 | 已参考 OMP run-collector 思路，新增每轮 `run_summary`：工具次数、guard/steering、compaction、termination reason 统一落 session 和事件流。 |
-| 风险 | R-042 | 中 | 只读源码验证中重复读取过多 | 新增 | T-084 中 `read_file` 54 次、`list_files` 10 次，重复读取同一批证据文件但没有 guard/steering 命中 | 参考 OMP pruning / soft escalation / evidence sufficiency：对已读同范围做 evidence-aware repetition guard，达到证据足够时触发 final-answer steering。 |
+| 风险 | R-042 | 中 | 只读源码验证中重复读取过多 | 已缓解 | T-084 中 `read_file` 54 次、`list_files` 10 次，重复读取同一批证据文件但没有 guard/steering 命中 | 已参考 OMP pruning / soft escalation / evidence sufficiency：对已读同范围做 evidence-aware repetition guard，达到阈值后返回已有 evidence 摘要并触发 final-answer steering。 |
 | 风险 | R-043 | 中 | 最终回答轻微结构漂移和过度断言 | 新增 | T-084 要求项目表，但最终输出表名表；还把 `IntentionConfigApplication` 表述为 Spring Boot 启动/配置类，证据不足 | 增强 Current task contract 的 final structure gate 和 final evidence hygiene，要求输出结构匹配用户字段，类作用类结论必须标 verified 或 inferred。 |
 | ADR | ADR-001 | 2026-07-07 | 优先采纳 OMP 成熟设计，按本地目标裁剪 | 已接受 | 好设计可直接采用，复杂度按需收敛 | OMP 是重要参考实现；我们不为了“避免复制”而绕开好设计。采用标准是收益是否大于复杂度，并且不破坏个人本地使用、封闭 VM、无公网依赖和第一阶段 MVP 边界。 |
 | ADR | ADR-002 | 2026-07-07 | max_steps 只作为防失控保险丝 | 已落地 | 默认值已改为 0，不限步 | OMP 的 stepCounter 主要用于 telemetry，终止靠无 tool_calls、deadline、abort；我们把 `max_steps` 仅作为显式保险丝。 |
@@ -335,7 +335,7 @@ python3 scripts/sync_project_excel.py
 | PT-028 | P1 | 已缓解并复跑 | T-073 复跑曾尝试新增 validator 注解和目录，但 `shell=deny` / `write_file=deny` 使新文件路径被拦，导致模型降级。T-074 后新文件创建可先 dry-run，并能记录/回滚。 | OMP 的 permission model 支持按工具和上下文请求权限；新文件写入应由审批/策略控制，而非一概 deny。 | `write_file` 支持 `dry_run=true` 新文件 diff 预览；真实创建会记录 patch log；`rollback_patch` 可删除本 session 创建的新文件。复跑中未因新文件权限降级改注释。 |
 | PT-029 | P1 | 已关闭 MVP 版 | T-074 复跑中模型正确判断当前 `crcl-open` 只是 `zqyl-investment-plan` 调用方并停止，但没有维护 todo，也没有调用 `git_diff` 证明无改动。 | OMP 会持续注入 current task / todo / tool evidence，并通过 tool-choice steering 约束最终回答前的必要收束步骤。 | T-075 已实现 no-edit final hygiene：实现任务准备无改动停止时，会先要求 todo/git 收束；测试覆盖过早 final 被 steering 到 `todo_add` + `git_status`。 |
 | PT-030 | P1 | 新增 | T-084 中模型首次用 `key/content/status` 调 `todo_add`，后续又用错误 id 调 `todo_update`；任务最终完成，但 todo 台账不可靠。 | OMP 的高频状态工具需要强 schema 提示、UI 可见性和可行动错误。 | T-085 候选：工具错误返回正确调用示例；可选兼容 `key -> id`、`content -> task`，同时继续提示规范参数名。 |
-| PT-031 | P0 | 新增 | T-084 中 153 秒内调用 78 次工具，其中 `read_file` 54 次，同一批 SQL/Java/XML 文件多次重复读取，但 `guard_hits=0`、`steering_counts=0`。 | OMP 将 tool result pruning、soft escalation、task state 和 evidence sufficiency 组合，用小上限把低价值重复探索切回回答。 | T-086 候选：evidence-aware read repetition guard；同路径同范围成功读取多次后返回已读 evidence 摘要并触发 final-answer steering。 |
+| PT-031 | P0 | 已缓解 | T-084 中 153 秒内调用 78 次工具，其中 `read_file` 54 次，同一批 SQL/Java/XML 文件多次重复读取，但 `guard_hits=0`、`steering_counts=0`。 | OMP 将 tool result pruning、soft escalation、task state 和 evidence sufficiency 组合，用小上限把低价值重复探索切回回答。 | T-086 已完成：同路径同范围成功读取多次后返回已读 evidence 摘要并触发 final-answer steering；只读/分析任务启用，编辑任务不启用。 |
 | PT-032 | P1 | 新增 | T-084 要求输出“必须关注/可能关注/暂不关注项目表”，最终变成“表名表”；对 `IntentionConfigApplication` 的作用也有过度断言。 | OMP 持续注入 current task contract 和 runtime evidence；成熟 reviewer/final check 会要求 verified fact 与 inference 分开。 | T-087 候选：增强 final structure gate 和 final evidence hygiene，检查显式输出结构，要求类作用类结论标 verified/inferred。 |
 
 ## P5 收口结论
