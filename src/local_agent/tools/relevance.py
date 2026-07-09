@@ -57,6 +57,16 @@ LOW_RELEVANCE_SUFFIXES = {
     ".yml",
 }
 
+SOURCE_CODE_SUFFIXES = {
+    ".java",
+    ".js",
+    ".jsx",
+    ".py",
+    ".ts",
+    ".tsx",
+    ".vue",
+}
+
 
 def is_code_implementation_request(text: str | None) -> bool:
     compact = (text or "").lower()
@@ -94,6 +104,11 @@ def path_matches_any(path: str, candidates: list[str] | tuple[str, ...]) -> bool
         if normalized == other or normalized.endswith("/" + other) or other.endswith("/" + normalized):
             return True
     return False
+
+
+def is_source_code_path(path: str) -> bool:
+    suffix = PurePosixPath(_normalize_path(path)).suffix.lower()
+    return suffix in SOURCE_CODE_SUFFIXES
 
 
 def _normalize_path(path: str) -> str:

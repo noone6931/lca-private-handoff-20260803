@@ -10,6 +10,7 @@ from .base import Tool, ToolContext, ToolResult
 from .files import session_patch_records
 from .relevance import is_code_implementation_request
 from .relevance import is_low_relevance_patch_path
+from .relevance import is_source_code_path
 from .relevance import request_mentions_config_or_path
 
 MAX_DIFF_SUMMARY_FILES = 12
@@ -76,9 +77,10 @@ def git_diff(args: dict[str, Any], context: ToolContext) -> ToolResult:
             )
     if result.is_error:
         return result
+    raw_diff = content
     content = _with_diff_summary(content)
     content = _with_attribution_note(content, args, context)
-    return ToolResult(_with_diff_reviewer_note(content, context))
+    return ToolResult(_with_diff_reviewer_note(content, context, raw_diff=raw_diff))
 
 
 def capture_git_baseline(workspace: str | PathLike[str]) -> dict[str, Any]:
@@ -286,26 +288,96 @@ def _with_attribution_note(content: str, args: dict[str, Any], context: ToolCont
     return content.rstrip() + "\n\n" + "\n".join(lines)
 
 
-def _with_diff_reviewer_note(content: str, context: ToolContext) -> str:
+def _with_diff_reviewer_note(content: str, context: ToolContext, *, raw_diff: str) -> str:
     request = context.current_user_request
     if not is_code_implementation_request(request):
         return content
+    lines = []
     suspicious_paths = sorted(
         path
         for path in _session_patch_paths(context)
         if is_low_relevance_patch_path(path) and not request_mentions_config_or_path(request, path)
     )
-    if not suspicious_paths:
+    if suspicious_paths:
+        lines.extend(
+            [
+                "- Potential relevance warning: this-session apply_patch touched deployment/config-like path(s): "
+                f"{_join_paths(suspicious_paths)}",
+                "- Before final answer, explain the exact source-code evidence connecting these files to the requested "
+                "implementation, or use rollback_patch/re-target the edit.",
+            ]
+        )
+    comment_only_paths = _comment_only_code_patch_paths(raw_diff, _session_patch_paths(context))
+    if comment_only_paths:
+        lines.extend(
+            [
+                "- Potential implementation-quality warning: this-session code diff appears comment/documentation-only "
+                f"for path(s): {_join_paths(comment_only_paths)}",
+                "- For implementation tasks, do not claim behavior, validation, parsing, or test coverage changed unless "
+                "the diff includes non-comment code or tests. Re-target the edit, rollback it, or explicitly report "
+                "that only documentation/comments changed.",
+            ]
+        )
+    if not lines:
         return content
-    lines = [
-        "",
-        "[diff reviewer]",
-        "- Potential relevance warning: this-session apply_patch touched deployment/config-like path(s): "
-        f"{_join_paths(suspicious_paths)}",
-        "- Before final answer, explain the exact source-code evidence connecting these files to the requested "
-        "implementation, or use rollback_patch/re-target the edit.",
-    ]
-    return content.rstrip() + "\n\n" + "\n".join(lines)
+    return content.rstrip() + "\n\n[diff reviewer]\n" + "\n".join(lines)
+
+
+def _comment_only_code_patch_paths(raw_diff: str, patch_paths: set[str]) -> list[str]:
+    if not patch_paths:
+        return []
+    files = _changed_code_lines_by_file(raw_diff)
+    comment_only: list[str] = []
+    for path, changed_lines in files.items():
+        if path not in patch_paths or not is_source_code_path(path):
+            continue
+        meaningful = [line for line in changed_lines if line.strip()]
+        if meaningful and all(_looks_like_comment_line(line) for line in meaningful):
+            comment_only.append(path)
+    return sorted(comment_only)
+
+
+def _changed_code_lines_by_file(raw_diff: str) -> dict[str, list[str]]:
+    files: dict[str, list[str]] = {}
+    current_path = ""
+    in_hunk = False
+    for line in raw_diff.splitlines():
+        if line.startswith("diff --git "):
+            current_path = _path_from_diff_git_line(line)
+            files.setdefault(current_path, [])
+            in_hunk = False
+            continue
+        if line.startswith("+++ "):
+            path = _path_from_file_marker(line)
+            if path and path != "/dev/null":
+                current_path = path
+                files.setdefault(current_path, [])
+            continue
+        if line.startswith("@@ "):
+            in_hunk = True
+            continue
+        if not in_hunk or not current_path:
+            continue
+        if line.startswith("+++") or line.startswith("---"):
+            continue
+        if line.startswith("+") or line.startswith("-"):
+            files.setdefault(current_path, []).append(line[1:])
+    return files
+
+
+def _looks_like_comment_line(line: str) -> bool:
+    stripped = line.strip()
+    if not stripped:
+        return True
+    if stripped in {"*/", "/*", "/**"}:
+        return True
+    if stripped.startswith(("//", "#", "*", "/*", "<!--", "-->", "{/*", "*/")):
+        return True
+    if stripped.startswith(("<p>", "</p>", "<ul>", "</ul>", "<li>", "</li>")):
+        return True
+    if stripped.endswith("-->"):
+        return True
+    return False
 
 
 def _baseline_paths(baseline: dict[str, Any], *, staged: bool) -> set[str]:

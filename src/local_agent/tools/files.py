@@ -86,7 +86,8 @@ def file_tools() -> list[Tool]:
             name="write_file",
             description=(
                 "Create a new text file inside the workspace or an explicitly allowed directory. "
-                "Refuses to overwrite existing files; use apply_patch for existing files."
+                "Refuses to overwrite existing files; use apply_patch for existing files. "
+                "Set dry_run=true to preview the new-file diff without writing."
             ),
             tier="write",
             input_schema={
@@ -94,6 +95,7 @@ def file_tools() -> list[Tool]:
                 "properties": {
                     "path": {"type": "string"},
                     "content": {"type": "string"},
+                    "dry_run": {"type": "boolean"},
                 },
                 "required": ["path", "content"],
                 "additionalProperties": False,
@@ -217,6 +219,20 @@ def rollback_patch(args: dict[str, Any], context: ToolContext) -> ToolResult:
             is_error=True,
         )
 
+    before_exists = bool(record.get("before_exists", True))
+    if not before_exists:
+        path.unlink()
+        _record_rollback(context, str(record["id"]))
+        diff = "".join(
+            difflib.unified_diff(
+                current_text.splitlines(keepends=True),
+                [],
+                fromfile=f"a/{record['path']}",
+                tofile=f"b/{record['path']}",
+            )
+        )
+        return ToolResult(f"Rolled back patch {record['id']}. Deleted created file.\n\n{diff}")
+
     before_text = str(record["before_text"])
     path.write_bytes(before_text.encode("utf-8"))
     _record_rollback(context, str(record["id"]))
@@ -250,6 +266,17 @@ def _interpreted_tag_note(original: str | None, tag: str) -> str:
     return f"Interpreted tag {original!r} as hash {tag!r}. Pass only the pure hash tag next time.\n\n"
 
 
+def _new_file_diff(path: str, content: str) -> str:
+    return "".join(
+        difflib.unified_diff(
+            [],
+            content.splitlines(keepends=True),
+            fromfile="/dev/null",
+            tofile=f"b/{path}",
+        )
+    )
+
+
 def write_file(args: dict[str, Any], context: ToolContext) -> ToolResult:
     try:
         path = resolve_workspace_path(context.workspace, args["path"], context.allowed_dirs)
@@ -260,9 +287,26 @@ def write_file(args: dict[str, Any], context: ToolContext) -> ToolResult:
             f"Refusing to overwrite existing file with write_file: {args['path']}. Use apply_patch instead.",
             is_error=True,
         )
+    display_path = display_workspace_path(context.workspace, path, context.allowed_dirs)
+    content = str(args["content"])
+    diff = _new_file_diff(display_path, content)
+    after_tag = hash_text(content)
+    if args.get("dry_run"):
+        return ToolResult(
+            f"New file preview only. File not changed. New tag after write would be: {after_tag}\n\n{diff}"
+        )
     Path(path.parent).mkdir(parents=True, exist_ok=True)
-    path.write_text(args["content"], encoding="utf-8")
-    return ToolResult(f"Wrote {display_workspace_path(context.workspace, path, context.allowed_dirs)}")
+    path.write_text(content, encoding="utf-8")
+    patch_id = _record_patch(
+        context=context,
+        path=display_path,
+        before_text="",
+        before_tag=hash_text(""),
+        after_tag=after_tag,
+        diff=diff,
+        before_exists=False,
+    )
+    return ToolResult(f"Wrote {display_path}. Patch id: {patch_id}. New tag: {after_tag}\n\n{diff}")
 
 
 def _record_patch(
@@ -273,6 +317,7 @@ def _record_patch(
     before_tag: str,
     after_tag: str,
     diff: str,
+    before_exists: bool = True,
 ) -> str:
     patch_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
     record = {
@@ -283,6 +328,7 @@ def _record_patch(
         "before_tag": before_tag,
         "after_tag": after_tag,
         "before_text": before_text,
+        "before_exists": before_exists,
         "diff": diff,
     }
     _append_patch_record(context, record)

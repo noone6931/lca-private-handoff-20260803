@@ -30,7 +30,7 @@
 
 ## 当前进度
 
-当前项目处于 P7 轻量高级能力阶段：P5 的安全与恢复增强 MVP 已收口；P6 默认工作流 MVP 已落地，用户可以用自然语言描述任务，而不是每次手写 `list_files/read_file/dry_run/run_tests/git_diff` 工具顺序。本轮已补 OMP 风格 auto summary、多语言轻量 LSP、multi-root `--allow-dir`、workspace roots 注入、Markdown memory 启动注入、`learn` 工具、可选 session memory consolidation、authored skills discovery、重复工具调用熔断、duplicate-tool forced-final steering、tool result pruning、todo steering、跨项目 `--env-file` / launcher 安装目录 `.env` 加载、OMP 风格用户级 `--state-dir` runtime state 分层，以及 Evidence Ledger 证据账本。2026-07-09 已完成 P7 阶段回顾、T-072 首轮真实需求实现压测和 T-073 轻量 relevance gate / reviewer；T-073 复跑 session `20260709T021349259159Z` 已阻止上一轮那种 `deployMessage/nacos` 跑偏和 `pom.xml/src` 反事实，但暴露下一层问题：真实实现可能在新文件权限受限后退化成低价值注释 patch。
+当前项目处于 P7 轻量高级能力阶段：P5 的安全与恢复增强 MVP 已收口；P6 默认工作流 MVP 已落地，用户可以用自然语言描述任务，而不是每次手写 `list_files/read_file/dry_run/run_tests/git_diff` 工具顺序。本轮已补 OMP 风格 auto summary、多语言轻量 LSP、multi-root `--allow-dir`、workspace roots 注入、Markdown memory 启动注入、`learn` 工具、可选 session memory consolidation、authored skills discovery、重复工具调用熔断、duplicate-tool forced-final steering、tool result pruning、todo steering、跨项目 `--env-file` / launcher 安装目录 `.env` 加载、OMP 风格用户级 `--state-dir` runtime state 分层，以及 Evidence Ledger 证据账本。2026-07-09 已完成 P7 阶段回顾、T-072 首轮真实需求实现压测、T-073 轻量 relevance gate / reviewer 和 T-074 实现质量 gate / safe new-file policy；T-074 复跑 session `20260709T025706579604Z` 已避免 comment-only 伪实现和未授权新文件降级，模型在证据不足时选择诚实停止，但暴露 no-edit 停止路径仍可能跳过 todo/git_diff 收束。
 
 已具备的核心能力：
 
@@ -43,7 +43,7 @@
 - `apply_patch` 已支持 `replace`、`insert_before`、`insert_after`，并兼容 Python 3.12。
 - 非交互审批、LLM 非 JSON 响应、session 恢复坏尾部、search_code 绝对路径泄漏等问题已经修复。
 - 已完成 Agent 自举测试：能够通过百炼模型调用工具读取、修改、测试和查看 diff。
-- 测试基线：161 个测试在正常本地环境通过。
+- 测试基线：164 个测试在正常本地环境通过。
 
 当前已具备：
 
@@ -80,6 +80,7 @@
 - Current task contract 已落地：每次 provider request 注入当前原始用户请求、最终输出结构约束和 evidence-backed path 规则，防止长工具链后只总结最后一个文件或把猜测路径当证据。
 - Evidence Ledger 已落地：runtime 从工具结果中央提炼本轮短证据账本，provider request 注入 `[Evidence ledger]`，并写入 session JSONL `evidence` 事件，帮助最终回答区分证据事实和推断。
 - T-073 relevance gate / reviewer 已落地：真实 `apply_patch` 写入前会检查目标文件是否已被本轮 `read_file` 读取；代码实现任务若要修改部署/配置类低相关路径且用户未提配置，会返回 tool error 要求重新定位或确认；workspace-root evidence 会进入 Evidence Ledger；`git_diff` 会对本轮 patch 触及低相关路径追加 `[diff reviewer]` 提醒；patch log 对 workspace 内绝对路径归一为相对路径，修正 attribution 对不齐问题。
+- T-074 implementation-quality reviewer / safe new-file policy 已落地：`git_diff` 会对本轮 comment-only 代码实现 patch 追加 `[diff reviewer]`，禁止把注释/文档改动包装成行为、校验、解析或测试覆盖变化；`write_file dry_run=true` 可预览新文件 diff，真实创建会写 patch log，`rollback_patch` 可删除本 session 创建的新文件。
 
 真实缺口：
 
@@ -94,7 +95,7 @@
 - 百炼真实小改复测会话 `20260707T094246132064Z` 已验证 todo、dry_run、apply_patch、session allow、rollback、run_tests、git_diff 主链路可跑通；最终仅新增一个测试 docstring。
 - 还没有基于模型 context window 的精确 token 预算；当前用字符窗口近似 OMP reserve 策略。
 - 还没有完整 OMP ToolChoiceQueue；当前只为 allowed-dir 需求文档读取实现了轻量 soft tool requirement，其余场景仍用 system/tool 描述、runtime reminder、todo reminder、pruning、重复工具熔断、forced-final steering 和 relevance gate 做本地版。T-073 复跑暂未证明必须立即上完整 ToolChoiceQueue。
-- 真实实现质量 gate 还未完成：T-073 复跑中模型定位到相关 Java DTO，但在 `write_file` 被 deny 后退化为“只加 JavaDoc 注释”的低价值 patch；下一步需要做 no-comment-only reviewer / safe new-file policy / 更明确的实现有效性判定。
+- T-074 复跑说明：当当前仓库不包含需求所属服务时，模型已能停止并说明 `crcl-open` 只是 `zqyl-investment-plan` 调用方；但 no-edit 停止路径没有严格维护 todo，也没有调用 `git_diff` 证明无改动。下一步补 no-edit final hygiene，或接入真实目标服务继续跨项目实现压测。
 - LSP 目前是多语言轻量静态工具，不是完整 LSP server，不支持 rename / code action / DAP。
 - provider 请求失败发生在 assistant tool_call 之前，当前会以 `LlmError` 停止；后续可继续优化用户提示。
 
@@ -109,7 +110,7 @@
 | P4 | 上下文治理 | 已完成 MVP 版 | 初版 summary / compaction、工具输出折叠、长需求文件工作流。 |
 | P5 | 安全与恢复增强 | 已完成并收口 | synthetic tool result、patch preview、回滚策略、非信任仓库提示、OMP 风格 approval model、approval prompt deadline cancel；真实小改复测通过。 |
 | P6 | 日用体验与默认工作流固化 | 已完成 MVP 版 | OMP 默认工作流本地化：system prompt、工具描述、轻量 runtime nudge。 |
-| P7 | 高级工程能力轻量版 | 进行中 | 已完成 OMP 风格 auto summary、多语言轻量 LSP、LSP 兼容别名、multi-root workspace roots 与工具观察提示、allowed-dir soft tool requirement、Markdown memory 启动注入、learn、可选 memory consolidation、authored skills discovery、综合压测记录、重复工具调用熔断、duplicate-tool forced-final steering、同文件切片读取漂移 guard、search_code 空搜索词跨路径 guard、path escape roots hint、LSP 空 query guard、Current task contract、Evidence Ledger、tool result pruning、todo steering、跨项目 env-file 和用户级 `--state-dir` runtime state 分层；path-scoped rules、DAP、TUI、subagents、reviewer、AST edit、managed skills 继续后置。 |
+| P7 | 高级工程能力轻量版 | 进行中 | 已完成 OMP 风格 auto summary、多语言轻量 LSP、LSP 兼容别名、multi-root workspace roots 与工具观察提示、allowed-dir soft tool requirement、Markdown memory 启动注入、learn、可选 memory consolidation、authored skills discovery、综合压测记录、重复工具调用熔断、duplicate-tool forced-final steering、同文件切片读取漂移 guard、search_code 空搜索词跨路径 guard、path escape roots hint、LSP 空 query guard、Current task contract、Evidence Ledger、tool result pruning、todo steering、跨项目 env-file、用户级 `--state-dir` runtime state 分层、relevance gate、implementation-quality reviewer 和 safe new-file policy；path-scoped rules、DAP、TUI、subagents、完整 reviewer、AST edit、managed skills 继续后置。 |
 
 ## 已完成功能
 
@@ -161,7 +162,7 @@
 | Todo Steering | 已完成 MVP 版 | 未完成 todo 会作为 runtime reminder 注入发送给模型的 system context，即使未触发 compaction 也能帮助模型保持方向。 |
 | Evidence Ledger | 已完成 MVP 版 | `src/local_agent/agent.py` 从工具结果提炼短证据记录，注入 provider-bound `[Evidence ledger]`，并写 session `evidence` 事件；测试覆盖 read_file 后账本注入。 |
 | Synthetic Tool Result | 已完成 MVP 版 | deadline 到期、用户中断、`finish_reason=length` 时会补齐剩余 tool_call 的 tool result。 |
-| 测试基线 | 已完成 | 本地正常环境下 161 个测试通过。 |
+| 测试基线 | 已完成 | 本地正常环境下 164 个测试通过。 |
 
 ## 下一步 Todo
 
@@ -228,7 +229,8 @@
 | T-071 | P7 阶段回顾与 OMP 差距决策 | 已完成 | P7 | 新增 `docs/stage-review-2026-07-09.md`，整理当前与 OMP 的差距、已关闭风险、剩余 P7 候选项，并决定先进入真实需求实现压测。 |
 | T-072 | 真实需求实现压测 | 首轮完成但未通过 | P7 | session `20260709T013441841983Z` 读取真实需求后漂移到 `deployMessage/nacos`，修改无关 Redis 配置并错误声称 worktree 无 `pom.xml/src`；问题已记录到 `docs/pressure-test-2026-07-09.md`。 |
 | T-073 | 轻量 reviewer / pre-edit relevance gate | 已完成并复跑 | P7/P8 | 已新增真实写入前 relevance gate、workspace-root evidence、`git_diff` reviewer 和 patch log 相对路径归一；复跑 session `20260709T021349259159Z` 未再触碰 `deployMessage/nacos`，也未再声称无 `pom.xml/src`。 |
-| T-074 | 真实实现质量 gate / safe new-file policy | 下一步 | P7/P8 | T-073 复跑中模型在 `write_file` 被 deny 后退化为只加 JavaDoc 注释；下一步应防止 comment-only 伪实现，并设计低风险新文件/新目录的审批策略。 |
+| T-074 | 真实实现质量 gate / safe new-file policy | 已完成并复跑 | P7/P8 | 已新增 comment-only 代码实现 reviewer、`write_file dry_run=true` 新文件预览、创建文件 patch log 和 rollback 删除；复跑 session `20260709T025706579604Z` 未再产生 comment-only patch，也未因新文件权限降级乱改，而是在证据不足时停止说明功能属于 `zqyl-investment-plan`。 |
+| T-075 | no-edit final hygiene / 跨服务目标接入 | 下一步 | P7/P8 | T-074 复跑证明安全停止有效，但未严格维护 todo，也未调用 `git_diff` 证明无改动；下一步补 no-edit 停止路径的收束规范，或把真实目标服务作为 `--cwd/--allow-dir` 接入继续实现压测。 |
 
 ## 风险清单
 
@@ -265,7 +267,8 @@
 | R-029 | 最终 diff 细节可能被模型过度简化或说错 | 已关闭并复测通过 | session `20260708T094926471758Z` 中 attribution 分类正确，但模型没有准确描述实际 diff hunk；低价值 README smoke-test 改动已撤回。 | 参考 OMP runtime observation 思路：已给 `git_diff` 增加 diff stats/hunk summary；session `20260708T100128250335Z` 验证最终总结可正确引用 summary + attribution。 |
 | R-030 | 过早补完整 reviewer / ToolChoiceQueue 会增加复杂度但未必命中当前痛点 | 开放并受控 | OMP 的 reviewer、subagents、ToolChoiceQueue 很强，但 LCA 当前还缺真实实现压测的失败样本；提前完整搬入可能拖慢 MVP 验证。 | 先按 `docs/stage-review-2026-07-09.md` 进入真实需求实现压测；只有压测暴露工具选择失控或 review 质量问题时，再按 OMP 方式定向裁剪。 |
 | R-031 | 真实实现任务可能产生无关 patch | 已缓解，继续观察 | T-072 session `20260709T013441841983Z` 读取正确需求后漂移到 Nacos/Redis 配置，并把无关注释当成实现锚点；这说明 dry_run/hash 校验只能保证位置正确，不能保证业务相关。 | 已完成 T-073：真实写入前要求目标文件已读；代码实现任务修改部署/配置类低相关路径会被拦截或要求用户确认；workspace-root evidence 进入 Evidence Ledger；`git_diff` 增加 reviewer 提示。T-073 复跑未再触碰 `deployMessage/nacos`。 |
-| R-032 | 真实实现可能退化成低价值注释 patch | 新增，高 | T-073 复跑 session `20260709T021349259159Z` 中模型定位到相关 Java 文件，但因 `write_file` 被 deny，最终只给 DTO 字段补 JavaDoc；这不能算真实业务实现。 | 下一步 T-074 参考 OMP reviewer/tool-choice 思路做实现质量 gate：comment-only patch 需要明确标记为文档改动或要求重新定位；真实实现任务需要允许受控新文件策略，或让模型在权限不足时停止并说明无法完成。 |
+| R-032 | 真实实现可能退化成低价值注释 patch | 已缓解并复跑 | T-073 复跑 session `20260709T021349259159Z` 中模型定位到相关 Java 文件，但因 `write_file` 被 deny，最终只给 DTO 字段补 JavaDoc；这不能算真实业务实现。 | T-074 已补 implementation-quality reviewer：本轮代码 diff 若只有注释/文档改动，`git_diff` 会提醒不能声称行为、校验、解析或测试覆盖变化。复跑 session `20260709T025706579604Z` 没有再做 comment-only patch，而是在当前仓库缺目标实现时停止说明。 |
+| R-033 | no-edit 停止路径可能跳过收束工具 | 新增，中 | T-074 复跑中模型正确停止，但没有维护 todo，也没有调用 `git_diff` 输出“无改动”证据；这会降低最终报告的可审计性。 | 下一步 T-075 参考 OMP current task / tool-choice steering 思路：当实现任务选择 no-edit stop 时，仍要求输出 open todo 状态、git status/diff 或明确说明为何无须验证；必要时 runtime 注入 no-edit final hygiene reminder。 |
 
 ## 架构决策
 
@@ -284,7 +287,8 @@
 | ADR-018 | Evidence Ledger 是本轮 provider-bound runtime context，不是长期 memory。 | 工具证据服务于当前会话最终回答和审计，不能替代 session 原文，也不应默认写入项目长期 memory；参考 OMP runtime state / tool evidence / steering 持续入上下文的思路。 |
 | ADR-019 | P7 后续先进入真实需求实现压测，reviewer / 完整 ToolChoiceQueue 条件触发。 | 阶段回顾显示当前主链路已具备低风险实战条件；完整 reviewer / ToolChoiceQueue 应根据真实实现压测暴露的问题裁剪，而不是在缺少失败样本时提前做重。 |
 | ADR-020 | T-073 优先做轻量 relevance gate / reviewer，不先做完整 ToolChoiceQueue。 | T-072 失败点是无关 patch 和反事实 workspace 判断；最小有效修复是写入前目标相关性检查、workspace-root evidence 和最终 diff reviewer。完整 ToolChoiceQueue 继续作为工具选择失控时的后补。 |
-| ADR-021 | T-074 先补实现质量 gate 和受控新文件策略，再决定是否上完整 ToolChoiceQueue。 | T-073 复跑证明 relevance gate 能挡无关目录漂移，但真实实现仍可能退化为 comment-only patch；下一步应先解决“什么算有效实现”和“何时允许新文件”的问题。 |
+| ADR-021 | T-074 先补实现质量 gate 和受控新文件策略，再决定是否上完整 ToolChoiceQueue。 | T-073 复跑证明 relevance gate 能挡无关目录漂移，但真实实现仍可能退化为 comment-only patch；T-074 已先解决“什么算有效实现”和“何时允许新文件”的 MVP 问题。 |
+| ADR-022 | 实现任务允许诚实停止，但 no-edit final 也要可审计。 | T-074 复跑证明“证据不足时停止”比强行注释 patch 更好；下一步需要让停止路径也保持 todo/git_diff/原因归档，而不是只靠最终文字。 |
 | ADR-015 | 人工上下文按 AGENTS/RULES 分层。 | 参照 Claude Code 与 OMP 的上下文文件/Sticky rules 分层：`AGENTS.md` 作为启动背景，`RULES.md` 作为短规则每轮注入；二者不同于长期 memory 和 session summary。 |
 | ADR-016 | Session memory consolidation 默认关闭；开启后默认写 state memory。 | 这一步不同于只发给模型的 context compaction；默认 off 可以保护只读分析，开启后默认写用户级 state dir，只有显式 `memory_scope=project` 才写项目 `.local-agent/memory`。 |
 | ADR-003 | Excel 作为人工视图，Markdown 作为开发协作 Agent 可读事实源。 | 这套文档服务于开发 LCA 的过程；`.xlsx` 是二进制展示产物，不适合作为协作 Agent 的事实源。 |
@@ -298,10 +302,10 @@
 | 项目 | 结论 | 依据 |
 |---|---|---|
 | 主链路 | 通过 | 百炼真实小改复测已跑通 todo、dry_run、apply_patch、session allow、rollback、run_tests、git_diff。 |
-| 测试 | 通过 | P5 收口时 90 个 unittest、compileall、xlsx 检查、diff check 均通过；P7 当前代码已跑通 161 个 unittest、compileall 和 diff check。 |
+| 测试 | 通过 | P5 收口时 90 个 unittest、compileall、xlsx 检查、diff check 均通过；P7 当前代码已跑通 164 个 unittest、compileall 和 diff check。 |
 | 日用入口 | 通过 | README 已补只读分析和小改任务命令模板。 |
 | 开放风险 | 可接受 | shell 仍非沙箱、prompt injection 仍需靠审批和封闭 VM；token budget / output reserve / managed skills 留到后续评估。 |
-| 下一阶段 | P7 轻量高级能力真实压测后续 | 企业项目联网压测已获用户允许并由 Agent 代跑；跨项目 env-file、轻量 pruning / todo steering、memory consolidation、duplicate-tool forced-final steering、allowed-dir soft tool requirement、repeated read_file guard、空搜索词 guard、path escape roots hint、LSP 空 query guard 和 Current task contract 已完成。下一步继续评估回答准确性，尤其是跨项目缺失证据时的措辞和实现前二次验证。 |
+| 下一阶段 | P7 轻量高级能力真实压测后续 | 企业项目联网压测已获用户允许并由 Agent 代跑；跨项目 env-file、轻量 pruning / todo steering、memory consolidation、duplicate-tool forced-final steering、allowed-dir soft tool requirement、repeated read_file guard、空搜索词 guard、path escape roots hint、LSP 空 query guard、Current task contract、relevance gate 和 implementation-quality reviewer 已完成。下一步补 no-edit final hygiene，并继续用真实目标服务验证实现切片。 |
 
 ## 推荐工作流
 
@@ -336,7 +340,6 @@
 
 用户确认本文件后，建议按以下顺序继续：
 
-1. 执行 T-074：实现真实实现质量 gate，避免实现任务退化为“只加注释”的伪实现。
-2. 设计 safe new-file policy：在低风险路径、已读父目录、用户允许写入时，支持受控创建新文件/目录；否则要求模型明确说明权限不足。
-3. 复跑 T-073 同一需求，观察模型是否能做出有业务逻辑价值的小切片，或明确给出“当前授权/依赖不足，无法安全实现”。
-4. 若仍出现关键工具不用/乱用，再评估完整 ToolChoiceQueue。
+1. 执行 T-075：补 no-edit final hygiene，让“无法安全实现/目标服务缺失”的停止路径也维护 todo，并用 `git_status` / `git_diff` 或等价证据证明无改动。
+2. 接入真实目标服务继续压测：优先找到 `zqyl-investment-plan` 或对应投资方案服务目录，作为 `--cwd` 或 `--allow-dir` 与需求文档一起跑实现切片。
+3. 观察是否仍出现关键工具不用/乱用；若出现，再按 OMP 思路补更完整的 ToolChoiceQueue。

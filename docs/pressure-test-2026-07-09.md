@@ -2,7 +2,7 @@
 
 日期：2026-07-09
 
-本文记录 T-072 首轮真实需求实现压测，以及随后 T-073 relevance gate / reviewer 复跑。T-072 成功暴露了一个必须处理的问题：LCA 在真实实现任务中可能从正确需求漂移到无关配置文件，并产生无业务价值 patch。T-073 已缓解该跑偏问题，但复跑又暴露真实实现可能退化成 comment-only 低价值 patch，下一步进入 T-074 实现质量 gate / safe new-file policy。
+本文记录 T-072 首轮真实需求实现压测，以及随后 T-073 relevance gate / reviewer、T-074 implementation-quality reviewer / safe new-file policy 复跑。T-072 成功暴露了一个必须处理的问题：LCA 在真实实现任务中可能从正确需求漂移到无关配置文件，并产生无业务价值 patch。T-073 已缓解该跑偏问题，但复跑又暴露真实实现可能退化成 comment-only 低价值 patch。T-074 已缓解 comment-only 伪实现和新文件权限降级问题；复跑中模型没有强行修改，而是在当前仓库缺少目标服务实现时停止说明。
 
 ## 压测目标
 
@@ -261,3 +261,73 @@ LCA 措施：
 - T-074 设计 safe new-file policy。
 - 候选规则：父目录已被 `list_files/read_file` 观察；目标路径在 workspace 或 allowed-dir；当前任务需要新增类/测试；`write_file` 走 prompt 或 per-tool allow；必要时先 dry-run/preview 计划。
 - 如果策略不允许新文件，模型应停止并报告“权限不足，无法安全实现”，而不是改注释凑完成。
+
+## T-074 复跑记录
+
+复跑时间：2026-07-09
+
+| 项目 | 内容 |
+|---|---|
+| LCA session | `20260709T025706579604Z` |
+| session JSONL | `/Users/chengming/.local/state/local-coding-agent/workspaces/mycode-project-crcl-open-lca-t072-worktree-5a7a7365d7ed/sessions/20260709T025706579604Z.jsonl` |
+| 压测 worktree | `/Users/chengming/mycode/project/crcl-open-lca-t072-worktree` |
+| 复跑后 worktree | `git status --short` 为空 |
+
+T-074 已落地的改动：
+
+- `git_diff` 对本轮代码实现 diff 增加 implementation-quality reviewer。
+- 如果本轮 source code diff 只有注释、JavaDoc、README 或纯文档变化，reviewer 会提醒模型不能把它声称为行为、校验、解析或测试覆盖变化。
+- `write_file` 支持 `dry_run=true`，可预览新文件 unified diff 而不写入。
+- 真实 `write_file` 创建新文件时会写 patch log，记录 `before_exists=false`、before/after tag 和 diff。
+- `rollback_patch` 可回滚本 session 创建的新文件：校验当前 after tag 后删除该文件。
+
+复跑命令的核心策略：
+
+```bash
+./agent --provider bailian \
+  --approval-mode yolo \
+  --tool-approval shell=deny,write_file=allow,memory_write=deny,rollback_patch=allow,run_tests=allow,apply_patch=allow \
+  --budget-seconds 900 \
+  --summary-mode auto \
+  --context-char-budget 60000 \
+  --memory-consolidation off \
+  --cwd /Users/chengming/mycode/project/crcl-open-lca-t072-worktree \
+  --allow-dir /Users/chengming/mynote/1_projects/0630_YXR-971_平台通用优化 \
+  "这是 T-074 真实需求实现复测。请读取 allowed-dir 中的《需求文档-例外核心企业批量导入V1.1.md》，再结合当前 crcl-open 代码，选择一个低风险、可回滚、可验证的小实现切片。不得只修改注释、JavaDoc、README 或纯文档；如果当前授权/依赖不足以安全做出有业务逻辑价值的改动，请停止并明确说明。"
+```
+
+复跑结果：
+
+| 观察点 | 结果 | 判断 |
+|---|---|---|
+| 是否读取需求 | 首步读取 allowed-dir 需求文档 | 通过 |
+| 是否重新触碰 `deployMessage/nacos` | 没有 | 通过 |
+| 是否产生 comment-only patch | 没有任何 patch | 通过 |
+| 是否因新文件权限降级为注释 patch | 没有；`write_file=allow` 后也未乱建文件 | 通过 |
+| 是否识别服务边界 | 识别 `crcl-open` 只有 `InvestmentPlanFeignApi` / `InvestmentPlanFeign` 调用，真实实现应在 `zqyl-investment-plan` | 通过 |
+| 是否维护 todo | 未调用 todo 工具 | 待改进 |
+| 是否输出 git diff | 无改动但未调用 `git_diff` 证明 | 待改进 |
+
+核心结论：
+
+- T-074 对 PT-027 有效：模型没有再把 JavaDoc/注释改动包装成“业务实现”。
+- T-074 对 PT-028 有效：新文件策略已支持 dry-run、patch log 和 rollback；复跑中也未因权限变化而乱建无用文件。
+- 当前 `crcl-open` 证据显示它是投资方案服务的调用方，不是“例外核心企业批量导入”的实现归属仓库。强行在当前仓库新增 Controller/Service/DTO 会造成跨服务边界污染。
+
+### PT-029：no-edit 停止路径缺少 todo/git_diff 收束
+
+现象：
+
+- T-074 复跑选择了正确方向：不强行修改。
+- 但 prompt 明确要求“必须维护 todo”和最终 `git_diff`，模型没有执行。
+- 对无改动停止来说，这不是业务风险，但会降低可审计性：用户无法从工具结果直接看到“确实没改”。
+
+OMP 对应思路：
+
+- OMP 会持续把当前任务、todo、工具证据和 runtime steering 放回上下文。
+- 当任务进入停止/收束阶段时，runtime 可以通过 tool-choice / steering 要求模型先完成必要观察，再最终回答。
+
+LCA 措施：
+
+- T-075 补 no-edit final hygiene：当实现任务选择“无法安全实现/目标服务缺失/证据不足”时，仍应读取或更新 todo 状态，并调用 `git_status` / `git_diff` 或在最终回答中明确说明未做文件修改、未运行测试的原因。
+- 如果后续提供 `zqyl-investment-plan` 路径，应把它作为主 `--cwd` 或 `--allow-dir`，继续真实实现压测。

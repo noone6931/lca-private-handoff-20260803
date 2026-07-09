@@ -431,11 +431,60 @@ class ToolTests(unittest.TestCase):
         self.assertTrue(result.is_error)
         self.assertIn("Refusing to overwrite", result.content)
 
+    def test_write_file_dry_run_previews_without_writing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            target = workspace / "src" / "NewValidator.java"
+
+            result = write_file(
+                {
+                    "path": "src/NewValidator.java",
+                    "content": "public class NewValidator {}\n",
+                    "dry_run": True,
+                },
+                ToolContext(workspace=workspace, approval_mode="yolo"),
+            )
+            target_exists = target.exists()
+
+        self.assertFalse(result.is_error)
+        self.assertIn("New file preview only", result.content)
+        self.assertIn("+++ b/src/NewValidator.java", result.content)
+        self.assertIn("+public class NewValidator {}", result.content)
+        self.assertFalse(target_exists)
+
+    def test_write_file_records_patch_and_rollback_deletes_created_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            state_dir = workspace / "state"
+            target = workspace / "src" / "NewValidator.java"
+            context = ToolContext(workspace=workspace, approval_mode="yolo", state_dir=state_dir, session_id="s1")
+
+            write_result = write_file(
+                {"path": "src/NewValidator.java", "content": "public class NewValidator {}\n"},
+                context,
+            )
+            rollback_result = rollback_patch({}, context)
+            second_rollback = rollback_patch({}, context)
+            patch_log = state_dir / "patches" / "s1.jsonl"
+            target_exists = target.exists()
+            patch_log_text = patch_log.read_text(encoding="utf-8")
+
+        self.assertFalse(write_result.is_error)
+        self.assertIn("Patch id:", write_result.content)
+        self.assertIn("+++ b/src/NewValidator.java", write_result.content)
+        self.assertFalse(rollback_result.is_error)
+        self.assertIn("Deleted created file", rollback_result.content)
+        self.assertFalse(target_exists)
+        self.assertTrue(second_rollback.is_error)
+        self.assertIn("No unapplied patch record", second_rollback.content)
+        self.assertIn('"before_exists": false', patch_log_text)
+
     def test_write_file_schema_description_matches_create_only_behavior(self) -> None:
         write_tool = next(tool for tool in file_tools() if tool.name == "write_file")
 
         self.assertIn("Create a new text file", write_tool.description)
         self.assertIn("Refuses to overwrite existing files", write_tool.description)
+        self.assertIn("dry_run=true", write_tool.description)
         self.assertNotIn("fully overwrite", write_tool.description)
 
     def test_patch_file_dry_run_previews_without_writing(self) -> None:
@@ -1357,6 +1406,54 @@ class ToolTests(unittest.TestCase):
         self.assertIn("[diff reviewer]", result.content)
         self.assertIn("Potential relevance warning", result.content)
         self.assertIn("deployMessage/nacos/app.properties", result.content)
+
+    def test_git_diff_adds_implementation_reviewer_for_comment_only_code_patch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            target = workspace / "src" / "ExemptCompanyDto.java"
+            target.parent.mkdir()
+            subprocess.run(["git", "init"], cwd=workspace, text=True, capture_output=True, check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=workspace, check=True)
+            subprocess.run(["git", "config", "user.name", "Test User"], cwd=workspace, check=True)
+            original = (
+                "public class ExemptCompanyDto {\n"
+                "    /**\n"
+                "     * 企业ID\n"
+                "     */\n"
+                "    private String companyId;\n"
+                "}\n"
+            )
+            target.write_text(original, encoding="utf-8")
+            subprocess.run(["git", "add", "."], cwd=workspace, check=True)
+            subprocess.run(["git", "commit", "-m", "init"], cwd=workspace, text=True, capture_output=True, check=True)
+            baseline = capture_git_baseline(workspace)
+            context = ToolContext(
+                workspace=workspace,
+                approval_mode="yolo",
+                state_dir=workspace / ".agent-state",
+                session_id="session-1",
+                git_baseline=baseline,
+                current_user_request="实现 Java 导入校验需求",
+            )
+
+            patch_file(
+                {
+                    "path": "src/ExemptCompanyDto.java",
+                    "tag": hash_text(original),
+                    "start_line": 2,
+                    "end_line": 4,
+                    "old_text": "    /**\n     * 企业ID\n     */",
+                    "new_text": "    /**\n     * 企业ID\n     * <p>业务规则：</p>\n     */",
+                },
+                context,
+            )
+            result = git_diff({}, context)
+
+        self.assertFalse(result.is_error)
+        self.assertIn("[diff reviewer]", result.content)
+        self.assertIn("implementation-quality warning", result.content)
+        self.assertIn("src/ExemptCompanyDto.java", result.content)
+        self.assertIn("do not claim behavior", result.content)
 
     def test_tool_registry_validates_required_enum_and_extra_args(self) -> None:
         calls: list[dict] = []
