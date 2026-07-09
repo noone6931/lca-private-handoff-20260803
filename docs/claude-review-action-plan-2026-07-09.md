@@ -26,7 +26,7 @@ Claude review 的方向基本成立：`agent.py` 已经偏大，context budget �
 | 拆解 `agent.py` | 接受 | 大拆分风险高，且当前真实使用链路仍在校准 | 连续压测稳定后，按 compaction/evidence/startup_context/memory_consolidation/steering 分批抽出。 |
 | Steerer 协议 | 接受 | 当前已有多个 guard/steering，值得统一，但要先保留行为测试 | 新增 run summary 后能看清哪些 steerer 最常触发，再抽接口。 |
 | token + reserve budget | 接受 | 当前 char budget 可用，但长任务需要更准 | 真实长任务出现预算误判、上下文超限或过早压缩时优先做。 |
-| Java/Vue LSP provider 拆分 | 接受 | 企业项目会用到，但不应默认引入重依赖 | 先增强 best-effort 输出和置信度；可选 parser extra 后置。 |
+| Java/Vue LSP provider 拆分 | 已开始落地 | 企业项目会用到，但不应默认引入重依赖 | T-093 已新增可选外部 LSP adapter；后续再评估 rename/code action、diagnostics ledger 和更完整 provider 分包。 |
 | 独立 run collector 模块 | 接受 | MVP 统计已落在 runtime 内，先服务压测；独立模块化可等数据形态稳定 | 当 `agent.py` 拆分开始时，把 `RunStats` / summary 逻辑平移到 `run_collector.py`。 |
 
 ## 明确非目标
@@ -58,10 +58,11 @@ LCA 与 OMP 的架构原则继续靠拢，但不把 OMP 的完整产品形态搬
 
 ## 2026-07-09 执行进展
 
-T-091/T-092 已开始关闭上述 review 项：
+T-091/T-092/T-093 已开始关闭上述 review 项：
 
 - 已修复 `.vue` 模板 markup 被 implementation-quality reviewer 误判 comment-only 的风险；JavaDoc markup 规则只在 `.java` 中生效。
 - 已新增 `src/local_agent/compaction.py`，先抽出 context compaction 的纯函数、provider-safe 清理、tool output pruning、recent message 修剪和 summary helpers，保持主循环行为不变。
 - 已给 Java/JavaScript/TypeScript/Vue LSP 输出增加 `[lsp confidence]`，明确这些结果来自 lightweight regex/delimiter fallback；完整 `lsp/clients` provider 分包和 optional parser 仍在下一阶段。
+- 已新增 `src/local_agent/lsp/` 可选外部 adapter：stdio JSON-RPC client、Java `jdtls`、TypeScript `typescript-language-server --stdio`、Vue `vue-language-server --stdio`、嵌套项目 root marker、`lsp_status` 和 `AGENT_LSP_MODE=auto|light|external`。这一步贴近 OMP 的 LSP client 子系统，但仍保留封闭 VM 边界：不自动下载依赖，不可用时回退 light fallback。
 
 下一步继续按低风险边界拆 `evidence.py`、`run_collector.py`、`startup_context.py` 或 `memory_consolidation.py`，同时保留真实需求压测优先级。

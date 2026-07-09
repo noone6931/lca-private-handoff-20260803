@@ -9,6 +9,13 @@ from typing import Any, Iterable
 from local_agent.patch.anchored import PatchError
 from local_agent.patch.anchored import display_workspace_path
 from local_agent.patch.anchored import resolve_workspace_path
+from local_agent.lsp.config import external_lsp_enabled
+from local_agent.lsp.config import resolved_server_configs
+from local_agent.lsp.config import strict_external_lsp
+from local_agent.lsp.external import external_definition
+from local_agent.lsp.external import external_diagnostics
+from local_agent.lsp.external import external_references
+from local_agent.lsp.external import external_symbols
 
 from .base import Tool, ToolContext, ToolResult
 from .search import SKIPPED_DIRS
@@ -87,7 +94,8 @@ def lsp_tools() -> list[Tool]:
         Tool(
             name="lsp_symbols",
             description=(
-                f"List lightweight symbols for {languages} files under the workspace or an explicitly allowed path. "
+                f"List symbols for {languages} files under the workspace or an explicitly allowed path. "
+                "Uses an external language server when auto-detected/configured, otherwise lightweight fallback. "
                 "Use this for code navigation before broad text search."
             ),
             tier="read",
@@ -98,7 +106,7 @@ def lsp_tools() -> list[Tool]:
             name="lsp_workspace_symbols",
             description=(
                 "Compatibility alias for lsp_symbols. "
-                f"List lightweight workspace symbols for {languages} files under the workspace or an explicitly allowed path."
+                f"List workspace symbols for {languages} files under the workspace or an explicitly allowed path."
             ),
             tier="read",
             input_schema=symbol_schema,
@@ -108,7 +116,7 @@ def lsp_tools() -> list[Tool]:
             name="lsp_document_symbols",
             description=(
                 "Compatibility alias for lsp_symbols. "
-                f"List lightweight symbols for a specific {languages} file or directory path."
+                f"List symbols for a specific {languages} file or directory path."
             ),
             tier="read",
             input_schema=symbol_schema,
@@ -117,7 +125,7 @@ def lsp_tools() -> list[Tool]:
         Tool(
             name="lsp_definition",
             description=(
-                f"Find lightweight definitions for {languages} symbols. "
+                f"Find definitions for {languages} symbols using external LSP when available, otherwise lightweight fallback. "
                 "Returns workspace-relative or absolute allowed-directory file, line, column, and symbol kind."
             ),
             tier="read",
@@ -137,7 +145,7 @@ def lsp_tools() -> list[Tool]:
             name="lsp_references",
             description=(
                 f"Find text references to an identifier in {languages} files under a workspace path. "
-                "This is local find-references without starting an external LSP server."
+                "Uses external LSP when available, otherwise local text fallback."
             ),
             tier="read",
             input_schema={
@@ -155,8 +163,8 @@ def lsp_tools() -> list[Tool]:
         Tool(
             name="lsp_diagnostics",
             description=(
-                f"Run lightweight diagnostics for {languages} files under a workspace path. "
-                "Python uses compile(); other languages use delimiter checks, not a full compiler."
+                f"Run diagnostics for {languages} files under a workspace path. "
+                "Uses external LSP when available; fallback uses Python compile() and delimiter checks."
             ),
             tier="read",
             input_schema={
@@ -169,6 +177,16 @@ def lsp_tools() -> list[Tool]:
             },
             handler=lsp_diagnostics,
         ),
+        Tool(
+            name="lsp_status",
+            description=(
+                "Show external language-server availability and fallback status. "
+                "External servers are used when configured/auto-detected; otherwise tools use lightweight fallback."
+            ),
+            tier="read",
+            input_schema={"type": "object", "properties": {}, "additionalProperties": False},
+            handler=lsp_status,
+        ),
     ]
 
 
@@ -178,6 +196,18 @@ def lsp_symbols(args: dict[str, Any], context: ToolContext) -> ToolResult:
         return root
     query = str(args.get("query") or "").strip()
     max_results = _max_results(args, default=80, upper=200)
+    external = external_symbols(
+        root,
+        workspace=context.workspace,
+        allowed_roots=context.allowed_dirs,
+        supported_files=_iter_supported_files(root),
+        query=query,
+        max_results=max_results,
+    )
+    if external.content:
+        return ToolResult(external.content)
+    if external.strict and external.error:
+        return ToolResult(external.error, is_error=True)
     results: list[str] = []
     matched_suffixes: set[str] = set()
     for record in _iter_symbol_records(root, context.workspace, context.allowed_dirs):
@@ -202,6 +232,18 @@ def lsp_definition(args: dict[str, Any], context: ToolContext) -> ToolResult:
     if isinstance(root, ToolResult):
         return root
     max_results = _max_results(args, default=40, upper=100)
+    external = external_definition(
+        root,
+        workspace=context.workspace,
+        allowed_roots=context.allowed_dirs,
+        supported_files=_iter_supported_files(root),
+        symbol=symbol,
+        max_results=max_results,
+    )
+    if external.content:
+        return ToolResult(external.content)
+    if external.strict and external.error:
+        return ToolResult(external.error, is_error=True)
     matches: list[str] = []
     matched_suffixes: set[str] = set()
     for record in _iter_symbol_records(root, context.workspace, context.allowed_dirs):
@@ -224,6 +266,18 @@ def lsp_references(args: dict[str, Any], context: ToolContext) -> ToolResult:
     if isinstance(root, ToolResult):
         return root
     max_results = _max_results(args, default=80, upper=200)
+    external = external_references(
+        root,
+        workspace=context.workspace,
+        allowed_roots=context.allowed_dirs,
+        supported_files=_iter_supported_files(root),
+        symbol=symbol,
+        max_results=max_results,
+    )
+    if external.content:
+        return ToolResult(external.content)
+    if external.strict and external.error:
+        return ToolResult(external.error, is_error=True)
     pattern = re.compile(rf"(?<![\w$]){re.escape(symbol)}(?![\w$])")
     results: list[str] = []
     matched_suffixes: set[str] = set()
@@ -254,6 +308,16 @@ def lsp_diagnostics(args: dict[str, Any], context: ToolContext) -> ToolResult:
     if isinstance(root, ToolResult):
         return root
     max_results = _max_results(args, default=80, upper=200)
+    external = external_diagnostics(
+        root,
+        workspace=context.workspace,
+        allowed_roots=context.allowed_dirs,
+        max_results=max_results,
+    )
+    if external.content:
+        return ToolResult(external.content)
+    if external.strict and external.error:
+        return ToolResult(external.error, is_error=True)
     diagnostics: list[str] = []
     matched_suffixes: set[str] = set()
     for path in _iter_supported_files(root):
@@ -273,6 +337,31 @@ def lsp_diagnostics(args: dict[str, Any], context: ToolContext) -> ToolResult:
     if not diagnostics:
         return ToolResult("No lightweight diagnostics.", useless=True)
     return ToolResult(_render_lsp_results(diagnostics, matched_suffixes))
+
+
+def lsp_status(args: dict[str, Any], context: ToolContext) -> ToolResult:
+    if not external_lsp_enabled():
+        return ToolResult("External LSP: disabled by AGENT_LSP_MODE; lightweight fallback is active.")
+    servers = resolved_server_configs(context.workspace)
+    mode = "strict external" if strict_external_lsp() else "auto external with lightweight fallback"
+    lines = [f"External LSP mode: {mode}"]
+    if not servers:
+        lines.append("No external LSP server commands found; lightweight fallback is active.")
+        lines.append(
+            "Configure AGENT_LSP_JDTLS_COMMAND, AGENT_LSP_TYPESCRIPT_COMMAND, "
+            "or AGENT_LSP_VUE_COMMAND, or install commands on PATH."
+        )
+        return ToolResult("\n".join(lines))
+    lines.append("Available external LSP servers:")
+    for server in servers:
+        markers = ", ".join(server.root_markers)
+        file_types = ", ".join(server.file_types)
+        command = " ".join(server.command)
+        lines.append(f"- {server.name}: {file_types}; command={command}; root markers={markers}")
+    lines.append(
+        "Tools use an external server only when root markers match; otherwise they fall back to lightweight static navigation."
+    )
+    return ToolResult("\n".join(lines))
 
 
 def _resolve_lsp_root(args: dict[str, Any], context: ToolContext) -> Path | ToolResult:

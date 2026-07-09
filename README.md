@@ -320,17 +320,46 @@ python3 scripts/sync_project_excel.py
 - `todo_add`: 添加当前会话 todo。
 - `todo_update`: 更新当前会话 todo 状态。
 - `ask_user`: 在需求不清时向用户提问；支持 `timeout_seconds` 和 `default_answer`，显式 timeout 也会被当前任务剩余预算夹紧。
-- `lsp_symbols`: 列出 Python、Java、JavaScript、TypeScript、Vue 的轻量符号。
+- `lsp_symbols`: 列出 Python、Java、JavaScript、TypeScript、Vue 的符号；默认优先使用可用的外部 LSP server，缺失时回退本地轻量解析。
 - `lsp_workspace_symbols` / `lsp_document_symbols`: `lsp_symbols` 的只读兼容别名，方便从 OMP/Codex 风格提示迁移。
-- `lsp_definition`: 查找 Python、Java、JavaScript、TypeScript、Vue 的轻量符号定义。
-- `lsp_references`: 查找这些语言中的标识符引用。
-- `lsp_diagnostics`: 运行轻量诊断；Python 使用 `compile()`，Java/JS/TS/Vue 使用本地括号/分隔符检查。
+- `lsp_definition`: 查找 Python、Java、JavaScript、TypeScript、Vue 的符号定义；外部 LSP 可用时使用真实 language server。
+- `lsp_references`: 查找这些语言中的标识符引用；外部 LSP 可用时优先使用真实引用结果。
+- `lsp_diagnostics`: 运行诊断；外部 LSP 可用时使用 language server，否则 Python 使用 `compile()`，Java/JS/TS/Vue 使用本地括号/分隔符检查。
+- `lsp_status`: 查看当前外部 language server 是否可用、命令来源和轻量回退状态。
 - context compaction: 按 OMP 风格 reserve 阈值压缩早期历史、保留当前用户请求和未完成 todo，并截断发送给模型的超大 tool 输出；空搜索/LSP 结果会标记 useless，发送给模型的上下文会折叠 useless/superseded 工具结果；默认 `--summary-mode auto` 会在触发压缩时尝试 LLM 摘要并失败回退 local。
 - startup context injection: 新 session 启动时会读取用户级和项目级 `AGENTS.md`，作为 advisory context 注入 system prompt。
 - sticky rules injection: 每次发送模型请求前会读取用户级和项目级 `RULES.md` 并追加到 provider-bound context。
 - startup memory injection: 新 session 启动时会读取项目 `.local-agent/memory/{project,decisions,conventions,learned}.md` 和 state dir `memory/{project,decisions,conventions,learned}.md`，并作为 advisory context 注入 system prompt；当前用户指令和最新源码证据优先。
 - memory consolidation: 可选 `--memory-consolidation auto|llm`，在一轮结束后用当前 provider 抽取长期经验；默认 `off`，开启后默认写 state dir，`--memory-scope project` 才写项目 `.local-agent/memory/*.md`。
 - authored skills discovery: 新 session 启动时会扫描 `.local-agent/skills/<name>/SKILL.md`，只注入 name、description 和 source path；如果 prompt 点名某个已发现 skill，runtime 会先要求读取对应 `SKILL.md`，正文仍按需进入上下文。
+
+## 可选外部 LSP
+
+LCA 的 LSP 设计参考 OMP：按语言 server/client 解耦，但保留封闭 VM 友好边界。运行时不会自动下载依赖；如果当前 workspace 或嵌套项目根存在 root marker，并且命令可用，就启用外部 LSP，否则回退轻量静态导航。
+
+默认支持的 server：
+
+- Java: `jdtls`，root marker 包括 `pom.xml`、`build.gradle`、`settings.gradle`、`.project`。
+- JavaScript/TypeScript: `typescript-language-server --stdio`，root marker 包括 `package.json`、`tsconfig.json`、`jsconfig.json`。
+- Vue: `vue-language-server --stdio`，root marker 包括 `package.json`、`vue.config.*`、`vite.config.*`、`nuxt.config.*`。
+
+可用环境变量：
+
+```bash
+AGENT_LSP_MODE=auto      # 默认；可用则外部 LSP，不可用则轻量回退
+AGENT_LSP_MODE=light     # 强制只用轻量回退
+AGENT_LSP_MODE=external  # 强制外部 LSP；不可用时报错
+
+AGENT_LSP_JDTLS_COMMAND="/path/to/jdtls"
+AGENT_LSP_TYPESCRIPT_COMMAND="/path/to/typescript-language-server --stdio"
+AGENT_LSP_VUE_COMMAND="/path/to/vue-language-server --stdio"
+```
+
+也可以把 npm 依赖预装到目标项目的 `node_modules/.bin`，或把 jdtls 离线包放到 VM 并通过环境变量指定。诊断当前状态：
+
+```bash
+./agent --cwd /path/to/project "请调用 lsp_status 看一下语言服务器是否可用"
+```
 
 ## 设计原则
 
@@ -355,7 +384,7 @@ python3 scripts/sync_project_excel.py
 - 用户级和项目级 `AGENTS.md` 提供常驻上下文，`RULES.md` 提供短 sticky rules；二者都是 advisory，当前用户指令和源码证据优先；
 - 项目 authored skills 只把 metadata 注入启动上下文，正文按需读取，避免 prompt 膨胀；
 - 长上下文默认使用 OMP 风格 auto compaction：超过阈值才尝试 LLM summary，失败回退本地确定性摘要，并在发送给模型的上下文中折叠 useless/superseded 工具结果；
-- LSP 能力先做封闭 VM 友好的多语言静态导航工具，覆盖 Python、Java、JavaScript、TypeScript、Vue，不启动外部语言服务器；
+- LSP 能力支持可选外部 language server；封闭 VM 中没有预置依赖时自动回退多语言静态导航，不自动下载依赖；
 - memory 使用 Markdown，启动时作为 advisory context 注入；可用 `learn` 显式沉淀长期经验，也可显式开启 memory consolidation 从 session 中抽取长期经验。
 
 OMP 核心设计判断沉淀在 `docs/omp-core-architecture-notes.md`，后续不再重复翻源码确认主循环、deadline、compaction 和 step counter 的基本结论。

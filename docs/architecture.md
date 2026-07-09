@@ -47,7 +47,7 @@
 | 本地工具层 | `[CORE-已落地]` | 文件、搜索、shell/test、git、patch、rollback、memory、learn、todo、ask_user。 | `src/local_agent/tools/`。 |
 | 上下文治理 | `[MVP-已落地]` | OMP 风格 reserve、auto/local/llm summary、recent 保留、tool 输出截断、单 system message。 | `AgentRuntime._messages_for_model()` 编排，`src/local_agent/compaction.py` 承载纯函数。 |
 | Context / Rules | `[MVP-已落地]` | Workspace roots、用户级/项目级 `AGENTS.md` 启动注入，`RULES.md` 每轮 sticky 注入；multi-root roots 也会进入关键工具观察。 | `--cwd`、`--allow-dir`、`~/.config/local-coding-agent/`、`.local-agent/`。 |
-| 轻量代码导航 | `[MVP-已落地]` | Python、Java、JS、TS、Vue 的 symbols/definition/references/diagnostics；非 Python 结果带 best-effort 置信度提示。 | `src/local_agent/tools/lsp.py`。 |
+| 代码导航 / LSP | `[MVP-已落地]` | Python、Java、JS、TS、Vue 的 symbols/definition/references/diagnostics；可选外部 LSP server，缺失时回退 lightweight fallback。 | `src/local_agent/tools/lsp.py`、`src/local_agent/lsp/`。 |
 | 本地持久化 | `[CORE-已落地]` | JSONL session、patch log、todo、Markdown memory。 | runtime state 默认在用户级 state dir；显式项目 memory/skills 在 `.local-agent/`，自动 consolidation 默认写 state memory。 |
 | Memory / Skills | `[MVP-已落地]` | Markdown memory 启动注入、learn、可选 session memory consolidation 和 authored skills discovery 已落地；managed skills 待评估。 | `docs/memory-skills-implementation-plan.md`。 |
 | Frontend / Event Protocol | `[MVP-已落地]` | 把 CLI、Terminal Frontend 和未来 Remote/Web 与 Runtime 解耦。 | dataclass Event/Command Protocol、EventSink、session `event_v1`、CLI stderr renderer 和 terminal-native frontend 已落地。 |
@@ -108,7 +108,7 @@ flowchart TD
 | Sticky rules | `[MVP-已落地]` | 用户级 `RULES.md` 和项目级 `.local-agent/RULES.md` 在每次 provider request 前注入。 | 用于短规则，避免长会话/compaction 后丢失关键操作约束。 |
 | ask_user | `[MVP-已落地]` | 支持 `timeout_seconds`、`default_answer`、deadline clamp。 | 只在需求歧义影响结果时使用。 |
 | Context compaction | `[MVP-已落地]` | `auto/local/llm` summary，recent 保留，tool 输出只在发给模型副本中截断。 | 当前以字符预算近似 token，保留 OMP reserve 思路；压缩纯函数已拆到 `compaction.py`，后续继续拆 evidence/run collector。 |
-| Light LSP | `[MVP-已落地]` | symbols、definition、references、diagnostics。 | 不启动外部 language server，封闭 VM 友好；Python 使用 AST，Java/JS/TS/Vue 是 best-effort regex/delimiter fallback 并在结果中标注。 |
+| LSP / Light fallback | `[MVP-已落地]` | symbols、definition、references、diagnostics、`lsp_status`。 | 默认 `AGENT_LSP_MODE=auto`：存在 root marker 和 server 命令时启用外部 LSP，否则回退本地静态导航；不自动下载依赖。 |
 | Markdown memory | `[MVP-已落地]` | `memory_read/write` 读写项目 project/decisions/conventions/learned；启动时同时注入项目 memory 和 state memory。 | 当前用户指令和最新源码证据优先。 |
 | Learn | `[MVP-已落地]` | `learn` 将可复用经验写入 `.local-agent/memory/learned.md`。 | tier=`write`，默认需要审批，不自动学习。 |
 | Memory consolidation | `[MVP-已落地]` | `--memory-consolidation auto|llm` 在一轮结束后抽取 session 中的长期经验；默认 `--memory-scope state` 写 state dir 的 `memory/*.md`，显式 `project` 才写 `.local-agent/memory/*.md`。 | 默认 `off`；坏 JSON、空结果、预算耗尽或本轮已显式写 memory 时不写入。 |
@@ -126,7 +126,7 @@ flowchart TD
 | Command Protocol v1 | `[MVP-已落地]` | `src/local_agent/protocol/commands.py`。 | 定义 `SubmitPrompt`、`ApproveTool`、`RejectTool`、`SetApprovalMode`、`SetToolApproval`、`CancelRun`、`InterruptTool`、`ContinueSession` 的 dataclass command shape。 | 命令对象和 `to_dict()` 已可测试复用；完整 runtime command handler 留给 Terminal Frontend 接入时补齐。 |
 | Terminal Frontend MVP | `[MVP-已落地]` | `src/local_agent/frontends/terminal/`、`src/local_agent/terminal_io.py`。 | 第一版选型为可选 `prompt_toolkit` + `rich`；定位是 terminal-native interactive frontend，不是 fullscreen TUI；保留原生 terminal scrollback，不做 OMP 级自研 renderer。 | `./agent`、`./agent --chat`、`./agent chat` 可进入同一套事件驱动交互入口；一次性 prompt / chat run 期间会静默 TTY echo，approval / ask_user 时恢复输入。 |
 | Managed skills / autolearn | `[LATER-后续候选]` | Skills 子系统。 | 默认关闭；generated skills 与 authored skills 隔离，优先级最低，需审计。 | 不影响 authored skills，且能清楚区分人工与自动生成来源。 |
-| 完整外部 LSP adapter | `[LATER-后续候选]` | 可选后台进程层。 | 作为 light LSP 的增强，不替换当前静态工具；按语言和依赖可用性启用。 | 支持更准确定义、rename、code action，但无依赖时自动降级。 |
+| LSP rename / code action | `[LATER-后续候选]` | LSP adapter 增强。 | 当前只读导航已支持外部 server；写入类重构能力仍后置。 | 支持 rename、code action 时必须接入 preview、approval、diff 和 rollback。 |
 | AST edit / refactor | `[LATER-后续候选]` | Patch 层增强。 | 先保留 anchored patch 主路径，再评估 Python/TS 局部 AST 修改。 | 能降低大规模重构误改率，同时保留 diff 和回滚。 |
 | Reviewer / planner 角色 | `[LATER-后续候选]` | Runtime 内部策略或未来 subagent。 | 先做单 Agent 的轻量 review prompt，不急于多 Agent 并发。 | 对高风险改动能给出更稳定的自检清单。 |
 | Remote/Web frontend | `[LATER-后续候选]` | `src/local_agent/frontends/remote/`。 | 等 Event/Command 协议稳定后再通过 JSONL replay 或 WebSocket 暴露；不进入第一版。 | CLI/Terminal Frontend 已证明协议可复用后，再接 remote/web。 |
@@ -279,15 +279,19 @@ Command Protocol v1 至少包含：
 - Path-scoped rules 作为下一步候选。
 - managed skills / autolearn 默认后置，避免自动生成内容长期污染 prompt。
 
-### Light LSP
+### LSP / Light Fallback
 
-light LSP 是本地静态工具，不是外部 LSP server：
+LSP 按 OMP 的语言 client 思路拆成可选外部 adapter 和本地轻量回退：
 
-- 支持 Python AST 符号和基础诊断。
-- 支持 Java、JavaScript、TypeScript、Vue 的正则级符号、引用和分隔符诊断。
+- `AGENT_LSP_MODE=auto` 为默认：有 root marker 和 server 命令时使用外部 LSP；没有依赖时自动回退。
+- `AGENT_LSP_MODE=light` 强制只用本地静态工具。
+- `AGENT_LSP_MODE=external` 强制外部 LSP，不可用时报错，适合验证 VM 镜像依赖是否齐全。
+- Java 默认找 `jdtls`，JavaScript/TypeScript 默认找 `typescript-language-server --stdio`，Vue 默认找 `vue-language-server --stdio`。
+- Python 继续使用 AST 符号和 `compile()` 基础诊断。
+- 外部 LSP 缺失时，Java、JavaScript、TypeScript、Vue 回退 regex/delimiter fallback，并在结果中标注 best-effort confidence。
 - 限制扫描文件数、单文件大小、返回条数。
 
-后续如接入外部 LSP，应设计为可选 adapter：可用则增强，不可用则回退 light LSP。
+运行时不会自动下载 npm/maven/pip 依赖；封闭 VM 需要提前预置命令，或通过 `AGENT_LSP_*_COMMAND` 指向离线安装路径。
 
 ### Patch / Rollback
 
@@ -340,7 +344,7 @@ rollback 只回滚当前 session 的 patch record，并要求当前文件仍匹�
 - Authored skills discovery。
 - Multi-root `--allow-dir`。
 - OMP 风格 auto context compaction。
-- 轻量多语言静态代码导航。
+- 可选外部 LSP + 多语言静态回退。
 - JSONL session。
 - 默认工作流 system prompt / runtime nudge。
 
@@ -348,7 +352,7 @@ rollback 只回滚当前 session 的 patch record，并要求当前文件仍匹�
 
 - Browser。
 - Web search。
-- 完整外部 LSP server 作为默认依赖。
+- 外部 LSP server 作为默认强依赖。
 - DAP。
 - MCP。
 - Subagents。
@@ -359,6 +363,6 @@ rollback 只回滚当前 session 的 patch record，并要求当前文件仍匹�
 
 ## 推荐落地顺序
 
-1. 用真实需求验证 multi-root、startup context/rules、startup memory、learn、memory consolidation、authored skills、auto summary 和 light LSP 的组合体验。
+1. 用真实需求验证 multi-root、startup context/rules、startup memory、learn、memory consolidation、authored skills、auto summary 和 LSP/light fallback 的组合体验。
 2. 做 path-scoped rules 或 token 预算，取决于真实任务里先暴露的是规则噪音还是上下文预算问题。
-3. 最后再评估 managed skills、外部 LSP adapter、AST edit、reviewer/planner 和更重的 TUI/Remote UI。
+3. 最后再评估 managed skills、LSP rename/code action、AST edit、reviewer/planner 和更重的 TUI/Remote UI。

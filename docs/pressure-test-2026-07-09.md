@@ -546,3 +546,22 @@ LCA 措施：
 - T-092 已完成 MVP 修复：Java/JavaScript/TypeScript/Vue 的 `lsp_symbols`、`lsp_definition`、`lsp_references`、`lsp_diagnostics` 命中结果前会追加 `[lsp confidence]`。
 - 提示说明 Python 使用 AST，Java/JS/TS/Vue 使用 lightweight regex/delimiter fallback，结果是 best-effort、可能漏报。
 - 后续若继续贴近 OMP，再拆 `lsp/clients` provider，并评估可选 tree-sitter / 外部 LSP server adapter。
+
+### PT-038：企业 Java/JS/Vue 项目需要更完整 LSP 证据
+
+现象：
+
+- 用户明确希望 LSP 覆盖 Java、JavaScript、Vue 等主流语言；企业项目代码量大，仅靠 regex fallback 做 definition/reference/diagnostic 容易漏报。
+- 继续把完整 LSP server 作为“后续候选”会影响真实需求设计压测中的证据质量，尤其是跨模块调用链、Spring/Vue/TS 项目。
+
+OMP 对应思路：
+
+- OMP 把 LSP 做成真子系统：按语言 client 管理 server 进程、能力、诊断台账和多路复用。
+- 关键设计不是“默认强依赖”，而是“可用则增强、不可用时能力边界清楚”，并通过工具结果告诉模型当前证据可靠性。
+
+LCA 措施：
+
+- T-093 已完成：新增 `src/local_agent/lsp/`，实现 stdio JSON-RPC LSP client 和可选外部 adapter。
+- 默认 `AGENT_LSP_MODE=auto`：Java 通过 `jdtls`，TypeScript/JavaScript 通过 `typescript-language-server --stdio`，Vue 通过 `vue-language-server --stdio`；支持嵌套项目 root marker。
+- `AGENT_LSP_MODE=light` 可强制轻量回退，`AGENT_LSP_MODE=external` 可强制外部 LSP 并在缺依赖时报错；`lsp_status` 用于诊断当前 VM 依赖是否可用。
+- 运行时不自动下载 npm/maven/pip 依赖；封闭 VM 需要提前预置，或通过 `AGENT_LSP_*_COMMAND` 指向离线安装路径。

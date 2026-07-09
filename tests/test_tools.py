@@ -2,17 +2,19 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from local_agent.lsp.client import close_all_clients
 from local_agent.patch.anchored import hash_text
 from local_agent.tools.base import Tool, ToolContext, ToolRegistry
 from local_agent.tools.files import file_tools, patch_file, read_file, rollback_patch, write_file
 from local_agent.tools.git import capture_git_baseline, git_diff
 from local_agent.tools.interaction import ask_user
-from local_agent.tools.lsp import lsp_definition, lsp_diagnostics, lsp_references, lsp_symbols, lsp_tools
+from local_agent.tools.lsp import lsp_definition, lsp_diagnostics, lsp_references, lsp_status, lsp_symbols, lsp_tools
 from local_agent.tools.memory import learn, memory_read
 from local_agent.tools.search import list_files
 from local_agent.tools.search import search_code
@@ -31,6 +33,136 @@ class _FakeStdin:
         if not self._lines:
             return ""
         return self._lines.pop(0)
+
+
+def _write_fake_lsp_server(path: Path) -> None:
+    path.write_text(
+        r'''
+from __future__ import annotations
+
+import json
+import sys
+
+
+def read_message():
+    headers = {}
+    while True:
+        line = sys.stdin.buffer.readline()
+        if line == b"":
+            return None
+        if line in {b"\r\n", b"\n"}:
+            break
+        decoded = line.decode("ascii").strip()
+        if ":" in decoded:
+            key, value = decoded.split(":", 1)
+            headers[key.lower()] = value.strip()
+    length = int(headers.get("content-length", "0"))
+    return json.loads(sys.stdin.buffer.read(length).decode("utf-8"))
+
+
+def send(payload):
+    body = json.dumps(payload).encode("utf-8")
+    sys.stdout.buffer.write(f"Content-Length: {len(body)}\r\n\r\n".encode("ascii") + body)
+    sys.stdout.buffer.flush()
+
+
+while True:
+    message = read_message()
+    if message is None:
+        break
+    method = message.get("method")
+    request_id = message.get("id")
+    if method == "initialize":
+        send({
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "result": {
+                "capabilities": {
+                    "documentSymbolProvider": True,
+                    "definitionProvider": True,
+                    "referencesProvider": True,
+                }
+            },
+        })
+    elif method == "textDocument/didOpen":
+        uri = message["params"]["textDocument"]["uri"]
+        send({
+            "jsonrpc": "2.0",
+            "method": "textDocument/publishDiagnostics",
+            "params": {
+                "uri": uri,
+                "diagnostics": [
+                    {
+                        "range": {
+                            "start": {"line": 1, "character": 2},
+                            "end": {"line": 1, "character": 8},
+                        },
+                        "severity": 2,
+                        "message": "fake diagnostic",
+                    }
+                ],
+            },
+        })
+    elif method == "textDocument/documentSymbol":
+        send({
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "result": [
+                {
+                    "name": "loadUser",
+                    "kind": 12,
+                    "range": {
+                        "start": {"line": 0, "character": 16},
+                        "end": {"line": 2, "character": 1},
+                    },
+                    "selectionRange": {
+                        "start": {"line": 0, "character": 16},
+                        "end": {"line": 0, "character": 24},
+                    },
+                }
+            ],
+        })
+    elif method == "textDocument/definition":
+        uri = message["params"]["textDocument"]["uri"]
+        send({
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "result": {
+                "uri": uri,
+                "range": {
+                    "start": {"line": 0, "character": 16},
+                    "end": {"line": 0, "character": 24},
+                },
+            },
+        })
+    elif method == "textDocument/references":
+        uri = message["params"]["textDocument"]["uri"]
+        send({
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "result": [
+                {
+                    "uri": uri,
+                    "range": {
+                        "start": {"line": 0, "character": 16},
+                        "end": {"line": 0, "character": 24},
+                    },
+                },
+                {
+                    "uri": uri,
+                    "range": {
+                        "start": {"line": 1, "character": 9},
+                        "end": {"line": 1, "character": 17},
+                    },
+                },
+            ],
+        })
+    else:
+        if request_id is not None:
+            send({"jsonrpc": "2.0", "id": request_id, "result": None})
+'''.lstrip(),
+        encoding="utf-8",
+    )
 
 
 class ToolTests(unittest.TestCase):
@@ -258,6 +390,79 @@ class ToolTests(unittest.TestCase):
         self.assertIn("service.ts:2:14: function loadUser", symbols.content)
         self.assertFalse(definition.is_error)
         self.assertIn("service.ts:2:14: function loadUser", definition.content)
+
+    def test_lsp_uses_external_language_server_when_available(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            (workspace / "package.json").write_text("{}\n", encoding="utf-8")
+            source = workspace / "src" / "service.ts"
+            source.parent.mkdir()
+            source.write_text(
+                "export function loadUser() {\n"
+                "  return loadUser()\n"
+                "}\n",
+                encoding="utf-8",
+            )
+            fake_server = workspace / "fake_lsp.py"
+            _write_fake_lsp_server(fake_server)
+            command = f"{sys.executable} {fake_server}"
+            context = ToolContext(workspace=workspace, approval_mode="yolo")
+            with patch.dict("os.environ", {"AGENT_LSP_TYPESCRIPT_COMMAND": command}):
+                try:
+                    symbols = lsp_symbols({"path": "src/service.ts", "query": "loadUser"}, context)
+                    definition = lsp_definition({"symbol": "loadUser", "path": "src"}, context)
+                    references = lsp_references({"symbol": "loadUser", "path": "src"}, context)
+                    diagnostics = lsp_diagnostics({"path": "src/service.ts"}, context)
+                finally:
+                    close_all_clients()
+
+        self.assertFalse(symbols.is_error)
+        self.assertIn("[lsp provider] external typescript-language-server", symbols.content)
+        self.assertIn("service.ts:1:17: function loadUser", symbols.content)
+        self.assertFalse(definition.is_error)
+        self.assertIn("service.ts:1:17: export function loadUser() {", definition.content)
+        self.assertFalse(references.is_error)
+        self.assertIn("service.ts:2:10: return loadUser()", references.content)
+        self.assertFalse(diagnostics.is_error)
+        self.assertIn("Warning: fake diagnostic", diagnostics.content)
+
+    def test_lsp_uses_nested_project_root_for_external_server(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            service = workspace / "service-a"
+            (service / "src").mkdir(parents=True)
+            (service / "package.json").write_text("{}\n", encoding="utf-8")
+            (service / "src" / "service.ts").write_text("export function loadUser() {}\n", encoding="utf-8")
+            fake_server = workspace / "fake_lsp.py"
+            _write_fake_lsp_server(fake_server)
+            command = f"{sys.executable} {fake_server}"
+            context = ToolContext(workspace=workspace, approval_mode="yolo")
+            with patch.dict("os.environ", {"AGENT_LSP_TYPESCRIPT_COMMAND": command}):
+                try:
+                    file_result = lsp_symbols({"path": "service-a/src/service.ts", "query": "loadUser"}, context)
+                    dir_result = lsp_symbols({"path": "service-a/src", "query": "loadUser"}, context)
+                finally:
+                    close_all_clients()
+
+        self.assertFalse(file_result.is_error)
+        self.assertIn("[lsp provider] external typescript-language-server", file_result.content)
+        self.assertIn("service-a/src/service.ts:1:17: function loadUser", file_result.content)
+        self.assertFalse(dir_result.is_error)
+        self.assertIn("[lsp provider] external typescript-language-server", dir_result.content)
+        self.assertIn("service-a/src/service.ts:1:17: function loadUser", dir_result.content)
+
+    def test_lsp_status_reports_external_server_command(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            fake_server = workspace / "fake_lsp.py"
+            _write_fake_lsp_server(fake_server)
+            command = f"{sys.executable} {fake_server}"
+            with patch.dict("os.environ", {"AGENT_LSP_TYPESCRIPT_COMMAND": command}):
+                result = lsp_status({}, ToolContext(workspace=workspace, approval_mode="yolo"))
+
+        self.assertFalse(result.is_error)
+        self.assertIn("External LSP mode", result.content)
+        self.assertIn("typescript-language-server", result.content)
 
     def test_lsp_tools_reject_path_escape(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
