@@ -17,7 +17,7 @@ python3 scripts/sync_project_excel.py
 | 字段 | 当前值 | 说明 |
 |---|---|---|
 | 最终目标 | 个人本地编程助手 Agent | 本地优先、封闭 VM 可用、只访问指定 AI API，能读代码、搜代码、改代码、跑测试、生成 diff、沉淀项目记忆。 |
-| 当前阶段 | P9：真实需求使用准备 | P6 默认工作流 MVP 已落地；P7 已补 OMP 风格 auto summary、多语言 LSP/light fallback、multi-root、startup context/rules、startup memory、learn、可选 memory consolidation、runtime state dir、Evidence Ledger、relevance gate、implementation-quality gate 和 no-edit final hygiene；2026-07-09 已完成 T-076 Event/Command Protocol v1、T-077/T-080 Terminal Frontend MVP 与命令可发现性、T-078 项目边界分析 MVP、T-081 Claude review 行动计划、T-082 run summary / coverage MVP、T-083 真实需求压测模板、T-084 qwen3-coder-next 企业项目只读源码验证压测、T-089 semantic exploration guard、T-090 terminal input/output isolation、T-091 Vue diff reviewer 误报修复、T-092 compaction 渐进模块化 / LSP 置信度提示、T-093 可选外部 LSP adapter、T-094 真实项目 LSP 可用性压测、T-095 jdtls 预置/strict external 复测、T-096 Java LSP 韧性对齐 OMP、T-097 Java project health 探针、T-098 Maven parent probe、T-099 Maven environment probe、T-100 Java LSP fallback 真实复测、T-101 query-aware LSP fallback、T-102 拓展服务费结算真实需求链路压测和 T-103 provider-safe invalid tool_call normalization。 |
+| 当前阶段 | P9：真实需求使用准备 | P6 默认工作流 MVP 已落地；P7 已补 OMP 风格 auto summary、多语言 LSP/light fallback、multi-root、startup context/rules、startup memory、learn、可选 memory consolidation、runtime state dir、Evidence Ledger、relevance gate、implementation-quality gate 和 no-edit final hygiene；2026-07-09 已完成 T-076 Event/Command Protocol v1、T-077/T-080 Terminal Frontend MVP 与命令可发现性、T-078 项目边界分析 MVP、T-081 Claude review 行动计划、T-082 run summary / coverage MVP、T-083 真实需求压测模板、T-084 qwen3-coder-next 企业项目只读源码验证压测、T-089 semantic exploration guard、T-090 terminal input/output isolation、T-091 Vue diff reviewer 误报修复、T-092 compaction 渐进模块化 / LSP 置信度提示、T-093 可选外部 LSP adapter、T-094 真实项目 LSP 可用性压测、T-095 jdtls 预置/strict external 复测、T-096 Java LSP 韧性对齐 OMP、T-097 Java project health 探针、T-098 Maven parent probe、T-099 Maven environment probe、T-100 Java LSP fallback 真实复测、T-101 query-aware LSP fallback、T-102 拓展服务费结算真实需求链路压测、T-103 provider-safe invalid tool_call normalization 和 T-104 msp-pay / zqylpayment 用户确认范围源码复核。 |
 | 推荐入口 | `./agent "阅读当前项目"` | 自动设置 `PYTHONPATH=src`，默认当前目录为 workspace。 |
 | Token 配置 | 环境变量 / `--env-file` / `.env` | `./agent` 会自动加载安装目录 `.env`，也可显式传 `--env-file`；真实环境变量优先。 |
 | 测试数 | 214 | 完整 unittest、compileall、diff check、xlsx 检查通过。 |
@@ -231,6 +231,7 @@ python3 scripts/sync_project_excel.py
 | T-101 | P0 | P9/P10 | query-aware LSP fallback | 已完成 | Agent | 第一轮复测暴露大仓库根路径 fallback 受 300 文件窗口限制，可能漏掉明确类名 | `lsp_symbols` / `lsp_definition` 带 query/symbol 时优先扫描文件名/路径匹配候选；新增 320 dummy Java 文件回归测试。 |
 | T-102 | P0 | P9 | 拓展服务费结算真实需求链路压测 | 已完成阶段 1-3 | Agent | 验证 LCA 能否从真实需求做范围判断、源码可用性核对、源码只读验证 | 范围判断通过；源码验证表明当前本机缺主候选 `zqyl-manager`、`zqyl-loan-application`、`ysd-provider`，仅有弱相关证据，暂不能进入实现设计。 |
 | T-103 | P0 | P9/P10 | provider-safe invalid tool_call normalization | 已完成 | Agent | T-102 暴露模型空工具名会污染历史并导致百炼 400 | assistant message 入历史前规范化 tool_call id/name/arguments；空工具名替换为 `__invalid_tool_call`，保持 tool_result 配对；新增回归测试。 |
+| T-104 | P0 | P9 | msp-pay / zqylpayment 用户确认范围源码复核 | 已完成 | Agent + User | 用户确认服务费结算前端应为 `msp-pay`、后端应为 `zqylpayment`，需要复核此前“缺主候选源码”的判断 | session `20260709T092317272887Z` 以 `zqylpaymentmaster9d423763` 为 cwd、`mpspaymasterce6ca65` 和需求目录为 allow-dir；结论是两者是合理候选但只部分支持，仍缺结算单实体、状态 60、制单/回退/下载中心等证据。 |
 
 ## 风险与决策
 
@@ -256,7 +257,7 @@ python3 scripts/sync_project_excel.py
 | 风险 | R-018 | 中 | AGENTS/RULES 长期注入可能与当前任务冲突 | 已缓解，持续关注 | 注入区明确 advisory；system prompt 明确当前用户指令和源码证据优先；RULES 适合短规则，长背景放 AGENTS 或 memory | Claude Code 和 OMP 都把这类上下文作为指导而非硬约束；真正硬限制应靠 permission/hooks。我们先做 advisory 注入，危险动作仍靠 approval。 |
 | 风险 | R-019 | 中 | memory consolidation 可能隐式写入陈旧或敏感内容 | 已进一步缓解，持续关注 | 默认 off；显式开启后默认写用户级 state dir 的 memory，只有 `memory_scope=project` 才写项目 `.local-agent/memory`；只接受严格 JSON 的短条目；坏 JSON、空结果、deadline 耗尽、本轮已显式写 memory 时不写 | OMP local memory 位于用户 agent dir，项目 `.omp/` 主要承载人工 context/rules/skills；我们按同一边界把自动 consolidation 默认放入 state dir，项目 memory 仍需显式写入。 |
 | 风险 | R-020 | 高 | multi-root allowed dir 没有稳定进入模型操作路径 | 已复跑通过 | session `20260708T065705459243Z` 和 `20260708T070722601499Z` 中模型尝试 `requirements` 并失败；session `20260708T072404789287Z` 已看到 roots 提示但仍未读需求文档，导致代码侧反推 | OMP 会显式提供 cwd/project context/rules，并通过 ToolChoiceQueue / soft tool requirement 做小上限纠偏；我们新增 `[Workspace roots]`、工具观察 roots 提示，并对需求/文档类任务前置 soft tool requirement；session `20260708T083312934017` 已验证先读真实需求文档。 |
-| 风险 | R-021 | 中 | 单仓库无法覆盖跨服务需求 | 已记录，持续关注 | 用户确认当前测试项目可能不覆盖完整需求；`拓展服务费结算` 可能在 incentive/settlement 等其他项目 | OMP 依赖用户提供完整 workspace/context；我们记录为压测边界，后续用多个 `--allow-dir` 接入相关项目，或者要求 Agent 明确输出“还需要哪个项目”。 |
+| 风险 | R-021 | 中 | 单仓库无法覆盖跨服务需求 | 已记录，持续关注 | 用户确认 `拓展服务费结算` 前端大概率是 `msp-pay`、后端大概率是 `zqylpayment`；T-104 复核显示这两个项目是合理候选但仍只部分覆盖，核心结算实体/流程证据未闭环 | OMP 依赖用户提供完整 workspace/context；我们记录为压测边界，后续用多个 `--allow-dir` 接入相关项目，并要求 Agent 区分“候选范围被用户确认”和“源码证据已闭环”。 |
 | 风险 | R-022 | 高 | 同文件连续切片读取导致任务漂移 | 已复跑通过 | session `20260708T073252231781Z` 中模型连续读取同一大文件多个相邻区间；session `20260708T074609696125Z` 中显式只读任务因“下一步实现”措辞误关 guard；session `20260708T081827983347Z` 中 guard 成功收束但证据一致性待补 | OMP 对病态子循环设置命名小上限，并通过 steering/pruning/deadline/runtime context 收束；我们新增显式只读优先级、repeated read_file guard、forced-final 已读文件证据摘要、原始请求摘要和已读一致性规则；session `20260708T083312934017` 已按 5 点结构输出。 |
 | 风险 | R-023 | 高 | 同一空搜索词跨路径扩散导致 token 浪费 | 已补并复跑通过 | session `20260708T082703005777Z` 中模型对同一无结果关键词反复切换 path 搜索，因参数不同绕过 exact duplicate guard | OMP 会把 no-op/useless tool result 降权、prune，并对 soft tool escalation 设置小上限；我们新增 search pattern 级 guard，按 pattern 而非完整参数统计无结果搜索，并在阈值后 forced-final。 |
 | 风险 | R-024 | 高 | path escape 纠偏不足会让模型漏读主项目 | 已补并复跑通过 | session `20260708T084322924403Z` 中模型误用父目录后没有恢复，最终只分析辅助项目 | OMP 会把 cwd/project context 和可行动工具观察持续放回上下文；我们把 roots hint 放进公共 path escape 错误，session `20260708T085927874078` 已验证可恢复。 |
@@ -323,7 +324,7 @@ python3 scripts/sync_project_excel.py
 
 | 项目 | 结论 | 依据 | 后续 |
 |---|---|---|---|
-| 阶段判断 | P9 真实需求使用准备进行中 | T-076/T-077 已让 Runtime 产出 typed events，并提供 terminal-native 交互入口；T-078 已把项目边界分析沉淀为本机 memory/skill 和通用 runtime gate；T-084 已完成新模型只读源码验证压测；T-085/T-086/T-087/T-088/T-089/T-090 已补 todo 参数纠偏、重复读收束、最终结构/证据卫生、evidence-first gate、语义探索收束和终端输入隔离；T-091/T-092 已修 Vue reviewer 误报并启动 OMP 风格渐进模块化；T-093 已补可选外部 LSP adapter；T-094/T-095/T-096/T-097/T-098/T-099/T-100/T-101 已完成 jdtls 预置、协议修复、project load/configuration 韧性、project health 探针、Maven parent/environment probe、真实项目 external/fallback 复测和 query-aware fallback；T-102/T-103 已完成真实需求链路压测和非法 tool_call 修复 | 下一步需要补充拓展服务费结算的主候选源码，或换一个当前源码覆盖充分的真实需求进入实现设计/小改。 |
+| 阶段判断 | P9 真实需求使用准备进行中 | T-076/T-077 已让 Runtime 产出 typed events，并提供 terminal-native 交互入口；T-078 已把项目边界分析沉淀为本机 memory/skill 和通用 runtime gate；T-084 已完成新模型只读源码验证压测；T-085/T-086/T-087/T-088/T-089/T-090 已补 todo 参数纠偏、重复读收束、最终结构/证据卫生、evidence-first gate、语义探索收束和终端输入隔离；T-091/T-092 已修 Vue reviewer 误报并启动 OMP 风格渐进模块化；T-093 已补可选外部 LSP adapter；T-094/T-095/T-096/T-097/T-098/T-099/T-100/T-101 已完成 jdtls 预置、协议修复、project load/configuration 韧性、project health 探针、Maven parent/environment probe、真实项目 external/fallback 复测和 query-aware fallback；T-102/T-103 已完成真实需求链路压测和非法 tool_call 修复；T-104 已按用户确认的 `msp-pay` / `zqylpayment` 做源码复核 | 下一步在这两个候选项目内做更窄的证据补全，确认现有能力复用点和必须新建能力，再进入实现设计/小改。 |
 | 与 OMP 的主要差距 | 差距集中在高级工程化，不阻塞低风险实战 | 完整 ToolChoiceQueue、reviewer/subagents、完整 LSP/DAP、browser/TUI、AST edit、managed skills 仍后置 | 由压测失败形态触发 |
 | 已关闭风险 | P0/P1 runtime 风险已基本收口 | Python 3.12 patch、非交互审批、orphan tool_calls、max_steps、allowed-dir、重复工具、证据漂移、diff 混淆等均已有修复或缓解 | 继续用真实任务验证 |
 | reviewer 决策 | 先保留轻量实现质量 gate | T-074 已补 no-comment-only reviewer，复跑未再产生伪实现 | 继续用真实任务验证；若后续出现更复杂 patch 质量问题，再补完整 reviewer/subagent |
@@ -375,7 +376,7 @@ python3 scripts/sync_project_excel.py
 | 测试 | 通过 | P5 收口时 90 个 unittest、compileall、xlsx 检查、diff check 均通过；P9 当前代码已跑通 214 个 unittest、compileall 和 diff check。 |
 | 日用入口 | 通过 | README 已补只读分析和小改任务命令模板。 |
 | 开放风险 | 可接受 | shell 仍非沙箱、prompt injection 仍需靠审批和封闭 VM；token budget / output reserve / managed skills 继续后置评估。 |
-| 下一阶段 | 真实需求设计与实现压测 | 已验证默认工作流、auto summary、多语言 LSP/light fallback、multi-root、startup memory、learn、authored skills、runtime state dir、多项目只读压测主链路、relevance gate、implementation-quality gate、no-edit final hygiene、semantic exploration guard、terminal input isolation、Event/Command Protocol、Terminal Frontend MVP 和项目边界分析 MVP；T-095 已让 Java LSP 在 external 不完整时稳定回退并暴露 Maven parent POM 根因。 |
+| 下一阶段 | 真实需求设计与实现压测 | 已验证默认工作流、auto summary、多语言 LSP/light fallback、multi-root、startup memory、learn、authored skills、runtime state dir、多项目只读压测主链路、relevance gate、implementation-quality gate、no-edit final hygiene、semantic exploration guard、terminal input isolation、Event/Command Protocol、Terminal Frontend MVP 和项目边界分析 MVP；T-104 已将用户确认的 `msp-pay` / `zqylpayment` 作为合理候选复核，下一步补齐服务费结算核心证据后再进入实现设计。 |
 
 ## 推荐工作流
 

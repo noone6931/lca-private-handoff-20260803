@@ -806,3 +806,52 @@ LCA 措施：
   - 非字符串 `arguments` 会替换为 `{}`。
   - 仍保留 tool_result 配对，让模型看到“未知/无效工具”错误，但下一轮 provider 请求不再 400。
 - 已新增回归测试：模拟空 tool name，确认第二轮 provider request 中 tool_call name 已被规范化，且 tool result 保持原 call id 配对。
+
+### PT-045：T-104 用户确认 msp-pay / zqylpayment 后的源码复核
+
+背景：
+
+- 用户根据业务经验补充判断：“服务费结算对应的前端应该是 `msp-pay`，后端应该是 `zqylpayment`。”
+- 本机路径映射：
+  - 前端：`/Users/chengming/mycode/project/mpspaymasterce6ca65`
+  - 后端：`/Users/chengming/mycode/project/zqylpaymentmaster9d423763`
+- 压测目标：不再要求 LCA 重新做项目范围分类，而是基于用户确认的前后端项目，验证源码证据是否足够支撑进入实现设计。
+
+会话：
+
+- session：`20260709T092317272887Z`
+- cwd：`/Users/chengming/mycode/project/zqylpaymentmaster9d423763`
+- allow dirs：
+  - `/Users/chengming/mycode/project/mpspaymasterce6ca65`
+  - `/Users/chengming/mynote/1_projects/0630_YXR-971_平台通用优化/需求文档-拓展服务费结算`
+- run summary：116.4s、27 次 LLM 请求、59 次工具调用、3 tool errors、25 次 compaction、13 次 LLM context summary、4 次 local context summary、1 次 repeated-read guard。
+
+源码证据结论：
+
+| 范围 | 证据 | 判断 |
+|---|---|---|
+| 前端 `mpspaymasterce6ca65` | 读到 `src/assets/interface/pay/platformPayment.js`、`src/store/modules/platformPayment.js`、路由入口等；存在平台缴费单、部分支付接口和 `拓展服务费` 字段线索 | 部分支持。该项目确实像“平台缴费/支付”前端，但未证明已有“拓展服务费结算单”独立页面、制单/已制单/回退状态流。 |
+| 后端 `zqylpaymentmaster9d423763` | 读到 `PlatformOrderController.java`、平台订单实体/支付订单实体相关线索；有 `subtype` 直接保理/再保理字段语义 | 部分支持。该项目确实覆盖支付单/平台订单基础能力，但未证明已有拓展服务费结算核心服务。 |
+| 需求关键点 | 结算单、平台费用、拓展服务费字段、状态 60、制单/已制单/回退、下载中心 | 大多未被源码证据闭环 | 当前证据不足以直接进入实现设计，只能进入“补证据/确认新建能力”阶段。 |
+
+仍缺失或待确认：
+
+- 后端是否存在 `SettlementOrder` / `ExtendServiceFeeRecord` / 结算单主表明细表等核心实体。
+- `platOrderStatus=60` 或订单状态 60 的枚举定义。
+- 制单、已制单、回退、下载 Word 或下载中心对接的后端接口。
+- 平台费用 / 拓展服务费金额字段在支付订单、平台订单或融资订单中的准确映射。
+- 前端是否已有隐藏菜单、路由模块或页面未被这轮读取覆盖。
+
+对 LCA 的评价：
+
+- 正向：这轮在用户确认范围后能诚实输出“部分支持但核心缺失”，没有强行把弱相关支付项目包装成完整实现入口。
+- 问题：仍出现较多 `search_code` / `read_file` 探索和 compaction；最终结论有用，但没有充分利用 `lsp_status probe=true` / `lsp_workspace_symbols` 先做 Java 项目健康和符号入口判断。
+- 结论：T-104 将 T-102 的“当前源码完全不足”修正为“用户确认的 msp-pay / zqylpayment 是合理候选，但当前证据只到平台缴费/支付基础层，拓展服务费结算仍缺核心实体和流程证据”。
+
+下一步：
+
+- 不应马上做小改实现。
+- 建议让 LCA 继续做一轮更窄的只读证据补全：
+  - 后端：搜索并读取 `*OrderStatus*`、`*Settlement*`、`*Fee*`、`*PlatformOrder*`、`*PaymentOrder*` 的 entity / mapper / application / controller。
+  - 前端：搜索并读取 `platformPayment` 对应 views、router modules、store actions、接口调用链。
+  - 输出“现有能力复用点”和“必须新建的能力”两张表。
