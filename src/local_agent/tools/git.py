@@ -8,6 +8,9 @@ from typing import Any
 
 from .base import Tool, ToolContext, ToolResult
 from .files import session_patch_records
+from .relevance import is_code_implementation_request
+from .relevance import is_low_relevance_patch_path
+from .relevance import request_mentions_config_or_path
 
 MAX_DIFF_SUMMARY_FILES = 12
 MAX_DIFF_SUMMARY_HUNKS_PER_FILE = 4
@@ -74,7 +77,8 @@ def git_diff(args: dict[str, Any], context: ToolContext) -> ToolResult:
     if result.is_error:
         return result
     content = _with_diff_summary(content)
-    return ToolResult(_with_attribution_note(content, args, context))
+    content = _with_attribution_note(content, args, context)
+    return ToolResult(_with_diff_reviewer_note(content, context))
 
 
 def capture_git_baseline(workspace: str | PathLike[str]) -> dict[str, Any]:
@@ -279,6 +283,28 @@ def _with_attribution_note(content: str, args: dict[str, Any], context: ToolCont
         "- Attribution hint: summarize pre-existing and this-session changes separately; "
         "a file can contain both if it was already dirty before this run."
     )
+    return content.rstrip() + "\n\n" + "\n".join(lines)
+
+
+def _with_diff_reviewer_note(content: str, context: ToolContext) -> str:
+    request = context.current_user_request
+    if not is_code_implementation_request(request):
+        return content
+    suspicious_paths = sorted(
+        path
+        for path in _session_patch_paths(context)
+        if is_low_relevance_patch_path(path) and not request_mentions_config_or_path(request, path)
+    )
+    if not suspicious_paths:
+        return content
+    lines = [
+        "",
+        "[diff reviewer]",
+        "- Potential relevance warning: this-session apply_patch touched deployment/config-like path(s): "
+        f"{_join_paths(suspicious_paths)}",
+        "- Before final answer, explain the exact source-code evidence connecting these files to the requested "
+        "implementation, or use rollback_patch/re-target the edit.",
+    ]
     return content.rstrip() + "\n\n" + "\n".join(lines)
 
 

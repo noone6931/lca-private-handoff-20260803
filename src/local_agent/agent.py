@@ -13,6 +13,7 @@ from .config import AgentConfig
 from .config import normalize_approval_mode
 from .llm import LlmError
 from .llm import OpenAICompatibleClient
+from .patch.anchored import display_workspace_path
 from .patch.anchored import PatchError
 from .patch.anchored import resolve_workspace_path
 from .session.jsonl_store import JsonlSessionStore
@@ -22,6 +23,10 @@ from .tools.base import ToolContext
 from .tools.base import ToolResult
 from .tools.base import tool_state_dir
 from .tools.git import capture_git_baseline
+from .tools.relevance import is_code_implementation_request
+from .tools.relevance import is_low_relevance_patch_path
+from .tools.relevance import path_matches_any
+from .tools.relevance import request_mentions_config_or_path
 
 
 SYSTEM_PROMPT = """You are a local coding agent running inside a user's workspace.
@@ -238,7 +243,9 @@ class AgentRuntime:
         self._repeated_read_file_guard_hits = 0
         self._repeated_read_file_final_answer_steers = 0
         self._read_file_evidence_paths: list[str] = []
+        self._strong_relevance_paths: list[str] = []
         self._evidence_records: list[EvidenceRecord] = []
+        self._workspace_root_evidence_recorded = False
         self._current_user_request: str | None = None
         self._read_file_drift_guard_enabled = False
         self._force_final_answer_without_tools = False
@@ -293,7 +300,14 @@ class AgentRuntime:
         self._soft_tool_requirement = _initial_soft_tool_requirement(prompt, self._config.allowed_dirs)
         if self._soft_tool_requirement is not None:
             self._append_soft_tool_requirement_message(self._soft_tool_requirement)
-        tool_context = replace(self._tool_context, deadline_monotonic=deadline, git_baseline=git_baseline)
+        self._record_workspace_root_evidence()
+        tool_context = replace(
+            self._tool_context,
+            deadline_monotonic=deadline,
+            git_baseline=git_baseline,
+            current_user_request=prompt,
+            patch_relevance_checker=self._patch_relevance_denial_reason,
+        )
 
         step = 1
         while self._config.max_steps == 0 or step <= self._config.max_steps:
@@ -905,6 +919,7 @@ class AgentRuntime:
         self._read_file_evidence_paths = self._read_file_evidence_paths[-20:]
 
     def _record_tool_evidence(self, name: str, arguments: str | dict[str, Any], result: ToolResult) -> None:
+        self._record_strong_relevance_paths(name, arguments, result)
         record = _build_tool_evidence_record(
             name,
             arguments,
@@ -914,6 +929,9 @@ class AgentRuntime:
         )
         if record is None:
             return
+        self._append_evidence_record(record)
+
+    def _append_evidence_record(self, record: EvidenceRecord) -> None:
         rendered = record.render()
         if self._evidence_records and self._evidence_records[-1].render() == rendered:
             return
@@ -928,6 +946,70 @@ class AgentRuntime:
                 "summary": record.summary,
             },
         )
+
+    def _record_workspace_root_evidence(self) -> None:
+        if self._workspace_root_evidence_recorded:
+            return
+        self._workspace_root_evidence_recorded = True
+        markers = _workspace_root_markers(self._config.workspace)
+        if not markers:
+            return
+        self._append_evidence_record(
+            EvidenceRecord(
+                tool="workspace",
+                subject="root",
+                summary="Primary workspace contains: " + ", ".join(markers) + ".",
+            )
+        )
+
+    def _record_strong_relevance_paths(
+        self,
+        name: str,
+        arguments: str | dict[str, Any],
+        result: ToolResult,
+    ) -> None:
+        if result.is_error:
+            return
+        paths: list[str] = []
+        if name == "search_code":
+            paths = [
+                path
+                for path in _first_search_result_paths(result.content, limit=8)
+                if not is_low_relevance_patch_path(path)
+            ]
+        elif name.startswith("lsp_"):
+            paths = _first_result_line_paths(result.content, limit=8)
+        for path in paths:
+            if path and path not in self._strong_relevance_paths:
+                self._strong_relevance_paths.append(path)
+        self._strong_relevance_paths = self._strong_relevance_paths[-30:]
+
+    def _patch_relevance_denial_reason(self, raw_path: str, resolved_path: Path) -> str | None:
+        display_path = display_workspace_path(
+            self._config.workspace,
+            resolved_path,
+            self._config.allowed_dirs,
+        )
+        if not path_matches_any(display_path, tuple(self._read_file_evidence_paths)):
+            return (
+                f"Patch relevance gate: refusing real apply_patch for {display_path!r} because that file "
+                "has not been read with read_file in this run. Call read_file on the exact target first; "
+                "apply_patch dry_run=true previews are still allowed."
+            )
+        if (
+            is_code_implementation_request(self._current_user_request)
+            and is_low_relevance_patch_path(display_path)
+            and not request_mentions_config_or_path(self._current_user_request, display_path)
+            and not path_matches_any(display_path, tuple(self._strong_relevance_paths))
+        ):
+            return (
+                f"Patch relevance gate: refusing real apply_patch for {display_path!r} because the current "
+                "request looks like a code implementation task, while the target looks like deployment/config "
+                "material. Before editing this path, establish direct relevance from source-code evidence or "
+                "ask the user to confirm a configuration/deployment edit. apply_patch dry_run=true previews are "
+                "still allowed."
+            )
+        return None
 
     def _read_file_evidence_summary(self) -> str:
         if not self._read_file_evidence_paths:
@@ -949,6 +1031,7 @@ class AgentRuntime:
             "[Evidence ledger]",
             "Runtime-collected tool evidence for this run. Use it to distinguish evidence-backed facts from inference.",
             "In final answers, cite exact paths only when they appear here or in tool results; label guessed files/classes as unverified.",
+            "Do not claim workspace root files are missing when workspace evidence lists them.",
         ]
         lines.extend(record.render() for record in self._evidence_records[-EVIDENCE_LEDGER_CONTEXT_RECORDS:])
         return _one_line_block("\n".join(lines), max_chars=EVIDENCE_LEDGER_CONTEXT_CHAR_LIMIT)
@@ -1334,6 +1417,24 @@ def _workspace_roots_context(workspace: Path, allowed_dirs: tuple[Path, ...]) ->
     return "\n".join(lines)
 
 
+def _workspace_root_markers(workspace: Path) -> list[str]:
+    candidates = [
+        ("pom.xml", workspace / "pom.xml"),
+        ("build.gradle", workspace / "build.gradle"),
+        ("settings.gradle", workspace / "settings.gradle"),
+        ("package.json", workspace / "package.json"),
+        ("pyproject.toml", workspace / "pyproject.toml"),
+        ("src/main/java", workspace / "src" / "main" / "java"),
+        ("src/main/resources", workspace / "src" / "main" / "resources"),
+        ("src", workspace / "src"),
+    ]
+    markers: list[str] = []
+    for label, path in candidates:
+        if path.exists():
+            markers.append(label)
+    return markers
+
+
 def _load_startup_context_files(workspace: Path, user_config_dir: Path, *, max_chars: int) -> str:
     if max_chars <= 0:
         return ""
@@ -1596,6 +1697,21 @@ def _first_search_result_paths(content: str, *, limit: int) -> list[str]:
         if not line or line.startswith("...") or line.startswith("Workspace roots:") or line.startswith("- "):
             continue
         path = line.split(":", 1)[0].strip()
+        if not path or path in paths:
+            continue
+        paths.append(path)
+        if len(paths) >= limit:
+            break
+    return paths
+
+
+def _first_result_line_paths(content: str, *, limit: int) -> list[str]:
+    paths: list[str] = []
+    for line in content.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("No ") or stripped.startswith("["):
+            continue
+        path = stripped.split(":", 1)[0].strip()
         if not path or path in paths:
             continue
         paths.append(path)

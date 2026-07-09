@@ -28,6 +28,8 @@ class ToolContext:
     session_tool_approval: dict[str, str] | None = None
     deadline_monotonic: float | None = None
     git_baseline: dict[str, Any] | None = None
+    current_user_request: str | None = None
+    patch_relevance_checker: Callable[[str, Path], str | None] | None = None
 
 
 def tool_state_dir(context: ToolContext) -> Path:

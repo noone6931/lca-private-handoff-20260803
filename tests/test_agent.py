@@ -513,6 +513,75 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertEqual(len(evidence_events), 1)
         self.assertEqual(evidence_events[0]["payload"]["tool"], "read_file")
 
+    def test_workspace_root_evidence_is_sent_on_first_model_request(self) -> None:
+        _MessageRecordingClient.messages = []
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            (workspace / "src" / "main" / "java").mkdir(parents=True)
+            (workspace / "pom.xml").write_text("<project />\n", encoding="utf-8")
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=workspace,
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+                context_char_budget=0,
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _MessageRecordingClient):
+                runtime = AgentRuntime(config, show_tool_logs=False)
+                result = runtime.run("实现 Java 导入校验需求")
+                evidence_events = [
+                    json.loads(line)
+                    for line in runtime._session.path.read_text(encoding="utf-8").splitlines()
+                    if json.loads(line).get("event") == "evidence"
+                ]
+
+        sent_system = [message for message in _MessageRecordingClient.messages if message.get("role") == "system"][0]
+        self.assertEqual(result, "done")
+        self.assertIn("[Evidence ledger]", sent_system["content"])
+        self.assertIn("workspace root", sent_system["content"])
+        self.assertIn("pom.xml", sent_system["content"])
+        self.assertIn("src/main/java", sent_system["content"])
+        self.assertTrue(any(event["payload"]["tool"] == "workspace" for event in evidence_events))
+
+    def test_patch_relevance_gate_blocks_unmentioned_deployment_config_for_code_task(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            target = workspace / "deployMessage" / "nacos" / "app.properties"
+            target.parent.mkdir(parents=True)
+            target.write_text("old=true\n", encoding="utf-8")
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=workspace,
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _FinalClient):
+                runtime = AgentRuntime(config, show_tool_logs=False)
+
+            runtime._current_user_request = "实现 Java 导入校验需求"
+            runtime._read_file_evidence_paths = ["deployMessage/nacos/app.properties"]
+            denied = runtime._patch_relevance_denial_reason(
+                "deployMessage/nacos/app.properties",
+                target,
+            )
+            runtime._current_user_request = "请修改 nacos 配置"
+            allowed = runtime._patch_relevance_denial_reason(
+                "deployMessage/nacos/app.properties",
+                target,
+            )
+
+        self.assertIsNotNone(denied)
+        self.assertIn("deployment/config", denied or "")
+        self.assertIsNone(allowed)
+
     def test_requirement_tasks_must_read_allowed_directory_docs_before_answering(self) -> None:
         _AllowedDirRequirementClient.calls = []
         with tempfile.TemporaryDirectory() as tmp:

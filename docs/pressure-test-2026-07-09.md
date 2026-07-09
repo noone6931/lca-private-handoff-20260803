@@ -2,7 +2,7 @@
 
 日期：2026-07-09
 
-本文记录 T-072 首轮真实需求实现压测。结论：压测成功暴露了一个必须处理的问题，LCA 当前在真实实现任务中可能从正确需求漂移到无关配置文件，并产生无业务价值 patch。因此 T-073 应从候选项升级为下一步：补轻量 reviewer / pre-edit relevance gate，必要时再补 ToolChoiceQueue。
+本文记录 T-072 首轮真实需求实现压测，以及随后 T-073 relevance gate / reviewer 复跑。T-072 成功暴露了一个必须处理的问题：LCA 在真实实现任务中可能从正确需求漂移到无关配置文件，并产生无业务价值 patch。T-073 已缓解该跑偏问题，但复跑又暴露真实实现可能退化成 comment-only 低价值 patch，下一步进入 T-074 实现质量 gate / safe new-file policy。
 
 ## 压测目标
 
@@ -159,3 +159,105 @@ T-072 首轮结论：真实需求实现链路尚未通过。失败不是 patch �
 ## 结论
 
 这轮压测是失败的，但失败非常有价值：它证明 LCA 已经不再卡在“能不能调用工具”，而是进入了更真实的 Agent 质量问题：能不能把需求、证据、编辑目标和最终总结牢牢绑在一起。
+
+## T-073 复跑记录
+
+复跑时间：2026-07-09
+
+| 项目 | 内容 |
+|---|---|
+| LCA session | `20260709T021349259159Z` |
+| session JSONL | `/Users/chengming/.local/state/local-coding-agent/workspaces/mycode-project-crcl-open-lca-t072-worktree-5a7a7365d7ed/sessions/20260709T021349259159Z.jsonl` |
+| patch log | `/Users/chengming/.local/state/local-coding-agent/workspaces/mycode-project-crcl-open-lca-t072-worktree-5a7a7365d7ed/patches/20260709T021349259159Z.jsonl` |
+| 压测 worktree | `/Users/chengming/mycode/project/crcl-open-lca-t072-worktree` |
+| 复跑后 worktree | 已清理，`git status --short` 为空 |
+
+T-073 已落地的改动：
+
+- `apply_patch` 真实写入前调用 runtime relevance gate。
+- 目标文件必须在本轮被 `read_file` 读取过；`dry_run=true` 仍允许预览。
+- 当前请求像代码实现任务时，如果目标是 `deployMessage/nacos/*.properties`、`*.yml` 等部署/配置类低相关路径，且用户没有明确要求改配置，会返回 tool error，要求重新定位或确认。
+- workspace root evidence 会进入 Evidence Ledger，包含 `pom.xml`、`src/main/java`、`src/main/resources` 等根事实。
+- `git_diff` 对本轮 patch 触及低相关路径追加 `[diff reviewer]`。
+- patch log 对 workspace 内绝对路径归一为相对路径，避免 `git_diff` attribution 把本轮绝对路径 patch 错判为 unrecorded relative diff。
+
+复跑结果：
+
+| 观察点 | 结果 | 判断 |
+|---|---|---|
+| 是否读取需求 | 首步读取 allowed-dir 需求文档 | 通过 |
+| 是否进入主源码 | 进入 `src/main/java`，读取 `ChargeFeignApi`、`ChargeRateAuditDto`、`IntentionConfigManagerController`、`ExemptCompanyDto`、`UpdateIntentionConfigReq` | 通过 |
+| 是否再次写 `deployMessage/nacos` | 没有触碰 | 通过 |
+| 是否再次声称无 `pom.xml/src` | 没有 | 通过 |
+| 是否执行 dry-run | 对 `ExemptCompanyDto.java` 先 dry-run | 通过 |
+| 是否执行真实写入 | 修改 `ExemptCompanyDto.java` 的 JavaDoc | 通过但价值低 |
+| 是否运行测试 | 执行 `mvn -q -DskipTests compile`，因父 POM `com.yljr:parent:pom:0.0.5-SNAPSHOT` 不可解析失败 | 环境/依赖问题 |
+| 是否输出 diff | 输出 diff summary 和 attribution | 通过 |
+
+实际 patch：
+
+```diff
+diff --git a/src/main/java/com/yljr/crcl/open/interfaces/facade/config/req/ExemptCompanyDto.java b/src/main/java/com/yljr/crcl/open/interfaces/facade/config/req/ExemptCompanyDto.java
+@@ -19,6 +19,11 @@ public class ExemptCompanyDto implements Serializable {
+     /**
+      * 企业ID
++     * <p>业务规则：</p>
++     * <ul>
++     *   <li>云信保理产品：须为当前额度方案的确权方</li>
++     *   <li>通用资金方产品：须已认证且企业类型含“核心企业”</li>
++     * </ul>
+      */
+     @NotNull(message = "企业ID不能为空")
+     private BigDecimal companyId;
+```
+
+该 patch 已从临时 worktree 清理，业务仓库未留下改动。
+
+## T-073 结论
+
+T-073 解决了 T-072 的核心跑偏问题，但没有让真实实现任务真正过关：
+
+- 好消息：模型没有再被 `deployMessage/nacos` 带走，workspace root 反事实也没有复现。
+- 坏消息：模型尝试新建 validator 注解和目录时被 `shell=deny` / `write_file=deny` 拦住，随后退化为只加 JavaDoc 注释，并把它包装成“健壮性/校验相关”小实现。
+
+这说明 LCA 已从“防无关副作用”推进到“判断实现是否有业务价值”的阶段。
+
+## 新增问题
+
+### PT-027：真实实现可能退化成 comment-only patch
+
+现象：
+
+- 模型定位到了 `ExemptCompanyDto.java`，这是相关 Java DTO。
+- 但最终只给 `companyId` 字段补 JavaDoc。
+- 该 patch 不改变校验逻辑、不改变导入解析、不返回错误枚举，不能算需求实现。
+
+OMP 对应思路：
+
+- OMP 不只依赖 patch 成功，还会把任务目标、todo、verification、reviewer/subagent 和 tool-choice steering 组合起来判断工作是否完成。
+- 对“实现类任务”，reviewer 应关注 patch 是否改变了运行行为，或是否明确声明只是文档/注释改动。
+
+LCA 措施：
+
+- T-074 增加 implementation-quality gate。
+- 对代码实现任务，如果 diff 只有注释/JavaDoc/README，需要要求模型明确标记为“文档改动”并说明没有实现业务逻辑，或重新定位真实逻辑切片。
+- 最终回答中不能把 comment-only patch 说成“实现/校验/健壮性”。
+
+### PT-028：真实实现可能需要受控新文件策略
+
+现象：
+
+- 模型尝试新增 `ValidCompanyId.java` 和 validator 目录。
+- 当前压测配置 `shell=deny,write_file=deny` 阻止了新文件/目录。
+- 模型没有停下来说明权限不足，而是降级成低价值注释 patch。
+
+OMP 对应思路：
+
+- OMP permission model 会按工具和动作请求权限，而不是一刀切让模型绕开权限。
+- 对新文件创建，应由审批策略、workspace 边界和任务相关性共同控制。
+
+LCA 措施：
+
+- T-074 设计 safe new-file policy。
+- 候选规则：父目录已被 `list_files/read_file` 观察；目标路径在 workspace 或 allowed-dir；当前任务需要新增类/测试；`write_file` 走 prompt 或 per-tool allow；必要时先 dry-run/preview 计划。
+- 如果策略不允许新文件，模型应停止并报告“权限不足，无法安全实现”，而不是改注释凑完成。

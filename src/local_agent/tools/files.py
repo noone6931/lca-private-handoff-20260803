@@ -156,6 +156,10 @@ def patch_file(args: dict[str, Any], context: ToolContext) -> ToolResult:
         return ToolResult(str(exc), is_error=True)
     if not path.exists():
         return ToolResult(f"Target file does not exist: {args['path']}", is_error=True)
+    if not args.get("dry_run") and context.patch_relevance_checker is not None:
+        denial_reason = context.patch_relevance_checker(str(args["path"]), path)
+        if denial_reason:
+            return ToolResult(denial_reason, is_error=True)
     before_text = path.read_bytes().decode("utf-8")
     before_tag = hash_text(before_text)
     tag, interpreted_from = _normalize_patch_tag(args["tag"])
@@ -179,7 +183,7 @@ def patch_file(args: dict[str, Any], context: ToolContext) -> ToolResult:
         )
     patch_id = _record_patch(
         context=context,
-        path=args["path"],
+        path=display_workspace_path(context.workspace, path, context.allowed_dirs),
         before_text=before_text,
         before_tag=before_tag,
         after_tag=result.new_tag,

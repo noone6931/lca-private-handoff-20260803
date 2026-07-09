@@ -464,6 +464,56 @@ class ToolTests(unittest.TestCase):
         self.assertIn("+new", result.content)
         self.assertEqual(persisted, original)
 
+    def test_patch_file_relevance_checker_blocks_real_write_but_not_dry_run(self) -> None:
+        calls: list[tuple[str, str]] = []
+
+        def checker(raw_path: str, resolved_path: Path) -> str:
+            calls.append((raw_path, resolved_path.name))
+            return "blocked by relevance gate"
+
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            target = workspace / "README.md"
+            original = "old\n"
+            target.write_text(original, encoding="utf-8")
+            context = ToolContext(
+                workspace=workspace,
+                approval_mode="yolo",
+                patch_relevance_checker=checker,
+            )
+
+            preview = patch_file(
+                {
+                    "path": "README.md",
+                    "tag": hash_text(original),
+                    "start_line": 1,
+                    "end_line": 1,
+                    "old_text": "old",
+                    "new_text": "new",
+                    "dry_run": True,
+                },
+                context,
+            )
+            write = patch_file(
+                {
+                    "path": "README.md",
+                    "tag": hash_text(original),
+                    "start_line": 1,
+                    "end_line": 1,
+                    "old_text": "old",
+                    "new_text": "new",
+                },
+                context,
+            )
+            persisted = target.read_text(encoding="utf-8")
+
+        self.assertFalse(preview.is_error)
+        self.assertIn("Patch preview only", preview.content)
+        self.assertTrue(write.is_error)
+        self.assertIn("blocked by relevance gate", write.content)
+        self.assertEqual(calls, [("README.md", "README.md")])
+        self.assertEqual(persisted, original)
+
     def test_patch_file_accepts_path_hash_tag_from_read_header(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp).resolve()
@@ -1248,7 +1298,7 @@ class ToolTests(unittest.TestCase):
             )
             patch_file(
                 {
-                    "path": "app.py",
+                    "path": str(workspace / "app.py"),
                     "tag": hash_text("print('old')\n"),
                     "start_line": 1,
                     "end_line": 1,
@@ -1266,6 +1316,47 @@ class ToolTests(unittest.TestCase):
         self.assertIn("This-session apply_patch files: README.md, app.py", result.content)
         self.assertIn("Files with both pre-existing and this-session changes: README.md", result.content)
         self.assertIn("summarize pre-existing and this-session changes separately", result.content)
+        self.assertNotIn("Current diff files not present at baseline and not recorded by apply_patch: app.py", result.content)
+
+    def test_git_diff_adds_relevance_reviewer_for_low_relevance_session_patch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            target = workspace / "deployMessage" / "nacos" / "app.properties"
+            target.parent.mkdir(parents=True)
+            subprocess.run(["git", "init"], cwd=workspace, text=True, capture_output=True, check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=workspace, check=True)
+            subprocess.run(["git", "config", "user.name", "Test User"], cwd=workspace, check=True)
+            original = "old=true\n"
+            target.write_text(original, encoding="utf-8")
+            subprocess.run(["git", "add", "."], cwd=workspace, check=True)
+            subprocess.run(["git", "commit", "-m", "init"], cwd=workspace, text=True, capture_output=True, check=True)
+            baseline = capture_git_baseline(workspace)
+            context = ToolContext(
+                workspace=workspace,
+                approval_mode="yolo",
+                state_dir=workspace / ".agent-state",
+                session_id="session-1",
+                git_baseline=baseline,
+                current_user_request="实现 Java 导入校验需求",
+            )
+
+            patch_file(
+                {
+                    "path": "deployMessage/nacos/app.properties",
+                    "tag": hash_text(original),
+                    "start_line": 1,
+                    "end_line": 1,
+                    "old_text": "old=true",
+                    "new_text": "old=false",
+                },
+                context,
+            )
+            result = git_diff({}, context)
+
+        self.assertFalse(result.is_error)
+        self.assertIn("[diff reviewer]", result.content)
+        self.assertIn("Potential relevance warning", result.content)
+        self.assertIn("deployMessage/nacos/app.properties", result.content)
 
     def test_tool_registry_validates_required_enum_and_extra_args(self) -> None:
         calls: list[dict] = []
