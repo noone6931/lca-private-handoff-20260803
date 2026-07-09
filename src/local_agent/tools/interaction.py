@@ -5,6 +5,7 @@ import sys
 import time
 from typing import Any
 
+from ..terminal_io import terminal_input_prompt
 from .base import Tool, ToolContext, ToolResult
 
 
@@ -44,10 +45,11 @@ def ask_user(args: dict[str, Any], context: ToolContext) -> ToolResult:
         )
     timeout = _effective_timeout(args, context)
     try:
-        if timeout is None:
-            answer = input(f"\n[agent question] {question}\n> ").strip()
-        else:
-            answer = _read_timed_answer(f"\n[agent question] {question}\n> ", timeout)
+        with terminal_input_prompt(sys.stdin):
+            if timeout is None:
+                answer = input(f"\n[agent question] {question}\n> ").strip()
+            else:
+                answer = _read_timed_answer(f"\n[agent question] {question}\n> ", timeout)
     except EOFError:
         if default_answer is not None:
             return ToolResult(default_answer)

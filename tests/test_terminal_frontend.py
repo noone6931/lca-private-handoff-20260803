@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import io
 import unittest
+from contextlib import contextmanager
+from unittest.mock import patch
 
 from local_agent.frontends.terminal.app import run_terminal_chat
 from local_agent.frontends.terminal.renderer import TerminalEventSink
@@ -51,6 +53,31 @@ class TerminalFrontendTests(unittest.TestCase):
 
         self.assertEqual(code, 0)
         self.assertIn("command help", output.getvalue())
+
+    def test_terminal_chat_silences_input_echo_while_runtime_runs(self) -> None:
+        runtime = _FakeRuntime()
+        input_stream = io.StringIO("hello\n/exit\n")
+        output = io.StringIO()
+        calls: list[str] = []
+
+        @contextmanager
+        def fake_silencer():
+            calls.append("enter")
+            try:
+                yield
+            finally:
+                calls.append("exit")
+
+        with patch("local_agent.frontends.terminal.app.silenced_terminal_input", fake_silencer):
+            code = run_terminal_chat(
+                runtime,  # type: ignore[arg-type]
+                input_stream=input_stream,
+                output_stream=output,
+            )
+
+        self.assertEqual(code, 0)
+        self.assertEqual(runtime.prompts, ["hello"])
+        self.assertEqual(calls, ["enter", "exit"])
 
     def test_terminal_event_sink_renders_append_only_lines(self) -> None:
         output = io.StringIO()

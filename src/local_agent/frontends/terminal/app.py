@@ -6,6 +6,7 @@ import sys
 from typing import TextIO
 
 from ...agent import AgentRuntime
+from ...terminal_io import silenced_terminal_input
 from .renderer import TerminalEventSink
 
 
@@ -43,7 +44,8 @@ def run_terminal_chat(
                 command_handler(runtime, text, output)
             continue
         try:
-            runtime.run(text)
+            with silenced_terminal_input():
+                runtime.run(text)
         except KeyboardInterrupt:
             print("interrupted", file=output)
 

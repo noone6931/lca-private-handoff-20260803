@@ -475,3 +475,20 @@ LCA 措施：
 
 - T-089 已完成：新增 semantic exploration guard。`list_files` 会按模块/父目录归一语义探索 key，同一模块或同一 Path-not-found 父路径超过小上限后跳过目录猜测。
 - 命中后 runtime 会追加 steering，并临时只开放 `search_code` / `read_file` / LSP 证据工具，要求模型回到命中文件证据或基于已有证据收束回答。
+
+### PT-034：终端输入混入工具日志
+
+现象：
+
+- 密码加密问答压测 transcript 中出现 `33333333333[tool:start] ...`。
+- 根因不是模型或工具协议，而是一次性 CLI 运行期间 stdin 仍处于普通 TTY echo 状态，用户误敲字符会被终端直接回显到同一个 transcript。
+
+OMP 对应思路：
+
+- OMP 将 runtime event、TUI renderer、permission prompt 和用户输入分层处理，用户输入不会直接和工具事件混在同一条输出流里。
+- LCA 当前不引入完整 async command bus，但应先把“运行中普通输入”和“真正需要用户确认/回答的输入”分开。
+
+LCA 措施：
+
+- T-090 已完成：新增 `terminal_io`，一次性 CLI、REPL 和 terminal chat 在 `runtime.run()` 期间临时关闭 TTY echo。
+- approval / ask_user 进入真实输入阶段时会临时恢复 echo，并 flush 运行期间误敲的输入缓冲；结束后重新静默，最终退出时恢复终端原状态。

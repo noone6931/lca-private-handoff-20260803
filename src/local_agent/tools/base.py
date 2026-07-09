@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
+from ..terminal_io import terminal_input_prompt
+
 
 @dataclass(frozen=True)
 class ToolResult:
@@ -187,22 +189,23 @@ def _approval_prompt(tool: Tool, *, allow_session_cache: bool) -> str:
 
 
 def _read_approval_answer(prompt: str, context: ToolContext) -> str | None:
-    if context.deadline_monotonic is None:
-        return input(prompt).strip().lower()
-    remaining = context.deadline_monotonic - time.monotonic()
-    if remaining <= 0:
-        return None
-    print(prompt, end="", flush=True)
-    try:
-        ready, _, _ = select.select([sys.stdin], [], [], remaining)
-    except (OSError, ValueError):
-        return None
-    if not ready:
-        return None
-    line = sys.stdin.readline()
-    if line == "":
-        raise EOFError
-    return line.strip().lower()
+    with terminal_input_prompt(sys.stdin):
+        if context.deadline_monotonic is None:
+            return input(prompt).strip().lower()
+        remaining = context.deadline_monotonic - time.monotonic()
+        if remaining <= 0:
+            return None
+        print(prompt, end="", flush=True)
+        try:
+            ready, _, _ = select.select([sys.stdin], [], [], remaining)
+        except (OSError, ValueError):
+            return None
+        if not ready:
+            return None
+        line = sys.stdin.readline()
+        if line == "":
+            raise EOFError
+        return line.strip().lower()
 
 
 def _emit_approval_result(tool: Tool, context: ToolContext, decision: str, *, allowed: bool) -> None:

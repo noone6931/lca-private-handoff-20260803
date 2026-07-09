@@ -17,10 +17,10 @@ python3 scripts/sync_project_excel.py
 | 字段 | 当前值 | 说明 |
 |---|---|---|
 | 最终目标 | 个人本地编程助手 Agent | 本地优先、封闭 VM 可用、只访问指定 AI API，能读代码、搜代码、改代码、跑测试、生成 diff、沉淀项目记忆。 |
-| 当前阶段 | P9：真实需求使用准备 | P6 默认工作流 MVP 已落地；P7 已补 OMP 风格 auto summary、多语言轻量 LSP、multi-root、startup context/rules、startup memory、learn、可选 memory consolidation、runtime state dir、Evidence Ledger、relevance gate、implementation-quality gate 和 no-edit final hygiene；2026-07-09 已完成 T-076 Event/Command Protocol v1、T-077/T-080 Terminal Frontend MVP 与命令可发现性、T-078 项目边界分析 MVP、T-081 Claude review 行动计划、T-082 run summary / coverage MVP、T-083 真实需求压测模板、T-084 qwen3-coder-next 企业项目只读源码验证压测和 T-089 semantic exploration guard。 |
+| 当前阶段 | P9：真实需求使用准备 | P6 默认工作流 MVP 已落地；P7 已补 OMP 风格 auto summary、多语言轻量 LSP、multi-root、startup context/rules、startup memory、learn、可选 memory consolidation、runtime state dir、Evidence Ledger、relevance gate、implementation-quality gate 和 no-edit final hygiene；2026-07-09 已完成 T-076 Event/Command Protocol v1、T-077/T-080 Terminal Frontend MVP 与命令可发现性、T-078 项目边界分析 MVP、T-081 Claude review 行动计划、T-082 run summary / coverage MVP、T-083 真实需求压测模板、T-084 qwen3-coder-next 企业项目只读源码验证压测、T-089 semantic exploration guard 和 T-090 terminal input/output isolation。 |
 | 推荐入口 | `./agent "阅读当前项目"` | 自动设置 `PYTHONPATH=src`，默认当前目录为 workspace。 |
 | Token 配置 | 环境变量 / `--env-file` / `.env` | `./agent` 会自动加载安装目录 `.env`，也可显式传 `--env-file`；真实环境变量优先。 |
-| 测试数 | 198 | 完整 unittest、compileall、diff check、xlsx 检查通过。 |
+| 测试数 | 202 | 完整 unittest、compileall、diff check、xlsx 检查通过。 |
 | 默认 budget_seconds | 600 | 单次任务默认 10 分钟墙钟预算；`--budget-seconds 0` 可关闭。 |
 | 默认 max_steps | 0 | 表示不限步；仅在用户显式设置时作为防失控保险丝。 |
 | 预算执行 | 细粒度 | LLM 请求和 shell/run_tests timeout 会按剩余预算夹紧；deadline 到期会补齐未执行工具结果。 |
@@ -120,8 +120,9 @@ python3 scripts/sync_project_excel.py
 | No-edit final hygiene | 已完成 MVP 版 | `src/local_agent/agent.py`、`tests/test_agent.py` | Provider context 提前说明无改动停止要可审计；runtime 发现过早 no-edit final 时追加 steering，并限制下一轮工具到 todo/git 收束集合 | 真实目标服务压测 |
 | Event/Command Protocol | 已完成 MVP 版 | `src/local_agent/protocol/events.py`、`src/local_agent/protocol/commands.py`、`src/local_agent/agent.py` | Runtime 产出 typed events，CLI 通过 stderr sink 渲染，session JSONL 写入 `event_v1`，命令协议 shape 已固化 | T-077 接 Terminal Frontend |
 | Terminal Frontend | 已完成 MVP 版 | `src/local_agent/frontends/terminal/`、`src/local_agent/cli.py` | append-only 交互前端，`./agent` / `--chat` / `chat` 入口，可选 `prompt_toolkit` / `rich`，approval events 可见 | 真实交互压测 |
+| Terminal input isolation | 已完成 MVP 版 | `src/local_agent/terminal_io.py`、`src/local_agent/cli.py`、`src/local_agent/frontends/terminal/app.py` | 一次性 CLI / REPL / terminal chat 在 agent run 期间关闭 TTY echo；approval / ask_user 会恢复输入并 flush 误敲缓冲 | 继续真实交互压测 |
 | 项目边界分析 | 已完成 MVP 版 | `.local-agent/memory/enterprise-service-boundary.md`、`.local-agent/skills/project-scope-analysis/SKILL.md`、`src/local_agent/agent.py` | 只根据需求和服务边界圈项目范围；analysis-only 不走实现 hygiene；点名 skill 会先读正文；缺表格/段落会强制无工具重答 | 用真实需求继续压测 |
-| 测试覆盖 | 已完成 | 当前 198 个测试通过 | unittest、compileall、diff check、xlsx 检查通过 | 日用反馈补测 |
+| 测试覆盖 | 已完成 | 当前 202 个测试通过 | unittest、compileall、diff check、xlsx 检查通过 | 日用反馈补测 |
 
 ## 下一步 Todo
 
@@ -216,7 +217,7 @@ python3 scripts/sync_project_excel.py
 | T-087 | P1 | P9 | final structure / evidence hygiene 增强 | 已完成 | Agent | T-084 最终把“项目表”退化成“表名表”，并对类作用有过度断言 | 已增强 Current task contract / final gate：项目范围表必须含项目/服务列；证据状态要求会触发已验证/推断标签检查。 |
 | T-088 | P0 | P9 | read-only evidence gate | 已完成 | Agent | 密码加密问答压测中，模型未读关键登录/密码文件前先给推测型答案 | 已参考 OMP current task / evidence context：代码证据/源码/不推测/怎么处理类问题若无成功 `read_file` 就准备回答，会被要求先查证据；search/LSP no-match 负向证据可明确收束。 |
 | T-089 | P0 | P9 | semantic exploration guard | 已完成 | Agent | 密码加密问答压测中，用户纠正后出现同模块/父子目录/Path not found 扩散，exact duplicate guard 太晚 | 已参考 OMP soft escalation / pruning：按模块/父目录归一 `list_files` 语义探索 key，超过小上限后跳过目录猜测，并临时只开放 search_code/read_file/LSP 证据工具。 |
-| T-090 | P1 | P9/P10 | terminal input/output isolation | 候选 | Agent | 压测日志出现用户键盘输入混入工具日志，如 `33333333333[tool:start]` | Terminal Frontend 继续强化 centralized renderer 和运行中输入管理；一次性 CLI 提示运行中不要直接敲字，推荐 `./agent --chat`。 |
+| T-090 | P1 | P9/P10 | terminal input/output isolation | 已完成 | Agent | 压测日志出现用户键盘输入混入工具日志，如 `33333333333[tool:start]` | 已新增 TTY echo 静默与 prompt 期恢复/flush，覆盖一次性 CLI、REPL 和 terminal chat。 |
 
 ## 风险与决策
 
@@ -266,7 +267,7 @@ python3 scripts/sync_project_excel.py
 | 风险 | R-043 | 中 | 最终回答轻微结构漂移和过度断言 | 已缓解 | T-084 要求项目表，但最终输出表名表；还把 `IntentionConfigApplication` 表述为 Spring Boot 启动/配置类，证据不足 | 已增强 Current task contract 和 final gate：项目范围表必须含项目/服务列；证据状态要求会触发已验证/推断标签检查。 |
 | 风险 | R-044 | 高 | 证据型只读问题先输出推测 | 已缓解 | “前端密码加密/后端怎么处理”问题中，模型未读关键登录/密码文件就先给“可能 HTTPS 明文 + 后端哈希”的推测 | T-088 已完成：无成功 `read_file` 的证据型回答会被 runtime steering 拦住并临时只开放证据工具；search/LSP no-match 负向证据可明确收束。 |
 | 风险 | R-045 | 高 | 语义级路径探索扩散 | 已缓解 | 用户纠正后出现大量相似目录 list_files、父子目录扩散、Path not found 和大目录读取；exact duplicate guard 太晚命中 | T-089 已完成：semantic exploration guard 按模块/父目录/Path-not-found pattern 小上限收束，并引导回 search_code/read_file/LSP 证据工具。 |
-| 风险 | R-046 | 中 | 终端输出被用户输入污染 | 新增 | 日志出现 `33333333333[tool:start]`，说明一次性 CLI 运行中键盘输入被终端 echo 到 transcript | T-090：强化 Terminal Frontend renderer/输入管理；一次性 CLI 增加提示，推荐长交互用 `./agent --chat`。 |
+| 风险 | R-046 | 中 | 终端输出被用户输入污染 | 已缓解 | 日志出现 `33333333333[tool:start]`，说明一次性 CLI 运行中键盘输入被终端 echo 到 transcript | T-090 已完成：一次性 CLI、REPL 和 terminal chat 在 agent run 期间关闭 TTY echo；approval / ask_user 会恢复输入并 flush 误敲缓冲。 |
 | ADR | ADR-001 | 2026-07-07 | 优先采纳 OMP 成熟设计，按本地目标裁剪 | 已接受 | 好设计可直接采用，复杂度按需收敛 | OMP 是重要参考实现；我们不为了“避免复制”而绕开好设计。采用标准是收益是否大于复杂度，并且不破坏个人本地使用、封闭 VM、无公网依赖和第一阶段 MVP 边界。 |
 | ADR | ADR-002 | 2026-07-07 | max_steps 只作为防失控保险丝 | 已落地 | 默认值已改为 0，不限步 | OMP 的 stepCounter 主要用于 telemetry，终止靠无 tool_calls、deadline、abort；我们把 `max_steps` 仅作为显式保险丝。 |
 | ADR | ADR-003 | 2026-07-07 | todo、ask_user、per-tool approval 是主功能 | 已落地 | P3 已实现 | OMP 将 todo、approval、elicitation 做成可观测会话能力；我们 P3 先做终端轻量版，后续再补 UI 化。 |
@@ -301,12 +302,12 @@ python3 scripts/sync_project_excel.py
 
 | 项目 | 结论 | 依据 | 后续 |
 |---|---|---|---|
-| 阶段判断 | P9 真实需求使用准备进行中 | T-076/T-077 已让 Runtime 产出 typed events，并提供 terminal-native 交互入口；T-078 已把项目边界分析沉淀为本机 memory/skill 和通用 runtime gate；T-084 已完成新模型只读源码验证压测；T-085/T-086/T-087/T-088/T-089 已补 todo 参数纠偏、重复读收束、最终结构/证据卫生、evidence-first gate 和语义探索收束 | 下一步补 T-090 或继续真实需求“范围确认 → 源码验证 → 实现设计/小改” |
+| 阶段判断 | P9 真实需求使用准备进行中 | T-076/T-077 已让 Runtime 产出 typed events，并提供 terminal-native 交互入口；T-078 已把项目边界分析沉淀为本机 memory/skill 和通用 runtime gate；T-084 已完成新模型只读源码验证压测；T-085/T-086/T-087/T-088/T-089/T-090 已补 todo 参数纠偏、重复读收束、最终结构/证据卫生、evidence-first gate、语义探索收束和终端输入隔离 | 下一步继续真实需求“范围确认 → 源码验证 → 实现设计/小改” |
 | 与 OMP 的主要差距 | 差距集中在高级工程化，不阻塞低风险实战 | 完整 ToolChoiceQueue、reviewer/subagents、完整 LSP/DAP、browser/TUI、AST edit、managed skills 仍后置 | 由压测失败形态触发 |
 | 已关闭风险 | P0/P1 runtime 风险已基本收口 | Python 3.12 patch、非交互审批、orphan tool_calls、max_steps、allowed-dir、重复工具、证据漂移、diff 混淆等均已有修复或缓解 | 继续用真实任务验证 |
 | reviewer 决策 | 先保留轻量实现质量 gate | T-074 已补 no-comment-only reviewer，复跑未再产生伪实现 | 继续用真实任务验证；若后续出现更复杂 patch 质量问题，再补完整 reviewer/subagent |
 | ToolChoiceQueue 决策 | 暂不先做完整 ToolChoiceQueue | 已有 allowed-dir soft requirement、duplicate forced-final、todo steering、pruning；还缺“关键工具长期不用/乱用”的新失败样本 | 若 T-072 暴露工具选择失控，再按 OMP 裁剪 ToolChoiceQueue |
-| 下一步 | T-090 或真实需求链路 | T-084 已证明新模型能跑通只读链路；重复读、todo 参数、最终结构/证据卫生、evidence-first 和语义探索扩散问题已补；剩余明显体验问题是终端输入输出隔离 | 先做 terminal input/output isolation，或直接进入用户真实需求的项目范围确认和源码验证 |
+| 下一步 | 真实需求链路 | T-084 已证明新模型能跑通只读链路；重复读、todo 参数、最终结构/证据卫生、evidence-first、语义探索扩散和终端输入污染问题已补 | 进入用户真实需求的项目范围确认和源码验证；必要时复跑密码加密问答样本 |
 
 ## P7 综合压测问题
 
@@ -350,10 +351,10 @@ python3 scripts/sync_project_excel.py
 | 项目 | 结论 | 依据 |
 |---|---|---|
 | 主链路 | 通过 | 百炼真实小改复测已跑通 todo、dry_run、apply_patch、session allow、rollback、run_tests、git_diff。 |
-| 测试 | 通过 | P5 收口时 90 个 unittest、compileall、xlsx 检查、diff check 均通过；P9 当前代码已跑通 198 个 unittest、compileall 和 diff check。 |
+| 测试 | 通过 | P5 收口时 90 个 unittest、compileall、xlsx 检查、diff check 均通过；P9 当前代码已跑通 202 个 unittest、compileall 和 diff check。 |
 | 日用入口 | 通过 | README 已补只读分析和小改任务命令模板。 |
 | 开放风险 | 可接受 | shell 仍非沙箱、prompt injection 仍需靠审批和封闭 VM；token budget / output reserve / managed skills 继续后置评估。 |
-| 下一阶段 | 真实需求设计与实现压测 | 已验证默认工作流、auto summary、多语言轻量 LSP、multi-root、startup memory、learn、authored skills、runtime state dir、多项目只读压测主链路、relevance gate、implementation-quality gate、no-edit final hygiene、semantic exploration guard、Event/Command Protocol、Terminal Frontend MVP 和项目边界分析 MVP；下一步用真实需求跑范围确认到源码验证。 |
+| 下一阶段 | 真实需求设计与实现压测 | 已验证默认工作流、auto summary、多语言轻量 LSP、multi-root、startup memory、learn、authored skills、runtime state dir、多项目只读压测主链路、relevance gate、implementation-quality gate、no-edit final hygiene、semantic exploration guard、terminal input isolation、Event/Command Protocol、Terminal Frontend MVP 和项目边界分析 MVP；下一步用真实需求跑范围确认到源码验证。 |
 
 ## 推荐工作流
 

@@ -1,11 +1,17 @@
 from __future__ import annotations
 
 import io
+import tempfile
 import unittest
+from contextlib import contextmanager
 from contextlib import redirect_stdout
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from local_agent.cli import _handle_repl_command
 from local_agent.cli import _is_chat_prompt
+from local_agent.cli import main
 
 
 class _FakeRuntime:
@@ -29,6 +35,17 @@ class _FakeRuntime:
 
     def reset_session_tool_policy(self, tool: str) -> None:
         self.calls.append(("reset", tool))
+
+
+class _FakeAgentRuntime:
+    prompts: list[str] = []
+
+    def __init__(self, *args, **kwargs) -> None:
+        return None
+
+    def run(self, prompt: str) -> str:
+        type(self).prompts.append(prompt)
+        return "done"
 
 
 class CliTests(unittest.TestCase):
@@ -85,6 +102,34 @@ class CliTests(unittest.TestCase):
 
         self.assertIn("Unknown command: /wat", output.getvalue())
         self.assertIn("Type /help", output.getvalue())
+
+    def test_one_shot_prompt_silences_terminal_input_while_runtime_runs(self) -> None:
+        _FakeAgentRuntime.prompts = []
+        calls: list[str] = []
+
+        @contextmanager
+        def fake_silencer():
+            calls.append("enter")
+            try:
+                yield
+            finally:
+                calls.append("exit")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            config = SimpleNamespace(workspace=Path(tmp), state_dir=None)
+            output = io.StringIO()
+            with (
+                patch("local_agent.cli.load_config", return_value=config),
+                patch("local_agent.cli.AgentRuntime", _FakeAgentRuntime),
+                patch("local_agent.cli.silenced_terminal_input", fake_silencer),
+                redirect_stdout(output),
+            ):
+                code = main(["hello", "world"])
+
+        self.assertEqual(code, 0)
+        self.assertEqual(output.getvalue().strip(), "done")
+        self.assertEqual(_FakeAgentRuntime.prompts, ["hello world"])
+        self.assertEqual(calls, ["enter", "exit"])
 
 
 if __name__ == "__main__":

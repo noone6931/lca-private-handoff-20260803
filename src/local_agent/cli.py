@@ -10,6 +10,7 @@ from .frontends.terminal import TerminalEventSink
 from .frontends.terminal import run_terminal_chat
 from .llm import LlmError
 from .session.jsonl_store import SessionError
+from .terminal_io import silenced_terminal_input
 
 
 REPL_HELP = """Commands:
@@ -162,7 +163,8 @@ def main(argv: list[str] | None = None) -> int:
                 history_path=(config.state_dir or config.workspace / ".local-agent") / "terminal_history",
             )
         if args.prompt:
-            print(runtime.run(" ".join(args.prompt)))
+            with silenced_terminal_input():
+                print(runtime.run(" ".join(args.prompt)))
             return 0
         return _repl(runtime)
     except (ConfigError, LlmError, SessionError) as exc:
@@ -186,7 +188,8 @@ def _repl(runtime: AgentRuntime) -> int:
         if prompt.startswith("/"):
             _handle_repl_command(runtime, prompt)
             continue
-        print(runtime.run(prompt))
+        with silenced_terminal_input():
+            print(runtime.run(prompt))
 
 
 def _is_chat_prompt(prompt: list[str]) -> bool:
