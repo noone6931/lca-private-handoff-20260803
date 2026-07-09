@@ -33,6 +33,7 @@ from .llm import OpenAICompatibleClient
 from .patch.anchored import display_workspace_path
 from .patch.anchored import PatchError
 from .patch.anchored import resolve_workspace_path
+from .planner import render_planner_explore_context
 from .protocol.events import AgentEvent
 from .protocol.events import EventEmitter
 from .protocol.events import EventSink
@@ -955,11 +956,17 @@ class AgentRuntime:
         todo_summary: list[str],
     ) -> list[dict[str, Any]]:
         evidence_ledger = self._evidence_ledger_summary()
+        planner_explore_context = render_planner_explore_context(
+            self._requirement_contract,
+            prompt=self._current_user_request,
+            tool_results=list(self._tool_choice_results),
+        )
         return _provider_safe_messages(
             _messages_with_runtime_context(
                 messages,
                 todo_summary,
                 evidence_ledger,
+                planner_explore_context,
                 self._config.workspace,
                 self._user_config_dir,
                 self._config.allowed_dirs,
@@ -2674,6 +2681,7 @@ def _messages_with_runtime_context(
     messages: list[dict[str, Any]],
     todo_summary: list[str],
     evidence_ledger: str,
+    planner_explore_context: str,
     workspace: Path,
     user_config_dir: Path,
     allowed_dirs: tuple[Path, ...] = (),
@@ -2689,6 +2697,8 @@ def _messages_with_runtime_context(
         updated = _messages_with_no_edit_final_hygiene(updated, current_user_request, todo_summary)
     if requirement_contract_context:
         updated = _messages_with_requirement_contract(updated, requirement_contract_context)
+    if planner_explore_context:
+        updated = _messages_with_planner_explore_context(updated, planner_explore_context)
     if evidence_ledger:
         updated = _messages_with_evidence_ledger(updated, evidence_ledger)
     sticky_rules = _load_sticky_rules(workspace, user_config_dir, max_chars=STICKY_RULES_CHAR_LIMIT)
@@ -2746,6 +2756,24 @@ def _messages_with_requirement_contract(messages: list[dict[str, Any]], requirem
     content = str(base.get("content") or "")
     first_marker = content.find("[Requirement contract]")
     last_marker = content.rfind("[Requirement contract]")
+    if first_marker != -1 and first_marker != last_marker:
+        base["content"] = content[:last_marker].rstrip()
+    return [base, *non_system]
+
+
+def _messages_with_planner_explore_context(messages: list[dict[str, Any]], planner_explore_context: str) -> list[dict[str, Any]]:
+    block = (
+        "[Planner / Explore]\n"
+        "Local deterministic phase guidance for implementation tasks. Use it to decide whether to inspect, write, "
+        "or verify; do not treat it as repository evidence.\n"
+        f"{planner_explore_context}"
+    )
+    system_messages = [message for message in messages if message.get("role") == "system"]
+    non_system = [message for message in messages if message.get("role") != "system"]
+    base = _system_message_with_appended_context(system_messages, block)
+    content = str(base.get("content") or "")
+    first_marker = content.find("[Planner / Explore]")
+    last_marker = content.rfind("[Planner / Explore]")
     if first_marker != -1 and first_marker != last_marker:
         base["content"] = content[:last_marker].rstrip()
     return [base, *non_system]

@@ -1038,6 +1038,33 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertIn("Task kind: read-only", system_content)
         self.assertIn("repository-grounded evidence", system_content)
 
+    def test_planner_explore_context_is_sent_for_implementation_tasks(self) -> None:
+        _MessageRecordingClient.messages = []
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=workspace,
+                max_steps=1,
+                budget_seconds=None,
+                approval_mode="yolo",
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _MessageRecordingClient):
+                runtime = AgentRuntime(config, show_tool_logs=False)
+                runtime.run("请实现用户注册接口邮箱唯一性校验，并补充测试。")
+
+        system_content = "\n".join(
+            str(message.get("content") or "")
+            for message in _MessageRecordingClient.messages
+            if message.get("role") == "system"
+        )
+        self.assertIn("[Planner / Explore]", system_content)
+        self.assertIn("Current phase: explore", system_content)
+        self.assertIn("do not write files yet", system_content)
+
     def test_tool_choice_queue_restricts_read_only_evidence_task_to_evidence_tools(self) -> None:
         _ToolSchemaRecordingClient.calls = []
         with tempfile.TemporaryDirectory() as tmp:
@@ -1062,6 +1089,32 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertNotIn("apply_patch", first_tools)
         self.assertNotIn("run_tests", first_tools)
         self.assertNotIn("shell", first_tools)
+
+    def test_tool_choice_queue_restricts_implementation_to_explore_tools_before_evidence(self) -> None:
+        _ToolSchemaRecordingClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=Path(tmp).resolve(),
+                max_steps=1,
+                budget_seconds=None,
+                approval_mode="yolo",
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _ToolSchemaRecordingClient):
+                runtime = AgentRuntime(config, show_tool_logs=False)
+                runtime.run("请实现用户注册接口邮箱唯一性校验，并补充测试。")
+
+        first_tools = _tool_names_from_schema_call(_ToolSchemaRecordingClient.calls[0]["tools"])
+        self.assertIn("read_file", first_tools)
+        self.assertIn("search_code", first_tools)
+        self.assertIn("lsp_symbols", first_tools)
+        self.assertIn("todo_add", first_tools)
+        self.assertNotIn("apply_patch", first_tools)
+        self.assertNotIn("write_file", first_tools)
+        self.assertNotIn("run_tests", first_tools)
 
     def test_tool_choice_queue_requires_tests_or_diff_after_workspace_write(self) -> None:
         _WriteFileThenFinalClient.calls = []

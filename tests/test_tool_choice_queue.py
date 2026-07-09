@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 
 from local_agent.tool_choice_queue import READ_ONLY_FORBIDDEN_TOOL_NAMES
+from local_agent.tool_choice_queue import PLANNER_EXPLORE_TOOL_NAMES
 from local_agent.tool_choice_queue import ToolChoiceQueue
 from local_agent.tool_choice_queue import ToolResultSummary
 from local_agent.tool_choice_queue import evaluate_tool_choice_state
@@ -39,6 +40,21 @@ class ToolChoiceQueueTests(unittest.TestCase):
         self.assertEqual(decision.rule_id, "implementation_final_hygiene")
         self.assertEqual(decision.missing_requirements, ("git_diff",))
         self.assertEqual(decision.allowed_tool_names, frozenset({"git_diff"}))
+
+    def test_implementation_task_requires_explore_before_write_tools(self) -> None:
+        decision = evaluate_tool_choice_state(
+            task_kind="code-implementation",
+            prompt="请实现用户注册接口邮箱唯一性校验，并补充测试。",
+            tool_names=[],
+            tool_results=[],
+        )
+
+        self.assertTrue(decision.steering_required)
+        self.assertEqual(decision.rule_id, "implementation_explore")
+        self.assertEqual(decision.missing_requirements, ("planner_explore_evidence",))
+        self.assertEqual(decision.allowed_tool_names, PLANNER_EXPLORE_TOOL_NAMES)
+        self.assertNotIn("apply_patch", decision.allowed_tool_names)
+        self.assertNotIn("write_file", decision.allowed_tool_names)
 
     def test_implementation_task_before_write_does_not_force_final_hygiene(self) -> None:
         decision = evaluate_tool_choice_state(

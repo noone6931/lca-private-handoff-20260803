@@ -48,6 +48,26 @@ LSP_EVIDENCE_TOOL_NAMES = frozenset(
 CODE_EVIDENCE_TOOL_NAMES = frozenset({"read_file", "search_code", *LSP_EVIDENCE_TOOL_NAMES})
 CODE_EVIDENCE_ALLOWED_TOOL_NAMES = frozenset({"list_files", *CODE_EVIDENCE_TOOL_NAMES})
 REQUIREMENT_DOC_TOOL_NAMES = frozenset({"ask_user", "list_files", "read_file", "search_code"})
+PLANNER_EXPLORE_TOOL_NAMES = frozenset(
+    {
+        "ask_user",
+        "git_diff",
+        "git_status",
+        "list_files",
+        "lsp_definition",
+        "lsp_diagnostics",
+        "lsp_document_symbols",
+        "lsp_references",
+        "lsp_status",
+        "lsp_symbols",
+        "lsp_workspace_symbols",
+        "read_file",
+        "search_code",
+        "todo_add",
+        "todo_read",
+        "todo_update",
+    }
+)
 WRITE_TOOL_NAMES = frozenset({"apply_patch", "rollback_patch", "write_file"})
 READ_ONLY_FORBIDDEN_TOOL_NAMES = frozenset(
     {
@@ -276,6 +296,19 @@ def evaluate_tool_choice_state(
             preferred_tool_names=evidence_preferred,
         )
 
+    if _implementation_needs_explore_before_write(task_kind, prompt, seen_tool_names, results):
+        return ToolChoiceDecision(
+            steering_required=True,
+            allowed_tool_names=_allowed_subset(PLANNER_EXPLORE_TOOL_NAMES, allowed_tools),
+            reason=(
+                "implementation_explore missing: implementation tasks must inspect local requirement/code evidence "
+                "and identify target files before write tools are enabled."
+            ),
+            rule_id="implementation_explore",
+            missing_requirements=("planner_explore_evidence",),
+            preferred_tool_names=evidence_preferred,
+        )
+
     implementation_missing = _implementation_missing_requirements(task_kind, prompt, seen_tool_names, results)
     if implementation_missing:
         allowed = []
@@ -418,6 +451,19 @@ def _has_requirement_doc_read(prompt: str, results: tuple[ToolResultSummary, ...
     return any(keyword in prompt_text for keyword in REQUIREMENT_DOC_KEYWORDS)
 
 
+def _implementation_needs_explore_before_write(
+    task_kind: str,
+    prompt: str,
+    seen_tool_names: set[str],
+    results: tuple[ToolResultSummary, ...],
+) -> bool:
+    if not _is_implementation_task(task_kind, prompt):
+        return False
+    if _workspace_write_happened(seen_tool_names, results):
+        return False
+    return not _has_code_evidence(seen_tool_names, results)
+
+
 def _implementation_missing_requirements(
     task_kind: str,
     prompt: str,
@@ -483,6 +529,7 @@ __all__ = [
     "CODE_EVIDENCE_ALLOWED_TOOL_NAMES",
     "CODE_EVIDENCE_TOOL_NAMES",
     "DEFAULT_TOOL_NAMES",
+    "PLANNER_EXPLORE_TOOL_NAMES",
     "READ_ONLY_FORBIDDEN_TOOL_NAMES",
     "REQUIREMENT_DOC_TOOL_NAMES",
     "RequiredToolGate",

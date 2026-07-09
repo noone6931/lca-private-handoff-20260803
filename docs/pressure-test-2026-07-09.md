@@ -971,17 +971,17 @@ LCA 本轮措施：
 
 | 问题 | 现象 | OMP 对应思路 | LCA 措施 |
 |---|---|---|---|
-| 搜索结果过大后未继续读关键文件就下结论 | `msp-pay` 关键词搜索返回 20000 字符，但模型没有继续 `read_file` 命中文件，就给出“未定位到拓展服务费结算代码/暂无明确可复用点”。这比 T-105 已读到的前端预制单页面、制单/回退/下载中心证据更弱。 | OMP 的 tool choice / runtime state 会把“必须读关键证据后才能 final”作为队列/steering，而不是只靠 prompt。 | 已完成 T-109 RequirementContract 和 T-111 MiniToolChoiceQueue：每轮注入目标/验收/证据要求，并对只读证据任务、需求文档前置读取、写后测试/diff 做阶段性工具收窄。下一步复跑同类任务验证是否改善。 |
-| 当前仍没有 CompletionAudit | 即使有 contract，最终回答还没有逐项审计“每个验收项是否有证据”。 | OMP 的 reviewer/observer 思路会在最终前做收束检查。 | 新增 T-110：CompletionAudit MVP。 |
+| 搜索结果过大后未继续读关键文件就下结论 | `msp-pay` 关键词搜索返回 20000 字符，但模型没有继续 `read_file` 命中文件，就给出“未定位到拓展服务费结算代码/暂无明确可复用点”。这比 T-105 已读到的前端预制单页面、制单/回退/下载中心证据更弱。 | OMP 的 tool choice / runtime state 会把“必须读关键证据后才能 final”作为队列/steering，而不是只靠 prompt。 | 已完成 T-109 RequirementContract、T-110 CompletionAudit、T-111 MiniToolChoiceQueue 和 T-112 Planner/Explore：每轮注入目标/验收/证据要求，最终回答前做 contract audit，并在实现任务本地证据不足时先隐藏写入工具。下一步复跑同类任务验证是否改善。 |
+| 当前仍没有 CompletionAudit | 即使有 contract，最终回答还没有逐项审计“每个验收项是否有证据”。 | OMP 的 reviewer/observer 思路会在最终前做收束检查。 | 已关闭：T-110 CompletionAudit 完整版已落地，证据型只读缺源码路径/证据状态会重写，实现任务写后缺测试/diff 会只开放缺失验证工具。 |
 
 结论：
 
 - T-106 数字事实 guard 对枚举状态码场景有效，修复后未再出现 `2/3` 被写成 `50/60`。
 - T-103 原先只处理空工具名，本轮补强为空/畸形 arguments provider-safe 归一化，百炼 400 已关闭。
-- T-108 证明下一类瓶颈已经从“模型说错数字”转为“证据没有读够就下结论”，因此 P10 进入 RequirementContract / MiniToolChoiceQueue / CompletionAudit。
+- T-108 证明下一类瓶颈已经从“模型说错数字”转为“证据没有读够就下结论”，因此 P10 进入 RequirementContract / MiniToolChoiceQueue / CompletionAudit / Planner-Explore。
 
 补充复测：
 
-- session `20260709T100822496949Z`：RequirementContract + MiniToolChoiceQueue 生效，先读 allowed-dir 需求文档和 enum 文件；但最终反事实声称“只读取前 6 行/未找到枚举体”。已补 T-110 最小切片：source evidence false-negative gate。
+- session `20260709T100822496949Z`：RequirementContract + MiniToolChoiceQueue 生效，先读 allowed-dir 需求文档和 enum 文件；但最终反事实声称“只读取前 6 行/未找到枚举体”。T-110 已从 source evidence false-negative gate 扩展为完整 CompletionAudit。
 - session `20260709T101335899977Z`：false-negative 被纠回，但模型又把 `PreOrderStatusEnum` 编成 `1/3/5`，原因是 source numeric guard 把 read_file 行号 `1:` / `5:` 当成源码数字证据。已修复为数字比对前剥离 read_file 行号。
-- session `20260709T101946966882Z`：最终窄复测确认 `PreOrderStatusEnum` 输出 `2/3/4`，`PlatOrderStatusEnum` 输出 `1/2/3/4/5`；中途再次出现畸形 tool_call arguments，但 provider-safe normalization 生效，百炼没有 400。`OrderStatusEnum` 最终结论“无 60”正确，但没有完整列出所有枚举项，说明完整 CompletionAudit 仍需继续增强。
+- session `20260709T101946966882Z`：最终窄复测确认 `PreOrderStatusEnum` 输出 `2/3/4`，`PlatOrderStatusEnum` 输出 `1/2/3/4/5`；中途再次出现畸形 tool_call arguments，但 provider-safe normalization 生效，百炼没有 400。`OrderStatusEnum` 最终结论“无 60”正确，但没有完整列出所有枚举项；T-110 已补完整 CompletionAudit，后续需用同类真实需求复跑验证。
