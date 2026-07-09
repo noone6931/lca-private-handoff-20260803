@@ -87,6 +87,14 @@ def main(argv: list[str] | None = None) -> int:
         help="Approximate message character budget before local compaction. 0 disables compaction.",
     )
     parser.add_argument(
+        "--context-token-budget",
+        type=int,
+        help=(
+            "Approximate model context token budget before compaction. "
+            "Uses a local estimate and keeps a reserve for the next turn. 0 disables token budgeting."
+        ),
+    )
+    parser.add_argument(
         "--context-recent-messages",
         type=int,
         help="Recent messages to keep verbatim when local compaction is active.",
@@ -137,6 +145,7 @@ def main(argv: list[str] | None = None) -> int:
             auto_approve_tools=args.auto_approve_tools,
             tool_approval=args.tool_approval,
             context_char_budget=args.context_char_budget,
+            context_token_budget=args.context_token_budget,
             context_recent_messages=args.context_recent_messages,
             summary_mode=args.summary_mode,
             memory_consolidation=args.memory_consolidation,

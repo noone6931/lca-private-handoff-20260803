@@ -855,3 +855,80 @@ LCA 措施：
   - 后端：搜索并读取 `*OrderStatus*`、`*Settlement*`、`*Fee*`、`*PlatformOrder*`、`*PaymentOrder*` 的 entity / mapper / application / controller。
   - 前端：搜索并读取 `platformPayment` 对应 views、router modules、store actions、接口调用链。
   - 输出“现有能力复用点”和“必须新建的能力”两张表。
+
+### PT-046：T-105 msp-pay / zqylpayment 窄范围证据补全
+
+目标：
+
+- 沿着 T-104 的下一步，只读补齐 `msp-pay` / `zqylpayment` 证据。
+- 明确区分：
+  - 已确认可复用能力；
+  - 仍缺失证据；
+  - 必须新建或改造能力；
+  - 下一步实现设计切片。
+
+会话：
+
+- session：`20260709T092951071920Z`
+- cwd：`/Users/chengming/mycode/project/zqylpaymentmaster9d423763`
+- allow dirs：
+  - `/Users/chengming/mycode/project/mpspaymasterce6ca65`
+  - `/Users/chengming/mynote/1_projects/0630_YXR-971_平台通用优化/需求文档-拓展服务费结算`
+- run summary：141.8s、32 次 LLM 请求、95 次工具调用、6 tool errors、30 次 compaction、9 次 LLM context summary、6 次 local context summary、1 次 repeated-read guard。
+
+关键源码事实：
+
+| 类别 | 源码事实 | 证据 |
+|---|---|---|
+| 预制单状态 | `PreOrderStatusEnum` 中 `MAKING(2, "待制单")`、`MADE(3, "已制单")`、`CANCEL(4, "已作废")`。没有 60。 | `/Users/chengming/mycode/project/zqylpaymentmaster9d423763/src/main/java/com/yljr/payment/payment/base/enums/PreOrderStatusEnum.java:15` |
+| 平台缴费单状态 | `PlatOrderStatusEnum` 中 `WAITING_PAY(1, "待缴费")`、`PAID(2, "已缴费")`、`CLOSE(3, "缴费关闭")`、`AUDITING(4, "待审核")`、`AUDIT_BACK(5, "已退回")`。 | `/Users/chengming/mycode/project/zqylpaymentmaster9d423763/src/main/java/com/yljr/payment/payment/base/enums/PlatOrderStatusEnum.java:12` |
+| 聚合支付订单状态 | `OrderStatusEnum` 是字符串状态：`NOTPAY`、`CHANNEL_NOTPAY`、`PAYING`、`ERROR`、`FAILURE`、`SUCCESS`、`CLOSE`，映射值是 1/2/3/4/5，没有业务订单状态 60。 | `/Users/chengming/mycode/project/zqylpaymentmaster9d423763/src/main/java/com/yljr/payment/payment/base/enums/OrderStatusEnum.java:18` |
+| 费用明细基础能力 | 后端已有 `FeeDetailEntity`，字段包括 `orderId`、`orderType`、`feeNo`、`feeName`、`feeAmount`；并有 `FeeDetailMapper.xml` / `FeeDetailService`。 | `/Users/chengming/mycode/project/zqylpaymentmaster9d423763/src/main/java/com/yljr/payment/payment/domain/entity/FeeDetailEntity.java:9` |
+| 制单/合并制单 | 后端 `PlatformOrderController` 暴露 `/creatPlatformOrder`；前端 `preOrderManagement/list.vue` 调用 `INTERFACE.creatPlatformOrder`。 | `/Users/chengming/mycode/project/zqylpaymentmaster9d423763/src/main/java/com/yljr/payment/payment/interfaces/facade/web/PlatformOrderController.java:33`、`/Users/chengming/mycode/project/mpspaymasterce6ca65/src/views/preOrderManagement/list.vue:820` |
+| 预制单回退 | 后端 `PlatformOrderController` 暴露 `/prepareOrderRollback` 和 `/prepareOrderRollbackValidate`；前端 `preOrderManagement/list.vue` 调用对应接口。 | `/Users/chengming/mycode/project/zqylpaymentmaster9d423763/src/main/java/com/yljr/payment/payment/interfaces/facade/web/PlatformOrderController.java:132`、`/Users/chengming/mycode/project/mpspaymasterce6ca65/src/views/preOrderManagement/list.vue:917` |
+| 下载中心链路 | 前端预制单页面有“下载中心”按钮，导出结果提示文件发送至“管理-下载中心”；后端平台缴费单有协议下载接口。 | `/Users/chengming/mycode/project/mpspaymasterce6ca65/src/views/preOrderManagement/list.vue:22`、`/Users/chengming/mycode/project/mpspaymasterce6ca65/src/views/preOrderManagement/list.vue:571`、`/Users/chengming/mycode/project/zqylpaymentmaster9d423763/src/main/java/com/yljr/payment/payment/interfaces/facade/web/PlatformOrderController.java:101` |
+| 平台服务费线索 | 前后端存在“平台服务费收款账户”“服务费”等弱相关线索，但更像账户/支付费用明细，不等于“拓展服务费结算单”。 | `/Users/chengming/mycode/project/mpspaymasterce6ca65/src/views/chargeAccountConfig/add.vue:436`、`/Users/chengming/mycode/project/zqylpaymentmaster9d423763/src/main/java/com/yljr/payment/payment/application/feign/basedata/dto/QueryAccountDto.java:28` |
+
+修正后的判断：
+
+| 判断项 | 结论 |
+|---|---|
+| `msp-pay` 是否可复用 | 是。已有预制单管理、待制单/已制单页签、单笔/合并制单、回退、导出到下载中心、平台缴费单管理等前端框架。 |
+| `zqylpayment` 是否可复用 | 是。已有预制单、平台缴费单、费用明细、制单、回退、协议下载等后端基础能力。 |
+| 是否已存在拓展服务费结算专属模块 | 未找到。未发现明确的 `ServiceFeeSettlement`、拓展服务费结算单实体/Controller/页面/路由。 |
+| 需求中的“订单状态 60”是否在当前项目闭环 | 未找到。当前 `PreOrderStatusEnum` 的“已制单”是 3，不是 60；`OrderStatusEnum` 也没有 60。订单状态 60 大概率来自其他融资/业务订单服务，不能由 `zqylpayment` 单独解释。 |
+| 是否可以进入实现设计 | 可以进入“基于现有预制单/平台缴费单框架的设计阶段”，但不能直接小改。设计必须先确认拓展服务费字段来源、订单状态 60 来源、结算单数据模型和下载中心归属。 |
+
+LCA 暴露的问题：
+
+| 问题 | 现象 | 影响 | 后续措施 |
+|---|---|---|---|
+| 枚举值误报 | LCA 最终回答把 `PreOrderStatusEnum.MAKING/MADE` 写成 `50/60`，但源码实际是 `2/3`。 | 这会直接误导实现设计，属于证据型回答的高风险问题。 | 已完成 T-106：新增 source-grounded numeric final steerer。最终回答涉及枚举值、状态码、接口路径、字段名等数字事实时，若与本轮 `read_file` 源码证据不一致，会强制无工具重写；测试覆盖 `PreOrderStatusEnum` 误报 `50/60` 被纠正为 `2/3`。 |
+| 工具探索偏多 | 95 次工具调用，重复读和 list_files 仍偏多；`run_tests` 被配置 deny 拦住。 | 成本和噪音偏高，但安全边界有效。 | 继续强化 evidence-sufficient 收束：当关键表已有足够证据时提前 final，而不是继续读同类文件。 |
+| “必须新建”表混入推导命名 | LCA 提出 `ServiceFeeEntity` / `ServiceFeeSettlementController` 等名称，但这些是建议，不是源码事实。 | 如果不区分事实/建议，会让用户误以为已有命名或架构已确定。 | 文档记录时保持“源码事实”和“设计建议”分离。 |
+
+### PT-047：T-106/T-107 OMP 架构纠偏
+
+触发原因：
+
+- T-105 暴露源码数字事实误报，说明只靠 Evidence Ledger 和最终回答提示仍不够。
+- 外部 review 再次指出 `agent.py` 的 steering/guard 继续膨胀，且上下文预算仍是字符近似，不符合 OMP 的模块化和 token reserve 原则。
+
+OMP 对应思路：
+
+- OMP 主循环负责调度，compaction/token/context、telemetry/run-collector、LSP clients、tool handling 等拆成独立模块；guard/observer/reviewer 不应无限塞进 loop。
+- OMP 按 context window token 预算触发 compaction，并为下一轮 prompt/response 预留 reserve。
+
+LCA 本轮措施：
+
+| 措施 | 状态 | 依据 |
+|---|---|---|
+| FinalAnswer Steerer 第一块抽象 | 已完成 | 新增 `src/local_agent/steering/final_answer.py`，把 read-only evidence、no-edit hygiene、final structure、source-grounded numeric 等最终回答纠偏从 `agent.py` 迁出。 |
+| source-grounded numeric guard | 已完成 | 本轮保存成功 `read_file` 源码证据；最终回答涉及状态码/枚举/接口/字段数字事实且与已读源码不一致时，会无工具重写。 |
+| token budget + reserve | 已完成 MVP | 新增本地 token 估算、`context_token_budget` / `AGENT_CONTEXT_TOKEN_BUDGET` / `--context-token-budget`，按 token 或 char 任一超阈值触发 compaction，并至少预留 15% 下一轮预算。 |
+| `agent.py` 行数趋势 | 已改善 | 本轮从 `agent.py` 删除旧 final-answer guard 常量/方法和重复 helper，新增 steering 模块；后续继续拆 Evidence Ledger、run collector、startup context、memory consolidation 和 semantic exploration steering。 |
+
+后续验证：
+
+- 需要复跑 T-105 同类服务费结算只读证据任务，观察 `PreOrderStatusEnum`、状态 60、接口/字段等数字事实是否仍会误报。
+- 如果仍出现事实误报，下一步应考虑更强的 evidence-sufficient reviewer 或要求最终回答引用 structured evidence ledger，而不是只追加自然语言 steering。

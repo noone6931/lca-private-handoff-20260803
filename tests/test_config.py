@@ -34,6 +34,7 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.max_steps, 0)
         self.assertEqual(config.budget_seconds, 600)
         self.assertEqual(config.context_char_budget, 60000)
+        self.assertEqual(config.context_token_budget, 0)
         self.assertEqual(config.context_recent_messages, 40)
         self.assertEqual(config.summary_mode, "auto")
         self.assertEqual(config.memory_consolidation, "off")
@@ -483,6 +484,7 @@ class ConfigTests(unittest.TestCase):
                 {
                     "DASHSCOPE_API_KEY": "token",
                     "AGENT_CONTEXT_CHAR_BUDGET": "1000",
+                    "AGENT_CONTEXT_TOKEN_BUDGET": "32000",
                     "AGENT_CONTEXT_RECENT_MESSAGES": "12",
                 },
                 clear=True,
@@ -500,6 +502,7 @@ class ConfigTests(unittest.TestCase):
                 )
 
         self.assertEqual(config.context_char_budget, 1000)
+        self.assertEqual(config.context_token_budget, 32000)
         self.assertEqual(config.context_recent_messages, 12)
 
     def test_summary_mode_can_come_from_env(self) -> None:

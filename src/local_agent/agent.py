@@ -13,11 +13,13 @@ from .compaction import SUMMARY_OUTPUT_CHAR_LIMIT
 from .compaction import SUMMARY_REQUEST_TIMEOUT
 from .compaction import assistant_snippets as _assistant_snippets
 from .compaction import estimate_message_chars as _estimate_message_chars
+from .compaction import estimate_message_tokens as _estimate_message_tokens
 from .compaction import format_llm_compaction_summary as _format_llm_compaction_summary
 from .compaction import messages_to_summary_transcript as _messages_to_summary_transcript
 from .compaction import provider_safe_messages as _provider_safe_messages
 from .compaction import prune_context_tool_outputs as _prune_context_tool_outputs
 from .compaction import resolve_compaction_threshold_chars as _resolve_compaction_threshold_chars
+from .compaction import resolve_compaction_threshold_tokens as _resolve_compaction_threshold_tokens
 from .compaction import snippets_for_role as _snippets_for_role
 from .compaction import summary_cache_key as _summary_cache_key
 from .compaction import summary_request_content as _summary_request_content
@@ -38,6 +40,16 @@ from .protocol.events import NullEventSink
 from .protocol.events import StderrEventSink
 from .session.jsonl_store import JsonlSessionStore
 from .state import default_config_root
+from .steering.final_answer import FinalAnswerContext
+from .steering.final_answer import FinalAnswerSteerer
+from .steering.final_answer import FinalStructureSteerer
+from .steering.final_answer import NoEditFinalHygieneSteerer
+from .steering.final_answer import READ_ONLY_EVIDENCE_TOOLS
+from .steering.final_answer import ReadOnlyEvidenceSteerer
+from .steering.final_answer import request_mentions_todo
+from .steering.final_answer import SourceEvidence
+from .steering.final_answer import SourceGroundedNumericSteerer
+from .steering.final_answer import SteeringDecision
 from .tools import create_default_registry
 from .tools.base import ToolContext
 from .tools.base import ToolResult
@@ -113,17 +125,7 @@ MAX_SOFT_TOOL_REQUIREMENT_STEERS = 3
 MAX_NO_EDIT_FINAL_HYGIENE_STEERS = 2
 MAX_FINAL_STRUCTURE_STEERS = 2
 MAX_READ_ONLY_EVIDENCE_STEERS = 2
-NO_EDIT_FINAL_HYGIENE_TOOLS = {"todo_read", "todo_add", "todo_update", "git_status", "git_diff"}
-READ_ONLY_EVIDENCE_TOOLS = {
-    "search_code",
-    "read_file",
-    "lsp_symbols",
-    "lsp_workspace_symbols",
-    "lsp_document_symbols",
-    "lsp_definition",
-    "lsp_references",
-    "lsp_diagnostics",
-}
+MAX_SOURCE_GROUNDED_NUMERIC_STEERS = 2
 INVALID_TOOL_CALL_NAME = "__invalid_tool_call"
 WORKFLOW_NUDGE = (
     "For this coding task, infer the tool sequence yourself. "
@@ -225,168 +227,6 @@ READ_FILE_DRIFT_GUARD_EDIT_KEYWORDS = {
     "实现",
     "写入",
 }
-NO_EDIT_FINAL_KEYWORDS = {
-    "belongs to another service",
-    "cannot safely",
-    "can't safely",
-    "did not change",
-    "did not modify",
-    "insufficient evidence",
-    "no changes",
-    "no edits",
-    "no files changed",
-    "not safe",
-    "out of scope",
-    "target service",
-    "unable to safely",
-    "不在当前仓库",
-    "不做修改",
-    "不能安全",
-    "不应包含",
-    "不应强行",
-    "不安全",
-    "不属于当前仓库",
-    "依赖不足",
-    "停止实施",
-    "当前仓库不包含",
-    "当前授权",
-    "没有修改",
-    "未修改",
-    "无改动",
-    "无法安全",
-    "目标服务",
-    "证据不足",
-}
-INCOMPLETE_FINAL_MARKERS = {
-    "ready to output",
-    "ready to provide",
-    "ready to generate",
-    "final table follows",
-    "final answer follows",
-    "准备输出",
-    "可以输出",
-    "马上输出",
-}
-FINAL_TABLE_REQUEST_KEYWORDS = {
-    "markdown table",
-    "table",
-    "表格",
-    "分析表",
-}
-FINAL_LABEL_CANDIDATES = (
-    "必须关注",
-    "可能关注",
-    "暂不关注",
-    "需要用户确认",
-    "必须关心",
-    "可能关心",
-    "暂不关心",
-)
-PROJECT_SCOPE_TABLE_REQUEST_KEYWORDS = {
-    "项目表",
-    "项目范围",
-    "项目清单",
-    "服务范围",
-    "关注项目",
-    "关心项目",
-    "需要关注哪些项目",
-    "project scope",
-    "service scope",
-}
-PROJECT_SCOPE_TABLE_COLUMN_KEYWORDS = {
-    "项目",
-    "服务",
-    "project",
-    "service",
-}
-EVIDENCE_REQUEST_KEYWORDS = {
-    "代码证据",
-    "代码依据",
-    "源码",
-    "代码里",
-    "代码中",
-    "源码中",
-    "source evidence",
-    "source-code evidence",
-    "code evidence",
-}
-NO_SPECULATION_REQUEST_KEYWORDS = {
-    "不需要推测",
-    "不要推测",
-    "别推测",
-    "不要猜",
-    "别猜",
-    "不靠猜",
-    "不要行业惯例",
-    "no speculation",
-    "don't guess",
-    "do not guess",
-}
-IMPLEMENTATION_EVIDENCE_REQUEST_KEYWORDS = {
-    "怎么解决",
-    "怎么处理",
-    "如何处理",
-    "如何实现",
-    "怎么实现",
-    "实现逻辑",
-    "处理逻辑",
-    "解决方案",
-    "在哪里实现",
-    "哪里实现",
-}
-SOURCE_NOT_FOUND_MARKERS = {
-    "未找到",
-    "没有找到",
-    "未发现",
-    "没有发现",
-    "找不到",
-    "无代码证据",
-    "缺少代码证据",
-    "没有代码证据",
-    "not found",
-    "no matches",
-    "no evidence",
-    "not located",
-}
-EVIDENCE_STATUS_REQUEST_KEYWORDS = {
-    "已验证",
-    "推断",
-    "证据状态",
-    "verified",
-    "inferred",
-}
-INFERENCE_MARKERS = {
-    "可能",
-    "推测",
-    "猜测",
-    "大概",
-    "应该",
-    "未验证",
-    "likely",
-    "possibly",
-    "probably",
-    "inferred",
-    "guess",
-}
-EVIDENCE_STATUS_LABELS = {
-    "已验证",
-    "推断",
-    "verified",
-    "inferred",
-    "证据支持",
-    "未验证",
-}
-TODO_REQUEST_KEYWORDS = {
-    "todo",
-    "task list",
-    "checklist",
-    "待办",
-    "任务清单",
-    "维护 todo",
-    "维护todo",
-}
-
-
 @dataclass
 class SoftToolRequirement:
     kind: str
@@ -459,7 +299,9 @@ class AgentRuntime:
         self._no_edit_final_hygiene_steers = 0
         self._final_structure_steers = 0
         self._read_only_evidence_steers = 0
+        self._source_grounded_numeric_steers = 0
         self._read_file_evidence_paths: list[str] = []
+        self._source_evidence: list[SourceEvidence] = []
         self._strong_relevance_paths: list[str] = []
         self._evidence_records: list[EvidenceRecord] = []
         self._workspace_root_evidence_recorded = False
@@ -471,6 +313,12 @@ class AgentRuntime:
         self._run_stats: RunStats | None = None
         self._last_run_summary: dict[str, Any] | None = None
         self._pending_compaction_summary_mode: str | None = None
+        self._final_answer_steerers: tuple[FinalAnswerSteerer, ...] = (
+            ReadOnlyEvidenceSteerer(max_steers=MAX_READ_ONLY_EVIDENCE_STEERS),
+            NoEditFinalHygieneSteerer(max_steers=MAX_NO_EDIT_FINAL_HYGIENE_STEERS),
+            FinalStructureSteerer(max_steers=MAX_FINAL_STRUCTURE_STEERS),
+            SourceGroundedNumericSteerer(max_steers=MAX_SOURCE_GROUNDED_NUMERIC_STEERS),
+        )
         self._state_dir = config.state_dir or config.workspace / ".local-agent"
         self._session = JsonlSessionStore(
             config.workspace,
@@ -533,6 +381,8 @@ class AgentRuntime:
         self._no_edit_final_hygiene_steers = 0
         self._final_structure_steers = 0
         self._read_only_evidence_steers = 0
+        self._source_grounded_numeric_steers = 0
+        self._source_evidence = []
         self._temporary_tool_allowlist = None
         self._messages.append({"role": "user", "content": model_prompt})
         self._session.append("user", {"content": prompt})
@@ -604,18 +454,11 @@ class AgentRuntime:
                         reason="soft_tool_requirement",
                     )
                 content = message.get("content") or ""
-                if self._should_steer_read_only_evidence(content, run_start_index):
-                    if self._steer_for_read_only_evidence(content):
-                        step += 1
-                        continue
-                if self._should_steer_no_edit_final_hygiene(content, run_start_index):
-                    if self._steer_for_no_edit_final_hygiene(content, run_start_index):
-                        step += 1
-                        continue
-                if self._should_steer_final_structure(content):
-                    if self._steer_for_final_structure(content):
-                        step += 1
-                        continue
+                steering = self._decide_final_answer_steering(content, run_start_index)
+                if steering is not None:
+                    self._apply_final_answer_steering(steering)
+                    step += 1
+                    continue
                 return self._finish_run(content, deadline, run_start_index)
 
             for index, tool_call in enumerate(tool_calls):
@@ -935,6 +778,7 @@ class AgentRuntime:
             "no_edit_final_hygiene": self._no_edit_final_hygiene_steers,
             "final_structure": self._final_structure_steers,
             "read_only_evidence": self._read_only_evidence_steers,
+            "source_grounded_numeric": self._source_grounded_numeric_steers,
             "soft_tool_requirement": self._soft_tool_requirement.steers if self._soft_tool_requirement else 0,
         }
         payload: dict[str, Any] = {
@@ -962,10 +806,10 @@ class AgentRuntime:
     def _messages_for_model(self, deadline: float | None = None) -> list[dict[str, Any]]:
         todo_summary = self._open_todo_summary()
         provider_context = _prune_context_tool_outputs(self._messages)
-        if self._config.context_char_budget <= 0:
+        if not self._context_budget_enabled():
             return self._provider_safe_runtime_messages(provider_context, todo_summary)
-        threshold = _resolve_compaction_threshold_chars(self._config.context_char_budget)
-        if _estimate_message_chars(provider_context) <= threshold:
+        thresholds = self._context_budget_thresholds()
+        if not self._context_budget_exceeded(provider_context):
             return self._provider_safe_runtime_messages(provider_context, todo_summary)
 
         system_messages = [message for message in provider_context if message.get("role") == "system"]
@@ -982,20 +826,42 @@ class AgentRuntime:
                 _system_message_with_compaction_summary(system_messages, compaction_summary),
                 *recent,
             ]
-            if _estimate_message_chars(compacted) <= self._config.context_char_budget or recent_count <= 6:
-                self._session.append(
-                    "context_compaction",
-                    {
-                        "original_messages": len(self._messages),
-                        "sent_messages": len(compacted),
-                        "dropped_messages": len(dropped),
-                        "threshold_chars": threshold,
-                    },
-                )
+            if not self._context_budget_exceeded(compacted) or recent_count <= 6:
+                payload: dict[str, Any] = {
+                    "original_messages": len(self._messages),
+                    "sent_messages": len(compacted),
+                    "dropped_messages": len(dropped),
+                    "estimated_chars": _estimate_message_chars(compacted),
+                    "estimated_tokens": _estimate_message_tokens(compacted),
+                }
+                payload.update(thresholds)
+                self._session.append("context_compaction", payload)
                 self._record_context_compaction()
                 return self._provider_safe_runtime_messages(compacted, todo_summary)
             recent_count = max(6, recent_count // 2)
         return self._provider_safe_runtime_messages(self._messages, todo_summary)
+
+    def _context_budget_enabled(self) -> bool:
+        return self._config.context_char_budget > 0 or self._config.context_token_budget > 0
+
+    def _context_budget_thresholds(self) -> dict[str, int]:
+        thresholds: dict[str, int] = {}
+        if self._config.context_char_budget > 0:
+            thresholds["threshold_chars"] = _resolve_compaction_threshold_chars(self._config.context_char_budget)
+        if self._config.context_token_budget > 0:
+            thresholds["threshold_tokens"] = _resolve_compaction_threshold_tokens(self._config.context_token_budget)
+        return thresholds
+
+    def _context_budget_exceeded(self, messages: list[dict[str, Any]]) -> bool:
+        if self._config.context_token_budget > 0:
+            threshold = _resolve_compaction_threshold_tokens(self._config.context_token_budget)
+            if _estimate_message_tokens(messages) > threshold:
+                return True
+        if self._config.context_char_budget > 0:
+            threshold = _resolve_compaction_threshold_chars(self._config.context_char_budget)
+            if _estimate_message_chars(messages) > threshold:
+                return True
+        return False
 
     def _provider_safe_runtime_messages(
         self,
@@ -1457,9 +1323,13 @@ class AgentRuntime:
             self._config.allowed_dirs,
         )
         if display_path in self._read_file_evidence_paths:
+            self._source_evidence.append(SourceEvidence(display_path, result.content))
+            self._source_evidence = self._source_evidence[-40:]
             return
         self._read_file_evidence_paths.append(display_path)
         self._read_file_evidence_paths = self._read_file_evidence_paths[-20:]
+        self._source_evidence.append(SourceEvidence(display_path, result.content))
+        self._source_evidence = self._source_evidence[-40:]
 
     def _record_tool_evidence(self, name: str, arguments: str | dict[str, Any], result: ToolResult) -> None:
         self._record_strong_relevance_paths(name, arguments, result)
@@ -1596,132 +1466,62 @@ class AgentRuntime:
             f"- {_one_line(self._current_user_request, max_chars=1200)}"
         )
 
-    def _should_steer_no_edit_final_hygiene(self, content: str, run_start_index: int) -> bool:
-        if self._no_edit_final_hygiene_steers >= MAX_NO_EDIT_FINAL_HYGIENE_STEERS:
-            return False
-        if not is_code_implementation_request(self._current_user_request):
-            return False
-        if not _looks_like_no_edit_final(content):
-            return False
-        tool_names = _tool_names_since(self._messages, run_start_index)
-        if tool_names.intersection({"apply_patch", "write_file", "rollback_patch"}):
-            return False
-        return bool(self._no_edit_final_hygiene_missing(tool_names))
-
-    def _should_steer_read_only_evidence(self, content: str, run_start_index: int) -> bool:
-        if self._read_only_evidence_steers >= MAX_READ_ONLY_EVIDENCE_STEERS:
-            return False
-        if not _request_needs_read_only_code_evidence(self._current_user_request):
-            return False
-        if _has_successful_read_file_since(self._messages, run_start_index):
-            return False
-        if _content_reports_no_source_evidence(content) and _has_negative_source_evidence_since(
-            self._messages,
-            run_start_index,
-        ):
-            return False
-        return True
-
-    def _steer_for_read_only_evidence(self, content: str) -> bool:
-        self._read_only_evidence_steers += 1
-        request_summary = self._final_answer_request_summary()
-        content_summary = _one_line(content, max_chars=800)
-        steering = (
-            "Runtime steering: the user asked for code/source evidence, but the previous answer was not grounded "
-            "in a successful read_file result from this run. Do not give an industry-practice or filename-based "
-            "guess.\n"
-            "- Use search_code or lsp_* to locate candidate files, then read_file the relevant implementation file.\n"
-            "- If searches return no matches, state that as a verified negative result and include the search terms.\n"
-            "- After collecting code evidence, answer the original question directly and separate verified facts from inference.\n"
-            f"- Draft final answer that triggered this check: {content_summary}"
-            f"{request_summary}"
+    def _decide_final_answer_steering(
+        self,
+        content: str,
+        run_start_index: int,
+    ) -> SteeringDecision | None:
+        context = FinalAnswerContext(
+            request=self._current_user_request,
+            content=content,
+            messages=self._messages,
+            run_start_index=run_start_index,
+            read_file_evidence_paths=list(self._read_file_evidence_paths),
+            source_evidence=list(self._source_evidence),
+            open_todos=self._open_todo_summary(),
+            is_code_implementation_request=is_code_implementation_request(self._current_user_request),
+            steer_counts=self._final_answer_steer_counts(),
         )
-        self._messages.append({"role": "user", "content": steering})
-        self._session.append(
-            "runtime_steering",
-            {
-                "kind": "read_only_evidence",
-                "steer_count": self._read_only_evidence_steers,
-            },
-        )
-        self._temporary_tool_allowlist = set(READ_ONLY_EVIDENCE_TOOLS)
-        return True
+        for steerer in self._final_answer_steerers:
+            decision = steerer.decide(context)
+            if decision is not None:
+                return decision
+        return None
 
-    def _should_steer_final_structure(self, content: str) -> bool:
-        if self._final_structure_steers >= MAX_FINAL_STRUCTURE_STEERS:
-            return False
-        return bool(_final_structure_issues(self._current_user_request, content))
+    def _apply_final_answer_steering(self, decision: SteeringDecision) -> None:
+        steer_count = self._increment_final_answer_steer_count(decision.kind)
+        self._messages.append({"role": "user", "content": decision.message})
+        payload = {
+            "kind": decision.kind,
+            **decision.payload,
+            "steer_count": steer_count,
+        }
+        self._session.append("runtime_steering", payload)
+        self._force_final_answer_without_tools = decision.force_final_answer_without_tools
+        self._temporary_tool_allowlist = decision.temporary_tool_allowlist
 
-    def _steer_for_final_structure(self, content: str) -> bool:
-        issues = _final_structure_issues(self._current_user_request, content)
-        if not issues:
-            return False
-        self._final_structure_steers += 1
-        request_summary = self._final_answer_request_summary()
-        content_summary = _one_line(content, max_chars=800)
-        steering = (
-            "Runtime steering: the previous final answer did not satisfy the user's requested output structure. "
-            "Do not call tools. Produce the final answer now using the evidence already collected.\n"
-            f"- Missing/invalid structure: {', '.join(issues)}.\n"
-            "- If the user requested tables or named sections, include the actual tables/sections in this response.\n"
-            "- Do not say you are ready to output it; output it directly.\n"
-            f"- Draft final answer that triggered this check: {content_summary}"
-            f"{request_summary}"
-        )
-        self._messages.append({"role": "user", "content": steering})
-        self._session.append(
-            "runtime_steering",
-            {
-                "kind": "final_structure",
-                "issues": issues,
-                "steer_count": self._final_structure_steers,
-            },
-        )
-        self._force_final_answer_without_tools = True
-        return True
+    def _final_answer_steer_counts(self) -> dict[str, int]:
+        return {
+            "read_only_evidence": self._read_only_evidence_steers,
+            "no_edit_final_hygiene": self._no_edit_final_hygiene_steers,
+            "final_structure": self._final_structure_steers,
+            "source_grounded_numeric": self._source_grounded_numeric_steers,
+        }
 
-    def _no_edit_final_hygiene_missing(self, tool_names: set[str]) -> list[str]:
-        missing: list[str] = []
-        if not tool_names.intersection({"git_status", "git_diff"}):
-            missing.append("git_status_or_git_diff")
-        if _request_mentions_todo(self._current_user_request) or self._open_todo_summary():
-            if not any(name.startswith("todo_") for name in tool_names):
-                missing.append("todo_state")
-        return missing
-
-    def _steer_for_no_edit_final_hygiene(self, content: str, run_start_index: int) -> bool:
-        tool_names = _tool_names_since(self._messages, run_start_index)
-        missing = self._no_edit_final_hygiene_missing(tool_names)
-        if not missing:
-            return False
-        self._no_edit_final_hygiene_steers += 1
-        request_summary = self._final_answer_request_summary()
-        missing_lines = ", ".join(missing)
-        content_summary = _one_line(content, max_chars=800)
-        steering = (
-            "Runtime steering: you are about to finish an implementation task without changing files. "
-            "That is acceptable when evidence shows the requested implementation is unsafe, out of scope, or belongs "
-            "to another service, but the no-edit stop must still be auditable before the final answer.\n"
-            f"- Missing hygiene: {missing_lines}.\n"
-            "- Use only todo_read/todo_add/todo_update and git_status/git_diff now.\n"
-            "- If the user requested todo tracking or open todos exist, update/read todo state and mark the task "
-            "blocked/skipped with the evidence-backed reason.\n"
-            "- Run git_status or git_diff to prove whether the workspace changed; if no tests were run because no files "
-            "changed or the target service is missing, say that explicitly in the final answer.\n"
-            f"- Draft final answer that triggered this check: {content_summary}"
-            f"{request_summary}"
-        )
-        self._messages.append({"role": "user", "content": steering})
-        self._session.append(
-            "runtime_steering",
-            {
-                "kind": "no_edit_final_hygiene",
-                "missing": missing,
-                "steer_count": self._no_edit_final_hygiene_steers,
-            },
-        )
-        self._temporary_tool_allowlist = set(NO_EDIT_FINAL_HYGIENE_TOOLS)
-        return True
+    def _increment_final_answer_steer_count(self, kind: str) -> int:
+        if kind == "read_only_evidence":
+            self._read_only_evidence_steers += 1
+            return self._read_only_evidence_steers
+        if kind == "no_edit_final_hygiene":
+            self._no_edit_final_hygiene_steers += 1
+            return self._no_edit_final_hygiene_steers
+        if kind == "final_structure":
+            self._final_structure_steers += 1
+            return self._final_structure_steers
+        if kind == "source_grounded_numeric":
+            self._source_grounded_numeric_steers += 1
+            return self._source_grounded_numeric_steers
+        return 0
 
     def _append_soft_tool_requirement_message(self, requirement: SoftToolRequirement) -> None:
         content = _soft_tool_requirement_message(requirement)
@@ -2804,7 +2604,7 @@ def _messages_with_no_edit_final_hygiene(
         return list(messages)
     todo_clause = (
         "If the user requested todo tracking or open todos exist, update/read todo state before finalizing."
-        if _request_mentions_todo(current_user_request) or todo_summary
+        if request_mentions_todo(current_user_request) or todo_summary
         else "Todo tracking is optional unless the task becomes multi-step or ambiguous."
     )
     block = (
@@ -2944,131 +2744,6 @@ def _should_add_workflow_nudge(prompt: str) -> bool:
     if len(prompt.strip()) <= 24 and not any(keyword in lowered for keyword in WORKFLOW_NUDGE_KEYWORDS):
         return False
     return any(keyword in lowered for keyword in WORKFLOW_NUDGE_KEYWORDS)
-
-
-def _looks_like_no_edit_final(content: str) -> bool:
-    lowered = content.lower()
-    compact = " ".join(content.split())
-    return any(keyword in lowered or keyword in compact for keyword in NO_EDIT_FINAL_KEYWORDS)
-
-
-def _final_structure_issues(request: str | None, content: str) -> list[str]:
-    request_text = request or ""
-    content_text = content or ""
-    lowered_content = content_text.lower()
-    issues: list[str] = []
-    if any(marker in lowered_content for marker in INCOMPLETE_FINAL_MARKERS):
-        issues.append("incomplete_final")
-    if _request_asks_for_table(request_text) and not _has_markdown_table(content_text):
-        issues.append("missing_table")
-    missing_labels = [
-        label
-        for label in FINAL_LABEL_CANDIDATES
-        if label in request_text and label not in content_text
-    ]
-    if missing_labels:
-        issues.append("missing_labels:" + ",".join(missing_labels))
-    if _request_asks_for_project_scope_table(request_text) and not _markdown_table_has_any_column(
-        content_text,
-        PROJECT_SCOPE_TABLE_COLUMN_KEYWORDS,
-    ):
-        issues.append("missing_project_or_service_table_column")
-    if _request_needs_evidence_status_labels(request_text, content_text) and not _content_has_evidence_status_label(
-        content_text
-    ):
-        issues.append("missing_evidence_status_labels")
-    return issues
-
-
-def _request_asks_for_table(request: str) -> bool:
-    lowered = request.lower()
-    return any(keyword.lower() in lowered for keyword in FINAL_TABLE_REQUEST_KEYWORDS)
-
-
-def _has_markdown_table(content: str) -> bool:
-    lines = [line.strip() for line in content.splitlines()]
-    has_row = any(line.startswith("|") and line.endswith("|") and line.count("|") >= 2 for line in lines)
-    has_separator = any(
-        line.startswith("|") and "---" in line and line.endswith("|")
-        for line in lines
-    )
-    return has_row and has_separator
-
-
-def _request_asks_for_project_scope_table(request: str) -> bool:
-    lowered = request.lower()
-    asks_for_scope = any(keyword.lower() in lowered for keyword in PROJECT_SCOPE_TABLE_REQUEST_KEYWORDS)
-    asks_for_table_shape = _request_asks_for_table(request) or "表" in request or "清单" in request
-    return asks_for_scope and asks_for_table_shape
-
-
-def _markdown_table_has_any_column(content: str, keywords: set[str]) -> bool:
-    lowered_keywords = {keyword.lower() for keyword in keywords}
-    for line in content.splitlines():
-        stripped = line.strip()
-        if not stripped.startswith("|") or not stripped.endswith("|"):
-            continue
-        if "---" in stripped:
-            continue
-        cells = [cell.strip().lower() for cell in stripped.strip("|").split("|")]
-        if any(any(keyword in cell for keyword in lowered_keywords) for cell in cells):
-            return True
-    return False
-
-
-def _request_needs_evidence_status_labels(request: str, content: str) -> bool:
-    lowered_request = request.lower()
-    lowered_content = content.lower()
-    if any(keyword.lower() in lowered_request for keyword in EVIDENCE_STATUS_REQUEST_KEYWORDS):
-        return True
-    asks_for_evidence = any(keyword.lower() in lowered_request for keyword in EVIDENCE_REQUEST_KEYWORDS)
-    has_inference = any(marker.lower() in lowered_content for marker in INFERENCE_MARKERS)
-    return asks_for_evidence and has_inference
-
-
-def _content_has_evidence_status_label(content: str) -> bool:
-    lowered = content.lower()
-    return any(label.lower() in lowered for label in EVIDENCE_STATUS_LABELS)
-
-
-def _request_needs_read_only_code_evidence(request: str | None) -> bool:
-    lowered = (request or "").lower()
-    if not lowered.strip():
-        return False
-    if any(keyword.lower() in lowered for keyword in NO_SPECULATION_REQUEST_KEYWORDS):
-        return True
-    if any(keyword.lower() in lowered for keyword in EVIDENCE_REQUEST_KEYWORDS):
-        return True
-    return any(keyword.lower() in lowered for keyword in IMPLEMENTATION_EVIDENCE_REQUEST_KEYWORDS)
-
-
-def _has_successful_read_file_since(messages: list[dict[str, Any]], start_index: int) -> bool:
-    for message in messages[start_index:]:
-        if message.get("role") != "tool":
-            continue
-        if message.get("_lca_tool_name") == "read_file" and not message.get("_lca_is_error"):
-            return True
-    return False
-
-
-def _has_negative_source_evidence_since(messages: list[dict[str, Any]], start_index: int) -> bool:
-    for message in messages[start_index:]:
-        if message.get("role") != "tool" or message.get("_lca_is_error"):
-            continue
-        name = str(message.get("_lca_tool_name") or "")
-        if (name == "search_code" or name.startswith("lsp_")) and message.get("_lca_useless"):
-            return True
-    return False
-
-
-def _content_reports_no_source_evidence(content: str) -> bool:
-    lowered = content.lower()
-    return any(marker.lower() in lowered for marker in SOURCE_NOT_FOUND_MARKERS)
-
-
-def _request_mentions_todo(content: str | None) -> bool:
-    lowered = (content or "").lower()
-    return any(keyword in lowered for keyword in TODO_REQUEST_KEYWORDS)
 
 
 def _should_guard_repeated_read_file(prompt: str) -> bool:
@@ -3318,18 +2993,6 @@ def _run_used_memory_write_tool(messages: list[dict[str, Any]]) -> bool:
         if any(name in MEMORY_CONSOLIDATION_WRITE_TOOLS for name in _assistant_tool_call_names(message)):
             return True
     return False
-
-
-def _tool_names_since(messages: list[dict[str, Any]], start_index: int) -> set[str]:
-    names: set[str] = set()
-    for message in messages[start_index:]:
-        if message.get("role") == "tool":
-            name = message.get("_lca_tool_name")
-            if isinstance(name, str) and name:
-                names.add(name)
-        elif message.get("role") == "assistant":
-            names.update(_assistant_tool_call_names(message))
-    return names
 
 
 def _should_auto_consolidate_memory(

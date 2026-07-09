@@ -16,6 +16,7 @@ class ConfigError(RuntimeError):
 DEFAULT_MAX_STEPS = 0
 DEFAULT_BUDGET_SECONDS = 600
 DEFAULT_CONTEXT_CHAR_BUDGET = 60000
+DEFAULT_CONTEXT_TOKEN_BUDGET = 0
 DEFAULT_CONTEXT_RECENT_MESSAGES = 40
 TOOL_APPROVAL_POLICIES = {"allow", "prompt", "deny"}
 APPROVAL_MODES = {"always-ask", "write", "yolo"}
@@ -40,6 +41,7 @@ class AgentConfig:
     auto_approve_tools: tuple[str, ...] = ()
     tool_approval: dict[str, str] | None = None
     context_char_budget: int = DEFAULT_CONTEXT_CHAR_BUDGET
+    context_token_budget: int = DEFAULT_CONTEXT_TOKEN_BUDGET
     context_recent_messages: int = DEFAULT_CONTEXT_RECENT_MESSAGES
     summary_mode: str = "auto"
     memory_consolidation: str = "off"
@@ -62,6 +64,7 @@ def load_config(
     auto_approve_tools: object | None = None,
     tool_approval: object | None = None,
     context_char_budget: int | None = None,
+    context_token_budget: int | None = None,
     context_recent_messages: int | None = None,
     summary_mode: str | None = None,
     memory_consolidation: str | None = None,
@@ -148,6 +151,15 @@ def load_config(
         "context_char_budget",
         raw_context_char_budget if raw_context_char_budget is not None else DEFAULT_CONTEXT_CHAR_BUDGET,
     )
+    raw_context_token_budget = (
+        context_token_budget
+        if context_token_budget is not None
+        else file_config.get("context_token_budget", os.environ.get("AGENT_CONTEXT_TOKEN_BUDGET"))
+    )
+    resolved_context_token_budget = _non_negative_int(
+        "context_token_budget",
+        raw_context_token_budget if raw_context_token_budget is not None else DEFAULT_CONTEXT_TOKEN_BUDGET,
+    )
     raw_context_recent_messages = (
         context_recent_messages
         if context_recent_messages is not None
@@ -208,6 +220,7 @@ def load_config(
         auto_approve_tools=resolved_auto_approve_tools,
         tool_approval=resolved_tool_approval,
         context_char_budget=resolved_context_char_budget,
+        context_token_budget=resolved_context_token_budget,
         context_recent_messages=resolved_context_recent_messages,
         summary_mode=resolved_summary_mode,
         memory_consolidation=resolved_memory_consolidation,

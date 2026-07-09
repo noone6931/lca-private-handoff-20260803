@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 from local_agent.agent import AgentRuntime
 from local_agent.compaction import resolve_compaction_threshold_chars
+from local_agent.compaction import resolve_compaction_threshold_tokens
 from local_agent.config import AgentConfig
 from local_agent.protocol.events import ListEventSink
 
@@ -266,6 +267,61 @@ class _ReadFileThenFinalClient:
                 },
             )()
         return type("Response", (), {"message": {"content": "done with evidence"}})()
+
+
+class _ReadEnumThenWrongNumericClient:
+    calls: list[dict] = []
+
+    def __init__(self, config: AgentConfig):
+        self.config = config
+
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
+        if len(type(self).calls) == 1:
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "call_read_enum",
+                                "type": "function",
+                                "function": {
+                                    "name": "read_file",
+                                    "arguments": json.dumps({"path": "src/PreOrderStatusEnum.java"}),
+                                },
+                            }
+                        ],
+                    }
+                },
+            )()
+        if len(type(self).calls) == 2:
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": (
+                            "PreOrderStatusEnum.MAKING = 50，"
+                            "PreOrderStatusEnum.MADE = 60。证据文件：src/PreOrderStatusEnum.java"
+                        )
+                    }
+                },
+            )()
+        return type(
+            "Response",
+            (),
+            {
+                "message": {
+                    "content": (
+                        "已验证：src/PreOrderStatusEnum.java:15 中 "
+                        "PreOrderStatusEnum.MAKING = 2，PreOrderStatusEnum.MADE = 3。"
+                    )
+                }
+            },
+        )()
 
 
 class _ReadSkillThenFinalClient:
@@ -1241,6 +1297,57 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertEqual(len(_ReadOnlyEvidenceNoMatchClient.calls), 2)
         self.assertEqual(runtime._last_run_summary["steering_counts"], {})
 
+    def test_source_grounded_numeric_gate_rewrites_status_values_from_read_source(self) -> None:
+        _ReadEnumThenWrongNumericClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            source_dir = workspace / "src"
+            source_dir.mkdir()
+            (source_dir / "PreOrderStatusEnum.java").write_text(
+                "\n".join(
+                    [
+                        "public enum PreOrderStatusEnum {",
+                        '    MAKING(2, "待制单"),',
+                        '    MADE(3, "已制单"),',
+                        '    CANCEL(4, "已作废");',
+                        "}",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=workspace,
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _ReadEnumThenWrongNumericClient):
+                runtime = AgentRuntime(config, show_tool_logs=False)
+                result = runtime.run("请根据代码证据说明 PreOrderStatusEnum 的状态码")
+                records = [
+                    json.loads(line)
+                    for line in runtime._session.path.read_text(encoding="utf-8").splitlines()
+                ]
+
+        steering_records = [
+            record
+            for record in records
+            if record.get("event") == "runtime_steering"
+            and record.get("payload", {}).get("kind") == "source_grounded_numeric"
+        ]
+        self.assertIn("MAKING = 2", result)
+        self.assertIn("MADE = 3", result)
+        self.assertNotIn("50", result)
+        self.assertNotIn("60", result)
+        self.assertEqual(len(_ReadEnumThenWrongNumericClient.calls), 3)
+        self.assertEqual(_ReadEnumThenWrongNumericClient.calls[2]["tools"], [])
+        self.assertEqual(len(steering_records), 1)
+        self.assertEqual(runtime._last_run_summary["steering_counts"], {"source_grounded_numeric": 1})
+
     def test_evidence_ledger_is_sent_to_provider_context_after_tool_results(self) -> None:
         _ReadFileThenFinalClient.calls = []
         with tempfile.TemporaryDirectory() as tmp:
@@ -2168,6 +2275,50 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertTrue(any("T1: Finish compaction" in m.get("content", "") for m in sent))
         self.assertFalse(any("T2: Already done" in m.get("content", "") for m in sent))
 
+    def test_context_compaction_can_trigger_from_token_budget(self) -> None:
+        _MessageRecordingClient.messages = []
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=workspace,
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+                context_char_budget=0,
+                context_token_budget=300,
+                context_recent_messages=2,
+                summary_mode="local",
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _MessageRecordingClient):
+                runtime = AgentRuntime(config, show_tool_logs=False)
+                runtime._messages.extend(
+                    [
+                        {"role": "user", "content": "old request " + ("x" * 1200)},
+                        {"role": "assistant", "content": "old answer " + ("y" * 1200)},
+                    ]
+                )
+                result = runtime.run("new request")
+                records = [
+                    json.loads(line)
+                    for line in runtime._session.path.read_text(encoding="utf-8").splitlines()
+                ]
+
+        compaction_records = [
+            record for record in records if record.get("event") == "context_compaction"
+        ]
+        sent_system_messages = [
+            message for message in _MessageRecordingClient.messages if message.get("role") == "system"
+        ]
+        self.assertEqual(result, "done")
+        self.assertEqual(compaction_records[0]["payload"]["threshold_tokens"], 255)
+        self.assertNotIn("threshold_chars", compaction_records[0]["payload"])
+        self.assertIn("estimated_tokens", compaction_records[0]["payload"])
+        self.assertIn("[Local context compaction]", sent_system_messages[0]["content"])
+
     def test_context_compaction_truncates_large_recent_tool_outputs_for_model_only(self) -> None:
         _MessageRecordingClient.messages = []
         large_tool_output = "tool-output-" + ("z" * 10000)
@@ -2590,6 +2741,8 @@ class AgentRuntimeTests(unittest.TestCase):
     def test_compaction_threshold_reserves_at_least_fifteen_percent(self) -> None:
         self.assertEqual(resolve_compaction_threshold_chars(1200), 1020)
         self.assertEqual(resolve_compaction_threshold_chars(100000), 34464)
+        self.assertEqual(resolve_compaction_threshold_tokens(1200), 1020)
+        self.assertEqual(resolve_compaction_threshold_tokens(100000), 85000)
 
     def test_workflow_nudge_is_added_for_coding_tasks(self) -> None:
         _MessageRecordingClient.messages = []

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from typing import Any
 
 COMPACTION_TOOL_CONTENT_CHAR_LIMIT = 6000
@@ -10,6 +11,7 @@ SUMMARY_OUTPUT_CHAR_LIMIT = 4000
 SUMMARY_REQUEST_TIMEOUT = 30.0
 
 DEFAULT_RESERVE_CHARS = 16384 * 4
+DEFAULT_RESERVE_TOKENS = 4096
 MIN_RESERVE_RATIO = 0.15
 
 USELESS_TOOL_RESULT_NOTICE = "[Uneventful tool result elided during local context pruning]"
@@ -20,11 +22,42 @@ def estimate_message_chars(messages: list[dict[str, Any]]) -> int:
     return sum(len(json.dumps(message, ensure_ascii=False, default=str)) for message in messages)
 
 
+def estimate_message_tokens(messages: list[dict[str, Any]]) -> int:
+    return sum(
+        estimate_text_tokens(json.dumps(message, ensure_ascii=False, default=str))
+        for message in messages
+    )
+
+
+def estimate_text_tokens(content: str) -> int:
+    """Cheap local token estimate for budget decisions when no tokenizer is bundled."""
+    if not content:
+        return 0
+    cjk_chars = 0
+    ascii_like_chars = 0
+    other_chars = 0
+    for char in content:
+        if "\u4e00" <= char <= "\u9fff":
+            cjk_chars += 1
+        elif ord(char) < 128:
+            ascii_like_chars += 1
+        else:
+            other_chars += 1
+    return max(1, int(math.ceil(cjk_chars + other_chars / 2 + ascii_like_chars / 4)))
+
+
 def resolve_compaction_threshold_chars(context_window_chars: int) -> int:
     if context_window_chars <= 1:
         return 0
     reserve = _resolve_budget_reserve_chars(context_window_chars)
     return max(0, min(context_window_chars - 1, context_window_chars - reserve))
+
+
+def resolve_compaction_threshold_tokens(context_window_tokens: int) -> int:
+    if context_window_tokens <= 1:
+        return 0
+    reserve = _resolve_budget_reserve_tokens(context_window_tokens)
+    return max(0, min(context_window_tokens - 1, context_window_tokens - reserve))
 
 
 def valid_recent_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -211,6 +244,14 @@ def _resolve_budget_reserve_chars(context_window_chars: int) -> int:
     default_reserve = max(proportional_reserve, DEFAULT_RESERVE_CHARS)
     default_reserve_is_impossible = default_reserve >= context_window_chars - proportional_reserve
     reserve_exceeds_window = default_reserve >= context_window_chars
+    return proportional_reserve if default_reserve_is_impossible or reserve_exceeds_window else default_reserve
+
+
+def _resolve_budget_reserve_tokens(context_window_tokens: int) -> int:
+    proportional_reserve = max(1, int(context_window_tokens * MIN_RESERVE_RATIO))
+    default_reserve = max(proportional_reserve, DEFAULT_RESERVE_TOKENS)
+    default_reserve_is_impossible = default_reserve >= context_window_tokens - proportional_reserve
+    reserve_exceeds_window = default_reserve >= context_window_tokens
     return proportional_reserve if default_reserve_is_impossible or reserve_exceeds_window else default_reserve
 
 

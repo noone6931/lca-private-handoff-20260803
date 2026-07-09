@@ -20,7 +20,7 @@ LCA 已经达到进入真实需求实现压测的门槛。下一步建议不是�
 | 维度 | OMP 设计 | LCA 现状 | 差距判断 |
 |---|---|---|---|
 | 主循环与停止条件 | 不靠主 `max_steps`，由 tool_calls、deadline、abort、compaction 共同控制 | `max_steps=0` 默认不限步，`budget_seconds` 为主要预算，deadline 到期补 synthetic result | MVP 已对齐 |
-| 上下文治理 | token 预算、reserve、summary/compaction | `summary_mode=auto`，字符预算近似 reserve，超过阈值可调用当前 provider 做 LLM summary | 可用；精确 token budget 仍缺 |
+| 上下文治理 | token 预算、reserve、summary/compaction | `summary_mode=auto`，支持字符预算和本地 token 估算预算，超过阈值可调用当前 provider 做 LLM summary | 可用；provider/model 专用 tokenizer 仍缺 |
 | 默认工作流 | system prompt、project prompt、tool descriptions、runtime reminders | system prompt、tool descriptions、runtime workflow reminder、Current task contract 已落地 | MVP 已对齐 |
 | ToolChoiceQueue | 支持 hard/soft tool requirement，偏离后可升级强制工具选择 | 已实现 allowed-dir soft requirement、重复工具 forced-final、todo steering、pruning，但不是完整队列 | 部分对齐；候选后补 |
 | Todo | eager todo、mid-run nudge、completion check | `todo_read/add/update`、open todo runtime reminder | MVP 可用；eager todo 未做 |
@@ -58,7 +58,7 @@ LCA 已经达到进入真实需求实现压测的门槛。下一步建议不是�
 - shell 不是沙箱，真正边界仍是 VM / OS / 人工审批。
 - prompt injection 仍是 Agent 通病，不信任仓库不能开 `yolo`。
 - 企业数据是否能发给 provider 由用户、provider、组织策略和运行宿主决定，LCA 不内置“一刀切禁止外发”。
-- token 预算仍是字符近似，不是模型 tokenizer 级精确预算。
+- token 预算已有本地估算 MVP，但仍不是 provider/model 专用 tokenizer 级精确预算。
 
 ## 剩余 P7 候选项
 
@@ -67,7 +67,7 @@ LCA 已经达到进入真实需求实现压测的门槛。下一步建议不是�
 | 完整 ToolChoiceQueue | hard/soft tool requirement、soft escalation | 高 | 中高 | 暂缓；若真实实现压测出现“关键工具长期不用/乱用”，再做 |
 | reviewer / self-review | reviewer/subagent/verification | 中高 | 中 | 暂缓；若真实实现压测出现 patch 质量或最终总结质量问题，再做轻量 post-diff reviewer |
 | path-scoped rules | 项目/目录级 context rules | 中 | 中 | 可作为后续 P7 小项，特别适合企业多模块项目 |
-| 精确 token budget | OMP token reserve / context window | 中 | 中 | 等长上下文真实失败后做；当前字符预算够用 |
+| provider/model 专用 tokenizer | OMP token reserve / context window | 中 | 中 | 当前已有本地 token budget MVP；等长上下文真实失败或模型上下文窗口差异明显时再接专用 tokenizer |
 | 更完整 LSP server | 真实 language server、rename、diagnostics | 高 | 高 | 后置；当前轻量 LSP 先服务定位 |
 | DAP/debugger | 调试器集成 | 中 | 高 | 后置 |
 | subagents | 分工探索/实现/review | 高 | 高 | 后置；当前个人本地第一阶段不做 |
