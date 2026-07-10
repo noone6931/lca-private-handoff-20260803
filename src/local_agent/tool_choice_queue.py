@@ -87,6 +87,7 @@ CANDIDATE_REMEDIATION_TOOL_NAMES = frozenset({*CANDIDATE_DELIVERY_TOOL_NAMES, "r
 CANDIDATE_TEST_TOOL_NAMES = frozenset({"run_tests", *CANDIDATE_STATE_TOOL_NAMES})
 CANDIDATE_DIFF_TOOL_NAMES = frozenset({"git_diff", *CANDIDATE_STATE_TOOL_NAMES})
 MAX_CANDIDATE_READ_REVISITS = 4
+MAX_CANDIDATE_PATCH_PREVIEW_FAILURES = 3
 POST_DIFF_REMEDIATION_TOOL_NAMES = frozenset(
     {
         "apply_patch",
@@ -255,6 +256,7 @@ class ToolChoiceDecision:
     preferred_tool_names: tuple[str, ...] = ()
     scoped_read_paths: tuple[str, ...] = ()
     scoped_read_budget: int | None = None
+    stop_message: str | None = None
 
     @property
     def needs_steering(self) -> bool:
@@ -263,6 +265,10 @@ class ToolChoiceDecision:
     @property
     def allowed_tools(self) -> frozenset[str]:
         return self.allowed_tool_names
+
+    @property
+    def should_stop(self) -> bool:
+        return self.stop_message is not None
 
 
 class RequiredToolGate:
@@ -369,6 +375,20 @@ def evaluate_tool_choice_state(
         preview_succeeded = _has_successful_patch_preview(results)
         preview_failed = any(result.name == "apply_patch" and result.is_error for result in results)
         if not wrote_workspace:
+            preview_failure_count = _candidate_patch_failure_count(results)
+            if not preview_succeeded and preview_failure_count >= MAX_CANDIDATE_PATCH_PREVIEW_FAILURES:
+                return ToolChoiceDecision(
+                    steering_required=False,
+                    allowed_tool_names=frozenset(),
+                    reason="autonomous_small_change_candidate patch retry budget exhausted.",
+                    rule_id="autonomous_small_change_patch_retry_exhausted",
+                    missing_requirements=("valid_patch_preview",),
+                    stop_message=(
+                        "Stopped before changing files: the autonomous candidate produced "
+                        f"{preview_failure_count} invalid apply_patch attempts without a successful preview. "
+                        "No workspace change was applied; rerun with a more specific target or inspect the candidate manually."
+                    ),
+                )
             if preview_failed and not preview_succeeded:
                 allowed = CANDIDATE_REMEDIATION_TOOL_NAMES
                 reason = (
@@ -667,6 +687,10 @@ def _has_successful_patch_preview(results: tuple[ToolResultSummary, ...]) -> boo
     )
 
 
+def _candidate_patch_failure_count(results: tuple[ToolResultSummary, ...]) -> int:
+    return sum(result.name == "apply_patch" and result.is_error for result in results)
+
+
 def _has_verification_after_last_write(
     name: str,
     seen_tool_names: set[str],
@@ -704,6 +728,7 @@ __all__ = [
     "CANDIDATE_TEST_TOOL_NAMES",
     "DEFAULT_TOOL_NAMES",
     "MAX_CANDIDATE_READ_REVISITS",
+    "MAX_CANDIDATE_PATCH_PREVIEW_FAILURES",
     "PLANNER_EXPLORE_TOOL_NAMES",
     "POST_DIFF_REMEDIATION_TOOL_NAMES",
     "READ_ONLY_FORBIDDEN_TOOL_NAMES",

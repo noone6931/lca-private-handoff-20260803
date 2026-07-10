@@ -8,6 +8,7 @@ from local_agent.tool_choice_queue import CANDIDATE_DIFF_TOOL_NAMES
 from local_agent.tool_choice_queue import CANDIDATE_REMEDIATION_TOOL_NAMES
 from local_agent.tool_choice_queue import CANDIDATE_TEST_TOOL_NAMES
 from local_agent.tool_choice_queue import MAX_CANDIDATE_READ_REVISITS
+from local_agent.tool_choice_queue import MAX_CANDIDATE_PATCH_PREVIEW_FAILURES
 from local_agent.tool_choice_queue import PLANNER_EXPLORE_TOOL_NAMES
 from local_agent.tool_choice_queue import POST_DIFF_REMEDIATION_TOOL_NAMES
 from local_agent.tool_choice_queue import ToolChoiceQueue
@@ -134,6 +135,25 @@ class ToolChoiceQueueTests(unittest.TestCase):
         )
         self.assertEqual(diff_decision.rule_id, "autonomous_small_change_diff")
         self.assertEqual(diff_decision.allowed_tool_names, CANDIDATE_DIFF_TOOL_NAMES)
+
+    def test_candidate_stops_after_bounded_invalid_patch_previews(self) -> None:
+        failed_attempts = [
+            ToolResultSummary("apply_patch", "Hash mismatch", is_error=True)
+            for _ in range(MAX_CANDIDATE_PATCH_PREVIEW_FAILURES)
+        ]
+        decision = evaluate_tool_choice_state(
+            task_kind="code-implementation",
+            prompt="请自己找一个极小的代码改进，并补充测试。",
+            tool_results=[
+                ToolResultSummary("read_file", "class UserService {}", path="src/UserService.java"),
+                ToolResultSummary("read_file", "class UserServiceTest {}", path="tests/UserServiceTest.java"),
+                *failed_attempts,
+            ],
+        )
+
+        self.assertTrue(decision.should_stop)
+        self.assertEqual(decision.rule_id, "autonomous_small_change_patch_retry_exhausted")
+        self.assertIn("No workspace change", decision.stop_message or "")
 
     def test_candidate_preview_error_allows_exact_read_remediation(self) -> None:
         decision = evaluate_tool_choice_state(

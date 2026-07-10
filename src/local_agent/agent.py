@@ -366,7 +366,14 @@ class AgentRuntime:
 
             self._record_llm_request()
             self._session.append("llm_request", {"step": step})
-            self._apply_tool_choice_queue_if_needed(deadline)
+            tool_choice_stop_message = self._apply_tool_choice_queue_if_needed(deadline)
+            if tool_choice_stop_message is not None:
+                return self._finish_run(
+                    tool_choice_stop_message,
+                    deadline,
+                    run_start_index,
+                    reason="tool_choice_queue",
+                )
             messages_for_model = self._messages_for_model(deadline)
             tools_for_model = self._tools_for_model()
             self._events.emit(
@@ -529,11 +536,11 @@ class AgentRuntime:
             allowed_names = _intersect_optional_tool_allowlist(allowed_names, self._run.tool_choice_allowed_tool_names)
         return allowed_names
 
-    def _apply_tool_choice_queue_if_needed(self, deadline: float | None = None) -> None:
+    def _apply_tool_choice_queue_if_needed(self, deadline: float | None = None) -> str | None:
         contract = self._run.requirement_contract
         if contract is None:
             self._run.tool_choice_allowed_tool_names = None
-            return
+            return None
         decision = self._run.tool_choice_queue.evaluate(
             task_kind=contract.task_kind,
             prompt=self._run.current_user_request or "",
@@ -544,6 +551,17 @@ class AgentRuntime:
         )
         self._run.tool_choice_allowed_tool_names = set(decision.allowed_tool_names)
         self._run.update_tool_choice_read_scope(decision.scoped_read_paths, decision.scoped_read_budget)
+        if decision.should_stop:
+            self._session.append(
+                "runtime_steering",
+                {
+                    "kind": "tool_choice_queue",
+                    "rule_id": decision.rule_id,
+                    "reason": decision.reason,
+                    "stop_message": decision.stop_message,
+                },
+            )
+            return decision.stop_message
         coverage = self._run.design_evidence_coverage.observe(
             queue_requires_steering=decision.steering_required,
             read_paths=(
@@ -566,18 +584,18 @@ class AgentRuntime:
                 self._messages.append({"role": "user", "content": coverage.message})
                 self._run.force_final_answer_without_tools = coverage.force_final_answer_without_tools
                 self._run.temporary_tool_allowlist = None
-                return
+                return None
         if self._run.force_final_answer_without_tools:
-            return
+            return None
         if not decision.steering_required:
-            return
+            return None
         signature = _tool_choice_steering_signature(decision, len(self._run.tool_choice_results))
         if signature in self._run.tool_choice_steering_signatures:
-            return
+            return None
         if _tool_choice_signature_count(self._run.tool_choice_steering_signatures, decision.rule_id) >= (
             MAX_TOOL_CHOICE_QUEUE_STEERS_PER_SIGNATURE
         ):
-            return
+            return None
         self._run.tool_choice_steering_signatures.add(signature)
         content = _tool_choice_steering_message(decision, self._run.current_user_request)
         self._messages.append({"role": "user", "content": content})
@@ -591,6 +609,7 @@ class AgentRuntime:
                 "reason": decision.reason,
             },
         )
+        return None
 
     def _available_registry_tool_names(self) -> tuple[str, ...]:
         if hasattr(self._registry, "tool_names"):
