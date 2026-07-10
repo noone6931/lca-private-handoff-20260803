@@ -50,3 +50,55 @@ source + test evidence -> dry_run preview -> write -> tests -> git diff
 1. 生产需求优先给出明确目标文件、行为和验收命令，走已验证的 preview -> write -> tests -> diff 链路。
 2. “自己找一个小改动”只用于 LCA 自身或隔离 worktree；它现在不会污染文件，但仍受 provider 规划质量影响。
 3. 后续不要为了让模型强行完成而放松 anchored patch、preview 或 runtime allowlist；优先改善 provider tool-call 兼容提示和明确任务的端到端压测。
+
+---
+
+# T-128A 动态工作目录真实压测（2026-07-11）
+
+## 范围与结论
+
+目标是在隔离 Git worktree 的同一 chat session 中，验证动态追加目录不会扩大 primary workspace 的 shell/Git/memory 权限，并验证 session 重开后 root 状态可以恢复：
+
+```text
+primary backend workspace
+  + /workspace add frontend
+  + /add-dir requirements
+  -> requirement + frontend + backend evidence
+  -> remove/reset
+  -> reopen same session and replay root state
+```
+
+结论：T-128A 通过。用户无需重启 session 即可追加、移除和重置只读/patch/LSP 可用根目录；动态 roots 会写入 session JSONL 并在同一 session 恢复。primary workspace 没有被切换，shell/Git 的执行根也没有随之扩大。`/move` 仍是后续 T-128B，不应误认为已实现。
+
+## 真实压测证据
+
+| 项 | 事实 |
+|---|---|
+| 隔离 worktree session | `20260710T234527128194Z` |
+| primary root | `/private/tmp/lca-t128-pressure.ZPZ0JN/worktree` |
+| 动态 roots | `/private/tmp/lca-t128-pressure.ZPZ0JN/frontend`、`/private/tmp/lca-t128-pressure.ZPZ0JN/requirements` |
+| 前端/需求/后端证据 | 成功 `read_file` requirement Markdown、`frontend/src/SettlementView.vue`、primary 的 `src/local_agent/tools/files.py` |
+| root 命令 | `/workspace add`、`/add-dir`、`/workspace list`、`/workspace remove`、`/workspace reset` 均成功，revision 从 1 递增到 4 |
+| primary 边界 | 模型额外调用的 `git_status` 返回空；未产生 worktree diff，未发生 write/exec 副作用 |
+| session replay | reset 后新增 requirements root（revision 5），退出并用同一 `--session` 重开，`/workspace list` 仍显示该 session root |
+| session 持久化 | JSONL 同时记录 `workspace_roots_changed` 与 `event_v1` 的 `WorkspaceRootsChanged` |
+
+## 压测观察、OMP 对照与措施
+
+| ID | 压测事实 | OMP 源码事实 | LCA 措施 | 状态 |
+|---|---|---|---|---|
+| PT-047 | 追加前端、需求目录后，不需要退出 session 就可把三份跨 root 证据交给模型。 | OMP 在 session 内维护 cwd/project context；目录变化不是让模型获得任意 filesystem 权限，而是运行时显式更新 project context。 | `WorkspaceContext` 保存 canonical primary/configured/session roots；仅前端命令可更新，ToolContext 与 provider workspace block 同步刷新。 | 已完成：`3ad198f`，真实复测通过。 |
+| PT-048 | add/remove/reset 的变化必须可恢复，否则恢复会话会出现“模型以为能读、工具却拒绝”的断裂。 | OMP 的 session history 与 runtime context 一起维持可恢复的会话状态。 | 每次操作追加 `workspace_roots_changed`，恢复时仅重放同一 primary 的最近快照；丢失路径跳过并发出错误事件。 | 已完成：单元测试 + 同 session 重开复测。 |
+| PT-049 | 只读任务的第一次最终回答被既有 CompletionAudit 引到“不能实现”的无关结论；二次追问时模型又多调用了 `git_status`。 | OMP 依靠 tool-choice/steering 约束病态流程，但不应把完成审计变成与原问题无关的模板回答。 | 记录为 P10 prompt/ToolChoiceQueue 收束质量问题；不在 T-128A 内新增主循环 guard，也不影响 dynamic-root 边界结论。 | 开放，等待后续真实任务样本归类。 |
+
+## 回归验证
+
+- T-128A 单元/Runtime/CLI/Protocol/Session 测试已覆盖：canonical roots、重复 add、remove/reset、busy rejection、ToolContext 刷新、provider root block 唯一、cross-root design evidence、session replay/missing root、前端命令与事件形状。
+- 实现提交前本地验证：`PYTHONPATH=src python3 -m unittest discover -s tests` 通过 321 项；`python3 -m compileall -q src tests` 与 `git diff --check` 通过。
+- 本次真实压测在独立 worktree 内完成，测试 fixture 与临时 state directory 将在压测结束后清理，不进入项目仓库。
+
+## 日用建议
+
+1. 后端 workspace 已开 chat 时，发现前端或需求目录可直接执行 `/workspace add "/path/to/project"` 或 `/add-dir "/path/to/requirements"`，再让 Agent 读取证据；不必重启。
+2. 用 `/workspace list` 核对当前 primary/configured/session 边界；临时关联目录做完后用 `/workspace remove PATH` 或 `/workspace reset` 收回。
+3. 需要让 shell、Git、startup rules、LSP primary 和项目 memory 一起切换时，等待 T-128B 的 `/move`；T-128A 故意不暗中改变这些根。
