@@ -4,11 +4,12 @@ from typing import Literal
 
 from .task_contract import RequirementContract
 from .tool_choice_queue import CODE_EVIDENCE_TOOL_NAMES
+from .tool_choice_queue import autonomous_small_change_candidate_paths
 from .tool_choice_queue import ToolResultSummary
 from .tool_choice_queue import WRITE_TOOL_NAMES
 
 
-PlannerPhase = Literal["not_applicable", "explore", "ready_to_implement", "verify"]
+PlannerPhase = Literal["not_applicable", "explore", "candidate_committed", "ready_to_implement", "verify"]
 
 
 def planner_phase(
@@ -23,6 +24,8 @@ def planner_phase(
         return "not_applicable"
     if _workspace_write_happened(tool_results):
         return "verify"
+    if autonomous_small_change_candidate_paths(contract.task_kind, prompt or "", tool_results):
+        return "candidate_committed"
     if _has_successful_code_evidence(tool_results):
         return "ready_to_implement"
     return "explore"
@@ -52,6 +55,14 @@ def render_planner_explore_context(
             [
                 "Phase instruction: do not write files yet. Use list_files/read_file/search_code/lsp_* and todo/ask_user when helpful.",
                 "Before editing, know which file or behavior the evidence supports.",
+            ]
+        )
+    elif phase == "candidate_committed":
+        lines.extend(
+            [
+                "Phase instruction: a small candidate is now evidence-backed. Stop broad exploration.",
+                "Use apply_patch dry_run=true, then the smallest relevant write, run_tests, and git_diff. "
+                "Only re-read the exact candidate file after an anchored preview/write error.",
             ]
         )
     elif phase == "ready_to_implement":

@@ -30,6 +30,29 @@ class PlannerExploreTests(unittest.TestCase):
 
         self.assertEqual(phase, "ready_to_implement")
 
+    def test_autonomous_small_change_moves_to_candidate_committed_after_source_and_test_reads(self) -> None:
+        contract = generate_requirement_contract("请自己找一个极小的代码改进，并补充测试。")
+
+        phase = planner_phase(
+            contract,
+            prompt=contract.objective,
+            tool_results=[
+                ToolResultSummary("read_file", "class UserService {}", path="src/UserService.java"),
+                ToolResultSummary("read_file", "class UserServiceTest {}", path="tests/UserServiceTest.java"),
+            ],
+        )
+        context = render_planner_explore_context(
+            contract,
+            prompt=contract.objective,
+            tool_results=[
+                ToolResultSummary("read_file", "class UserService {}", path="src/UserService.java"),
+                ToolResultSummary("read_file", "class UserServiceTest {}", path="tests/UserServiceTest.java"),
+            ],
+        )
+
+        self.assertEqual(phase, "candidate_committed")
+        self.assertIn("Stop broad exploration", context)
+
     def test_implementation_moves_to_verify_after_write(self) -> None:
         contract = generate_requirement_contract("请实现用户注册接口邮箱唯一性校验，并补充测试。")
 

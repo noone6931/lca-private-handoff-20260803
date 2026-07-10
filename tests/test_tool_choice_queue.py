@@ -3,6 +3,8 @@ from __future__ import annotations
 import unittest
 
 from local_agent.tool_choice_queue import READ_ONLY_FORBIDDEN_TOOL_NAMES
+from local_agent.tool_choice_queue import CANDIDATE_DELIVERY_TOOL_NAMES
+from local_agent.tool_choice_queue import CANDIDATE_REMEDIATION_TOOL_NAMES
 from local_agent.tool_choice_queue import PLANNER_EXPLORE_TOOL_NAMES
 from local_agent.tool_choice_queue import POST_DIFF_REMEDIATION_TOOL_NAMES
 from local_agent.tool_choice_queue import ToolChoiceQueue
@@ -67,6 +69,37 @@ class ToolChoiceQueueTests(unittest.TestCase):
 
         self.assertFalse(decision.steering_required)
         self.assertIn("apply_patch", decision.allowed_tool_names)
+
+    def test_autonomous_small_change_candidate_stops_broad_exploration_after_source_and_test_reads(self) -> None:
+        decision = evaluate_tool_choice_state(
+            task_kind="code-implementation",
+            prompt="请自己找一个极小的代码改进，并补充测试。",
+            tool_results=[
+                ToolResultSummary("read_file", "class UserService {}", path="src/UserService.java"),
+                ToolResultSummary("read_file", "class UserServiceTest {}", path="tests/UserServiceTest.java"),
+            ],
+        )
+
+        self.assertTrue(decision.steering_required)
+        self.assertEqual(decision.rule_id, "autonomous_small_change_candidate")
+        self.assertEqual(decision.allowed_tool_names, CANDIDATE_DELIVERY_TOOL_NAMES)
+        self.assertNotIn("list_files", decision.allowed_tool_names)
+        self.assertNotIn("search_code", decision.allowed_tool_names)
+
+    def test_candidate_preview_error_allows_exact_read_remediation(self) -> None:
+        decision = evaluate_tool_choice_state(
+            task_kind="code-implementation",
+            prompt="请自己找一个极小的代码改进，并补充测试。",
+            tool_results=[
+                ToolResultSummary("read_file", "class UserService {}", path="src/UserService.java"),
+                ToolResultSummary("read_file", "class UserServiceTest {}", path="tests/UserServiceTest.java"),
+                ToolResultSummary("apply_patch", "Hash mismatch", is_error=True),
+            ],
+        )
+
+        self.assertTrue(decision.steering_required)
+        self.assertEqual(decision.allowed_tool_names, CANDIDATE_REMEDIATION_TOOL_NAMES)
+        self.assertIn("read_file", decision.allowed_tool_names)
 
     def test_implementation_task_with_diff_and_tests_is_complete(self) -> None:
         decision = evaluate_tool_choice_state(

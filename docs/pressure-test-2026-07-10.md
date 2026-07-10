@@ -171,3 +171,13 @@ T-124 的 reset 修复了表面泄漏，但任务状态仍分散在 `AgentRuntim
 | 交付 | 最终回答按“改动、验证、diff、风险”四项给出，worktree 无额外文件修改。 |
 
 结论：P0b 的 RunContext/RunCollector 重构没有破坏受控小改闭环；第一个会话的核心问题仍是“模型自主选点时探索过宽”，不是 preview、写入、测试或 diff 管道失效。后续应以真实失败样本决定是否收紧现有 Planner/ToolChoiceQueue 阶段转换。
+
+## T-127 P0c 模块迁移与自主候选收束（20260711）
+
+本项先做模块级回归，不把它写成尚未发生的百炼端到端成功。T-126 的失败样本已经足以定义收束规则：用户明确要求“自行挑选极小改动”时，读到一份源码和一份测试证据后，不应继续目录/搜索/LSP 探索。
+
+| 维度 | 措施 | 当前验证 | 仍需验证 |
+|---|---|---|---|
+| 编排层薄化 | 新增 `startup_context.py`、`soft_tool_requirement.py`、`evidence.py`、`session_guard_state.py`；Evidence Ledger 由 RunContext 单一持有，session 级重复窗口不再散落在 Runtime。 | `agent.py` 从 3445 降至 2494 行；Startup、Evidence、SessionGuard 的行为均有独立或既有回归。 | 不把行数当唯一指标；后续仅在真实失败样本证明需要时继续迁出 memory consolidation。 |
+| 自主小改候选 | `ToolChoiceQueue` 在显式自主极小改动任务、且已有 source + test `read_file` 证据时返回 `autonomous_small_change_candidate`；Planner 显示 `candidate_committed`。 | Queue/Planner 单测锁定：初始 allowed tools 仅 `apply_patch`、`run_tests`、`git_diff`、todo 更新；preview 锚点失败才额外允许 `read_file` 精确恢复。 | 在隔离 worktree + 百炼复跑 T-126 原任务，检查是否按 `candidate_committed → preview → write → test → diff` 收束，并记录工具数/错误率。 |
+| OMP 对齐 | 采用 OMP 的“主循环编排、子系统持有状态、ToolChoiceQueue 在观察后收窄操作空间”的原则。 | 没有向 `agent.py` 新增第四套 guard；行为进入既有 Planner/Queue。 | 不照搬 OMP 的并发队列或多 Agent，只验证单 Agent 本地场景收益。 |

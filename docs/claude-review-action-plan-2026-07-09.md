@@ -14,8 +14,9 @@ T-113 至 T-121 的真实压测和回归已达到“先压测后拆分”的触�
 
 - T-123 已新增 `steering/tool_loop.py` / `steering/termination.py`，将重复调用、空 search/LSP、重复 read、语义路径探索的 soft steering 和 hard stop 收敛为一个显式优先级 registry。
 - 跨 root 设计证据的覆盖与 bounded final 收束已从 `AgentRuntime` 迁入 `design_evidence.py`。
-- T-124/T-125 已迁出 `run_collector.py` / `run_context.py`，并在每轮开始清空本轮 evidence/range state；任务合同、工具队列、证据、preview、steering 和 collector 都有单一 run 所有者。`agent.py` 已降至 3445 行，295 个 unittest、`compileall`、`git diff --check` 通过。
-- P0b 基线已完成；不继续叠加新的 runtime guard，下一步回到真实小改压测。若压测显示跨连续对话 guard 的语义仍不清晰，再单独抽 `SessionGuardState`。
+- T-124/T-125 已迁出 `run_collector.py` / `run_context.py`，并在每轮开始清空本轮 evidence/range state；任务合同、工具队列、证据、preview、steering 和 collector 都有单一 run 所有者。
+- T-127 完成 P0c：`startup_context.py`、`soft_tool_requirement.py`、`evidence.py` 和 `session_guard_state.py` 承接启动上下文、soft requirement、证据账本和跨 run guard 窗口；`agent.py` 已降至 2494 行，303 个 unittest、`compileall`、`git diff --check` 通过。
+- T-126 的自主选点失败进入既有 Planner/ToolChoiceQueue：证据形成 source + test 候选后进入 `candidate_committed`，只开放 preview/write/test/diff；preview 锚点失败才允许精确重读。下一步是隔离 worktree 的真实复跑，不继续叠加 runtime guard。
 
 ## 已立即采纳
 

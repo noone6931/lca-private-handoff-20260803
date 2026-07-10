@@ -1,37 +1,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any
 
 from .design_evidence import DesignEvidenceCoverageSteerer
-from .requirement_evidence import RequirementEvidence
+from .evidence import EvidenceLedger
+from .evidence import EvidenceRecord
 from .run_collector import RunCollector
-from .steering.final_answer import SourceEvidence
+from .soft_tool_requirement import SoftToolRequirement
 from .steering.tool_loop import ToolLoopSteeringRegistry
 from .task_contract import RequirementContract
 from .tool_choice_queue import ToolChoiceQueue
 from .tool_choice_queue import ToolResultSummary
-
-
-@dataclass
-class SoftToolRequirement:
-    kind: str
-    allowed_dirs: tuple[Path, ...]
-    candidate_files: tuple[Path, ...] = ()
-    steers: int = 0
-    satisfied: bool = False
-
-
-@dataclass(frozen=True)
-class EvidenceRecord:
-    tool: str
-    subject: str
-    summary: str
-    status: str = "ok"
-
-    def render(self) -> str:
-        return f"- [{self.status}] {self.tool} {self.subject}: {self.summary}"
 
 
 @dataclass
@@ -54,20 +34,79 @@ class RunContext:
     requirement_contract: RequirementContract | None = None
     requirement_contract_context: str = ""
     design_evidence_coverage: DesignEvidenceCoverageSteerer = field(default_factory=DesignEvidenceCoverageSteerer)
-    design_evidence_read_paths: list[str] = field(default_factory=list)
     soft_tool_requirement: SoftToolRequirement | None = None
     read_file_range_counts: dict[tuple[str, int, str], int] = field(default_factory=dict)
-    read_file_evidence_paths: list[str] = field(default_factory=list)
-    source_evidence: list[SourceEvidence] = field(default_factory=list)
-    pinned_requirement_evidence: list[RequirementEvidence] = field(default_factory=list)
-    successful_patch_preview_signatures: set[str] = field(default_factory=set)
-    strong_relevance_paths: list[str] = field(default_factory=list)
-    evidence_records: list[EvidenceRecord] = field(default_factory=list)
-    workspace_root_evidence_recorded: bool = False
+    evidence: EvidenceLedger = field(default_factory=EvidenceLedger)
     final_answer_steers: dict[str, int] = field(default_factory=dict)
     tool_loop_steering: ToolLoopSteeringRegistry = field(default_factory=ToolLoopSteeringRegistry)
     tool_choice_queue: ToolChoiceQueue = field(default_factory=ToolChoiceQueue)
     collector: RunCollector = field(default_factory=RunCollector)
+
+    # Compatibility views keep existing runtime tests and integrations stable while
+    # EvidenceLedger becomes the single owner of the mutable evidence state.
+    @property
+    def read_file_evidence_paths(self) -> list[str]:
+        return self.evidence.read_file_paths
+
+    @read_file_evidence_paths.setter
+    def read_file_evidence_paths(self, value: list[str]) -> None:
+        self.evidence.read_file_paths = value
+
+    @property
+    def design_evidence_read_paths(self) -> list[str]:
+        return self.evidence.design_read_paths
+
+    @design_evidence_read_paths.setter
+    def design_evidence_read_paths(self, value: list[str]) -> None:
+        self.evidence.design_read_paths = value
+
+    @property
+    def source_evidence(self):
+        return self.evidence.source_evidence
+
+    @source_evidence.setter
+    def source_evidence(self, value) -> None:
+        self.evidence.source_evidence = value
+
+    @property
+    def pinned_requirement_evidence(self):
+        return self.evidence.pinned_requirement_evidence
+
+    @pinned_requirement_evidence.setter
+    def pinned_requirement_evidence(self, value) -> None:
+        self.evidence.pinned_requirement_evidence = value
+
+    @property
+    def successful_patch_preview_signatures(self) -> set[str]:
+        return self.evidence.successful_patch_preview_signatures
+
+    @successful_patch_preview_signatures.setter
+    def successful_patch_preview_signatures(self, value: set[str]) -> None:
+        self.evidence.successful_patch_preview_signatures = value
+
+    @property
+    def strong_relevance_paths(self) -> list[str]:
+        return self.evidence.strong_relevance_paths
+
+    @strong_relevance_paths.setter
+    def strong_relevance_paths(self, value: list[str]) -> None:
+        self.evidence.strong_relevance_paths = value
+
+    @property
+    def evidence_records(self) -> list[EvidenceRecord]:
+        return self.evidence.records
+
+    @evidence_records.setter
+    def evidence_records(self, value: list[EvidenceRecord]) -> None:
+        self.evidence.records = value
+
+    @property
+    def workspace_root_evidence_recorded(self) -> bool:
+        return self.evidence.workspace_root_recorded
+
+    @workspace_root_evidence_recorded.setter
+    def workspace_root_evidence_recorded(self, value: bool) -> None:
+        self.evidence.workspace_root_recorded = value
 
     def begin(
         self,
@@ -98,15 +137,8 @@ class RunContext:
         self.requirement_contract = requirement_contract
         self.requirement_contract_context = requirement_contract_context
         self.design_evidence_coverage.reset(design_evidence_roots)
-        self.design_evidence_read_paths.clear()
         self.soft_tool_requirement = None
         self.read_file_range_counts.clear()
-        self.read_file_evidence_paths.clear()
-        self.source_evidence.clear()
-        self.pinned_requirement_evidence.clear()
-        self.successful_patch_preview_signatures.clear()
-        self.strong_relevance_paths.clear()
-        self.evidence_records.clear()
-        self.workspace_root_evidence_recorded = False
+        self.evidence.reset()
         self.final_answer_steers.clear()
         self.tool_loop_steering.reset()

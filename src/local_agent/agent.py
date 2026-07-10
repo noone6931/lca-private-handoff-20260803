@@ -29,6 +29,7 @@ from .compaction import valid_recent_messages as _valid_recent_messages
 from .config import AgentConfig
 from .config import normalize_approval_mode
 from .design_evidence import cross_root_design_evidence_roots
+from .evidence import EvidenceRecord
 from .llm import LlmError
 from .llm import OpenAICompatibleClient
 from .patch.anchored import display_workspace_path
@@ -37,18 +38,24 @@ from .patch.anchored import resolve_workspace_path
 from .planner import render_planner_explore_context
 from .patch_reviewer import review_input_summary
 from .patch_reviewer import review_input_metadata
-from .requirement_evidence import is_requirement_source_path
 from .requirement_evidence import render_pinned_requirement_evidence
-from .requirement_evidence import update_requirement_evidence
-from .run_context import EvidenceRecord
 from .run_context import RunContext
-from .run_context import SoftToolRequirement
+from .soft_tool_requirement import advance_soft_tool_requirement
+from .soft_tool_requirement import initial_soft_tool_requirement
+from .soft_tool_requirement import observe_soft_tool_requirement
+from .soft_tool_requirement import SoftToolRequirement
+from .soft_tool_requirement import soft_tool_requirement_message
+from .soft_tool_requirement import soft_tool_requirement_stop_message
+from .startup_context import build_system_prompt
+from .startup_context import load_sticky_rules
+from .startup_context import workspace_roots_context
 from .protocol.events import AgentEvent
 from .protocol.events import EventEmitter
 from .protocol.events import EventSink
 from .protocol.events import NullEventSink
 from .protocol.events import StderrEventSink
 from .session.jsonl_store import JsonlSessionStore
+from .session_guard_state import SessionGuardState
 from .state import default_config_root
 from .steering.final_answer import FinalAnswerContext
 from .steering.final_answer import FinalAnswerSteerer
@@ -61,7 +68,6 @@ from .steering.final_answer import ReadOnlyEvidenceSteerer
 from .steering.final_answer import RequirementEvidenceSteerer
 from .steering.final_answer import SourceEvidenceFalseNegativeSteerer
 from .steering.final_answer import request_mentions_todo
-from .steering.final_answer import SourceEvidence
 from .steering.final_answer import SourceGroundedNumericSteerer
 from .steering.final_answer import SteeringDecision
 from .steering.tool_loop import ToolLoopSignals
@@ -71,7 +77,6 @@ from .steering.termination import synthetic_tool_stop_message
 from .steering.termination import termination_message
 from .task_contract import generate_requirement_contract
 from .task_contract import render_contract_context
-from .tools.argument_normalization import normalize_compatibility_arguments
 from .tools import create_default_registry
 from .tools.base import ToolContext
 from .tools.base import ToolResult
@@ -79,7 +84,6 @@ from .tools.base import tool_state_dir
 from .tools.git import capture_git_baseline
 from .tools.relevance import is_analysis_only_request
 from .tools.relevance import is_code_implementation_request
-from .tools.relevance import is_low_relevance_patch_path
 from .tools.relevance import path_matches_any
 from .tools.relevance import request_mentions_config_or_path
 from .tool_choice_queue import ToolChoiceDecision
@@ -113,7 +117,6 @@ MEMORY_CONSOLIDATION_MAX_ITEMS_PER_BUCKET = 5
 MEMORY_CONSOLIDATION_MAX_ITEM_CHARS = 700
 MEMORY_CONSOLIDATION_BUCKETS = ("project", "decisions", "conventions", "learned")
 MEMORY_CONSOLIDATION_WRITE_TOOLS = {"memory_write", "learn"}
-STARTUP_MEMORY_NAMES = ("project", "decisions", "conventions", "learned")
 STARTUP_MEMORY_CHAR_LIMIT = 8000
 STARTUP_CONTEXT_CHAR_LIMIT = 8000
 STICKY_RULES_CHAR_LIMIT = 4000
@@ -121,21 +124,7 @@ CURRENT_TASK_CONTRACT_CHAR_LIMIT = 2000
 STARTUP_SKILLS_CHAR_LIMIT = 4000
 MAX_AUTHORED_SKILLS = 40
 MAX_SKILL_DESCRIPTION_CHARS = 320
-EVIDENCE_LEDGER_MAX_RECORDS = 30
-EVIDENCE_LEDGER_CONTEXT_RECORDS = 18
-EVIDENCE_LEDGER_CONTEXT_CHAR_LIMIT = 6000
-MAX_IDENTICAL_TOOL_CALLS_IN_RECENT_WINDOW = 3
-REPEAT_TOOL_CALL_WINDOW = 12
-MAX_USELESS_SEARCHES_PER_PATTERN_IN_RECENT_WINDOW = 8
-USELESS_SEARCH_PATTERN_WINDOW = 20
-MAX_USELESS_LSP_SYMBOL_QUERIES_IN_RECENT_WINDOW = 12
-USELESS_LSP_SYMBOL_QUERY_WINDOW = 24
-MAX_READ_FILE_CALLS_PER_FILE_IN_RECENT_WINDOW = 8
-READ_FILE_PATH_WINDOW = 14
 MAX_READ_FILE_SUCCESSES_PER_RANGE_IN_RUN = 3
-MAX_SEMANTIC_EXPLORATIONS_PER_KEY_IN_RECENT_WINDOW = 4
-SEMANTIC_EXPLORATION_WINDOW = 20
-MAX_SOFT_TOOL_REQUIREMENT_STEERS = 3
 MAX_NO_EDIT_FINAL_HYGIENE_STEERS = 2
 MAX_FINAL_STRUCTURE_STEERS = 2
 MAX_READ_ONLY_EVIDENCE_STEERS = 2
@@ -177,31 +166,6 @@ WORKFLOW_NUDGE_KEYWORDS = {
     "文档",
 }
 
-ALLOWED_DIR_REQUIREMENT_KEYWORDS = {
-    "requirement",
-    "requirements",
-    "spec",
-    "specs",
-    "prd",
-    "需求",
-    "需求目录",
-    "需求文档",
-    "读取需求",
-    "外部需求",
-}
-ALLOWED_DIR_DOC_SUFFIXES = {".md", ".txt", ".rst", ".html", ".htm"}
-ALLOWED_DIR_DOC_NAME_KEYWORDS = {
-    "requirement",
-    "requirements",
-    "spec",
-    "prd",
-    "handoff",
-    "需求",
-    "文档",
-    "说明",
-    "方案",
-}
-MAX_ALLOWED_DIR_DOC_CANDIDATES = 8
 READ_FILE_DRIFT_GUARD_KEYWORDS = {
     "analysis",
     "analyze",
@@ -262,16 +226,7 @@ class AgentRuntime:
         self._registry = create_default_registry()
         self._session_tool_approval: dict[str, str] = {}
         self._summary_cache: dict[str, str] = {}
-        self._recent_tool_call_signatures: list[str] = []
-        self._recent_useless_search_pattern_keys: list[str] = []
-        self._recent_useless_lsp_symbol_query_keys: list[str] = []
-        self._recent_read_file_path_keys: list[str] = []
-        self._recent_semantic_exploration_keys: list[str] = []
-        self._duplicate_tool_guard_hits = 0
-        self._useless_search_pattern_guard_hits = 0
-        self._useless_lsp_symbol_guard_hits = 0
-        self._repeated_read_file_guard_hits = 0
-        self._semantic_exploration_guard_hits = 0
+        self._session_guards = SessionGuardState()
         self._run = RunContext()
         self._last_run_summary: dict[str, Any] | None = None
         self._final_answer_steerers: tuple[FinalAnswerSteerer, ...] = (
@@ -299,11 +254,17 @@ class AgentRuntime:
             recorder=self._record_event_v1,
         )
         self._user_config_dir = default_config_root()
-        system_prompt = _system_prompt_with_startup_context(
+        system_prompt = build_system_prompt(
+            SYSTEM_PROMPT,
             config.workspace,
             self._user_config_dir,
             state_dir=self._state_dir,
             allowed_dirs=config.allowed_dirs,
+            startup_context_char_limit=STARTUP_CONTEXT_CHAR_LIMIT,
+            startup_memory_char_limit=STARTUP_MEMORY_CHAR_LIMIT,
+            startup_skills_char_limit=STARTUP_SKILLS_CHAR_LIMIT,
+            max_authored_skills=MAX_AUTHORED_SKILLS,
+            max_skill_description_chars=MAX_SKILL_DESCRIPTION_CHARS,
         )
         self._messages: list[dict[str, Any]] = [
             {"role": "system", "content": system_prompt},
@@ -380,10 +341,11 @@ class AgentRuntime:
         if model_prompt != prompt:
             self._session.append("workflow_nudge", {"content": WORKFLOW_NUDGE})
         self._run.read_file_drift_guard_enabled = _should_guard_repeated_read_file(prompt)
-        self._run.soft_tool_requirement = _initial_soft_tool_requirement(
+        self._run.soft_tool_requirement = initial_soft_tool_requirement(
             prompt,
             self._config.workspace,
             self._config.allowed_dirs,
+            max_skill_description_chars=MAX_SKILL_DESCRIPTION_CHARS,
         )
         if self._run.soft_tool_requirement is not None:
             self._append_soft_tool_requirement_message(self._run.soft_tool_requirement)
@@ -461,11 +423,7 @@ class AgentRuntime:
                 name = function.get("name") or ""
                 arguments = function.get("arguments") or "{}"
                 self._log_tool_start(name, arguments)
-                duplicate_hits_before = self._duplicate_tool_guard_hits
-                useless_search_hits_before = self._useless_search_pattern_guard_hits
-                useless_lsp_hits_before = self._useless_lsp_symbol_guard_hits
-                repeated_read_hits_before = self._repeated_read_file_guard_hits
-                semantic_exploration_hits_before = self._semantic_exploration_guard_hits
+                guard_hits_before = self._session_guards.counts()
                 try:
                     result = self._execute_tool_with_repeat_guard(name, arguments, tool_context)
                 except KeyboardInterrupt:
@@ -498,25 +456,19 @@ class AgentRuntime:
                             "Skipped because runtime patch review requires correction or verification before further work.",
                         )
                         break
-                duplicate_skipped = self._duplicate_tool_guard_hits > duplicate_hits_before
-                useless_search_skipped = self._useless_search_pattern_guard_hits > useless_search_hits_before
-                useless_lsp_skipped = self._useless_lsp_symbol_guard_hits > useless_lsp_hits_before
-                repeated_read_skipped = self._repeated_read_file_guard_hits > repeated_read_hits_before
-                semantic_exploration_skipped = (
-                    self._semantic_exploration_guard_hits > semantic_exploration_hits_before
-                )
+                guard_hits = self._session_guards.counts()
                 tool_loop_steering_signals = ToolLoopSignals(
-                    duplicate_skipped=duplicate_skipped,
+                    duplicate_skipped=guard_hits["duplicate_tool"] > guard_hits_before["duplicate_tool"],
                     duplicate_tool_name=name,
-                    duplicate_guard_hits=self._duplicate_tool_guard_hits,
-                    useless_search_skipped=useless_search_skipped,
-                    useless_search_guard_hits=self._useless_search_pattern_guard_hits,
-                    useless_lsp_skipped=useless_lsp_skipped,
-                    useless_lsp_guard_hits=self._useless_lsp_symbol_guard_hits,
-                    repeated_read_skipped=repeated_read_skipped,
-                    repeated_read_guard_hits=self._repeated_read_file_guard_hits,
-                    semantic_exploration_skipped=semantic_exploration_skipped,
-                    semantic_exploration_guard_hits=self._semantic_exploration_guard_hits,
+                    duplicate_guard_hits=guard_hits["duplicate_tool"],
+                    useless_search_skipped=guard_hits["useless_search_pattern"] > guard_hits_before["useless_search_pattern"],
+                    useless_search_guard_hits=guard_hits["useless_search_pattern"],
+                    useless_lsp_skipped=guard_hits["useless_lsp_symbol"] > guard_hits_before["useless_lsp_symbol"],
+                    useless_lsp_guard_hits=guard_hits["useless_lsp_symbol"],
+                    repeated_read_skipped=guard_hits["repeated_read_file"] > guard_hits_before["repeated_read_file"],
+                    repeated_read_guard_hits=guard_hits["repeated_read_file"],
+                    semantic_exploration_skipped=guard_hits["semantic_exploration"] > guard_hits_before["semantic_exploration"],
+                    semantic_exploration_guard_hits=guard_hits["semantic_exploration"],
                     read_file_evidence=self._read_file_evidence_summary(),
                     request_summary=self._final_answer_request_summary(),
                 )
@@ -731,13 +683,7 @@ class AgentRuntime:
             run_id,
             prompt,
             started_monotonic,
-            guard_start={
-                "duplicate_tool": self._duplicate_tool_guard_hits,
-                "useless_search_pattern": self._useless_search_pattern_guard_hits,
-                "useless_lsp_symbol": self._useless_lsp_symbol_guard_hits,
-                "repeated_read_file": self._repeated_read_file_guard_hits,
-                "semantic_exploration": self._semantic_exploration_guard_hits,
-            },
+            guard_start=self._session_guards.counts(),
             steer_start={
                 "duplicate_tool_final_answer": self._run.tool_loop_steering.count("duplicate_tool_final_answer"),
                 "useless_search_pattern_final_answer": self._run.tool_loop_steering.count("useless_search_pattern_final_answer"),
@@ -774,13 +720,7 @@ class AgentRuntime:
     def _finish_run_summary(self, reason: str) -> dict[str, Any]:
         payload = self._run.collector.finish(
             reason,
-            guard_values={
-                "duplicate_tool": self._duplicate_tool_guard_hits,
-                "useless_search_pattern": self._useless_search_pattern_guard_hits,
-                "useless_lsp_symbol": self._useless_lsp_symbol_guard_hits,
-                "repeated_read_file": self._repeated_read_file_guard_hits,
-                "semantic_exploration": self._semantic_exploration_guard_hits,
-            },
+            guard_values=self._session_guards.counts(),
             steering_values={
                 "duplicate_tool_final_answer": self._run.tool_loop_steering.count("duplicate_tool_final_answer"),
                 "useless_search_pattern_final_answer": self._run.tool_loop_steering.count("useless_search_pattern_final_answer"),
@@ -884,7 +824,7 @@ class AgentRuntime:
                 self._config.allowed_dirs,
                 self._run.current_user_request,
                 self._run.requirement_contract_context,
-                render_pinned_requirement_evidence(self._run.pinned_requirement_evidence),
+                render_pinned_requirement_evidence(self._run.evidence.pinned_requirement_evidence),
             )
         )
 
@@ -1048,7 +988,7 @@ class AgentRuntime:
         if read_file_range_key is not None:
             range_count = self._run.read_file_range_counts.get(read_file_range_key, 0)
             if range_count >= MAX_READ_FILE_SUCCESSES_PER_RANGE_IN_RUN:
-                self._repeated_read_file_guard_hits += 1
+                self._session_guards.record_hit("repeated_read_file")
                 return self._repeated_read_file_result(
                     _display_read_file_range_key(
                         read_file_range_key,
@@ -1058,65 +998,38 @@ class AgentRuntime:
                     range_count,
                     evidence=self._evidence_for_read_file_range(read_file_range_key),
                 )
-        if read_file_key is not None:
-            recent_path_count = self._recent_read_file_path_keys.count(read_file_key)
-            self._recent_read_file_path_keys.append(read_file_key)
-            self._recent_read_file_path_keys = self._recent_read_file_path_keys[-READ_FILE_PATH_WINDOW:]
-            if recent_path_count >= MAX_READ_FILE_CALLS_PER_FILE_IN_RECENT_WINDOW:
-                self._repeated_read_file_guard_hits += 1
-                return self._repeated_read_file_result(read_file_key, recent_path_count)
         signature = _tool_call_signature(name, arguments)
-        recent_count = self._recent_tool_call_signatures.count(signature)
-        self._recent_tool_call_signatures.append(signature)
-        self._recent_tool_call_signatures = self._recent_tool_call_signatures[-REPEAT_TOOL_CALL_WINDOW:]
-        if recent_count >= MAX_IDENTICAL_TOOL_CALLS_IN_RECENT_WINDOW:
-            self._duplicate_tool_guard_hits += 1
-            return self._duplicate_tool_result(name, recent_count)
         search_pattern_key = _search_pattern_key(name, arguments)
-        if search_pattern_key is not None:
-            recent_useless_count = self._recent_useless_search_pattern_keys.count(search_pattern_key)
-            if recent_useless_count >= MAX_USELESS_SEARCHES_PER_PATTERN_IN_RECENT_WINDOW:
-                self._useless_search_pattern_guard_hits += 1
-                return self._useless_search_pattern_result(search_pattern_key, recent_useless_count)
         lsp_symbol_query_key = _lsp_symbol_query_key(name, arguments)
-        if (
-            lsp_symbol_query_key is not None
-            and len(self._recent_useless_lsp_symbol_query_keys) >= MAX_USELESS_LSP_SYMBOL_QUERIES_IN_RECENT_WINDOW
-        ):
-            self._useless_lsp_symbol_guard_hits += 1
-            return self._useless_lsp_symbol_result(
-                lsp_symbol_query_key,
-                len(self._recent_useless_lsp_symbol_query_keys),
-            )
         semantic_exploration_key = _semantic_exploration_key(
             name,
             arguments,
             self._config.workspace,
             self._config.allowed_dirs,
         )
-        if semantic_exploration_key is not None:
-            recent_semantic_count = self._recent_semantic_exploration_keys.count(semantic_exploration_key)
-            self._recent_semantic_exploration_keys.append(semantic_exploration_key)
-            self._recent_semantic_exploration_keys = self._recent_semantic_exploration_keys[
-                -SEMANTIC_EXPLORATION_WINDOW:
-            ]
-            if recent_semantic_count >= MAX_SEMANTIC_EXPLORATIONS_PER_KEY_IN_RECENT_WINDOW:
-                self._semantic_exploration_guard_hits += 1
-                return self._semantic_exploration_result(semantic_exploration_key, recent_semantic_count)
+        decision = self._session_guards.before_tool(
+            read_file_key=read_file_key,
+            signature=signature,
+            search_pattern_key=search_pattern_key,
+            lsp_symbol_query_key=lsp_symbol_query_key,
+            semantic_exploration_key=semantic_exploration_key,
+        )
+        if decision is not None:
+            if decision.kind == "repeated_read_file":
+                return self._repeated_read_file_result(decision.subject, decision.prior_count)
+            if decision.kind == "duplicate_tool":
+                return self._duplicate_tool_result(name, decision.prior_count)
+            if decision.kind == "useless_search_pattern":
+                return self._useless_search_pattern_result(decision.subject, decision.prior_count)
+            if decision.kind == "useless_lsp_symbol":
+                return self._useless_lsp_symbol_result(decision.subject, decision.prior_count)
+            return self._semantic_exploration_result(decision.subject, decision.prior_count)
         result = self._registry.execute(name, arguments, tool_context)
-        if search_pattern_key is not None and result.useless and not result.is_error:
-            self._recent_useless_search_pattern_keys.append(search_pattern_key)
-            self._recent_useless_search_pattern_keys = self._recent_useless_search_pattern_keys[
-                -USELESS_SEARCH_PATTERN_WINDOW:
-            ]
-        if lsp_symbol_query_key is not None and not result.is_error:
-            if result.useless:
-                self._recent_useless_lsp_symbol_query_keys.append(lsp_symbol_query_key)
-                self._recent_useless_lsp_symbol_query_keys = self._recent_useless_lsp_symbol_query_keys[
-                    -USELESS_LSP_SYMBOL_QUERY_WINDOW:
-                ]
-            else:
-                self._recent_useless_lsp_symbol_query_keys = []
+        self._session_guards.record_result(
+            search_pattern_key=search_pattern_key,
+            lsp_symbol_query_key=lsp_symbol_query_key,
+            result=result,
+        )
         if read_file_range_key is not None and not result.is_error:
             self._run.read_file_range_counts[read_file_range_key] = (
                 self._run.read_file_range_counts.get(read_file_range_key, 0) + 1
@@ -1196,51 +1109,15 @@ class AgentRuntime:
         )
 
     def _record_read_file_evidence(self, name: str, arguments: str | dict[str, Any], result: ToolResult) -> None:
-        if name != "read_file" or result.is_error:
-            return
-        try:
-            parsed = arguments if isinstance(arguments, dict) else json.loads(arguments or "{}")
-        except json.JSONDecodeError:
-            return
-        if not isinstance(parsed, dict):
-            return
-        raw_path = parsed.get("path")
-        if not isinstance(raw_path, str) or not raw_path.strip():
-            return
-        resolved_path = resolve_workspace_path(
-            self._config.workspace,
-            raw_path.strip(),
-            self._config.allowed_dirs,
-        )
-        canonical_path = str(resolved_path)
-        if canonical_path not in self._run.design_evidence_read_paths:
-            self._run.design_evidence_read_paths.append(canonical_path)
-            self._run.design_evidence_read_paths = self._run.design_evidence_read_paths[-40:]
-        display_path = _display_read_file_evidence_path(
-            self._config.workspace,
-            raw_path.strip(),
-            self._config.allowed_dirs,
-        )
-        if display_path in self._run.read_file_evidence_paths:
-            self._run.source_evidence.append(SourceEvidence(display_path, result.content))
-            self._run.source_evidence = self._run.source_evidence[-40:]
-            self._maybe_pin_requirement_evidence(display_path, result.content)
-            return
-        self._run.read_file_evidence_paths.append(display_path)
-        self._run.read_file_evidence_paths = self._run.read_file_evidence_paths[-20:]
-        self._run.source_evidence.append(SourceEvidence(display_path, result.content))
-        self._run.source_evidence = self._run.source_evidence[-40:]
-        self._maybe_pin_requirement_evidence(display_path, result.content)
-
-    def _maybe_pin_requirement_evidence(self, path: str, content: str) -> None:
-        candidate_paths = self._run.soft_tool_requirement.candidate_files if self._run.soft_tool_requirement else ()
-        if not is_requirement_source_path(path, candidate_paths):
-            return
-        self._run.pinned_requirement_evidence = update_requirement_evidence(
-            self._run.pinned_requirement_evidence,
-            path=path,
-            content=content,
-        )
+        if name == "read_file":
+            requirement = self._run.soft_tool_requirement
+            self._run.evidence.record_read_file(
+                arguments=arguments,
+                result=result,
+                workspace=self._config.workspace,
+                allowed_dirs=self._config.allowed_dirs,
+                requirement_candidates=requirement.candidate_files if requirement is not None else (),
+            )
 
     def _record_tool_choice_result(self, name: str, arguments: str | dict[str, Any], result: ToolResult) -> None:
         self._run.tool_choice_tool_names.append(name)
@@ -1258,17 +1135,15 @@ class AgentRuntime:
         self._run.tool_choice_results = self._run.tool_choice_results[-80:]
 
     def _record_tool_evidence(self, name: str, arguments: str | dict[str, Any], result: ToolResult) -> None:
-        self._record_strong_relevance_paths(name, arguments, result)
-        record = _build_tool_evidence_record(
-            name,
-            arguments,
-            result,
-            self._config.workspace,
-            self._config.allowed_dirs,
+        record = self._run.evidence.record_tool(
+            name=name,
+            arguments=arguments,
+            result=result,
+            workspace=self._config.workspace,
+            allowed_dirs=self._config.allowed_dirs,
         )
-        if record is None:
-            return
-        self._append_evidence_record(record)
+        if record is not None:
+            self._append_evidence_record(record)
 
     def _invalidate_stale_source_evidence_after_write(
         self,
@@ -1276,29 +1151,17 @@ class AgentRuntime:
         arguments: str | dict[str, Any],
         result: ToolResult,
     ) -> None:
-        """Do not let a pre-write read_file snapshot contradict a later successful write."""
-
-        if result.is_error or name not in {"apply_patch", "rollback_patch", "write_file"}:
-            return
-        parsed = _parse_tool_arguments(arguments)
-        if name == "apply_patch" and parsed.get("dry_run"):
-            return
-        raw_path = parsed.get("path")
-        if not isinstance(raw_path, str) or not raw_path.strip():
-            return
-        display_path = _display_read_file_evidence_path(
-            self._config.workspace,
-            raw_path.strip(),
-            self._config.allowed_dirs,
+        self._run.evidence.invalidate_source_after_write(
+            name=name,
+            arguments=arguments,
+            result=result,
+            workspace=self._config.workspace,
+            allowed_dirs=self._config.allowed_dirs,
         )
-        self._run.source_evidence = [item for item in self._run.source_evidence if item.path != display_path]
 
     def _append_evidence_record(self, record: EvidenceRecord) -> None:
-        rendered = record.render()
-        if self._run.evidence_records and self._run.evidence_records[-1].render() == rendered:
+        if not self._run.evidence.append(record):
             return
-        self._run.evidence_records.append(record)
-        self._run.evidence_records = self._run.evidence_records[-EVIDENCE_LEDGER_MAX_RECORDS:]
         self._session.append(
             "evidence",
             {
@@ -1310,79 +1173,26 @@ class AgentRuntime:
         )
 
     def _record_workspace_root_evidence(self) -> None:
-        if self._run.workspace_root_evidence_recorded:
-            return
-        self._run.workspace_root_evidence_recorded = True
-        markers = _workspace_root_markers(self._config.workspace)
-        if not markers:
-            return
-        self._append_evidence_record(
-            EvidenceRecord(
-                tool="workspace",
-                subject="root",
-                summary="Primary workspace contains: " + ", ".join(markers) + ".",
-            )
-        )
-
-    def _record_strong_relevance_paths(
-        self,
-        name: str,
-        arguments: str | dict[str, Any],
-        result: ToolResult,
-    ) -> None:
-        if result.is_error:
-            return
-        paths: list[str] = []
-        if name == "search_code":
-            paths = [
-                path
-                for path in _first_search_result_paths(result.content, limit=8)
-                if not is_low_relevance_patch_path(path)
-            ]
-        elif name.startswith("lsp_"):
-            paths = _first_result_line_paths(result.content, limit=8)
-        for path in paths:
-            if path and path not in self._run.strong_relevance_paths:
-                self._run.strong_relevance_paths.append(path)
-        self._run.strong_relevance_paths = self._run.strong_relevance_paths[-30:]
+        record = self._run.evidence.record_workspace_root(self._config.workspace)
+        if record is not None:
+            self._append_evidence_record(record)
 
     def _patch_relevance_denial_reason(self, raw_path: str, resolved_path: Path) -> str | None:
-        display_path = display_workspace_path(
-            self._config.workspace,
+        display_path = display_workspace_path(self._config.workspace, resolved_path, self._config.allowed_dirs)
+        return self._run.evidence.patch_relevance_denial_reason(
+            raw_path,
             resolved_path,
-            self._config.allowed_dirs,
+            workspace=self._config.workspace,
+            allowed_dirs=self._config.allowed_dirs,
+            is_code_implementation_request=is_code_implementation_request(self._run.current_user_request),
+            request_mentions_config_or_path=request_mentions_config_or_path(self._run.current_user_request, display_path),
         )
-        if not path_matches_any(display_path, tuple(self._run.read_file_evidence_paths)):
-            return (
-                f"Patch relevance gate: refusing real apply_patch for {display_path!r} because that file "
-                "has not been read with read_file in this run. Call read_file on the exact target first; "
-                "apply_patch dry_run=true previews are still allowed."
-            )
-        if (
-            is_code_implementation_request(self._run.current_user_request)
-            and is_low_relevance_patch_path(display_path)
-            and not request_mentions_config_or_path(self._run.current_user_request, display_path)
-            and not path_matches_any(display_path, tuple(self._run.strong_relevance_paths))
-        ):
-            return (
-                f"Patch relevance gate: refusing real apply_patch for {display_path!r} because the current "
-                "request looks like a code implementation task, while the target looks like deployment/config "
-                "material. Before editing this path, establish direct relevance from source-code evidence or "
-                "ask the user to confirm a configuration/deployment edit. apply_patch dry_run=true previews are "
-                "still allowed."
-            )
-        return None
 
     def _patch_preview_denial_reason(self, args: dict[str, Any], resolved_path: Path) -> str | None:
-        if not _request_requires_patch_preview(self._run.current_user_request):
-            return None
-        signature = _patch_preview_signature(args, resolved_path)
-        if signature in self._run.successful_patch_preview_signatures:
-            return None
-        return (
-            "Preview contract: this task explicitly requires a patch preview before a real write. "
-            "Call apply_patch first with the identical path, tag, line range, old_text, new_text, and mode plus "
-            "dry_run=true. The preview must succeed before applying this patch."
+        return self._run.evidence.patch_preview_denial_reason(
+            args,
+            resolved_path,
+            preview_required=_request_requires_patch_preview(self._run.current_user_request),
         )
 
     def _record_successful_patch_preview(
@@ -1391,61 +1201,23 @@ class AgentRuntime:
         arguments: str | dict[str, Any],
         result: ToolResult,
     ) -> None:
-        if name != "apply_patch" or result.is_error:
-            return
-        parsed = _parse_tool_arguments(arguments)
-        try:
-            normalized, _ = normalize_compatibility_arguments(name, parsed)
-        except ValueError:
-            return
-        if not normalized.get("dry_run"):
-            return
-        raw_path = normalized.get("path")
-        if not isinstance(raw_path, str) or not raw_path.strip():
-            return
-        try:
-            resolved_path = resolve_workspace_path(
-                self._config.workspace,
-                raw_path,
-                self._config.allowed_dirs,
-            )
-        except PatchError:
-            return
-        self._run.successful_patch_preview_signatures.add(_patch_preview_signature(normalized, resolved_path))
+        self._run.evidence.record_successful_patch_preview(
+            name=name,
+            arguments=arguments,
+            result=result,
+            workspace=self._config.workspace,
+            allowed_dirs=self._config.allowed_dirs,
+        )
 
     def _read_file_evidence_summary(self) -> str:
-        if not self._run.read_file_evidence_paths:
-            return ""
-        recent_paths = self._run.read_file_evidence_paths[-12:]
-        lines = [
-            "",
-            "",
-            "Already read these files in this run; do not claim they were unread:",
-            *[f"- {path}" for path in recent_paths],
-            "If one of these files still needs deeper implementation review, say it was already read and specify the missing detail.",
-        ]
-        return "\n".join(lines)
+        return self._run.evidence.read_file_summary()
 
     def _evidence_for_read_file_range(self, range_key: tuple[str, int, str]) -> str:
         subject = _display_read_file_range_subject(range_key, self._config.workspace, self._config.allowed_dirs)
-        matches = [
-            record.render()
-            for record in reversed(self._run.evidence_records)
-            if record.tool == "read_file" and record.subject == subject
-        ]
-        return "\n".join(reversed(matches[:3]))
+        return self._run.evidence.evidence_for_read_file_range(subject)
 
     def _evidence_ledger_summary(self) -> str:
-        if not self._run.evidence_records:
-            return ""
-        lines = [
-            "[Evidence ledger]",
-            "Runtime-collected tool evidence for this run. Use it to distinguish evidence-backed facts from inference.",
-            "In final answers, cite exact paths only when they appear here or in tool results; label guessed files/classes as unverified.",
-            "Do not claim workspace root files are missing when workspace evidence lists them.",
-        ]
-        lines.extend(record.render() for record in self._run.evidence_records[-EVIDENCE_LEDGER_CONTEXT_RECORDS:])
-        return _one_line_block("\n".join(lines), max_chars=EVIDENCE_LEDGER_CONTEXT_CHAR_LIMIT)
+        return self._run.evidence.summary()
 
     def _final_answer_request_summary(self) -> str:
         if not self._run.current_user_request:
@@ -1483,11 +1255,11 @@ class AgentRuntime:
             run_start_index=run_start_index,
             requirement_contract=self._run.requirement_contract,
             tool_results=list(self._run.tool_choice_results),
-            read_file_evidence_paths=list(self._run.read_file_evidence_paths),
-            source_evidence=list(self._run.source_evidence),
-            requirement_evidence=list(self._run.pinned_requirement_evidence),
+            read_file_evidence_paths=list(self._run.evidence.read_file_paths),
+            source_evidence=list(self._run.evidence.source_evidence),
+            requirement_evidence=list(self._run.evidence.pinned_requirement_evidence),
             required_design_evidence_roots=self._run.design_evidence_coverage.roots,
-            design_evidence_read_paths=list(self._run.design_evidence_read_paths),
+            design_evidence_read_paths=list(self._run.evidence.design_read_paths),
             open_todos=self._open_todo_summary(),
             is_code_implementation_request=is_code_implementation_request(self._run.current_user_request),
             steer_counts=self._final_answer_steer_counts(),
@@ -1526,7 +1298,7 @@ class AgentRuntime:
         return self._run.final_answer_steers[kind]
 
     def _append_soft_tool_requirement_message(self, requirement: SoftToolRequirement) -> None:
-        content = _soft_tool_requirement_message(requirement)
+        content = soft_tool_requirement_message(requirement)
         self._messages.append({"role": "user", "content": content})
         self._session.append(
             "runtime_steering",
@@ -1545,10 +1317,9 @@ class AgentRuntime:
         requirement = self._run.soft_tool_requirement
         if requirement is None or requirement.satisfied:
             return False
-        if requirement.steers >= MAX_SOFT_TOOL_REQUIREMENT_STEERS:
+        if not advance_soft_tool_requirement(requirement):
             return False
-        requirement.steers += 1
-        content = _soft_tool_requirement_message(requirement)
+        content = soft_tool_requirement_message(requirement)
         self._messages.append({"role": "user", "content": content})
         self._session.append(
             "runtime_steering",
@@ -1560,48 +1331,22 @@ class AgentRuntime:
         return True
 
     def _soft_tool_requirement_stop_message(self) -> str:
-        requirement = self._run.soft_tool_requirement
-        if requirement is None:
-            return "Stopped because a required tool step was not completed."
-        if requirement.kind == "authored_skill":
-            return (
-                "Stopped because the task explicitly referenced a project skill, but the assistant did not "
-                "read that skill's SKILL.md after repeated reminders. Retry or explicitly ask it to read the "
-                "skill file first."
-            )
-        return (
-            "Stopped because the task required reading requirement/spec documents from an allowed directory, "
-            "but the assistant did not call read_file on any allowed-directory document after repeated reminders. "
-            "Retry with the same --allow-dir, or explicitly name the requirement file path."
-        )
+        return soft_tool_requirement_stop_message(self._run.soft_tool_requirement)
 
     def _observe_soft_tool_requirement(self, name: str, arguments: str | dict[str, Any], result: ToolResult) -> None:
         requirement = self._run.soft_tool_requirement
-        if requirement is None or requirement.satisfied or result.is_error:
-            return
-        if name != "read_file":
-            return
-        try:
-            parsed = arguments if isinstance(arguments, dict) else json.loads(arguments or "{}")
-        except json.JSONDecodeError:
-            return
-        if not isinstance(parsed, dict):
-            return
-        raw_path = parsed.get("path")
-        if not isinstance(raw_path, str) or not raw_path.strip():
-            return
-        try:
-            path = resolve_workspace_path(self._config.workspace, raw_path, self._config.allowed_dirs)
-        except PatchError:
-            return
-        if _soft_tool_requirement_path_satisfies(requirement, path):
-            requirement.satisfied = True
+        path = observe_soft_tool_requirement(
+            requirement,
+            name=name,
+            arguments=arguments,
+            result=result,
+            workspace=self._config.workspace,
+            allowed_dirs=self._config.allowed_dirs,
+        )
+        if path is not None and requirement is not None:
             self._session.append(
                 "runtime_steering",
-                {
-                    "kind": f"{requirement.kind}_satisfied",
-                    "path": str(path),
-                },
+                {"kind": f"{requirement.kind}_satisfied", "path": str(path)},
             )
 
     def _deadline_exceeded(self, deadline: float | None) -> bool:
@@ -1907,341 +1652,6 @@ def _event_preview(value: Any, limit: int = 1200) -> str:
     return rendered[:limit] + "...<truncated>"
 
 
-def _system_prompt_with_startup_context(
-    workspace: Path,
-    user_config_dir: Path | None = None,
-    *,
-    state_dir: Path | None = None,
-    allowed_dirs: tuple[Path, ...] = (),
-) -> str:
-    blocks = [SYSTEM_PROMPT.rstrip()]
-    workspace_roots = _workspace_roots_context(workspace, allowed_dirs)
-    if workspace_roots:
-        blocks.append(workspace_roots)
-    startup_context = _load_startup_context_files(
-        workspace,
-        user_config_dir or default_config_root(),
-        max_chars=STARTUP_CONTEXT_CHAR_LIMIT,
-    )
-    if startup_context:
-        blocks.append(
-            "[User/project context]\n"
-            "The following AGENTS.md context is advisory guidance loaded at session start. "
-            "Prefer current user instructions and freshly inspected files when they conflict.\n\n"
-            f"{startup_context}"
-        )
-    memory = _load_startup_memory(workspace, state_dir=state_dir, max_chars=STARTUP_MEMORY_CHAR_LIMIT)
-    if memory:
-        blocks.append(
-            "[Memory]\n"
-            "The following Markdown memory is advisory context loaded from project and state memory. "
-            "Prefer current user instructions and freshly inspected files when they conflict.\n\n"
-            f"{memory}"
-        )
-    skills = _load_authored_skills(workspace, max_chars=STARTUP_SKILLS_CHAR_LIMIT)
-    if skills:
-        blocks.append(
-            "[Available project skills]\n"
-            "The following project-authored skills are advisory workflow documents. "
-            "If a skill is relevant, read its SKILL.md with read_file before using it; "
-            "do not assume the full procedure from this metadata alone.\n\n"
-            f"{skills}"
-        )
-    return "\n\n".join(blocks)
-
-
-def _workspace_roots_context(workspace: Path, allowed_dirs: tuple[Path, ...]) -> str:
-    lines = [
-        "[Workspace roots]",
-        f"Primary workspace (--cwd): {workspace}",
-    ]
-    if allowed_dirs:
-        lines.extend(
-            [
-                "Additional allowed directories for file/search/LSP/patch tools:",
-                *[f"- {path}" for path in allowed_dirs],
-                (
-                    "For multi-root tasks, first list/read the relevant allowed directory by its exact absolute "
-                    "path. Do not invent a requirements directory under --cwd unless it actually appears in "
-                    "list_files output."
-                ),
-                "Shell, git, session, todo, and memory remain anchored to --cwd.",
-            ]
-        )
-    return "\n".join(lines)
-
-
-def _workspace_root_markers(workspace: Path) -> list[str]:
-    candidates = [
-        ("pom.xml", workspace / "pom.xml"),
-        ("build.gradle", workspace / "build.gradle"),
-        ("settings.gradle", workspace / "settings.gradle"),
-        ("package.json", workspace / "package.json"),
-        ("pyproject.toml", workspace / "pyproject.toml"),
-        ("src/main/java", workspace / "src" / "main" / "java"),
-        ("src/main/resources", workspace / "src" / "main" / "resources"),
-        ("src", workspace / "src"),
-    ]
-    markers: list[str] = []
-    for label, path in candidates:
-        if path.exists():
-            markers.append(label)
-    return markers
-
-
-def _load_startup_context_files(workspace: Path, user_config_dir: Path, *, max_chars: int) -> str:
-    if max_chars <= 0:
-        return ""
-    candidates = [
-        user_config_dir / "AGENTS.md",
-        workspace / ".local-agent" / "AGENTS.md",
-    ]
-    return _load_markdown_blocks(workspace, candidates, max_chars=max_chars, truncation_marker="...<earlier context truncated>\n")
-
-
-def _load_startup_memory(workspace: Path, *, state_dir: Path | None = None, max_chars: int) -> str:
-    if max_chars <= 0:
-        return ""
-    paths = _startup_memory_paths(_startup_memory_dirs(workspace, state_dir))
-    return _load_markdown_blocks(workspace, paths, max_chars=max_chars, truncation_marker="...<earlier memory truncated>\n")
-
-
-def _startup_memory_paths(memory_dirs: list[Path]) -> list[Path]:
-    paths: list[Path] = []
-    seen: set[Path] = set()
-    for memory_dir in memory_dirs:
-        priority_paths = [memory_dir / f"{name}.md" for name in STARTUP_MEMORY_NAMES]
-        extra_paths = sorted(
-            (
-                path
-                for path in memory_dir.glob("*.md")
-                if path.name not in {f"{name}.md" for name in STARTUP_MEMORY_NAMES}
-            ),
-            key=lambda path: path.name.lower(),
-        )
-        for path in [*priority_paths, *extra_paths]:
-            resolved = path.expanduser().resolve()
-            if resolved in seen:
-                continue
-            seen.add(resolved)
-            paths.append(path)
-    return paths
-
-
-def _startup_memory_dirs(workspace: Path, state_dir: Path | None) -> list[Path]:
-    candidates = [workspace / ".local-agent" / "memory"]
-    if state_dir is not None:
-        candidates.append(state_dir / "memory")
-    memory_dirs: list[Path] = []
-    seen: set[Path] = set()
-    for candidate in candidates:
-        resolved = candidate.expanduser().resolve()
-        if resolved in seen:
-            continue
-        seen.add(resolved)
-        if resolved.exists() and resolved.is_dir():
-            memory_dirs.append(resolved)
-    return memory_dirs
-
-
-def _load_sticky_rules(workspace: Path, user_config_dir: Path, *, max_chars: int) -> str:
-    if max_chars <= 0:
-        return ""
-    candidates = [
-        user_config_dir / "RULES.md",
-        workspace / ".local-agent" / "RULES.md",
-    ]
-    return _load_markdown_blocks(workspace, candidates, max_chars=max_chars, truncation_marker="...<earlier rules truncated>\n")
-
-
-def _load_markdown_blocks(
-    workspace: Path,
-    paths: list[Path],
-    *,
-    max_chars: int,
-    truncation_marker: str,
-) -> str:
-    blocks: list[str] = []
-    remaining = max_chars
-    for path in paths:
-        if remaining <= 0:
-            break
-        if not path.exists() or not path.is_file():
-            continue
-        try:
-            text = path.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            continue
-        text = text.replace("\x00", "").strip()
-        if not text:
-            continue
-        header = f"### {_display_context_path(workspace, path)}\n"
-        available = remaining - len(header)
-        if available <= 0:
-            break
-        clipped = _clip_context_text(text, max_chars=available, marker=truncation_marker)
-        block = f"{header}{clipped}"
-        blocks.append(block)
-        remaining -= len(block) + 2
-    return "\n\n".join(blocks)
-
-
-def _display_context_path(workspace: Path, path: Path) -> str:
-    try:
-        return str(path.relative_to(workspace))
-    except ValueError:
-        pass
-    try:
-        return "~/" + str(path.relative_to(Path.home()))
-    except ValueError:
-        return str(path)
-
-
-def _display_read_file_evidence_path(workspace: Path, raw_path: str, allowed_dirs: tuple[Path, ...]) -> str:
-    try:
-        path = resolve_workspace_path(workspace, raw_path, allowed_dirs)
-    except PatchError:
-        return raw_path
-    try:
-        return str(path.relative_to(workspace))
-    except ValueError:
-        return str(path)
-
-
-def _build_tool_evidence_record(
-    name: str,
-    arguments: str | dict[str, Any],
-    result: ToolResult,
-    workspace: Path,
-    allowed_dirs: tuple[Path, ...],
-) -> EvidenceRecord | None:
-    parsed = _parse_tool_arguments(arguments)
-    if result.is_error and name not in {
-        "apply_patch",
-        "git_diff",
-        "git_status",
-        "rollback_patch",
-        "run_tests",
-        "shell",
-        "write_file",
-    }:
-        return None
-    if name == "read_file" and not result.is_error:
-        return _read_file_evidence_record(parsed, result, workspace, allowed_dirs)
-    if name == "search_code" and not result.is_error:
-        return _search_code_evidence_record(parsed, result)
-    if name.startswith("lsp_") and not result.is_error:
-        return _lsp_evidence_record(name, parsed, result)
-    if name in {"apply_patch", "rollback_patch", "write_file"}:
-        return _file_change_evidence_record(name, parsed, result)
-    if name in {"git_diff", "git_status"}:
-        return _git_evidence_record(name, result)
-    if name in {"run_tests", "shell"}:
-        return _command_evidence_record(name, parsed, result)
-    return None
-
-
-def _read_file_evidence_record(
-    parsed: dict[str, Any],
-    result: ToolResult,
-    workspace: Path,
-    allowed_dirs: tuple[Path, ...],
-) -> EvidenceRecord | None:
-    raw_path = parsed.get("path")
-    if not isinstance(raw_path, str) or not raw_path.strip():
-        return None
-    subject = _display_read_file_evidence_path(workspace, raw_path.strip(), allowed_dirs)
-    header = _first_nonempty_line(result.content)
-    start_line = parsed.get("start_line") or 1
-    end_line = parsed.get("end_line")
-    if end_line:
-        line_range = f"lines {start_line}-{end_line}"
-    else:
-        line_range = f"from line {start_line}"
-    summary = f"{_one_line(header, max_chars=180)}; read {line_range}."
-    return EvidenceRecord(tool="read_file", subject=subject, summary=summary)
-
-
-def _search_code_evidence_record(parsed: dict[str, Any], result: ToolResult) -> EvidenceRecord | None:
-    pattern = str(parsed.get("pattern") or "").strip()
-    if not pattern:
-        return None
-    raw_path = str(parsed.get("path") or ".").strip() or "."
-    subject = f"pattern={pattern!r} path={raw_path!r}"
-    if result.useless or result.content.strip().startswith("No matches."):
-        return EvidenceRecord(
-            tool="search_code",
-            subject=subject,
-            summary="No matches returned.",
-            status="no_match",
-        )
-    paths = _first_search_result_paths(result.content, limit=5)
-    if paths:
-        summary = "Matched files: " + ", ".join(paths)
-    else:
-        summary = "Returned matches; inspect the search_code tool result for exact lines."
-    return EvidenceRecord(tool="search_code", subject=subject, summary=summary)
-
-
-def _lsp_evidence_record(name: str, parsed: dict[str, Any], result: ToolResult) -> EvidenceRecord | None:
-    subject = _lsp_subject(parsed)
-    if not subject:
-        subject = "query"
-    if result.useless or result.content.strip().startswith("No "):
-        return EvidenceRecord(
-            tool=name,
-            subject=subject,
-            summary=_one_line(result.content, max_chars=220),
-            status="no_match",
-        )
-    lines = _first_content_lines(result.content, limit=4)
-    summary = " | ".join(_one_line(line, max_chars=160) for line in lines)
-    if not summary:
-        summary = "Returned lightweight code navigation results."
-    return EvidenceRecord(tool=name, subject=subject, summary=summary)
-
-
-def _file_change_evidence_record(name: str, parsed: dict[str, Any], result: ToolResult) -> EvidenceRecord | None:
-    raw_path = parsed.get("path") if isinstance(parsed.get("path"), str) else ""
-    subject = raw_path or name
-    status = "error" if result.is_error else "ok"
-    if name == "apply_patch" and parsed.get("dry_run") and not result.is_error:
-        status = "preview"
-    summary = _one_line(_first_nonempty_line(result.content) or result.content, max_chars=260)
-    changed_files = _diff_changed_files(result.content, limit=4)
-    if changed_files:
-        summary = f"{summary}; diff files: {', '.join(changed_files)}"
-    return EvidenceRecord(tool=name, subject=str(subject), summary=summary, status=status)
-
-
-def _git_evidence_record(name: str, result: ToolResult) -> EvidenceRecord:
-    status = "error" if result.is_error else "ok"
-    if result.content.strip() in {"(empty)", "(empty diff)"}:
-        status = "empty"
-        summary = "No output."
-    else:
-        changed_files = _diff_changed_files(result.content, limit=6)
-        if changed_files:
-            summary = "Changed files: " + ", ".join(changed_files)
-        else:
-            summary = _one_line(result.content, max_chars=260)
-    return EvidenceRecord(tool=name, subject="workspace", summary=summary, status=status)
-
-
-def _command_evidence_record(name: str, parsed: dict[str, Any], result: ToolResult) -> EvidenceRecord:
-    command = str(parsed.get("command") or ("default test command" if name == "run_tests" else "command"))
-    status = "error" if result.is_error else "ok"
-    exit_code = _last_exit_code_line(result.content)
-    first_line = _first_nonempty_line(result.content)
-    summary_parts = []
-    if first_line:
-        summary_parts.append(_one_line(first_line, max_chars=180))
-    if exit_code:
-        summary_parts.append(exit_code)
-    summary = "; ".join(summary_parts) or "Command executed."
-    return EvidenceRecord(tool=name, subject=_one_line(command, max_chars=140), summary=summary, status=status)
-
-
 def _parse_tool_arguments(arguments: str | dict[str, Any]) -> dict[str, Any]:
     if isinstance(arguments, dict):
         return arguments
@@ -2250,103 +1660,6 @@ def _parse_tool_arguments(arguments: str | dict[str, Any]) -> dict[str, Any]:
     except json.JSONDecodeError:
         return {}
     return parsed if isinstance(parsed, dict) else {}
-
-
-def _lsp_subject(parsed: dict[str, Any]) -> str:
-    query = parsed.get("query")
-    symbol = parsed.get("symbol")
-    path = parsed.get("path")
-    parts = []
-    if isinstance(query, str) and query.strip():
-        parts.append(f"query={query.strip()!r}")
-    if isinstance(symbol, str) and symbol.strip():
-        parts.append(f"symbol={symbol.strip()!r}")
-    if isinstance(path, str) and path.strip():
-        parts.append(f"path={path.strip()!r}")
-    return " ".join(parts)
-
-
-def _first_search_result_paths(content: str, *, limit: int) -> list[str]:
-    paths: list[str] = []
-    for line in content.splitlines():
-        if not line or line.startswith("...") or line.startswith("Workspace roots:") or line.startswith("- "):
-            continue
-        path = line.split(":", 1)[0].strip()
-        if not path or path in paths:
-            continue
-        paths.append(path)
-        if len(paths) >= limit:
-            break
-    return paths
-
-
-def _first_result_line_paths(content: str, *, limit: int) -> list[str]:
-    paths: list[str] = []
-    for line in content.splitlines():
-        stripped = line.strip()
-        if not stripped or stripped.startswith("No ") or stripped.startswith("["):
-            continue
-        path = stripped.split(":", 1)[0].strip()
-        if not path or path in paths:
-            continue
-        paths.append(path)
-        if len(paths) >= limit:
-            break
-    return paths
-
-
-def _diff_changed_files(content: str, *, limit: int) -> list[str]:
-    files: list[str] = []
-    for line in content.splitlines():
-        path = ""
-        if line.startswith("diff --git "):
-            parts = line.split()
-            if len(parts) >= 4:
-                path = parts[3]
-        elif line.startswith("+++ b/"):
-            path = line[4:]
-        elif line.startswith("--- a/"):
-            path = line[4:]
-        if path.startswith("b/") or path.startswith("a/"):
-            path = path[2:]
-        if path and path != "/dev/null" and path not in files:
-            files.append(path)
-            if len(files) >= limit:
-                break
-    return files
-
-
-def _first_content_lines(content: str, *, limit: int) -> list[str]:
-    lines = []
-    for line in content.splitlines():
-        stripped = line.strip()
-        if not stripped:
-            continue
-        lines.append(stripped)
-        if len(lines) >= limit:
-            break
-    return lines
-
-
-def _first_nonempty_line(content: str) -> str:
-    lines = _first_content_lines(content, limit=1)
-    return lines[0] if lines else ""
-
-
-def _last_exit_code_line(content: str) -> str:
-    for line in reversed(content.splitlines()):
-        stripped = line.strip()
-        if stripped.startswith("[exit_code]"):
-            return stripped
-    return ""
-
-
-def _one_line_block(content: str, *, max_chars: int) -> str:
-    if len(content) <= max_chars:
-        return content
-    marker = "\n...<evidence ledger truncated>"
-    keep = max(0, max_chars - len(marker))
-    return content[:keep].rstrip() + marker
 
 
 def _clip_memory_text(text: str, *, max_chars: int) -> str:
@@ -2360,125 +1673,6 @@ def _clip_context_text(text: str, *, max_chars: int, marker: str) -> str:
     if keep == 0:
         return marker[:max_chars]
     return marker + text[-keep:].lstrip()
-
-
-def _load_authored_skills(workspace: Path, *, max_chars: int) -> str:
-    skills_dir = workspace / ".local-agent" / "skills"
-    if max_chars <= 0 or not skills_dir.exists() or not skills_dir.is_dir():
-        return ""
-    lines: list[str] = []
-    remaining = max_chars
-    for skill_file in _iter_authored_skill_files(skills_dir):
-        metadata = _read_skill_metadata(workspace, skill_file)
-        if metadata is None or metadata.get("hide"):
-            continue
-        name = str(metadata["name"])
-        description = str(metadata["description"])
-        source = str(skill_file.relative_to(workspace))
-        rendered = f"- {name}: {description} Source: {source}"
-        if len(rendered) + 1 > remaining:
-            break
-        lines.append(rendered)
-        remaining -= len(rendered) + 1
-        if len(lines) >= MAX_AUTHORED_SKILLS:
-            break
-    return "\n".join(lines)
-
-
-def _iter_authored_skill_files(skills_dir: Path) -> list[Path]:
-    skill_files: list[Path] = []
-    for child in sorted(skills_dir.iterdir(), key=lambda item: item.name.lower()):
-        if not child.is_dir():
-            continue
-        skill_file = child / "SKILL.md"
-        if skill_file.is_file():
-            skill_files.append(skill_file)
-    return skill_files
-
-
-def _read_skill_metadata(workspace: Path, skill_file: Path) -> dict[str, str | bool] | None:
-    try:
-        skill_file.resolve().relative_to(workspace.resolve())
-    except (OSError, ValueError):
-        return None
-    try:
-        raw = skill_file.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
-        return None
-    frontmatter = _parse_frontmatter(raw)
-    fallback_name = skill_file.parent.name
-    name = _clean_skill_name(str(frontmatter.get("name") or fallback_name))
-    if not name:
-        return None
-    description = _clean_skill_description(str(frontmatter.get("description") or _fallback_skill_description(raw)))
-    if not description:
-        return None
-    hide = _parse_bool(frontmatter.get("hide"))
-    return {"name": name, "description": description, "hide": hide}
-
-
-def _parse_frontmatter(text: str) -> dict[str, str]:
-    lines = text.splitlines()
-    if not lines or lines[0].strip() != "---":
-        return {}
-    data: dict[str, str] = {}
-    for line in lines[1:]:
-        if line.strip() == "---":
-            break
-        if ":" not in line:
-            continue
-        key, value = line.split(":", 1)
-        key = key.strip().lower()
-        value = _strip_wrapping_quotes(value.strip())
-        if key in {"name", "description", "hide"}:
-            data[key] = value
-    return data
-
-
-def _fallback_skill_description(text: str) -> str:
-    in_frontmatter = False
-    frontmatter_done = False
-    for raw_line in text.splitlines():
-        line = raw_line.strip()
-        if line == "---" and not frontmatter_done:
-            in_frontmatter = not in_frontmatter
-            if not in_frontmatter:
-                frontmatter_done = True
-            continue
-        if in_frontmatter or not line:
-            continue
-        if line.startswith("#"):
-            continue
-        return line
-    return ""
-
-
-def _strip_wrapping_quotes(value: str) -> str:
-    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
-        return value[1:-1]
-    return value
-
-
-def _clean_skill_name(name: str) -> str:
-    cleaned = name.strip()[:64]
-    if not cleaned or not all(char.isalnum() or char in {"-", "_"} for char in cleaned):
-        return ""
-    return cleaned
-
-
-def _clean_skill_description(description: str) -> str:
-    cleaned = " ".join(description.replace("\x00", "").split())
-    if len(cleaned) > MAX_SKILL_DESCRIPTION_CHARS:
-        cleaned = cleaned[: MAX_SKILL_DESCRIPTION_CHARS - 14].rstrip() + "...<truncated>"
-    return cleaned
-
-
-def _parse_bool(value: object) -> bool:
-    if isinstance(value, bool):
-        return value
-    if value is None:
-        return False
-    return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
 def _messages_with_runtime_todo_reminder(
@@ -2512,7 +1706,7 @@ def _messages_with_runtime_context(
     pinned_requirement_evidence: str = "",
 ) -> list[dict[str, Any]]:
     updated = list(messages)
-    workspace_roots = _workspace_roots_context(workspace, allowed_dirs)
+    workspace_roots = workspace_roots_context(workspace, allowed_dirs)
     if workspace_roots:
         updated = _messages_with_workspace_roots(updated, workspace_roots)
     if current_user_request:
@@ -2526,7 +1720,7 @@ def _messages_with_runtime_context(
         updated = _messages_with_planner_explore_context(updated, planner_explore_context)
     if evidence_ledger:
         updated = _messages_with_evidence_ledger(updated, evidence_ledger)
-    sticky_rules = _load_sticky_rules(workspace, user_config_dir, max_chars=STICKY_RULES_CHAR_LIMIT)
+    sticky_rules = load_sticky_rules(workspace, user_config_dir, max_chars=STICKY_RULES_CHAR_LIMIT)
     if sticky_rules:
         updated = _messages_with_sticky_rules(updated, sticky_rules)
     return _messages_with_runtime_todo_reminder(updated, todo_summary)
@@ -2770,151 +1964,6 @@ def _should_guard_repeated_read_file(prompt: str) -> bool:
     if any(keyword in lowered for keyword in READ_FILE_DRIFT_GUARD_EDIT_KEYWORDS):
         return False
     return any(keyword in lowered for keyword in READ_FILE_DRIFT_GUARD_KEYWORDS)
-
-
-def _initial_soft_tool_requirement(
-    prompt: str,
-    workspace: Path,
-    allowed_dirs: tuple[Path, ...],
-) -> SoftToolRequirement | None:
-    skill_file = _mentioned_authored_skill_file(prompt, workspace)
-    if skill_file is not None:
-        return SoftToolRequirement(
-            kind="authored_skill",
-            allowed_dirs=(),
-            candidate_files=(skill_file,),
-        )
-    if not allowed_dirs:
-        return None
-    lowered = prompt.lower()
-    if not any(keyword in lowered for keyword in ALLOWED_DIR_REQUIREMENT_KEYWORDS):
-        return None
-    return SoftToolRequirement(
-        kind="allowed_dir_requirements",
-        allowed_dirs=allowed_dirs,
-        candidate_files=_allowed_dir_doc_candidates(allowed_dirs),
-    )
-
-
-def _mentioned_authored_skill_file(prompt: str, workspace: Path) -> Path | None:
-    lowered = prompt.lower()
-    skills_dir = workspace / ".local-agent" / "skills"
-    if not lowered.strip() or not skills_dir.exists() or not skills_dir.is_dir():
-        return None
-    for skill_file in _iter_authored_skill_files(skills_dir):
-        metadata = _read_skill_metadata(workspace, skill_file)
-        if metadata is None or metadata.get("hide"):
-            continue
-        names = {
-            str(metadata["name"]).lower(),
-            skill_file.parent.name.lower(),
-        }
-        if any(name and name in lowered for name in names):
-            return skill_file
-    return None
-
-
-def _allowed_dir_doc_candidates(allowed_dirs: tuple[Path, ...]) -> tuple[Path, ...]:
-    candidates: list[Path] = []
-    for root in allowed_dirs:
-        if not root.exists() or not root.is_dir():
-            continue
-        for path in _iter_allowed_dir_files(root):
-            if path.suffix.lower() not in ALLOWED_DIR_DOC_SUFFIXES:
-                continue
-            candidates.append(path)
-    candidates.sort(key=_allowed_dir_doc_sort_key)
-    return tuple(candidates[:MAX_ALLOWED_DIR_DOC_CANDIDATES])
-
-
-def _iter_allowed_dir_files(root: Path):
-    skipped = {".git", ".local-agent", ".venv", "__pycache__", "node_modules", "target", "dist", "build"}
-    for child in sorted(root.iterdir(), key=lambda item: (not item.is_dir(), item.name.lower())):
-        if child.is_dir():
-            if child.name in skipped or child.name.startswith("."):
-                continue
-            yield from _iter_allowed_dir_files(child)
-        elif child.is_file():
-            yield child
-
-
-def _allowed_dir_doc_sort_key(path: Path) -> tuple[int, str]:
-    lowered = path.name.lower()
-    score = 0 if any(keyword in lowered for keyword in ALLOWED_DIR_DOC_NAME_KEYWORDS) else 1
-    return (score, str(path).lower())
-
-
-def _soft_tool_requirement_message(requirement: SoftToolRequirement) -> str:
-    if requirement.kind == "authored_skill":
-        lines = [
-            "[Runtime tool requirement]",
-            "This task explicitly references a project-authored skill. Read the skill instructions before applying it.",
-            "Use only read_file until this requirement is satisfied.",
-            "",
-            "Required skill file:",
-            *[f"- {path}" for path in requirement.candidate_files],
-            "",
-            "Required next evidence: call read_file on the relevant SKILL.md file above. "
-            "Do not answer from skill metadata alone.",
-        ]
-        return "\n".join(lines)
-    lines = [
-        "[Runtime tool requirement]",
-        (
-            "This task explicitly references external requirements/spec documents. "
-            "Before searching or concluding from the primary code workspace, read evidence from an allowed directory."
-        ),
-        "Use only list_files/read_file until this requirement is satisfied.",
-        "",
-        "Allowed directories:",
-        *[f"- {path}" for path in requirement.allowed_dirs],
-    ]
-    if requirement.candidate_files:
-        lines.extend(
-            [
-                "",
-                "Candidate requirement/spec files; prefer read_file on the most relevant ones first:",
-                *[f"- {path}" for path in requirement.candidate_files],
-            ]
-        )
-    lines.extend(
-        [
-            "",
-            "Required next evidence: call read_file with a path under one of the allowed directories. "
-            "Do not answer or search the primary code workspace until at least one allowed-directory document has been read.",
-        ]
-    )
-    return "\n".join(lines)
-
-
-def _soft_tool_requirement_path_satisfies(requirement: SoftToolRequirement, path: Path) -> bool:
-    if requirement.kind == "authored_skill":
-        return _path_matches_any_candidate(path, requirement.candidate_files)
-    if requirement.kind == "allowed_dir_requirements":
-        return _path_is_under_any(path, requirement.allowed_dirs)
-    return False
-
-
-def _path_matches_any_candidate(path: Path, candidates: tuple[Path, ...]) -> bool:
-    resolved = path.resolve()
-    for candidate in candidates:
-        try:
-            if resolved == candidate.resolve():
-                return True
-        except OSError:
-            continue
-    return False
-
-
-def _path_is_under_any(path: Path, roots: tuple[Path, ...]) -> bool:
-    resolved = path.resolve()
-    for root in roots:
-        try:
-            resolved.relative_to(root.resolve())
-            return True
-        except ValueError:
-            continue
-    return False
 
 
 def _messages_to_memory_transcript(

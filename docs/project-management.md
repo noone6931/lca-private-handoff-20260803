@@ -17,10 +17,10 @@ python3 scripts/sync_project_excel.py
 | 字段 | 当前值 | 说明 |
 |---|---|---|
 | 最终目标 | 个人本地编程助手 Agent | 本地优先、封闭 VM 可用、只访问指定 AI API，能读代码、搜代码、改代码、跑测试、生成 diff、沉淀项目记忆。 |
-| 当前阶段 | P10：Intelligence Runtime 骨架 + P0b 架构还债 | T-123 已完成 ToolLoop steering 拆分；T-124/T-125 已迁出 RunCollector，并将任务合同、队列、证据、preview、steering 和本轮 metadata 收拢为 `RunContext`，`agent.py` 现为 3445 行。下一步回到真实小改压测。详见 `docs/pressure-test-2026-07-10.md`。 |
+| 当前阶段 | P10：Intelligence Runtime 骨架 + P0c 架构还债 | T-123~T-127 已抽 ToolLoop、RunCollector/RunContext、StartupContext、EvidenceLedger、SoftToolRequirement 与 SessionGuardState；`agent.py` 现为 2494 行。下一步在隔离 worktree 复跑自主小改的 `candidate_committed → preview → write → test → diff` 链路。详见 `docs/pressure-test-2026-07-10.md`。 |
 | 推荐入口 | `./agent "阅读当前项目"` | 自动设置 `PYTHONPATH=src`，默认当前目录为 workspace。 |
 | Token 配置 | 环境变量 / `--env-file` / `.env` | `./agent` 会自动加载安装目录 `.env`，也可显式传 `--env-file`；真实环境变量优先。 |
-| 测试数 | 295 | 完整 unittest、compileall、xlsx 同步和 diff check 已通过。 |
+| 测试数 | 303 | 完整 unittest、compileall、xlsx 同步和 diff check 已通过。 |
 | 默认 budget_seconds | 600 | 单次任务默认 10 分钟墙钟预算；`--budget-seconds 0` 可关闭。 |
 | 默认 max_steps | 0 | 表示不限步；仅在用户显式设置时作为防失控保险丝。 |
 | 预算执行 | 细粒度 | LLM 请求和 shell/run_tests timeout 会按剩余预算夹紧；deadline 到期会补齐未执行工具结果。 |
@@ -63,7 +63,7 @@ python3 scripts/sync_project_excel.py
 | P7 | 高级工程能力轻量版 | OMP 风格 auto summary、多语言 LSP/light fallback、LSP 兼容别名、LSP best-effort 置信度提示、multi-root workspace roots、allowed-dir soft tool requirement、startup context/rules、startup memory、learn、memory consolidation、authored skills discovery、重复工具调用熔断、duplicate-tool forced-final steering、同文件切片读取漂移 guard、空搜索词跨路径 guard、path escape roots hint、LSP 空 query guard、Current task contract、Evidence Ledger、tool result pruning、todo steering、跨项目 env-file、runtime state dir、真实项目压测记录、relevance gate / diff reviewer、implementation-quality reviewer、safe new-file policy、no-edit final hygiene | 已完成 MVP 版 | 100% | 高级轻量能力主线已收口，后续按真实压测失败形态补 path-scoped rules、完整 reviewer 或 ToolChoiceQueue；架构债按 OMP 原则渐进拆 `agent.py`。 |
 | P8 | 前端协议与交互基础 | Event/Command Protocol、event replay、terminal-native frontend | 已完成 MVP 版 | 100% | T-076/T-077 已完成；完整 async command bus 和更重 UI 后置，下一步按用户项目边界做项目清单分析压测。 |
 | P9 | 真实需求使用准备 | 项目边界分析、用户确认项目范围、源码验证、实现设计 | 进行中 | 40% | T-078 已完成项目边界分析 MVP；T-083 已固化压测模板；T-084 已完成 qwen3-coder-next 只读源码验证压测并记录新问题。 |
-| P10 | Intelligence Runtime 骨架 | RequirementContract、CompletionAudit、MiniToolChoiceQueue、Planner/Explore、Reviewer | 进行中 | 94% | 已完成 RequirementContract、CompletionAudit、MiniToolChoiceQueue、Planner/Explore、post-diff Patch Reviewer、no-edit evidence gate、ToolRegistry 参数归一、preview contract、numeric guard scope、quoted literal分类、pinned requirement evidence 与 cross-root evidence matrix；T-123 已完成 P0a ToolLoop steering registry，T-124/T-125 已完成 P0b RunCollector / RunContext 收拢。下一步以真实小改验证协同效果。 |
+| P10 | Intelligence Runtime 骨架 | RequirementContract、CompletionAudit、MiniToolChoiceQueue、Planner/Explore、Reviewer | 进行中 | 96% | 已完成 RequirementContract、CompletionAudit、MiniToolChoiceQueue、Planner/Explore、post-diff Patch Reviewer、no-edit evidence gate、ToolRegistry 参数归一、preview contract、pinned requirement evidence 与 cross-root evidence matrix；T-123~T-127 已完成 ToolLoop、RunCollector/RunContext、StartupContext、EvidenceLedger 与 SessionGuardState 模块化，并为自主小改加入 `candidate_committed` 收束。下一步以隔离 worktree 真实复跑验证协同效果。 |
 
 ## 已完成功能
 
@@ -258,6 +258,7 @@ python3 scripts/sync_project_excel.py
 | T-124 | P0 | P10 | P0b RunCollector 与跨 run evidence reset | 已完成并回归 | Agent + 小红 | review 发现连续终端任务会保留上一轮 `read_file` 证据、relevance、evidence ledger 与“本轮范围读取次数”，可能让下一任务误判证据已满足。 | 新增 `run_collector.py` 承接 RunStats、compaction/tool 计数和 summary 计算；每轮开始清空本轮 evidence、preview、relevance 和 read range 状态，保留明确属于 session 的审批与重复调用历史。新增跨 run 泄漏和 collector 单测；`agent.py` 降至 3538 行，294 个 unittest 通过。 |
 | T-125 | P0 | P10 | P0b RunContext 状态收拢 | 已完成并回归 | Agent | `AgentRuntime` 仍持有任务合同、工具队列、证据、preview、final steering 和 run metadata，P0b 尚未完成单一任务状态边界。 | 新增 `run_context.py`，统一当前 run 的 deadline/baseline、contract、queue、设计证据、Evidence Ledger、preview、final steering、ToolLoop registry 和 Collector；session 消息、审批与 recent guard 保留 Runtime。新增 RunContext reset 回归；`agent.py` 降至 3445 行，295 个 unittest 通过。 |
 | T-126 | P0 | P10 | P0b 后真实小改压测 | 部分通过，继续观察自主选点 | Agent | 自主选点 session `20260710T154146640779Z` 多轮读 `test_patch.py` / `anchored.py` 后未进入交付；精确目标复跑 `20260710T154432520729Z` 则完成 todo、read、dry_run、真实 patch、定向 3 测试和 diff，仅改一份测试文件。 | P0b 未破坏受控小改闭环；下一次真实失败若仍是探索过宽，优先收紧已有 Planner/ToolChoiceQueue/ToolLoop registry 的阶段转换，不在 `agent.py` 新增控制分支。 |
+| T-127 | P0 | P10 | P0c 状态边界迁移与自主小改候选收束 | 已完成单元回归，待真实复跑 | Agent | T-126 暴露自主选点会在已读 source/test 后继续宽泛探索；review 也要求迁出 Evidence、Startup、session guard state。 | 新增 `startup_context.py`、`soft_tool_requirement.py`、`evidence.py`、`session_guard_state.py`；Queue 在明确自主小改且 source+test 已读后进入 `candidate_committed`，只开放 preview/write/test/diff，preview 锚点失败才允许精确重读。`agent.py` 3445 -> 2494，303 tests 通过。 |
 
 ## 风险与决策
 
@@ -295,7 +296,7 @@ python3 scripts/sync_project_excel.py
 | 风险 | R-030 | 中 | 过早补完整 reviewer / ToolChoiceQueue 会增加复杂度但未必命中当前痛点 | 已缓解，继续受控 | T-108/T-105 类压测证明仅靠 prompt 和 final steering 仍会出现关键证据没读够就下结论；完整 OMP ToolChoiceQueue/reviewer/subagents 仍过重。 | 已按 OMP 工具调度原则裁剪出 MiniToolChoiceQueue、Planner/Explore 和二阶段 Patch Reviewer；Reviewer 仅消费已有 diff/工具证据，不引入第二个 Agent。完整多队列调度和 subagents 继续等真实失败样本触发。 |
 | 风险 | R-031 | 高 | 真实实现任务可能产生无关 patch | 已缓解，继续观察 | T-072 session `20260709T013441841983Z` 读取正确需求后漂移到 Nacos/Redis 配置，并把无关注释当成实现锚点；dry_run/hash 校验只能保证位置正确，不能保证业务相关 | 已完成 T-073：真实写入前目标文件必须已读；代码实现任务写部署/配置类低相关路径会被拦截或要求用户确认；workspace-root evidence 和 diff reviewer 已落地；复跑未再触碰 `deployMessage/nacos`。 |
 | 风险 | R-053 | 高 | 源码证据型最终回答可能误报数字/状态码 | 已关闭 MVP 版，继续压测 | T-105 session `20260709T092951071920Z` 读到 `PreOrderStatusEnum.MAKING(2)` / `MADE(3)`，最终却误报为 `50/60` | 参考 OMP runtime evidence/steering 边界：新增 source-grounded numeric final steerer，记录本轮 `read_file` 源码证据；最终回答涉及枚举、状态码、接口、字段等数字事实时，若与已读源码片段不一致，会强制无工具重写并要求标注未确认。 |
-| 风险 | R-054 | 高 | `agent.py` steering/guard 继续膨胀 | 已完成 P0b 基线，继续观察 | review 指出 compaction 已拆出，但 semantic/read-only/final guard 又继续进入 `agent.py`，不符合 OMP 一职责一文件原则 | T-106 已抽 FinalAnswer Steerer；T-123 已抽 ToolLoop steering/termination；T-124/T-125 已抽 RunCollector / RunContext，主文件降至 3445 行。后续新 guard 继续只进独立 steering 模块；真实压测后再决定是否拆 SessionGuardState。 |
+| 风险 | R-054 | 高 | `agent.py` steering/guard 继续膨胀 | P0c 已缓解，继续观察 | review 指出 compaction 已拆出，但 semantic/read-only/final guard 又继续进入 `agent.py`，不符合 OMP 一职责一文件原则 | T-106 已抽 FinalAnswer Steerer；T-123 已抽 ToolLoop steering/termination；T-124/T-125 已抽 RunCollector / RunContext；T-127 已抽 StartupContext、EvidenceLedger、SoftToolRequirement 与 SessionGuardState，主文件降至 2494 行。后续新 guard 继续只进独立 steering/阶段模块。 |
 | 风险 | R-055 | 高 | 无效 tool_call 参数会污染下一轮 provider 请求 | 已关闭 MVP 版 | T-108 首轮复测中百炼拒绝历史消息：无效工具调用的 `function.arguments` 为空或畸形 JSON，导致下一轮 HTTP 400 | 已在 assistant message 入历史前把工具名、id、arguments 统一归一为 provider-safe JSON object 字符串；空/畸形参数写入 `_invalid_arguments`，并补回归测试。 |
 | 风险 | R-056 | 高 | read_file 行号会干扰源码数字事实比对 | 已关闭 MVP 版 | T-108 窄复测中，模型把枚举状态误报成 1/3/5；numeric guard 因 read_file 内容含 `1:`、`3:`、`5:` 行号而误以为这些数字有源码证据 | source numeric guard 比对前会剥离 read_file 行号前缀，再判断状态码/枚举值是否出现在源码内容中；新增回归测试覆盖错误数字刚好等于行号的情况。 |
 | 风险 | R-057 | 高 | provider 的工具参数方言导致有效任务无法进入写入/验证闭环 | 已缓解，继续观察 | T-115 已收敛 `file_hash*` / `source_hash_tag` / `hash_tag`、`old_str/new_str`、`mode=edit`、整数/布尔字符串、`run_tests.cmd` 和 todo scalar 方言；真实小改已完成源码/测试/定向测试/diff。 | 按 OMP 的 tool-call 归一边界，只在 ToolRegistry 接收明确已观测的 scalar alias；schema、hash、approval 和 anchored patch 校验不变。raw diff / bulk todo 不隐式执行，交由 T-116。 |
@@ -363,7 +364,7 @@ python3 scripts/sync_project_excel.py
 
 | 项目 | 结论 | 依据 | 后续 |
 |---|---|---|---|
-| 阶段判断 | P10 Intelligence Runtime 骨架进行中 | T-076/T-107 已完成 typed events、terminal frontend、项目边界分析、run summary、真实需求压测、Java LSP 韧性、source-grounded numeric guard 和 token budget；T-109~T-122 已补 contract/audit/queue/planner/reviewer/no-edit evidence/ToolRegistry 归一、preview contract、final-guard scope、pinned requirement evidence 与 cross-root evidence matrix；T-123 已完成第一批 ToolLoop steering 模块化。真实小改交付链路已跑通，跨项目设计的最小 evidence coverage 也已验证。 | 继续按 OMP 的“协议边界 + active loop observer + ToolChoiceQueue 小上限”原则完成 P0b `RunContext` / `RunStats` 收拢，再用真实需求设计和小改压测检验协同效果。 |
+| 阶段判断 | P10 Intelligence Runtime 骨架进行中 | T-076/T-107 已完成 typed events、terminal frontend、项目边界分析、run summary、真实需求压测、Java LSP 韧性、source-grounded numeric guard 和 token budget；T-109~T-127 已补 contract/audit/queue/planner/reviewer、ToolLoop registry、RunCollector/RunContext、StartupContext、EvidenceLedger、SessionGuardState 和自主小改候选收束。真实小改交付链路已跑通，跨项目设计的最小 evidence coverage 也已验证。 | 继续按 OMP 的“协议边界 + active loop observer + ToolChoiceQueue 小上限”原则在隔离 worktree 复跑自主小改；不通过则只在现有 Planner/Queue 中修正。 |
 | 与 OMP 的主要差距 | 差距集中在高级工程化，不阻塞低风险实战 | 完整 reviewer/subagents、完整 LSP/DAP、browser/TUI、AST edit、managed skills 仍后置；ToolChoiceQueue 已有裁剪版 MVP | 由压测失败形态触发 |
 | 已关闭风险 | P0/P1 runtime 风险已基本收口 | Python 3.12 patch、非交互审批、orphan tool_calls、max_steps、allowed-dir、重复工具、证据漂移、diff 混淆等均已有修复或缓解 | 继续用真实任务验证 |
 | reviewer 决策 | 先保留轻量实现质量 gate | T-074 已补 no-comment-only reviewer，复跑未再产生伪实现 | 继续用真实任务验证；若后续出现更复杂 patch 质量问题，再补完整 reviewer/subagent |
@@ -414,7 +415,7 @@ python3 scripts/sync_project_excel.py
 | 项目 | 结论 | 依据 |
 |---|---|---|
 | 主链路 | 通过 | 百炼真实小改复测已跑通 todo、dry_run、apply_patch、session allow、rollback、run_tests、git_diff。 |
-| 测试 | 通过 | P5 收口时 90 个 unittest、compileall、xlsx 检查、diff check 均通过；P10 当前代码已跑通 295 个 unittest。 |
+| 测试 | 通过 | P5 收口时 90 个 unittest、compileall、xlsx 检查、diff check 均通过；P10 当前代码已跑通 303 个 unittest。 |
 | 日用入口 | 通过 | README 已补只读分析和小改任务命令模板。 |
 | 开放风险 | 可接受 | shell 仍非沙箱、prompt injection 仍需靠审批和封闭 VM；provider/model 专用 tokenizer、输出 reserve、managed skills、完整 reviewer 和完整 OMP ToolChoiceQueue 继续后置评估。 |
 | 下一阶段 | 真实需求设计与实现压测 | 已验证默认工作流、auto summary、多语言 LSP/light fallback、multi-root、startup memory、learn、authored skills、runtime state dir、多项目只读压测主链路、relevance gate、implementation-quality gate、no-edit final hygiene、semantic exploration guard、terminal input isolation、Event/Command Protocol、Terminal Frontend MVP、项目边界分析 MVP、source-grounded numeric guard、token budget、pinned requirement evidence 和 cross-root evidence matrix；下一步进入一项边界明确的真实需求设计和小改验证。 |

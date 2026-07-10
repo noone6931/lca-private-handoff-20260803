@@ -1,6 +1,6 @@
 # Local Coding Agent 项目状态
 
-更新时间：2026-07-09
+更新时间：2026-07-11
 
 本文档是开发 `local-coding-agent` 时给参与开发的人和协作 Agent 读取的项目管理基线。`docs/local-coding-agent-project-management.xlsx` 继续作为人工查看的表格视图；本 Markdown 文件作为后续开发时优先读取的项目状态、路线、Todo 和决策来源。它不是 LCA 运行时自己的 memory 或用户项目记忆。
 
@@ -30,7 +30,7 @@
 
 ## 当前进度
 
-当前项目已完成 P8 前端协议与交互基础 MVP，P9 真实需求使用准备已覆盖项目边界、源码验证、LSP 韧性和服务费结算链路压测，并进入 P10 Intelligence Runtime 骨架。用户可以用自然语言描述任务，而不是每次手写工具顺序；Runtime 通过 RequirementContract、Planner/Explore、MiniToolChoiceQueue、CompletionAudit 和二阶段 Patch Reviewer 保持任务目标、证据、写入、测试和 diff 的闭环。2026-07-10 的 T-113 至 T-122 已补齐 Reviewer/Completion 的运行时事实闭环；T-123 至 T-125 已归还核心架构债：ToolLoop steering、RunCollector 与 RunContext 已离开 `AgentRuntime`，主文件为 3445 行，295 个 unittest 通过。下一步回到真实小改压测，在此之前不向主文件新增 feature guard。详见 `docs/pressure-test-2026-07-10.md`。Runtime 继续产出 typed events 和 `run_summary`，CLI/session/tool 日志和 terminal frontend 共用事件流。
+当前项目已完成 P8 前端协议与交互基础 MVP，P9 真实需求使用准备已覆盖项目边界、源码验证、LSP 韧性和服务费结算链路压测，并进入 P10 Intelligence Runtime 骨架。用户可以用自然语言描述任务，而不是每次手写工具顺序；Runtime 通过 RequirementContract、Planner/Explore、MiniToolChoiceQueue、CompletionAudit 和二阶段 Patch Reviewer 保持任务目标、证据、写入、测试和 diff 的闭环。T-123 至 T-127 已继续归还核心架构债：ToolLoop steering、RunCollector、RunContext、EvidenceLedger、StartupContext 与 SessionGuardState 已离开 `AgentRuntime`；主文件降至 2494 行，303 个 unittest 通过。T-127 针对 T-126 的失败样本新增自主小改候选收束：读到源码和测试证据后，Queue 会停止宽泛探索并引导 preview/write/test/diff。下一步是在隔离 worktree 复跑该真实路径，不向主文件新增 feature guard。详见 `docs/pressure-test-2026-07-10.md`。Runtime 继续产出 typed events 和 `run_summary`，CLI/session/tool 日志和 terminal frontend 共用事件流。
 
 已具备的核心能力：
 
@@ -43,7 +43,7 @@
 - `apply_patch` 已支持 `replace`、`insert_before`、`insert_after`，并兼容 Python 3.12。
 - 非交互审批、LLM 非 JSON 响应、session 恢复坏尾部、search_code 绝对路径泄漏等问题已经修复。
 - 已完成 Agent 自举测试：能够通过百炼模型调用工具读取、修改、测试和查看 diff。
-- 测试基线：287 个测试在正常本地环境通过。
+- 测试基线：303 个测试在正常本地环境通过。
 
 当前已具备：
 
@@ -150,7 +150,7 @@
 | P7 | 高级工程能力轻量版 | 已完成 MVP 版 | 已完成 OMP 风格 auto summary、多语言 LSP/light fallback、LSP 兼容别名、multi-root workspace roots 与工具观察提示、allowed-dir soft tool requirement、Markdown memory 启动注入、learn、可选 memory consolidation、authored skills discovery、综合压测记录、重复工具调用熔断、duplicate-tool forced-final steering、同文件切片读取漂移 guard、search_code 空搜索词跨路径 guard、path escape roots hint、LSP 空 query guard、Current task contract、Evidence Ledger、tool result pruning、todo steering、跨项目 env-file、用户级 `--state-dir` runtime state 分层、relevance gate、implementation-quality reviewer、safe new-file policy 和 no-edit final hygiene；path-scoped rules、DAP、subagents、完整 reviewer、AST edit、managed skills 继续后置。 |
 | P8 | 前端协议与交互基础 | 已完成 MVP 版 | T-076 已完成 Event/Command Protocol v1、EventSink、CLI stderr renderer 和 session `event_v1`；T-077 已完成 terminal-native frontend，而不是 fullscreen 重 TUI。 |
 | P9 | 真实需求使用准备 | 已完成阶段性 MVP | 已完成项目边界分析、真实需求模板、企业项目只读源码验证、Java LSP 韧性、拓展服务费结算链路压测和服务范围复核；后续继续按真实需求推进设计/实现切片。 |
-| P10 | Intelligence Runtime 骨架 | 进行中 | 按 OMP 架构原则补单 Agent 内部的目标契约、工具选择队列、完成审计、两阶段计划和 reviewer。T-123 已完成 P0a；T-124/T-125 已完成 RunCollector / RunContext 与跨 run evidence/range state 隔离，`agent.py` 降至 3445 行。下一步复跑真实小改链路验证工具调用成本。 |
+| P10 | Intelligence Runtime 骨架 | 进行中 | 按 OMP 架构原则补单 Agent 内部的目标契约、工具选择队列、完成审计、两阶段计划和 reviewer。T-123~T-127 已完成 ToolLoop registry、RunCollector/RunContext、StartupContext/EvidenceLedger/SessionGuardState 迁移，以及自主小改候选收束；`agent.py` 降至 2494 行。下一步在隔离 worktree 复跑真实自主小改链路。 |
 
 ## 已完成功能
 
@@ -212,7 +212,7 @@
 | 二阶段 Patch Reviewer | 已完成 MVP 版 | `src/local_agent/patch_reviewer.py` 在成功 `git_diff` 后立即消费 write / `git_diff` / search/LSP 证据；显式要求测试却没有测试 diff、公开 API 未做写后调用方检索、低相关或 comment-only patch 均会触发 runtime steering，并只开放受控修复/验证/回滚工具；最终回答前仍保留兜底审查。 |
 | no-edit evidence gate | 已完成 | CompletionAudit 不再接受只有“blocked/unexecuted”的文字自述；必须有 search/LSP 未命中、路径缺失、relevance/approval 拒绝等工具证据，才允许实现任务在无 diff 时收尾。 |
 | ToolRegistry 参数归一 | 已完成 MVP 版 | `src/local_agent/tools/argument_normalization.py` 在 schema 校验前仅映射已观测 scalar alias；冲突值直接拒绝，随后仍执行原 schema、approval、path/hash 和 anchored patch 校验。 |
-| 测试基线 | 已完成 | 本地正常环境下 287 个测试通过。 |
+| 测试基线 | 已完成 | 本地正常环境下 303 个测试通过。 |
 
 ## 下一步 Todo
 
@@ -331,6 +331,7 @@
 | T-124 | P0b RunCollector 与跨 run evidence reset | 已完成并回归 | P10 | `run_collector.py` 现在承接 RunStats、compaction/tool 计数和 summary 计算；每个新 run 会清空 read evidence、relevance、evidence ledger、patch preview 与 read range counts，避免上一任务污染下一任务。294 个 unittest 通过；完整 `RunContext` 仍待迁移。 |
 | T-125 | P0b RunContext 状态收拢 | 已完成并回归 | P10 | `run_context.py` 统一当前 run 的 metadata、contract、queue、证据、preview、steering、ToolLoop registry 与 Collector；Runtime 保留构造依赖、会话消息/审批、summary cache、recent session guard 和上一轮 summary。`agent.py` 为 3445 行，295 个 unittest 通过。 |
 | T-126 | P0b 后真实小改压测 | 部分通过，继续观察自主选点 | P10 | 自主选点 session `20260710T154146640779Z` 仍探索过宽且无交付；精确目标复跑 `20260710T154432520729Z` 已完成 todo、两份目标读取、dry_run、真实 patch、定向 3 测试和 diff，且只改预期测试文件。P0b 未破坏受控小改闭环；后续优先改 Planner/ToolChoiceQueue/ToolLoop registry，而不加主循环 guard。 |
+| T-127 | P0c Evidence / Startup / SessionGuard 迁移与自主小改候选收束 | 已完成单元回归，待真实复跑 | P10 | 新增 `evidence.py`、`startup_context.py`、`soft_tool_requirement.py`、`session_guard_state.py`；Evidence Ledger 成为 RunContext 唯一所有者，SessionGuardState 明确跨 run 的窗口语义。自主小改在读取源码+测试证据后进入 `candidate_committed`，限制为 preview/write/test/diff；preview 失败才允许精确重读。`agent.py` 3445 -> 2494，303 个 unittest 通过。 |
 
 ## 风险清单
 
@@ -369,7 +370,7 @@
 | R-031 | 真实实现任务可能产生无关 patch | 已缓解，继续观察 | T-072 session `20260709T013441841983Z` 读取正确需求后漂移到 Nacos/Redis 配置，并把无关注释当成实现锚点；这说明 dry_run/hash 校验只能保证位置正确，不能保证业务相关。 | 已完成 T-073：真实写入前要求目标文件已读；代码实现任务修改部署/配置类低相关路径会被拦截或要求用户确认；workspace-root evidence 进入 Evidence Ledger；`git_diff` 增加 reviewer 提示。T-073 复跑未再触碰 `deployMessage/nacos`。 |
 | R-032 | 真实实现可能退化成低价值注释 patch | 已缓解并复跑 | T-073 复跑 session `20260709T021349259159Z` 中模型定位到相关 Java 文件，但因 `write_file` 被 deny，最终只给 DTO 字段补 JavaDoc；这不能算真实业务实现。 | T-074 已补 implementation-quality reviewer：本轮代码 diff 若只有注释/文档改动，`git_diff` 会提醒不能声称行为、校验、解析或测试覆盖变化。复跑 session `20260709T025706579604Z` 没有再做 comment-only patch，而是在当前仓库缺目标实现时停止说明。 |
 | R-053 | 源码证据型最终回答可能误报数字/状态码 | 已关闭 MVP 版，继续压测 | T-105 中模型读到 `PreOrderStatusEnum.MAKING(2)` / `MADE(3)`，最终却误报为 `50/60`。 | 参考 OMP runtime evidence / steering：已新增 source-grounded numeric final steerer，最终回答涉及枚举、状态码、接口、字段等数字事实且与已读源码不一致时，会强制无工具重写。 |
-| R-054 | `agent.py` steering/guard 继续膨胀 | 已完成 P0b 基线，继续观察 | review 指出 compaction 已拆出，但 final/read-only/semantic guard 继续堆在 `agent.py`。 | T-106 已抽 FinalAnswer Steerer；T-123 已抽 ToolLoop steering/termination；T-124/T-125 已抽 RunCollector / RunContext，主文件降至 3445 行。新 guard 继续只进独立 steering 模块；真实压测后再决定是否拆 SessionGuardState。 |
+| R-054 | `agent.py` steering/guard 继续膨胀 | P0c 已缓解，继续观察 | review 指出 compaction 已拆出，但 final/read-only/semantic guard 继续堆在 `agent.py`。 | T-106 已抽 FinalAnswer Steerer；T-123 已抽 ToolLoop steering/termination；T-124/T-125 已抽 RunCollector / RunContext；T-127 已抽 EvidenceLedger、StartupContext、SoftToolRequirement 与 SessionGuardState，主文件降至 2494 行。新 guard 继续只进独立 steering 或阶段模块。 |
 | R-055 | 无效 tool_call 参数会污染下一轮 provider 请求 | 已关闭 MVP 版 | T-108 首轮复测中百炼拒绝历史消息：无效工具调用的 `function.arguments` 为空或畸形 JSON，导致下一轮 HTTP 400。 | 已在 assistant message 入历史前把工具名、id、arguments 统一归一为 provider-safe JSON object 字符串；空/畸形参数写入 `_invalid_arguments`，并补回归测试。 |
 | R-056 | read_file 行号会干扰源码数字事实比对 | 已关闭 MVP 版 | T-108 窄复测中，模型把枚举状态误报成 1/3/5；numeric guard 因 read_file 内容含 `1:`、`3:`、`5:` 行号而误以为这些数字有源码证据。 | source numeric guard 比对前会剥离 read_file 行号前缀，再判断状态码/枚举值是否出现在源码内容中；新增回归测试覆盖错误数字刚好等于行号的情况。 |
 | R-057 | provider 的工具参数方言导致有效任务无法进入写入/验证闭环 | 已缓解，继续观察 | T-115 真实复测已跑通源码、测试、定向测试和 diff；安全的 scalar alias 已集中归一。 | 只在 ToolRegistry 映射明确已观测的 scalar alias，原 schema、hash、approval 和 anchored patch 校验仍生效；raw diff / bulk todo 继续拒绝并由 T-116 处理。 |
@@ -438,10 +439,10 @@
 | 项目 | 结论 | 依据 |
 |---|---|---|
 | 主链路 | 通过 | 百炼真实小改复测已跑通 todo、dry_run、apply_patch、session allow、rollback、run_tests、git_diff。 |
-| 测试 | 通过 | P5 收口时 90 个 unittest、compileall、xlsx 检查、diff check 均通过；P10 当前代码已跑通 295 个 unittest。 |
+| 测试 | 通过 | P5 收口时 90 个 unittest、compileall、xlsx 检查、diff check 均通过；P10 当前代码已跑通 303 个 unittest。 |
 | 日用入口 | 通过 | README 已补只读分析和小改任务命令模板。 |
 | 开放风险 | 可接受 | shell 仍非沙箱、prompt injection 仍需靠审批和封闭 VM；provider/model 专用 tokenizer、输出 reserve、managed skills、完整 reviewer 和完整 OMP ToolChoiceQueue 继续后置评估。 |
-| 下一阶段 | P10 Intelligence Runtime 继续收束 | T-109~T-122 已补 RequirementContract、CompletionAudit、MiniToolChoiceQueue、Planner/Explore、post-diff Patch Reviewer、no-edit evidence gate、ToolRegistry 参数归一、preview contract、numeric guard scope、literal 分类、实现任务 final-guard scope、pinned requirement evidence 和 cross-root evidence matrix；T-123 已抽 ToolLoop registry。下一步先完成 P0b `RunContext` / `RunStats`，再进入边界明确的真实需求设计和小改验证。 |
+| 下一阶段 | P10 Intelligence Runtime 继续收束 | T-109~T-127 已补 RequirementContract、CompletionAudit、MiniToolChoiceQueue、Planner/Explore、post-diff Patch Reviewer、no-edit evidence gate、ToolRegistry 参数归一、preview contract、pinned requirement evidence、cross-root evidence matrix、ToolLoop registry、RunContext/Collector、EvidenceLedger/StartupContext/SessionGuardState，以及自主小改候选收束。下一步是在隔离 worktree 复跑真实自主小改，观察百炼是否按 `candidate_committed → preview → write → test → diff` 收束。 |
 
 ## 推荐工作流
 

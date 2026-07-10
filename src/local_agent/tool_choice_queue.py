@@ -74,6 +74,16 @@ PLANNER_EXPLORE_TOOL_NAMES = frozenset(
         "todo_update",
     }
 )
+CANDIDATE_DELIVERY_TOOL_NAMES = frozenset(
+    {
+        "apply_patch",
+        "git_diff",
+        "run_tests",
+        "todo_read",
+        "todo_update",
+    }
+)
+CANDIDATE_REMEDIATION_TOOL_NAMES = frozenset({*CANDIDATE_DELIVERY_TOOL_NAMES, "read_file"})
 POST_DIFF_REMEDIATION_TOOL_NAMES = frozenset(
     {
         "apply_patch",
@@ -161,6 +171,19 @@ IMPLEMENTATION_KEYWORDS = frozenset(
         "改造",
         "新增",
         "编码",
+    }
+)
+AUTONOMOUS_SMALL_CHANGE_KEYWORDS = frozenset(
+    {
+        "choose a small",
+        "choose an extremely small",
+        "find a small",
+        "pick a small",
+        "自行挑选",
+        "自己找一个",
+        "找一个很小",
+        "找一个极小",
+        "自主选点",
     }
 )
 REQUIREMENT_DOC_KEYWORDS = frozenset(
@@ -335,6 +358,22 @@ def evaluate_tool_choice_state(
             preferred_tool_names=evidence_preferred,
         )
 
+    candidate_paths = autonomous_small_change_candidate_paths(task_kind, prompt, results)
+    if candidate_paths and not _workspace_write_happened(seen_tool_names, results):
+        preview_failed = any(result.name == "apply_patch" and result.is_error for result in results)
+        allowed = CANDIDATE_REMEDIATION_TOOL_NAMES if preview_failed else CANDIDATE_DELIVERY_TOOL_NAMES
+        return ToolChoiceDecision(
+            steering_required=True,
+            allowed_tool_names=_allowed_subset(allowed, allowed_tools),
+            reason=(
+                "autonomous_small_change_candidate committed: sufficient target and test evidence exists. "
+                "Stop broad exploration and move through preview, the smallest relevant patch, verification, and diff."
+            ),
+            rule_id="autonomous_small_change_candidate",
+            missing_requirements=("patch_preview_or_write",),
+            preferred_tool_names=("read_file", "apply_patch") if preview_failed else ("apply_patch",),
+        )
+
     implementation_missing = _implementation_missing_requirements(task_kind, prompt, seen_tool_names, results)
     if implementation_missing:
         allowed = []
@@ -498,6 +537,38 @@ def _implementation_needs_explore_before_write(
     return not _has_code_evidence(seen_tool_names, results)
 
 
+def autonomous_small_change_candidate_paths(
+    task_kind: str,
+    prompt: str,
+    results: tuple[ToolResultSummary, ...] | list[ToolResultSummary],
+) -> tuple[str, ...]:
+    """Return a narrow candidate only for an explicitly autonomous tiny-change task."""
+
+    if not _is_implementation_task(task_kind, prompt):
+        return ()
+    text = _lower_text(prompt)
+    if not any(marker in text for marker in AUTONOMOUS_SMALL_CHANGE_KEYWORDS):
+        return ()
+    paths = []
+    for result in results:
+        if result.name != "read_file" or result.is_error or not result.path:
+            continue
+        path = result.path
+        if path not in paths:
+            paths.append(path)
+    has_test = any(_is_test_path(path) for path in paths)
+    has_source = any(not _is_test_path(path) for path in paths)
+    if not (has_test and has_source):
+        return ()
+    return tuple(paths[-4:])
+
+
+def _is_test_path(path: str) -> bool:
+    lowered = path.replace("\\", "/").lower()
+    name = lowered.rsplit("/", 1)[-1]
+    return "/test/" in lowered or "/tests/" in lowered or name.startswith("test_") or name.endswith(("_test.py", "test.java", "test.ts", "test.js"))
+
+
 def _implementation_missing_requirements(
     task_kind: str,
     prompt: str,
@@ -563,6 +634,8 @@ def _lower_text(value: str) -> str:
 __all__ = [
     "CODE_EVIDENCE_ALLOWED_TOOL_NAMES",
     "CODE_EVIDENCE_TOOL_NAMES",
+    "CANDIDATE_DELIVERY_TOOL_NAMES",
+    "CANDIDATE_REMEDIATION_TOOL_NAMES",
     "DEFAULT_TOOL_NAMES",
     "PLANNER_EXPLORE_TOOL_NAMES",
     "POST_DIFF_REMEDIATION_TOOL_NAMES",
@@ -573,5 +646,6 @@ __all__ = [
     "ToolChoiceQueue",
     "ToolResultSummary",
     "WRITE_TOOL_NAMES",
+    "autonomous_small_change_candidate_paths",
     "evaluate_tool_choice_state",
 ]
