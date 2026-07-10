@@ -467,6 +467,23 @@ class ToolTests(unittest.TestCase):
         self.assertTrue(denied.is_error)
         self.assertIn("Runtime candidate read restriction", denied.content)
 
+    def test_registry_rejects_candidate_read_after_revisit_budget_is_exhausted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            selected = workspace / "selected.py"
+            selected.write_text("selected = True\n", encoding="utf-8")
+            context = ToolContext(
+                workspace=workspace,
+                approval_mode="yolo",
+                runtime_tool_allowlist=frozenset({"read_file"}),
+                runtime_read_file_paths=frozenset({str(selected)}),
+                runtime_read_file_remaining=0,
+            )
+            result = ToolRegistry(file_tools()).execute("read_file", {"path": "selected.py"}, context)
+
+        self.assertTrue(result.is_error)
+        self.assertIn("Runtime candidate read budget exhausted", result.content)
+
     def test_list_files_skips_agent_and_cache_dirs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp).resolve()

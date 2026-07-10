@@ -37,6 +37,7 @@ class ToolContext:
     event_callback: Callable[[str, dict[str, Any]], None] | None = None
     runtime_tool_allowlist: frozenset[str] | None = None
     runtime_read_file_paths: frozenset[str] | None = None
+    runtime_read_file_remaining: int | None = None
 
 
 def tool_state_dir(context: ToolContext) -> Path:
@@ -125,6 +126,11 @@ def _runtime_read_file_scope_denial_reason(
 ) -> str | None:
     if name != "read_file" or context.runtime_read_file_paths is None:
         return None
+    if context.runtime_read_file_remaining is not None and context.runtime_read_file_remaining <= 0:
+        return (
+            "Runtime candidate read budget exhausted: use the source/test evidence and hash tags already collected, "
+            "then apply_patch dry_run=true. Do not continue splitting the candidate files into more reads."
+        )
     raw_path = arguments.get("path")
     if not isinstance(raw_path, str) or not raw_path.strip():
         return None

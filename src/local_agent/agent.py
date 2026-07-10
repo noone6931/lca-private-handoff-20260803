@@ -543,7 +543,7 @@ class AgentRuntime:
             design_evidence_roots=self._run.design_evidence_coverage.roots,
         )
         self._run.tool_choice_allowed_tool_names = set(decision.allowed_tool_names)
-        self._run.tool_choice_read_file_paths = set(decision.scoped_read_paths) if decision.scoped_read_paths else None
+        self._run.update_tool_choice_read_scope(decision.scoped_read_paths, decision.scoped_read_budget)
         coverage = self._run.design_evidence_coverage.observe(
             queue_requires_steering=decision.steering_required,
             read_paths=(
@@ -989,6 +989,7 @@ class AgentRuntime:
                 tool_context,
                 runtime_tool_allowlist=frozenset(allowed_tools) if allowed_tools is not None else None,
                 runtime_read_file_paths=scoped_read_paths,
+                runtime_read_file_remaining=self._run.tool_choice_read_file_remaining,
             )
         read_file_key = (
             _read_file_path_key(name, arguments, self._config.workspace, self._config.allowed_dirs)
@@ -1161,6 +1162,7 @@ class AgentRuntime:
             )
         )
         self._run.tool_choice_results = self._run.tool_choice_results[-80:]
+        self._run.consume_tool_choice_read(name)
 
     def _record_tool_evidence(self, name: str, arguments: str | dict[str, Any], result: ToolResult) -> None:
         record = self._run.evidence.record_tool(

@@ -7,6 +7,7 @@ from local_agent.tool_choice_queue import CANDIDATE_DELIVERY_TOOL_NAMES
 from local_agent.tool_choice_queue import CANDIDATE_DIFF_TOOL_NAMES
 from local_agent.tool_choice_queue import CANDIDATE_REMEDIATION_TOOL_NAMES
 from local_agent.tool_choice_queue import CANDIDATE_TEST_TOOL_NAMES
+from local_agent.tool_choice_queue import MAX_CANDIDATE_READ_REVISITS
 from local_agent.tool_choice_queue import PLANNER_EXPLORE_TOOL_NAMES
 from local_agent.tool_choice_queue import POST_DIFF_REMEDIATION_TOOL_NAMES
 from local_agent.tool_choice_queue import ToolChoiceQueue
@@ -91,6 +92,7 @@ class ToolChoiceQueueTests(unittest.TestCase):
         self.assertNotIn("git_diff", decision.allowed_tool_names)
         self.assertIn("read_file", decision.allowed_tool_names)
         self.assertEqual(decision.scoped_read_paths, ("src/UserService.java", "tests/UserServiceTest.java"))
+        self.assertEqual(decision.scoped_read_budget, MAX_CANDIDATE_READ_REVISITS)
 
     def test_scoped_docs_exclusion_keeps_autonomous_candidate_delivery_enabled(self) -> None:
         decision = evaluate_tool_choice_state(

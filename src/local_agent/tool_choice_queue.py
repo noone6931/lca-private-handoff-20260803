@@ -86,6 +86,7 @@ CANDIDATE_DELIVERY_TOOL_NAMES = frozenset({"apply_patch", "read_file", *CANDIDAT
 CANDIDATE_REMEDIATION_TOOL_NAMES = frozenset({*CANDIDATE_DELIVERY_TOOL_NAMES, "read_file"})
 CANDIDATE_TEST_TOOL_NAMES = frozenset({"run_tests", *CANDIDATE_STATE_TOOL_NAMES})
 CANDIDATE_DIFF_TOOL_NAMES = frozenset({"git_diff", *CANDIDATE_STATE_TOOL_NAMES})
+MAX_CANDIDATE_READ_REVISITS = 4
 POST_DIFF_REMEDIATION_TOOL_NAMES = frozenset(
     {
         "apply_patch",
@@ -253,6 +254,7 @@ class ToolChoiceDecision:
     missing_requirements: tuple[str, ...] = ()
     preferred_tool_names: tuple[str, ...] = ()
     scoped_read_paths: tuple[str, ...] = ()
+    scoped_read_budget: int | None = None
 
     @property
     def needs_steering(self) -> bool:
@@ -396,6 +398,7 @@ def evaluate_tool_choice_state(
                 missing_requirements=("patch_preview_or_write",),
                 preferred_tool_names=preferred,
                 scoped_read_paths=candidate_paths,
+                scoped_read_budget=MAX_CANDIDATE_READ_REVISITS,
             )
         if not _has_verification_after_last_write("run_tests", seen_tool_names, results):
             return ToolChoiceDecision(
@@ -700,6 +703,7 @@ __all__ = [
     "CANDIDATE_REMEDIATION_TOOL_NAMES",
     "CANDIDATE_TEST_TOOL_NAMES",
     "DEFAULT_TOOL_NAMES",
+    "MAX_CANDIDATE_READ_REVISITS",
     "PLANNER_EXPLORE_TOOL_NAMES",
     "POST_DIFF_REMEDIATION_TOOL_NAMES",
     "READ_ONLY_FORBIDDEN_TOOL_NAMES",

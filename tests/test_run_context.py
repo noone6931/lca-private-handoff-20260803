@@ -9,6 +9,20 @@ from local_agent.tool_choice_queue import ToolResultSummary
 
 
 class RunContextTests(unittest.TestCase):
+    def test_candidate_read_scope_preserves_budget_for_same_paths_and_resets_for_new_scope(self) -> None:
+        context = RunContext()
+
+        context.update_tool_choice_read_scope(("src/Service.java", "tests/ServiceTest.java"), 4)
+        context.consume_tool_choice_read("read_file")
+        context.update_tool_choice_read_scope(("src/Service.java", "tests/ServiceTest.java"), 4)
+
+        self.assertEqual(context.tool_choice_read_file_remaining, 3)
+        context.update_tool_choice_read_scope(("src/Other.java", "tests/OtherTest.java"), 4)
+        self.assertEqual(context.tool_choice_read_file_remaining, 4)
+        context.update_tool_choice_read_scope((), None)
+        self.assertIsNone(context.tool_choice_read_file_paths)
+        self.assertIsNone(context.tool_choice_read_file_remaining)
+
     def test_begin_replaces_task_state_and_preserves_explicit_run_metadata(self) -> None:
         context = RunContext()
         context.read_file_range_counts[("src/Old.java", 1, "tag")] = 3

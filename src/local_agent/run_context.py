@@ -29,6 +29,7 @@ class RunContext:
     temporary_tool_allowlist: set[str] | None = None
     tool_choice_allowed_tool_names: set[str] | None = None
     tool_choice_read_file_paths: set[str] | None = None
+    tool_choice_read_file_remaining: int | None = None
     tool_choice_steering_signatures: set[str] = field(default_factory=set)
     tool_choice_results: list[ToolResultSummary] = field(default_factory=list)
     tool_choice_tool_names: list[str] = field(default_factory=list)
@@ -133,6 +134,7 @@ class RunContext:
         self.temporary_tool_allowlist = None
         self.tool_choice_allowed_tool_names = None
         self.tool_choice_read_file_paths = None
+        self.tool_choice_read_file_remaining = None
         self.tool_choice_steering_signatures.clear()
         self.tool_choice_results.clear()
         self.tool_choice_tool_names.clear()
@@ -144,3 +146,22 @@ class RunContext:
         self.evidence.reset()
         self.final_answer_steers.clear()
         self.tool_loop_steering.reset()
+
+    def update_tool_choice_read_scope(
+        self,
+        paths: tuple[str, ...],
+        budget: int | None,
+    ) -> None:
+        next_paths = set(paths)
+        if not next_paths:
+            self.tool_choice_read_file_paths = None
+            self.tool_choice_read_file_remaining = None
+            return
+        if self.tool_choice_read_file_paths != next_paths:
+            self.tool_choice_read_file_paths = next_paths
+            self.tool_choice_read_file_remaining = budget
+
+    def consume_tool_choice_read(self, name: str) -> None:
+        if name != "read_file" or self.tool_choice_read_file_remaining is None:
+            return
+        self.tool_choice_read_file_remaining = max(0, self.tool_choice_read_file_remaining - 1)
