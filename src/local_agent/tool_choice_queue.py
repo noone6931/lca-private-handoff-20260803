@@ -7,6 +7,7 @@ from typing import Any
 
 from .design_evidence import missing_design_evidence_roots
 from .verification_timeline import last_workspace_write_index
+from .verification_timeline import result_changed_workspace
 from .verification_timeline import successful_tool_after_last_write
 from .verification_timeline import workspace_write_happened
 from .verification_timeline import WRITE_TOOL_NAMES
@@ -74,16 +75,17 @@ PLANNER_EXPLORE_TOOL_NAMES = frozenset(
         "todo_update",
     }
 )
-CANDIDATE_DELIVERY_TOOL_NAMES = frozenset(
+CANDIDATE_STATE_TOOL_NAMES = frozenset(
     {
-        "apply_patch",
-        "git_diff",
-        "run_tests",
+        "todo_add",
         "todo_read",
         "todo_update",
     }
 )
+CANDIDATE_DELIVERY_TOOL_NAMES = frozenset({"apply_patch", *CANDIDATE_STATE_TOOL_NAMES})
 CANDIDATE_REMEDIATION_TOOL_NAMES = frozenset({*CANDIDATE_DELIVERY_TOOL_NAMES, "read_file"})
+CANDIDATE_TEST_TOOL_NAMES = frozenset({"run_tests", *CANDIDATE_STATE_TOOL_NAMES})
+CANDIDATE_DIFF_TOOL_NAMES = frozenset({"git_diff", *CANDIDATE_STATE_TOOL_NAMES})
 POST_DIFF_REMEDIATION_TOOL_NAMES = frozenset(
     {
         "apply_patch",
@@ -359,20 +361,64 @@ def evaluate_tool_choice_state(
         )
 
     candidate_paths = autonomous_small_change_candidate_paths(task_kind, prompt, results)
-    if candidate_paths and not _workspace_write_happened(seen_tool_names, results):
+    if candidate_paths:
+        wrote_workspace = _workspace_write_happened(seen_tool_names, results)
+        preview_succeeded = _has_successful_patch_preview(results)
         preview_failed = any(result.name == "apply_patch" and result.is_error for result in results)
-        allowed = CANDIDATE_REMEDIATION_TOOL_NAMES if preview_failed else CANDIDATE_DELIVERY_TOOL_NAMES
-        return ToolChoiceDecision(
-            steering_required=True,
-            allowed_tool_names=_allowed_subset(allowed, allowed_tools),
-            reason=(
-                "autonomous_small_change_candidate committed: sufficient target and test evidence exists. "
-                "Stop broad exploration and move through preview, the smallest relevant patch, verification, and diff."
-            ),
-            rule_id="autonomous_small_change_candidate",
-            missing_requirements=("patch_preview_or_write",),
-            preferred_tool_names=("read_file", "apply_patch") if preview_failed else ("apply_patch",),
-        )
+        if not wrote_workspace:
+            if preview_failed and not preview_succeeded:
+                allowed = CANDIDATE_REMEDIATION_TOOL_NAMES
+                reason = (
+                    "autonomous_small_change_candidate preview needs repair: the anchored preview failed. "
+                    "Only re-read the exact candidate file if necessary, then retry apply_patch dry_run=true."
+                )
+                preferred = ("read_file", "apply_patch")
+            elif preview_succeeded:
+                allowed = CANDIDATE_DELIVERY_TOOL_NAMES
+                reason = (
+                    "autonomous_small_change_candidate preview succeeded: stop exploration and apply the same "
+                    "small patch without dry_run before testing."
+                )
+                preferred = ("apply_patch",)
+            else:
+                allowed = CANDIDATE_DELIVERY_TOOL_NAMES
+                reason = (
+                    "autonomous_small_change_candidate committed: sufficient target and test evidence exists. "
+                    "Stop broad exploration and use apply_patch dry_run=true before any write, test, or diff."
+                )
+                preferred = ("apply_patch",)
+            return ToolChoiceDecision(
+                steering_required=True,
+                allowed_tool_names=_allowed_subset(allowed, allowed_tools),
+                reason=reason,
+                rule_id="autonomous_small_change_candidate",
+                missing_requirements=("patch_preview_or_write",),
+                preferred_tool_names=preferred,
+            )
+        if not _has_verification_after_last_write("run_tests", seen_tool_names, results):
+            return ToolChoiceDecision(
+                steering_required=True,
+                allowed_tool_names=_allowed_subset(CANDIDATE_TEST_TOOL_NAMES, allowed_tools),
+                reason=(
+                    "autonomous_small_change_candidate verification pending: the patch was written. "
+                    "Run the focused tests before reading more files or inspecting the diff."
+                ),
+                rule_id="autonomous_small_change_test",
+                missing_requirements=("run_tests",),
+                preferred_tool_names=("run_tests",),
+            )
+        if not _has_verification_after_last_write("git_diff", seen_tool_names, results):
+            return ToolChoiceDecision(
+                steering_required=True,
+                allowed_tool_names=_allowed_subset(CANDIDATE_DIFF_TOOL_NAMES, allowed_tools),
+                reason=(
+                    "autonomous_small_change_candidate diff pending: tests have run after the write. "
+                    "Inspect git_diff before the final report."
+                ),
+                rule_id="autonomous_small_change_diff",
+                missing_requirements=("git_diff",),
+                preferred_tool_names=("git_diff",),
+            )
 
     implementation_missing = _implementation_missing_requirements(task_kind, prompt, seen_tool_names, results)
     if implementation_missing:
@@ -609,6 +655,13 @@ def _workspace_write_happened(seen_tool_names: set[str], results: tuple[ToolResu
     return bool(seen_tool_names.intersection(WRITE_TOOL_NAMES))
 
 
+def _has_successful_patch_preview(results: tuple[ToolResultSummary, ...]) -> bool:
+    return any(
+        result.name == "apply_patch" and _successful_tool_result(result) and not result_changed_workspace(result)
+        for result in results
+    )
+
+
 def _has_verification_after_last_write(
     name: str,
     seen_tool_names: set[str],
@@ -641,7 +694,9 @@ __all__ = [
     "CODE_EVIDENCE_ALLOWED_TOOL_NAMES",
     "CODE_EVIDENCE_TOOL_NAMES",
     "CANDIDATE_DELIVERY_TOOL_NAMES",
+    "CANDIDATE_DIFF_TOOL_NAMES",
     "CANDIDATE_REMEDIATION_TOOL_NAMES",
+    "CANDIDATE_TEST_TOOL_NAMES",
     "DEFAULT_TOOL_NAMES",
     "PLANNER_EXPLORE_TOOL_NAMES",
     "POST_DIFF_REMEDIATION_TOOL_NAMES",

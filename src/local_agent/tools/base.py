@@ -35,6 +35,7 @@ class ToolContext:
     patch_relevance_checker: Callable[[str, Path], str | None] | None = None
     patch_preview_checker: Callable[[dict[str, Any], Path], str | None] | None = None
     event_callback: Callable[[str, dict[str, Any]], None] | None = None
+    runtime_tool_allowlist: frozenset[str] | None = None
 
 
 def tool_state_dir(context: ToolContext) -> Path:
@@ -84,6 +85,13 @@ class ToolRegistry:
         tool = self._tools.get(name)
         if tool is None:
             return ToolResult(f"Unknown tool: {name}", is_error=True)
+        if context.runtime_tool_allowlist is not None and name not in context.runtime_tool_allowlist:
+            allowed = ", ".join(sorted(context.runtime_tool_allowlist)) or "(no tools)"
+            return ToolResult(
+                f"Runtime tool choice restriction: '{name}' is not allowed at this step. "
+                f"Allowed tools: {allowed}. Follow the current workflow before retrying.",
+                is_error=True,
+            )
         try:
             denial_reason = _approval_denial_reason(tool, context)
             if denial_reason:

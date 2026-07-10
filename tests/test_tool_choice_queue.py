@@ -4,7 +4,9 @@ import unittest
 
 from local_agent.tool_choice_queue import READ_ONLY_FORBIDDEN_TOOL_NAMES
 from local_agent.tool_choice_queue import CANDIDATE_DELIVERY_TOOL_NAMES
+from local_agent.tool_choice_queue import CANDIDATE_DIFF_TOOL_NAMES
 from local_agent.tool_choice_queue import CANDIDATE_REMEDIATION_TOOL_NAMES
+from local_agent.tool_choice_queue import CANDIDATE_TEST_TOOL_NAMES
 from local_agent.tool_choice_queue import PLANNER_EXPLORE_TOOL_NAMES
 from local_agent.tool_choice_queue import POST_DIFF_REMEDIATION_TOOL_NAMES
 from local_agent.tool_choice_queue import ToolChoiceQueue
@@ -85,6 +87,8 @@ class ToolChoiceQueueTests(unittest.TestCase):
         self.assertEqual(decision.allowed_tool_names, CANDIDATE_DELIVERY_TOOL_NAMES)
         self.assertNotIn("list_files", decision.allowed_tool_names)
         self.assertNotIn("search_code", decision.allowed_tool_names)
+        self.assertNotIn("run_tests", decision.allowed_tool_names)
+        self.assertNotIn("git_diff", decision.allowed_tool_names)
 
     def test_scoped_docs_exclusion_keeps_autonomous_candidate_delivery_enabled(self) -> None:
         decision = evaluate_tool_choice_state(
@@ -102,6 +106,30 @@ class ToolChoiceQueueTests(unittest.TestCase):
         self.assertTrue(decision.steering_required)
         self.assertEqual(decision.rule_id, "autonomous_small_change_candidate")
         self.assertEqual(decision.allowed_tool_names, CANDIDATE_DELIVERY_TOOL_NAMES)
+
+    def test_candidate_write_requires_test_then_diff_in_order(self) -> None:
+        candidate = [
+            ToolResultSummary("read_file", "class UserService {}", path="src/UserService.java"),
+            ToolResultSummary("read_file", "class UserServiceTest {}", path="tests/UserServiceTest.java"),
+            ToolResultSummary("apply_patch", "Patch preview only. File not changed.", changed=False),
+            ToolResultSummary("apply_patch", "Applied patch.", changed=True),
+        ]
+
+        test_decision = evaluate_tool_choice_state(
+            task_kind="code-implementation",
+            prompt="请自己找一个极小的代码改进，并补充测试。",
+            tool_results=candidate,
+        )
+        self.assertEqual(test_decision.rule_id, "autonomous_small_change_test")
+        self.assertEqual(test_decision.allowed_tool_names, CANDIDATE_TEST_TOOL_NAMES)
+
+        diff_decision = evaluate_tool_choice_state(
+            task_kind="code-implementation",
+            prompt="请自己找一个极小的代码改进，并补充测试。",
+            tool_results=[*candidate, ToolResultSummary("run_tests", "OK")],
+        )
+        self.assertEqual(diff_decision.rule_id, "autonomous_small_change_diff")
+        self.assertEqual(diff_decision.allowed_tool_names, CANDIDATE_DIFF_TOOL_NAMES)
 
     def test_candidate_preview_error_allows_exact_read_remediation(self) -> None:
         decision = evaluate_tool_choice_state(

@@ -412,6 +412,39 @@ while True:
 
 
 class ToolTests(unittest.TestCase):
+    def test_registry_rejects_provider_tool_outside_runtime_allowlist(self) -> None:
+        calls: list[str] = []
+
+        def handler(_args: dict[str, object], _context: ToolContext) -> ToolResult:
+            calls.append("blocked")
+            return ToolResult("should not run")
+
+        registry = ToolRegistry(
+            [
+                Tool(
+                    name="blocked",
+                    description="test-only tool",
+                    input_schema={"type": "object", "properties": {}, "additionalProperties": False},
+                    tier="read",
+                    handler=handler,
+                )
+            ]
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            result = registry.execute(
+                "blocked",
+                {},
+                ToolContext(
+                    workspace=Path(tmp).resolve(),
+                    approval_mode="yolo",
+                    runtime_tool_allowlist=frozenset({"read_file"}),
+                ),
+            )
+
+        self.assertTrue(result.is_error)
+        self.assertIn("Runtime tool choice restriction", result.content)
+        self.assertEqual(calls, [])
+
     def test_list_files_skips_agent_and_cache_dirs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp).resolve()

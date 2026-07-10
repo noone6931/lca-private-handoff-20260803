@@ -505,8 +505,20 @@ class AgentRuntime:
         )
 
     def _tools_for_model(self) -> list[dict[str, Any]]:
-        if self._run.force_final_answer_without_tools:
+        allowed_names = self._effective_runtime_tool_allowlist()
+        if allowed_names == set():
             return []
+        if allowed_names is None:
+            return self._registry.schemas()
+        return [
+            schema
+            for schema in self._registry.schemas()
+            if schema.get("function", {}).get("name") in allowed_names
+        ]
+
+    def _effective_runtime_tool_allowlist(self) -> set[str] | None:
+        if self._run.force_final_answer_without_tools:
+            return set()
         allowed_names: set[str] | None = None
         if self._run.temporary_tool_allowlist is not None:
             allowed_names = set(self._run.temporary_tool_allowlist)
@@ -515,13 +527,7 @@ class AgentRuntime:
             allowed_names = _intersect_optional_tool_allowlist(allowed_names, {"list_files", "read_file"})
         if self._run.tool_choice_allowed_tool_names is not None:
             allowed_names = _intersect_optional_tool_allowlist(allowed_names, self._run.tool_choice_allowed_tool_names)
-        if allowed_names is None:
-            return self._registry.schemas()
-        return [
-            schema
-            for schema in self._registry.schemas()
-            if schema.get("function", {}).get("name") in allowed_names
-        ]
+        return allowed_names
 
     def _apply_tool_choice_queue_if_needed(self, deadline: float | None = None) -> None:
         contract = self._run.requirement_contract
@@ -975,6 +981,9 @@ class AgentRuntime:
         arguments: str | dict[str, Any],
         tool_context: ToolContext,
     ) -> ToolResult:
+        allowed_tools = self._effective_runtime_tool_allowlist()
+        if allowed_tools is not None:
+            tool_context = replace(tool_context, runtime_tool_allowlist=frozenset(allowed_tools))
         read_file_key = (
             _read_file_path_key(name, arguments, self._config.workspace, self._config.allowed_dirs)
             if self._run.read_file_drift_guard_enabled

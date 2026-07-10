@@ -1131,7 +1131,7 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertNotIn("write_file", first_tools)
         self.assertNotIn("run_tests", first_tools)
 
-    def test_tool_choice_queue_requires_tests_or_diff_after_workspace_write(self) -> None:
+    def test_tool_choice_queue_rejects_provider_tool_outside_explore_allowlist(self) -> None:
         _WriteFileThenFinalClient.calls = []
         with tempfile.TemporaryDirectory() as tmp:
             config = AgentConfig(
@@ -1150,13 +1150,13 @@ class AgentRuntimeTests(unittest.TestCase):
 
         self.assertGreaterEqual(len(_WriteFileThenFinalClient.calls), 2)
         second_tools = _tool_names_from_schema_call(_WriteFileThenFinalClient.calls[1]["tools"])
-        self.assertEqual(second_tools, {"git_diff", "run_tests"})
+        self.assertIn("read_file", second_tools)
+        self.assertNotIn("write_file", second_tools)
         second_messages = _WriteFileThenFinalClient.calls[1]["messages"]
         self.assertTrue(
             any(
-                message.get("role") == "user"
-                and "[Runtime tool choice queue]" in str(message.get("content") or "")
-                and "implementation_final_hygiene" in str(message.get("content") or "")
+                message.get("role") == "tool"
+                and "Runtime tool choice restriction" in str(message.get("content") or "")
                 for message in second_messages
             )
         )
