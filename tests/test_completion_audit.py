@@ -82,6 +82,47 @@ class CompletionAuditTests(unittest.TestCase):
 
         self.assertTrue(result.passed)
 
+    def test_blocked_no_edit_claim_requires_tool_observed_blocking_evidence(self) -> None:
+        contract = generate_requirement_contract("请实现用户注册接口的邮箱唯一性校验，并补充单元测试。")
+
+        result = audit_completion(
+            contract,
+            request="请实现用户注册接口的邮箱唯一性校验，并补充单元测试。",
+            final_content="任务 blocked：当前不做修改，也没有需要提交的文件。",
+            tool_results=[
+                ToolResultSummary("read_file", "class UserService {}", path="src/UserService.java"),
+                ToolResultSummary("git_diff", "(empty)"),
+            ],
+            source_paths=["src/UserService.java"],
+            open_todos=[],
+        )
+
+        self.assertFalse(result.passed)
+        missing = result.missing_items[0]
+        self.assertEqual(missing.category, "acceptance")
+        self.assertIn("no tool result records", missing.reason)
+        self.assertIn("apply_patch", result.allowed_tool_names())
+
+    def test_blocked_no_edit_passes_when_search_records_target_absence(self) -> None:
+        contract = generate_requirement_contract("请实现用户注册接口的邮箱唯一性校验，并补充单元测试。")
+
+        result = audit_completion(
+            contract,
+            request="请实现用户注册接口的邮箱唯一性校验，并补充单元测试。",
+            final_content=(
+                "已验证：search_code 未找到用户注册实现，目标服务不在当前仓库；"
+                "任务 blocked，未修改文件，也未运行测试。"
+            ),
+            tool_results=[
+                ToolResultSummary("search_code", "(no matches)", useless=True),
+                ToolResultSummary("git_diff", "(empty)"),
+            ],
+            source_paths=[],
+            open_todos=[],
+        )
+
+        self.assertTrue(result.passed)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -77,6 +77,17 @@ NEGATIVE_EVIDENCE_MARKERS = frozenset(
         "找不到",
     }
 )
+NO_EDIT_BLOCK_EVIDENCE_MARKERS = frozenset(
+    {
+        *NEGATIVE_EVIDENCE_MARKERS,
+        "file not found",
+        "outside the workspace",
+        "patch relevance gate",
+        "refusing real apply_patch",
+        "user denied tool execution",
+        "permission denied",
+    }
+)
 CANNOT_TEST_MARKERS = frozenset(
     {
         "cannot run tests",
@@ -382,7 +393,9 @@ def _implementation_items(
 ) -> list[CompletionAuditItem]:
     content = final_content or ""
     write_happened = _workspace_write_happened(tool_results)
-    blocked_no_edit = _looks_like_blocked_no_edit(content)
+    blocked_no_edit_claim = _looks_like_blocked_no_edit(content)
+    blocked_no_edit_evidence = _has_blocked_no_edit_evidence(tool_results)
+    blocked_no_edit = blocked_no_edit_claim and blocked_no_edit_evidence
     code_evidence = _has_successful_code_evidence(tool_results)
     tests_run = _has_successful_tool(tool_results, "run_tests")
     diff_run = _has_successful_tool(tool_results, "git_diff")
@@ -394,13 +407,22 @@ def _implementation_items(
     if write_happened:
         items.append(_passed("acceptance", implement_requirement, "workspace write tool changed files"))
     elif blocked_no_edit:
-        items.append(_passed("acceptance", implement_requirement, "answer explicitly stops or blocks instead of pretending to implement"))
+        items.append(
+            _passed(
+                "acceptance",
+                implement_requirement,
+                "answer explicitly stops and a tool result records a concrete blocking condition",
+            )
+        )
     else:
+        reason = "no workspace change happened and the final answer does not clearly mark the task blocked/no-edit"
+        if blocked_no_edit_claim:
+            reason = "final answer claims blocked/no-edit, but no tool result records a concrete blocking condition"
         items.append(
             _missing(
                 "acceptance",
                 implement_requirement,
-                "no workspace change happened and the final answer does not clearly mark the task blocked/no-edit",
+                reason,
                 ("read_file", "search_code", "apply_patch"),
             )
         )
@@ -552,6 +574,18 @@ def _has_negative_evidence_result(results: list[ToolResultSummary]) -> bool:
         if result.name not in CODE_EVIDENCE_TOOL_NAMES:
             continue
         if result.useless or any(marker in result.content.lower() for marker in NEGATIVE_EVIDENCE_MARKERS):
+            return True
+    return False
+
+
+def _has_blocked_no_edit_evidence(results: list[ToolResultSummary]) -> bool:
+    """Require a tool-observed reason before accepting a no-edit implementation stop."""
+
+    for result in results:
+        lowered = (result.content or "").lower()
+        if result.name in CODE_EVIDENCE_TOOL_NAMES and (result.useless or any(marker in lowered for marker in NEGATIVE_EVIDENCE_MARKERS)):
+            return True
+        if result.is_error and any(marker in lowered for marker in NO_EDIT_BLOCK_EVIDENCE_MARKERS):
             return True
     return False
 

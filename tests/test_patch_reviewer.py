@@ -58,6 +58,21 @@ class PatchReviewerTests(unittest.TestCase):
 
         self.assertTrue(result.passed)
 
+    def test_chinese_add_one_test_request_requires_test_diff(self) -> None:
+        request = "请修复登录功能，并加一个测试。"
+        contract = generate_requirement_contract(request)
+        result = review_patch(
+            contract,
+            request=request,
+            tool_results=[
+                ToolResultSummary("apply_patch", "Applied patch", path="src/LoginService.java", changed=True),
+                ToolResultSummary("git_diff", _java_diff()),
+            ],
+        )
+
+        self.assertFalse(result.passed)
+        self.assertIn("requested_test_missing", {finding.code for finding in result.findings})
+
     def test_public_api_change_requires_post_write_call_site_evidence(self) -> None:
         contract = generate_requirement_contract("请实现用户名规范化功能。")
         result = review_patch(

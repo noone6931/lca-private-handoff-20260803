@@ -1676,6 +1676,47 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertIn("apply_patch", decision.temporary_tool_allowlist or set())
         self.assertIn("run_tests", decision.temporary_tool_allowlist or set())
 
+    def test_post_diff_patch_reviewer_steers_before_the_model_attempts_a_final_answer(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=workspace,
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+            )
+            runtime = AgentRuntime(config, show_tool_logs=False)
+            runtime._current_user_request = "请修复用户名规范化，并补充单元测试。"
+            runtime._requirement_contract = generate_requirement_contract(runtime._current_user_request)
+            runtime._tool_choice_results = [
+                ToolResultSummary("read_file", "class UserService {}", path="src/UserService.java"),
+                ToolResultSummary("apply_patch", "Applied patch", path="src/UserService.java", changed=True),
+                ToolResultSummary(
+                    "git_diff",
+                    (
+                        "diff --git a/src/UserService.java b/src/UserService.java\n"
+                        "--- a/src/UserService.java\n"
+                        "+++ b/src/UserService.java\n"
+                        "@@ -1 +1 @@\n"
+                        "-    private String normalize(String value) { return value; }\n"
+                        "+    private String normalize(String value) { return value.trim(); }\n"
+                        "\n[diff summary]\n- Total: 1 file(s), +1 -1, 1 hunk(s).\n"
+                    ),
+                ),
+            ]
+
+            decision = runtime._decide_post_diff_patch_review(0)
+
+        self.assertIsNotNone(decision)
+        assert decision is not None
+        self.assertEqual(decision.kind, "patch_reviewer")
+        self.assertIn("requested_test_missing", str(decision.payload))
+        self.assertIn("apply_patch", decision.temporary_tool_allowlist or set())
+
     def test_final_answer_steer_counts_reset_at_the_start_of_each_run(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             config = AgentConfig(

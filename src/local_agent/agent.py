@@ -541,6 +541,15 @@ class AgentRuntime:
                 self._record_read_file_evidence(name, arguments, result)
                 self._record_tool_evidence(name, arguments, result)
                 self._observe_soft_tool_requirement(name, arguments, result)
+                if name == "git_diff" and not result.is_error:
+                    patch_review = self._decide_post_diff_patch_review(run_start_index)
+                    if patch_review is not None:
+                        self._apply_final_answer_steering(patch_review)
+                        self._append_synthetic_tool_results(
+                            tool_calls[index + 1 :],
+                            "Skipped because runtime patch review requires correction or verification before further work.",
+                        )
+                        break
                 duplicate_skipped = self._duplicate_tool_guard_hits > duplicate_hits_before
                 useless_search_skipped = self._useless_search_pattern_guard_hits > useless_search_hits_before
                 useless_lsp_skipped = self._useless_lsp_symbol_guard_hits > useless_lsp_hits_before
@@ -1587,7 +1596,23 @@ class AgentRuntime:
         content: str,
         run_start_index: int,
     ) -> SteeringDecision | None:
-        context = FinalAnswerContext(
+        context = self._final_answer_context(content, run_start_index)
+        for steerer in self._final_answer_steerers:
+            decision = steerer.decide(context)
+            if decision is not None:
+                return decision
+        return None
+
+    def _decide_post_diff_patch_review(self, run_start_index: int) -> SteeringDecision | None:
+        context = self._final_answer_context("", run_start_index)
+        for steerer in self._final_answer_steerers:
+            if steerer.kind != "patch_reviewer":
+                continue
+            return steerer.decide(context)
+        return None
+
+    def _final_answer_context(self, content: str, run_start_index: int) -> FinalAnswerContext:
+        return FinalAnswerContext(
             request=self._current_user_request,
             content=content,
             messages=self._messages,
@@ -1600,11 +1625,6 @@ class AgentRuntime:
             is_code_implementation_request=is_code_implementation_request(self._current_user_request),
             steer_counts=self._final_answer_steer_counts(),
         )
-        for steerer in self._final_answer_steerers:
-            decision = steerer.decide(context)
-            if decision is not None:
-                return decision
-        return None
 
     def _apply_final_answer_steering(self, decision: SteeringDecision) -> None:
         steer_count = self._increment_final_answer_steer_count(decision.kind)
