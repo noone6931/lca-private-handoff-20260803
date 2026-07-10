@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 
 from local_agent.patch_reviewer import review_input_summary
+from local_agent.patch_reviewer import review_input_metadata
 from local_agent.patch_reviewer import review_patch
 from local_agent.task_contract import generate_requirement_contract
 from local_agent.tool_choice_queue import ToolResultSummary
@@ -100,6 +101,39 @@ class PatchReviewerTests(unittest.TestCase):
 
         self.assertTrue(result.passed)
 
+    def test_pre_write_diff_does_not_review_a_later_workspace_write(self) -> None:
+        contract = generate_requirement_contract("请实现用户名规范化功能。")
+        result = review_patch(
+            contract,
+            request="请实现用户名规范化功能。",
+            tool_results=[
+                ToolResultSummary("apply_patch", "Applied first patch", changed=True),
+                ToolResultSummary("git_diff", _java_diff()),
+                ToolResultSummary("apply_patch", "Applied final patch", changed=True),
+            ],
+        )
+
+        self.assertIn("git_diff_missing", {finding.code for finding in result.findings})
+
+    def test_useless_or_unrelated_search_does_not_satisfy_call_site_review(self) -> None:
+        contract = generate_requirement_contract("请实现用户名规范化功能。")
+        result = review_patch(
+            contract,
+            request="请实现用户名规范化功能。",
+            tool_results=[
+                ToolResultSummary("apply_patch", "Applied patch", changed=True),
+                ToolResultSummary("search_code", "(no matches)", useless=True),
+                ToolResultSummary(
+                    "read_file",
+                    "class AuditService { void record() {} }",
+                    path="src/AuditService.java",
+                ),
+                ToolResultSummary("git_diff", _java_diff(public_api=True)),
+            ],
+        )
+
+        self.assertIn("call_site_review_missing", {finding.code for finding in result.findings})
+
     def test_diff_reviewer_warning_becomes_runtime_review_finding(self) -> None:
         contract = generate_requirement_contract("请实现导入校验功能。")
         diff = _java_diff() + "\n[diff reviewer]\n- Potential implementation-quality warning: comment/documentation-only\n"
@@ -124,6 +158,27 @@ class PatchReviewerTests(unittest.TestCase):
         self.assertIn("[diff summary]", result)
         self.assertIn("[diff reviewer]", result)
         self.assertLessEqual(len(result), 800)
+
+    def test_large_diff_metadata_preserves_late_test_paths_for_reviewer(self) -> None:
+        request = "请实现用户名规范化，并补充单元测试。"
+        source_only = _java_diff().split("\n[diff summary]", 1)[0]
+        test_only = _java_diff(test_changed=True).split("diff --git a/src/test/UserServiceTest.java", 1)[1]
+        raw = source_only + ("+filler\n" * 2000) + "diff --git a/src/test/UserServiceTest.java" + test_only
+        summary = review_input_summary("git_diff", raw, max_chars=800)
+        result = review_patch(
+            generate_requirement_contract(request),
+            request=request,
+            tool_results=[
+                ToolResultSummary("apply_patch", "Applied patch", changed=True),
+                ToolResultSummary(
+                    "git_diff",
+                    summary,
+                    metadata=review_input_metadata("git_diff", raw),
+                ),
+            ],
+        )
+
+        self.assertNotIn("requested_test_missing", {finding.code for finding in result.findings})
 
 
 if __name__ == "__main__":

@@ -103,3 +103,12 @@ T-115 的结论不是“百炼已经完全高效”，而是：安全可逆的 p
 | 初轮修正 | 初版 final steerer 使用展示用相对路径判断 root 归属；主 workspace 的 `src/...` 因此被误判为未覆盖。 | 运行时另存 canonical absolute source paths，展示/引用仍保留相对路径；两种路径职责不再混用。 |
 | 收束策略 | 矩阵覆盖后保留有限补读；接近 deadline 时直接撤回 tools，为最终回答预留 45 秒。 | 对齐 OMP 的 deadline-first 控制原则：步数只是局部护栏，不让探索吃掉最终交付时间。 |
 | `20260710T032336652934Z` | 先读 V1.3 需求，再读 `msp-pay` 的 `platformPayment.js` / Vue 页面和 `zqylpayment` 的 Java 源码；矩阵完成后 runtime 发出 `design_evidence_final`，下一次 LLM 请求 `tool_schema_count=0`。最终 `termination_reason=final`，127 秒、16 次 LLM 请求、19 次只读工具、0 tool error。 | 通过：最小跨前后端证据覆盖与最终收束均生效。模型仍有 5 次 `list_files` 和 6 次 `search_code`，后续压测继续关注探索成本。 |
+
+## T-122 Reviewer / Completion 时序回归（20260710）
+
+| 问题 | 措施 | 回归结果 |
+|---|---|---|
+| 旧测试或 diff 发生在最终写入前仍可能放行。 | 新增 `verification_timeline.py`，Queue、CompletionAudit、Patch Reviewer 统一以最后一次真实 workspace write 为时间锚点。 | 新增反例测试：`write → test → diff → write` 必须重新要求 `run_tests + git_diff`。 |
+| 大 diff 截断会遗漏后段测试/API 改动。 | `ToolResultSummary.metadata` 保存截断前完整 diff 的 changed paths、test paths 与 public API symbols；模型上下文仍只接收有界摘要。 | 后段测试 diff 在 800 字符摘要之外时，Reviewer 仍能识别测试文件改动。 |
+| “这个功能实现了吗？”会误入实现流程。 | RequirementContract 在实现意图判断前识别常见中文状态问句。 | `实现了吗` / `当前是否支持` / `已经实现…了吗` 均回归为 read-only。 |
+| 无结果或无关读取可充当调用方检查。 | Reviewer 只接受最后写入后的非 useless、且含变更 API/类型证据的 search/LSP/read 结果。 | useless `No matches` 和无关文件读取不能再通过调用方审查。 |

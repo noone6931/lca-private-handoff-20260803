@@ -20,7 +20,7 @@ python3 scripts/sync_project_excel.py
 | 当前阶段 | P10：Intelligence Runtime 骨架 | T-121 已让跨前后端只读设计任务先覆盖需求、主后端和用户指定前端源码，再撤回工具并收束回答。当前继续观察 anchored patch 参数纠错与跨项目设计的工具调用成本。详见 `docs/pressure-test-2026-07-10.md`。 |
 | 推荐入口 | `./agent "阅读当前项目"` | 自动设置 `PYTHONPATH=src`，默认当前目录为 workspace。 |
 | Token 配置 | 环境变量 / `--env-file` / `.env` | `./agent` 会自动加载安装目录 `.env`，也可显式传 `--env-file`；真实环境变量优先。 |
-| 测试数 | 280 | 完整 unittest、compileall、xlsx 同步和 diff check 已通过。 |
+| 测试数 | 287 | 完整 unittest、compileall、xlsx 同步和 diff check 已通过。 |
 | 默认 budget_seconds | 600 | 单次任务默认 10 分钟墙钟预算；`--budget-seconds 0` 可关闭。 |
 | 默认 max_steps | 0 | 表示不限步；仅在用户显式设置时作为防失控保险丝。 |
 | 预算执行 | 细粒度 | LLM 请求和 shell/run_tests timeout 会按剩余预算夹紧；deadline 到期会补齐未执行工具结果。 |
@@ -126,7 +126,7 @@ python3 scripts/sync_project_excel.py
 | Planner/Explore | 已完成 MVP 版 | `src/local_agent/planner.py`、`src/local_agent/tool_choice_queue.py`、`src/local_agent/agent.py` | 实现任务在 explore 阶段只开放 list/read/search/LSP/todo/ask/git 状态检查；读到本地证据后进入 ready_to_implement，写后进入 verify | 真实实现压测 |
 | 二阶段 Patch Reviewer | 已完成 MVP 版 | `src/local_agent/patch_reviewer.py`、`src/local_agent/steering/final_answer.py`、`src/local_agent/agent.py` | 成功 `git_diff` 后立即检查显式测试 diff、公开 API 调用方和已有 diff reviewer finding；若有风险，停止同批后续工具并只开放修复/验证/回滚，最终回答仍有兜底审查 | T-115 真实小改已复测；下一步 T-116 preview contract |
 | No-edit evidence gate | 已完成 MVP 版 | `src/local_agent/completion_audit.py` | 实现任务的 blocked/no-edit 必须由 search/LSP 未命中、路径缺失、runtime relevance/approval 拒绝等工具事实支撑；模型文本不足以放行 | 继续真实任务观察 |
-| 测试覆盖 | 已完成 | 当前 280 个测试通过 | unittest、compileall、xlsx 和 diff check 通过 | 日用反馈补测 |
+| 测试覆盖 | 已完成 | 当前 287 个测试通过 | unittest、compileall、xlsx 和 diff check 通过 | 日用反馈补测 |
 
 ## 下一步 Todo
 
@@ -253,6 +253,7 @@ python3 scripts/sync_project_excel.py
 | T-119 | P1 | P10 | 实现任务 final-guard scope / CompletionAudit priority | 已完成并压测 | Agent | 源码数字/证据类 final guard 不能抢占实现任务的锚点修复、补测试和验证。 | T-119 将这类 final guard 限定为 `read-only` contract；真实 session `20260710T022516812575Z` 在两处初始 patch 失败后仍完成两份文件 preview、写入、定向 6 测试和 diff。 |
 | T-120 | P0 | P10 | Pinned requirement evidence / compaction authority | 已完成 MVP 并复测 | Agent | 真实服务费结算设计 session `20260710T024503106586Z` 经 12 次 LLM summary 后将后期规划误写为当前双审/支付流程。 | 成功 `read_file` 的 requirement/spec Markdown 以高优先级 pinned context 注入每次 provider request；最终需求事实要求真实 requirement path:line。session `20260710T025606504484Z` 已不再编造双审/支付当前范围。 |
 | T-121 | P0 | P10 | 真实设计 evidence matrix / cross-root ToolChoiceQueue | 已完成并真实复测 | Agent | T-120 复测仍在后端候选目录进行 57 次调用，未读取用户声明前端，造成复用结论过弱。 | 跨 root 只读设计任务要求主 workspace 和每个用户指定代码目录各成功读取至少一份源码；覆盖后只保留有限补读，或接近 deadline 时预留最终回答时间。session `20260710T032336652934Z` 读取需求、`zqylpayment` Java 与 `msp-pay` JS/Vue 后以 final 收束（127 秒、19 次只读工具、0 错误）。 |
+| T-122 | P0 | P10 | 写入后验证时序与 Reviewer 事实硬化 | 已完成并回归 | Agent | review 发现此前 `run_tests` / `git_diff` 可发生在最终写入前，大 diff 截断会丢失测试/API 事实，状态问句会误分成实现任务，调用方检查可被无效结果绕过。 | 新增 `verification_timeline.py` 统一最后写入后的验证判断；Reviewer 在截断前提取完整 diff metadata；常见中文状态问句归为只读；调用方证据排除 useless/无关结果并关联变更 API。 |
 
 ## 风险与决策
 
@@ -409,7 +410,7 @@ python3 scripts/sync_project_excel.py
 | 项目 | 结论 | 依据 |
 |---|---|---|
 | 主链路 | 通过 | 百炼真实小改复测已跑通 todo、dry_run、apply_patch、session allow、rollback、run_tests、git_diff。 |
-| 测试 | 通过 | P5 收口时 90 个 unittest、compileall、xlsx 检查、diff check 均通过；P10 当前代码已跑通 280 个 unittest。 |
+| 测试 | 通过 | P5 收口时 90 个 unittest、compileall、xlsx 检查、diff check 均通过；P10 当前代码已跑通 287 个 unittest。 |
 | 日用入口 | 通过 | README 已补只读分析和小改任务命令模板。 |
 | 开放风险 | 可接受 | shell 仍非沙箱、prompt injection 仍需靠审批和封闭 VM；provider/model 专用 tokenizer、输出 reserve、managed skills、完整 reviewer 和完整 OMP ToolChoiceQueue 继续后置评估。 |
 | 下一阶段 | 真实需求设计与实现压测 | 已验证默认工作流、auto summary、多语言 LSP/light fallback、multi-root、startup memory、learn、authored skills、runtime state dir、多项目只读压测主链路、relevance gate、implementation-quality gate、no-edit final hygiene、semantic exploration guard、terminal input isolation、Event/Command Protocol、Terminal Frontend MVP、项目边界分析 MVP、source-grounded numeric guard、token budget、pinned requirement evidence 和 cross-root evidence matrix；下一步进入一项边界明确的真实需求设计和小改验证。 |

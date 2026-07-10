@@ -43,7 +43,7 @@
 - `apply_patch` 已支持 `replace`、`insert_before`、`insert_after`，并兼容 Python 3.12。
 - 非交互审批、LLM 非 JSON 响应、session 恢复坏尾部、search_code 绝对路径泄漏等问题已经修复。
 - 已完成 Agent 自举测试：能够通过百炼模型调用工具读取、修改、测试和查看 diff。
-- 测试基线：280 个测试在正常本地环境通过。
+- 测试基线：287 个测试在正常本地环境通过。
 
 当前已具备：
 
@@ -212,7 +212,7 @@
 | 二阶段 Patch Reviewer | 已完成 MVP 版 | `src/local_agent/patch_reviewer.py` 在成功 `git_diff` 后立即消费 write / `git_diff` / search/LSP 证据；显式要求测试却没有测试 diff、公开 API 未做写后调用方检索、低相关或 comment-only patch 均会触发 runtime steering，并只开放受控修复/验证/回滚工具；最终回答前仍保留兜底审查。 |
 | no-edit evidence gate | 已完成 | CompletionAudit 不再接受只有“blocked/unexecuted”的文字自述；必须有 search/LSP 未命中、路径缺失、relevance/approval 拒绝等工具证据，才允许实现任务在无 diff 时收尾。 |
 | ToolRegistry 参数归一 | 已完成 MVP 版 | `src/local_agent/tools/argument_normalization.py` 在 schema 校验前仅映射已观测 scalar alias；冲突值直接拒绝，随后仍执行原 schema、approval、path/hash 和 anchored patch 校验。 |
-| 测试基线 | 已完成 | 本地正常环境下 280 个测试通过。 |
+| 测试基线 | 已完成 | 本地正常环境下 287 个测试通过。 |
 
 ## 下一步 Todo
 
@@ -326,6 +326,7 @@
 | T-119 | 实现任务 final-guard scope / CompletionAudit priority | 已完成并压测 | P10 | source-backed numeric/evidence final guard 现在只处理 `read-only` contract；真实会话 `20260710T022516812575Z` 在两处初始 patch 失败后仍完成 preview、写入、定向 6 测试和 diff。无写入时的 `SourceEvidenceFalseNegative` 继续仅做 todo/git 收尾卫生。 |
 | T-120 | Pinned requirement evidence / compaction authority | 已完成 MVP 并复测 | P10 | 真实设计 session `20260710T024503106586Z` 因多轮 LLM compaction 编造需求范围；成功读取的 requirement/spec Markdown 现在作为高优先级 pinned context 注入每次 provider request，最终稿要求 requirement 文件路径/行号。复测不再把双审/支付写成本期范围。 |
 | T-121 | 真实设计 evidence matrix / cross-root ToolChoiceQueue | 已完成并真实复测 | P10 | 新增 `design_evidence.py`，跨 root 只读设计任务必须在主 workspace 和用户指定代码目录各成功读取至少一份源码；ToolChoiceQueue 逐 root 约束工具，final steerer 复核 canonical path 覆盖。覆盖后限制补读并在 deadline 接近时预留最终回答时间。session `20260710T032336652934Z` 127 秒、19 次只读工具、0 错误，以 final 收束。 |
+| T-122 | 写入后验证时序与 Reviewer 事实硬化 | 已完成并回归 | P10 | `verification_timeline.py` 让 Queue、CompletionAudit 和 Patch Reviewer 只承认最后一次真实写入后的 `run_tests` / `git_diff`；Reviewer 在 diff 截断前保存 changed/test/API metadata；状态问句归为只读；调用方证据排除 useless/无关结果。 |
 
 ## 风险清单
 
@@ -433,7 +434,7 @@
 | 项目 | 结论 | 依据 |
 |---|---|---|
 | 主链路 | 通过 | 百炼真实小改复测已跑通 todo、dry_run、apply_patch、session allow、rollback、run_tests、git_diff。 |
-| 测试 | 通过 | P5 收口时 90 个 unittest、compileall、xlsx 检查、diff check 均通过；P10 当前代码已跑通 280 个 unittest。 |
+| 测试 | 通过 | P5 收口时 90 个 unittest、compileall、xlsx 检查、diff check 均通过；P10 当前代码已跑通 287 个 unittest。 |
 | 日用入口 | 通过 | README 已补只读分析和小改任务命令模板。 |
 | 开放风险 | 可接受 | shell 仍非沙箱、prompt injection 仍需靠审批和封闭 VM；provider/model 专用 tokenizer、输出 reserve、managed skills、完整 reviewer 和完整 OMP ToolChoiceQueue 继续后置评估。 |
 | 下一阶段 | P10 Intelligence Runtime 继续收束 | T-109~T-121 已补 RequirementContract、CompletionAudit、MiniToolChoiceQueue、Planner/Explore、post-diff Patch Reviewer、no-edit evidence gate、ToolRegistry 参数归一、preview contract、numeric guard scope、literal 分类、实现任务 final-guard scope、pinned requirement evidence 和 cross-root evidence matrix；下一步进入边界明确的真实需求设计和小改验证。 |

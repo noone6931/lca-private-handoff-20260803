@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal, Mapping
 
 from .task_contract import RequirementContract
 from .tool_choice_queue import ToolResultSummary
-from .tool_choice_queue import WRITE_TOOL_NAMES
+from .verification_timeline import results_after_last_write
+from .verification_timeline import workspace_write_happened
 
 
 ReviewSeverity = Literal["blocking", "warning"]
@@ -20,10 +21,10 @@ QUALITY_REMEDIATION_TOOLS = frozenset(
 _DIFF_REVIEWER_HEADER = "[diff reviewer]"
 _DIFF_SECTION_HEADERS = ("[diff summary]", "[diff attribution]", "[diff reviewer]")
 _PUBLIC_METHOD_PATTERN = re.compile(
-    r"^[+-]\s*(?:public|protected)\s+(?:static\s+)?[A-Za-z_$][\w$<>, ?\[\].]*\s+[A-Za-z_$][\w$]*\s*\(",
+    r"^[+-]\s*(?:public|protected)\s+(?:static\s+)?[A-Za-z_$][\w$<>, ?\[\].]*\s+(?P<symbol>[A-Za-z_$][\w$]*)\s*\(",
 )
 _EXPORTED_JS_API_PATTERN = re.compile(
-    r"^[+-]\s*export\s+(?:default\s+)?(?:async\s+)?(?:function|class|const|let|var)\b",
+    r"^[+-]\s*export\s+(?:default\s+)?(?:async\s+)?(?:function|class|const|let|var)\s+(?P<symbol>[A-Za-z_$][\w$]*)",
 )
 _TEST_REQUEST_MARKERS = (
     "单元测试",
@@ -86,6 +87,20 @@ class PatchReviewResult:
         }
 
 
+@dataclass(frozen=True)
+class PatchReviewFacts:
+    changed_paths: tuple[str, ...]
+    test_paths: tuple[str, ...]
+    public_api_symbols: tuple[str, ...]
+
+    def metadata(self) -> dict[str, object]:
+        return {
+            "changed_paths": list(self.changed_paths),
+            "test_paths": list(self.test_paths),
+            "public_api_symbols": list(self.public_api_symbols),
+        }
+
+
 def review_patch(
     contract: RequirementContract | None,
     *,
@@ -101,10 +116,10 @@ def review_patch(
 
     if contract is None or contract.task_kind != "code-implementation":
         return PatchReviewResult(())
-    if not _workspace_write_happened(tool_results):
+    if not workspace_write_happened(tool_results):
         return PatchReviewResult(())
 
-    latest_diff = _latest_successful_git_diff(tool_results)
+    latest_diff = _latest_successful_git_diff_after_last_write(tool_results)
     if latest_diff is None:
         return PatchReviewResult(
             (
@@ -138,8 +153,8 @@ def review_patch(
             )
         )
 
-    raw_diff = _raw_diff_content(diff_content)
-    if _request_requires_test_change(request) and _has_changed_source_file(raw_diff) and not _has_changed_test_file(raw_diff):
+    facts = _review_facts_for_diff(latest_diff)
+    if _request_requires_test_change(request) and _has_changed_source_file(facts) and not facts.test_paths:
         findings.append(
             _finding(
                 "requested_test_missing",
@@ -148,7 +163,7 @@ def review_patch(
                 TEST_REMEDIATION_TOOLS,
             )
         )
-    if _has_public_api_signature_change(raw_diff) and not _has_call_site_evidence_after_last_write(tool_results):
+    if facts.public_api_symbols and not _has_call_site_evidence_after_last_write(tool_results, facts):
         findings.append(
             _finding(
                 "call_site_review_missing",
@@ -204,28 +219,23 @@ def review_input_summary(name: str, content: str, *, max_chars: int = 6000) -> s
     return _truncate(summary, max_chars)
 
 
+def review_input_metadata(name: str, content: str) -> dict[str, object]:
+    """Extract full-diff facts before the runtime stores a bounded diff summary."""
+
+    if name != "git_diff":
+        return {}
+    return {"patch_review": _diff_review_facts(_raw_diff_content(content)).metadata()}
+
+
 def _finding(code: str, severity: ReviewSeverity, message: str, allowed_tools: frozenset[str] | set[str]) -> PatchReviewFinding:
     return PatchReviewFinding(code, severity, message, tuple(sorted(allowed_tools)))
 
 
-def _latest_successful_git_diff(results: list[ToolResultSummary]) -> ToolResultSummary | None:
-    for result in reversed(results):
+def _latest_successful_git_diff_after_last_write(results: list[ToolResultSummary]) -> ToolResultSummary | None:
+    for result in reversed(results_after_last_write(results)):
         if result.name == "git_diff" and not result.is_error:
             return result
     return None
-
-
-def _workspace_write_happened(results: list[ToolResultSummary]) -> bool:
-    return any(result.name in WRITE_TOOL_NAMES and _result_changed_workspace(result) for result in results)
-
-
-def _result_changed_workspace(result: ToolResultSummary) -> bool:
-    if result.is_error:
-        return False
-    if result.changed is not None:
-        return result.changed
-    lowered = (result.content or "").lower()
-    return not any(marker in lowered for marker in ("dry run", "dry_run", "preview only", "file not changed", "not changed"))
 
 
 def _raw_diff_content(content: str) -> str:
@@ -260,41 +270,81 @@ def _changed_paths(raw_diff: str) -> set[str]:
     return paths
 
 
-def _has_changed_source_file(raw_diff: str) -> bool:
-    return any(path.lower().endswith((".java", ".py", ".js", ".jsx", ".ts", ".tsx", ".vue")) for path in _changed_paths(raw_diff))
+def _diff_review_facts(raw_diff: str) -> PatchReviewFacts:
+    changed_paths = tuple(sorted(_changed_paths(raw_diff)))
+    test_paths = tuple(path for path in changed_paths if _is_test_path(path))
+    public_api_symbols = tuple(sorted(_public_api_symbols(raw_diff)))
+    return PatchReviewFacts(changed_paths, test_paths, public_api_symbols)
 
 
-def _has_changed_test_file(raw_diff: str) -> bool:
-    for path in _changed_paths(raw_diff):
-        lowered = path.lower()
-        filename = lowered.rsplit("/", 1)[-1]
-        if "/test/" in f"/{lowered}" or "/tests/" in f"/{lowered}" or "/spec/" in f"/{lowered}":
-            return True
-        if any(token in filename for token in ("test", "spec")):
-            return True
-    return False
+def _review_facts_for_diff(result: ToolResultSummary) -> PatchReviewFacts:
+    metadata = result.metadata.get("patch_review") if isinstance(result.metadata, Mapping) else None
+    if isinstance(metadata, Mapping):
+        changed_paths = _metadata_strings(metadata.get("changed_paths"))
+        test_paths = _metadata_strings(metadata.get("test_paths"))
+        public_api_symbols = _metadata_strings(metadata.get("public_api_symbols"))
+        return PatchReviewFacts(changed_paths, test_paths, public_api_symbols)
+    return _diff_review_facts(_raw_diff_content(result.content))
 
 
-def _has_public_api_signature_change(raw_diff: str) -> bool:
+def _has_changed_source_file(facts: PatchReviewFacts) -> bool:
+    return any(path.lower().endswith((".java", ".py", ".js", ".jsx", ".ts", ".tsx", ".vue")) for path in facts.changed_paths)
+
+
+def _is_test_path(path: str) -> bool:
+    lowered = path.lower()
+    filename = lowered.rsplit("/", 1)[-1]
+    return (
+        "/test/" in f"/{lowered}"
+        or "/tests/" in f"/{lowered}"
+        or "/spec/" in f"/{lowered}"
+        or any(token in filename for token in ("test", "spec"))
+    )
+
+
+def _public_api_symbols(raw_diff: str) -> set[str]:
+    symbols: set[str] = set()
     for line in raw_diff.splitlines():
         if line.startswith(("+++", "---")):
             continue
-        if _PUBLIC_METHOD_PATTERN.match(line) or _EXPORTED_JS_API_PATTERN.match(line):
+        match = _PUBLIC_METHOD_PATTERN.match(line) or _EXPORTED_JS_API_PATTERN.match(line)
+        if match is not None:
+            symbols.add(match.group("symbol"))
+    return symbols
+
+
+def _metadata_strings(value: object) -> tuple[str, ...]:
+    if not isinstance(value, list):
+        return ()
+    return tuple(sorted(str(item) for item in value if isinstance(item, str) and item))
+
+
+def _has_call_site_evidence_after_last_write(
+    results: list[ToolResultSummary],
+    facts: PatchReviewFacts,
+) -> bool:
+    evidence_tokens = {symbol.lower() for symbol in facts.public_api_symbols}
+    changed_paths = {path.lower() for path in facts.changed_paths}
+    evidence_tokens.update(_source_name_tokens(facts.changed_paths))
+    for result in results_after_last_write(results):
+        if result.is_error or result.useless or result.name not in CALL_SITE_EVIDENCE_TOOLS:
+            continue
+        if result.name == "read_file" and result.path and result.path.lower() in changed_paths:
+            continue
+        haystack = " ".join(part for part in (result.path, result.content) if part).lower()
+        if any(token in haystack for token in evidence_tokens):
             return True
     return False
 
 
-def _has_call_site_evidence_after_last_write(results: list[ToolResultSummary]) -> bool:
-    last_write_index = max(
-        (index for index, result in enumerate(results) if result.name in WRITE_TOOL_NAMES and _result_changed_workspace(result)),
-        default=-1,
-    )
-    if last_write_index < 0:
-        return False
-    return any(
-        not result.is_error and result.name in CALL_SITE_EVIDENCE_TOOLS
-        for result in results[last_write_index + 1 :]
-    )
+def _source_name_tokens(paths: tuple[str, ...]) -> set[str]:
+    tokens: set[str] = set()
+    for path in paths:
+        filename = path.rsplit("/", 1)[-1]
+        stem = filename.rsplit(".", 1)[0].lower()
+        if len(stem) >= 4 and stem not in {"index", "main", "app"}:
+            tokens.add(stem)
+    return tokens
 
 
 def _truncate(value: str, max_chars: int) -> str:

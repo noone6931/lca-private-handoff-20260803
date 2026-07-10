@@ -37,6 +37,7 @@ from .patch.anchored import PatchError
 from .patch.anchored import resolve_workspace_path
 from .planner import render_planner_explore_context
 from .patch_reviewer import review_input_summary
+from .patch_reviewer import review_input_metadata
 from .requirement_evidence import RequirementEvidence
 from .requirement_evidence import is_requirement_source_path
 from .requirement_evidence import render_pinned_requirement_evidence
@@ -1588,6 +1589,7 @@ class AgentRuntime:
                 is_error=result.is_error,
                 useless=result.useless,
                 path=_tool_choice_argument_path(arguments),
+                metadata=review_input_metadata(name, result.content),
             )
         )
         self._tool_choice_results = self._tool_choice_results[-80:]

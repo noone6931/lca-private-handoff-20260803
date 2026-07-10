@@ -2,10 +2,14 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from .design_evidence import missing_design_evidence_roots
+from .verification_timeline import last_workspace_write_index
+from .verification_timeline import successful_tool_after_last_write
+from .verification_timeline import workspace_write_happened
+from .verification_timeline import WRITE_TOOL_NAMES
 
 
 DEFAULT_TOOL_NAMES = frozenset(
@@ -83,7 +87,6 @@ POST_DIFF_REMEDIATION_TOOL_NAMES = frozenset(
         "write_file",
     }
 )
-WRITE_TOOL_NAMES = frozenset({"apply_patch", "rollback_patch", "write_file"})
 READ_ONLY_FORBIDDEN_TOOL_NAMES = frozenset(
     {
         "apply_patch",
@@ -205,20 +208,6 @@ CANNOT_TEST_MARKERS = frozenset(
         "无法运行测试",
     }
 )
-NO_WRITE_RESULT_MARKERS = frozenset(
-    {
-        "dry run",
-        "dry_run",
-        "file not changed",
-        "no file changed",
-        "not changed",
-        "patch preview only",
-        "preview only",
-        "would be",
-    }
-)
-
-
 @dataclass(frozen=True)
 class ToolResultSummary:
     name: str
@@ -227,6 +216,7 @@ class ToolResultSummary:
     useless: bool = False
     path: str | None = None
     changed: bool | None = None
+    metadata: Mapping[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -413,6 +403,7 @@ def _normalize_tool_result(result: ToolResultSummary | Mapping[str, Any] | str) 
         path = arguments.get("path")
     error_value = result.get("is_error", result.get("error", False))
     changed = result.get("changed", result.get("workspace_changed"))
+    metadata = result.get("metadata")
     return ToolResultSummary(
         name=name,
         content=content,
@@ -420,6 +411,7 @@ def _normalize_tool_result(result: ToolResultSummary | Mapping[str, Any] | str) 
         useless=bool(result.get("useless", False)),
         path=str(path) if path is not None else None,
         changed=changed if isinstance(changed, bool) else None,
+        metadata=dict(metadata) if isinstance(metadata, Mapping) else {},
     )
 
 
@@ -517,11 +509,11 @@ def _implementation_missing_requirements(
     missing: list[str] = []
     if not _workspace_write_happened(seen_tool_names, results):
         return missing
-    if not _has_successful_tool("git_diff", seen_tool_names, results):
+    if not _has_verification_after_last_write("git_diff", seen_tool_names, results):
         missing.append("git_diff")
     if (
-        not _has_successful_tool("run_tests", seen_tool_names, results)
-        and not _has_cannot_test_explanation(results)
+        not _has_verification_after_last_write("run_tests", seen_tool_names, results)
+        and not _has_cannot_test_explanation_after_last_write(results)
     ):
         missing.append("run_tests_or_cannot_test_explanation")
     return missing
@@ -535,23 +527,24 @@ def _has_successful_tool(name: str, seen_tool_names: set[str], results: tuple[To
 
 
 def _workspace_write_happened(seen_tool_names: set[str], results: tuple[ToolResultSummary, ...]) -> bool:
-    write_results = [result for result in results if result.name in WRITE_TOOL_NAMES]
-    if write_results:
-        return any(_tool_result_changed_workspace(result) for result in write_results)
+    if results:
+        return workspace_write_happened(results)
     return bool(seen_tool_names.intersection(WRITE_TOOL_NAMES))
 
 
-def _tool_result_changed_workspace(result: ToolResultSummary) -> bool:
-    if result.is_error:
-        return False
-    if result.changed is not None:
-        return result.changed
-    content = _lower_text(result.content)
-    return not any(marker in content for marker in NO_WRITE_RESULT_MARKERS)
+def _has_verification_after_last_write(
+    name: str,
+    seen_tool_names: set[str],
+    results: tuple[ToolResultSummary, ...],
+) -> bool:
+    if last_workspace_write_index(results) >= 0:
+        return successful_tool_after_last_write(results, name)
+    return _has_successful_tool(name, seen_tool_names, results)
 
 
-def _has_cannot_test_explanation(results: tuple[ToolResultSummary, ...]) -> bool:
-    combined = _lower_text("\n".join(result.content for result in results))
+def _has_cannot_test_explanation_after_last_write(results: tuple[ToolResultSummary, ...]) -> bool:
+    after_write = results[last_workspace_write_index(results) + 1 :]
+    combined = _lower_text("\n".join(result.content for result in after_write))
     return any(marker in combined for marker in CANNOT_TEST_MARKERS)
 
 

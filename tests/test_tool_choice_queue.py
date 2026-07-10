@@ -85,6 +85,27 @@ class ToolChoiceQueueTests(unittest.TestCase):
         self.assertIn("apply_patch", decision.allowed_tool_names)
         self.assertIn("run_tests", decision.allowed_tool_names)
 
+    def test_implementation_verification_must_follow_the_last_workspace_write(self) -> None:
+        decision = evaluate_tool_choice_state(
+            task_kind="implementation",
+            prompt="实现用户名规范化，并补充测试。",
+            tool_names=["apply_patch", "run_tests", "git_diff"],
+            tool_results=[
+                ToolResultSummary("apply_patch", "Applied first patch", changed=True),
+                ToolResultSummary("run_tests", "OK"),
+                ToolResultSummary("git_diff", "diff --git a/src/UserService.java b/src/UserService.java"),
+                ToolResultSummary("apply_patch", "Applied final patch", changed=True),
+            ],
+        )
+
+        self.assertTrue(decision.steering_required)
+        self.assertEqual(decision.rule_id, "implementation_final_hygiene")
+        self.assertEqual(
+            decision.missing_requirements,
+            ("git_diff", "run_tests_or_cannot_test_explanation"),
+        )
+        self.assertEqual(decision.allowed_tool_names, frozenset({"git_diff", "run_tests"}))
+
     def test_post_diff_pending_tests_keeps_focused_repair_tools_available(self) -> None:
         decision = evaluate_tool_choice_state(
             task_kind="implementation",

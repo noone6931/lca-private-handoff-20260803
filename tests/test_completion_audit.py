@@ -82,6 +82,27 @@ class CompletionAuditTests(unittest.TestCase):
 
         self.assertTrue(result.passed)
 
+    def test_implementation_verification_must_follow_the_last_workspace_write(self) -> None:
+        request = "请实现用户注册接口的邮箱唯一性校验，并补充单元测试。"
+        result = audit_completion(
+            generate_requirement_contract(request),
+            request=request,
+            final_content="已修改：src/UserService.java。验证：测试和 diff 已完成。",
+            tool_results=[
+                ToolResultSummary("apply_patch", "Applied first patch", changed=True),
+                ToolResultSummary("run_tests", "OK"),
+                ToolResultSummary("git_diff", "diff --git a/src/UserService.java b/src/UserService.java"),
+                ToolResultSummary("apply_patch", "Applied final patch", changed=True),
+            ],
+            source_paths=["src/UserService.java"],
+            open_todos=[],
+        )
+
+        self.assertFalse(result.passed)
+        allowed = set(result.allowed_tool_names())
+        self.assertIn("git_diff", allowed)
+        self.assertIn("run_tests", allowed)
+
     def test_blocked_no_edit_claim_requires_tool_observed_blocking_evidence(self) -> None:
         contract = generate_requirement_contract("请实现用户注册接口的邮箱唯一性校验，并补充单元测试。")
 

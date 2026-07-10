@@ -41,6 +41,15 @@ class RequirementContractTests(unittest.TestCase):
 
         self.assertEqual(contract.task_kind, "code-implementation")
 
+    def test_chinese_status_questions_are_read_only(self) -> None:
+        for prompt in (
+            "这个功能实现了吗？",
+            "当前是否支持批量导出？",
+            "已经实现用户注册了吗？",
+        ):
+            with self.subTest(prompt=prompt):
+                self.assertEqual(generate_requirement_contract(prompt).task_kind, "read-only")
+
     def test_service_fee_settlement_design_contract_is_clarification_first(self) -> None:
         contract = generate_requirement_contract("帮我设计服务费结算需求：下单、退款、商家分账都要考虑。")
 

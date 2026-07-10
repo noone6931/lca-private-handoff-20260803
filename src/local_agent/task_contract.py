@@ -76,6 +76,13 @@ _QUESTION_MARKERS = (
     "analyze",
 )
 
+_STATUS_QUESTION_PATTERNS = (
+    r"(?:这个|该|当前|已有|此)?.{0,18}(?:功能|接口|能力|模块)?.{0,12}实现了吗",
+    r"(?:这个|该|当前|已有|此)?.{0,18}(?:功能|接口|能力|模块)?.{0,12}(?:已经|是否|有没有)实现",
+    r"(?:当前|是否|已经|有没有).{0,18}支持",
+    r"(?:功能|接口|能力|模块).{0,12}完成了吗",
+)
+
 _CODE_EVIDENCE_MARKERS = (
     "代码",
     "源码",
@@ -252,6 +259,8 @@ def classify_task_kind(user_prompt: str) -> TaskKind:
     has_design_marker = _contains_any(lower, _DESIGN_MARKERS)
     has_implementation_intent = _has_implementation_intent(lower)
 
+    if _looks_like_status_question(lower):
+        return "read-only"
     if has_implementation_intent and not has_explicit_read_only_directive:
         return "code-implementation"
     if has_read_only_marker or (has_question_marker and has_code_evidence and not has_implementation_intent):
@@ -316,6 +325,10 @@ def _looks_like_read_only_implementation_question(lower_prompt: str) -> bool:
         re.search(r"(如何|怎么|是否|有没有|哪里|在哪|什么).{0,12}实现", lower_prompt)
         or re.search(r"实现.{0,8}(原理|方式|逻辑|在哪里|在哪|如何|怎么)", lower_prompt)
     )
+
+
+def _looks_like_status_question(lower_prompt: str) -> bool:
+    return any(re.search(pattern, lower_prompt) for pattern in _STATUS_QUESTION_PATTERNS)
 
 
 def _unclear_scope(prompt: str) -> str:

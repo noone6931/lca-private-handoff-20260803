@@ -7,7 +7,9 @@ from typing import Literal
 from .task_contract import RequirementContract
 from .tool_choice_queue import CODE_EVIDENCE_TOOL_NAMES
 from .tool_choice_queue import ToolResultSummary
-from .tool_choice_queue import WRITE_TOOL_NAMES
+from .verification_timeline import results_after_last_write
+from .verification_timeline import successful_tool_after_last_write
+from .verification_timeline import workspace_write_happened
 
 
 AuditCategory = Literal["acceptance", "evidence", "verification"]
@@ -99,18 +101,6 @@ CANNOT_TEST_MARKERS = frozenset(
         "未运行测试",
         "无法测试",
         "无法运行测试",
-    }
-)
-NO_WRITE_RESULT_MARKERS = frozenset(
-    {
-        "dry run",
-        "dry_run",
-        "file not changed",
-        "no file changed",
-        "not changed",
-        "patch preview only",
-        "preview only",
-        "would be",
     }
 )
 INCOMPLETE_FINAL_MARKERS = frozenset(
@@ -269,7 +259,7 @@ def _read_only_items(
     code_evidence = _has_successful_code_evidence(tool_results)
     source_ref = bool(source_paths) and _mentions_source_reference(content, source_paths)
     negative_evidence = _has_negative_evidence_result(tool_results)
-    no_edits = not _workspace_write_happened(tool_results)
+    no_edits = not workspace_write_happened(tool_results)
     items: list[CompletionAuditItem] = []
 
     direct_requirement = _requirement_at(
@@ -392,14 +382,14 @@ def _implementation_items(
     open_todos: list[str],
 ) -> list[CompletionAuditItem]:
     content = final_content or ""
-    write_happened = _workspace_write_happened(tool_results)
+    write_happened = workspace_write_happened(tool_results)
     blocked_no_edit_claim = _looks_like_blocked_no_edit(content)
     blocked_no_edit_evidence = _has_blocked_no_edit_evidence(tool_results)
     blocked_no_edit = blocked_no_edit_claim and blocked_no_edit_evidence
     code_evidence = _has_successful_code_evidence(tool_results)
-    tests_run = _has_successful_tool(tool_results, "run_tests")
-    diff_run = _has_successful_tool(tool_results, "git_diff")
-    cannot_test = _mentions_cannot_test(content) or _tool_results_mention_cannot_test(tool_results)
+    tests_run = successful_tool_after_last_write(tool_results, "run_tests")
+    diff_run = successful_tool_after_last_write(tool_results, "git_diff")
+    cannot_test = _mentions_cannot_test(content) or _tool_results_mention_cannot_test_after_last_write(tool_results)
     source_ref = _mentions_source_reference(content, source_paths)
     items: list[CompletionAuditItem] = []
 
@@ -546,25 +536,8 @@ def _has_successful_code_evidence(results: list[ToolResultSummary]) -> bool:
     return any(_successful(result) and result.name in CODE_EVIDENCE_TOOL_NAMES for result in results)
 
 
-def _has_successful_tool(results: list[ToolResultSummary], name: str) -> bool:
-    return any(_successful(result) and result.name == name for result in results)
-
-
 def _successful(result: ToolResultSummary) -> bool:
     return bool(result.name) and not result.is_error
-
-
-def _workspace_write_happened(results: list[ToolResultSummary]) -> bool:
-    return any(result.name in WRITE_TOOL_NAMES and _tool_result_changed_workspace(result) for result in results)
-
-
-def _tool_result_changed_workspace(result: ToolResultSummary) -> bool:
-    if result.is_error:
-        return False
-    if result.changed is not None:
-        return result.changed
-    lowered = (result.content or "").lower()
-    return not any(marker in lowered for marker in NO_WRITE_RESULT_MARKERS)
 
 
 def _has_negative_evidence_result(results: list[ToolResultSummary]) -> bool:
@@ -635,8 +608,8 @@ def _mentions_cannot_test(content: str) -> bool:
     return any(marker in lowered for marker in CANNOT_TEST_MARKERS)
 
 
-def _tool_results_mention_cannot_test(results: list[ToolResultSummary]) -> bool:
-    lowered = "\n".join(result.content for result in results).lower()
+def _tool_results_mention_cannot_test_after_last_write(results: list[ToolResultSummary]) -> bool:
+    lowered = "\n".join(result.content for result in results_after_last_write(results)).lower()
     return any(marker in lowered for marker in CANNOT_TEST_MARKERS)
 
 
