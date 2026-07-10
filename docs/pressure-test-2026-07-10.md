@@ -146,3 +146,15 @@ T-124 的 reset 修复了表面泄漏，但任务状态仍分散在 `AgentRuntim
 | config/client/registry、消息历史、session approval、summary cache、recent session guard、last run summary | 当前 prompt、contract、deadline/baseline、工具 allowlist/结果、evidence ledger、patch preview、范围读取计数、steering 与 telemetry |
 
 验证：新增 RunContext reset 单测；`agent.py` 为 3445 行，全量 295 个 unittest、`compileall`、`git diff --check` 通过。此项仍不把 recent tool signatures/hits 误当作本轮状态，它们是后续按真实压测语义决定是否抽出的 `SessionGuardState`。
+
+## T-126 P0b 后真实小改压测（未通过，20260710）
+
+隔离 Git worktree session `20260710T154146640779Z` 要求 LCA 自行挑选极小改进，并按 `todo → read → dry_run → write → run_tests → git_diff` 收束。主仓库未被写入，隔离 worktree 也没有 diff。
+
+| 观察 | 事实 | 判定 |
+|---|---|---|
+| 探索顺序 | 模型先 `list_files`、读取多个大文件，直到约第 11 轮才建立 todo；随后在 `tests/test_patch.py` 与 `patch/anchored.py` 之间持续切片读取。 | Planner/ToolChoiceQueue 尚未把“极小实现任务先确定一个候选改动并进入 preview”收紧为可执行阶段目标。 |
+| 交付闭环 | 记录中未出现 `apply_patch dry_run`、真实写入、`run_tests` 或 `git_diff`；会话末尾也没有 `final` / `run_summary`。 | 本次不能算通过，且不能用“已理解源码”替代实现交付。 |
+| 重复控制 | 同文件使用相邻或不同 range 读取，避开了同范围重复 guard；最终又回读整文件。 | 现有 guard 能挡 exact/近似重复，但对“为寻找一个很小改动而无界深读”的探索成本仍缺少阶段化收束。 |
+
+下一步不立即新增 agent.py guard。先在带输出重定向的独立 worktree 复跑，排除本次外部终端截断对会话收尾的影响；若现象复现，再优先在现有 Planner/ToolChoiceQueue 或 ToolLoop registry 中收紧“已选定小改目标后只允许 preview/write/test/diff”的阶段转换，而不在主循环增加第四套控制分支。

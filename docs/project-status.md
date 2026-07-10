@@ -330,6 +330,7 @@
 | T-123 | P0a ToolLoop steering registry | 已完成并回归 | P10 | 新增 `steering/tool_loop.py` 与 `steering/termination.py`，用统一的显式优先级迁移重复调用、空 search/LSP、重复 read、语义路径探索的 soft steering/hard stop；设计 evidence coverage 迁入 `design_evidence.py`。`agent.py` 从 3875 降至 3607 行，291 个 unittest 通过；P0b `RunContext` / `RunStats` 仍未完成。 |
 | T-124 | P0b RunCollector 与跨 run evidence reset | 已完成并回归 | P10 | `run_collector.py` 现在承接 RunStats、compaction/tool 计数和 summary 计算；每个新 run 会清空 read evidence、relevance、evidence ledger、patch preview 与 read range counts，避免上一任务污染下一任务。294 个 unittest 通过；完整 `RunContext` 仍待迁移。 |
 | T-125 | P0b RunContext 状态收拢 | 已完成并回归 | P10 | `run_context.py` 统一当前 run 的 metadata、contract、queue、证据、preview、steering、ToolLoop registry 与 Collector；Runtime 保留构造依赖、会话消息/审批、summary cache、recent session guard 和上一轮 summary。`agent.py` 为 3445 行，295 个 unittest 通过。 |
+| T-126 | P0b 后真实小改压测 | 首轮未通过，待复跑 | P10 | 隔离 worktree session `20260710T154146640779Z` 无 diff：模型在 `test_patch.py` / `anchored.py` 多轮切片读取，未进入 preview、写入、测试、diff 或 final。先排除终端截断，再决定是否在 Planner/ToolChoiceQueue/ToolLoop registry 收紧阶段转换；不向 `agent.py` 新增 guard。 |
 
 ## 风险清单
 
