@@ -136,3 +136,13 @@ T-115 的结论不是“百炼已经完全高效”，而是：安全可逆的 p
 | 连续任务的证据污染 | 每个新 run 清空 read evidence、source/pinned evidence、preview、relevance、Evidence Ledger、workspace-root 标记和 read range counts。 | 新增同一 Runtime 的跨 run 回归：旧文件证据与范围计数不会进入下一轮 ledger 或 guard。 |
 
 本项没有把 session 级审批、消息历史、summary cache 或 recent guard keys 清掉；这些仍是有意保留的连续会话状态。完整 `RunContext` / `SessionGuardState` 拆分将在下一步先明确语义后进行。
+
+## T-125 P0b RunContext（20260710）
+
+T-124 的 reset 修复了表面泄漏，但任务状态仍分散在 `AgentRuntime`、局部变量和 RunCollector。T-125 新增 `run_context.py`，以 `RunContext.begin()` 为唯一新任务入口：它持有本轮 run metadata、deadline/baseline、RequirementContract、ToolChoiceQueue 状态、设计/需求证据、preview、final steering、ToolLoop registry 和 RunCollector。
+
+| Runtime 保留 | RunContext 接管 |
+|---|---|
+| config/client/registry、消息历史、session approval、summary cache、recent session guard、last run summary | 当前 prompt、contract、deadline/baseline、工具 allowlist/结果、evidence ledger、patch preview、范围读取计数、steering 与 telemetry |
+
+验证：新增 RunContext reset 单测；`agent.py` 为 3445 行，全量 295 个 unittest、`compileall`、`git diff --check` 通过。此项仍不把 recent tool signatures/hits 误当作本轮状态，它们是后续按真实压测语义决定是否抽出的 `SessionGuardState`。

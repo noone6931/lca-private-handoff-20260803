@@ -14,8 +14,8 @@ T-113 至 T-121 的真实压测和回归已达到“先压测后拆分”的触�
 
 - T-123 已新增 `steering/tool_loop.py` / `steering/termination.py`，将重复调用、空 search/LSP、重复 read、语义路径探索的 soft steering 和 hard stop 收敛为一个显式优先级 registry。
 - 跨 root 设计证据的覆盖与 bounded final 收束已从 `AgentRuntime` 迁入 `design_evidence.py`。
-- T-124 已迁出 `run_collector.py`，并在每轮开始清空本轮 evidence/range state，避免终端连续任务的证据泄漏；`agent.py` 已降至 3538 行，294 个 unittest、`compileall`、`git diff --check` 通过。
-- P0b 的下一步是引入完整 `RunContext` 收拢剩余 run 级状态字段；此项完成前不继续叠加新的 runtime guard。
+- T-124/T-125 已迁出 `run_collector.py` / `run_context.py`，并在每轮开始清空本轮 evidence/range state；任务合同、工具队列、证据、preview、steering 和 collector 都有单一 run 所有者。`agent.py` 已降至 3445 行，295 个 unittest、`compileall`、`git diff --check` 通过。
+- P0b 基线已完成；不继续叠加新的 runtime guard，下一步回到真实小改压测。若压测显示跨连续对话 guard 的语义仍不清晰，再单独抽 `SessionGuardState`。
 
 ## 已立即采纳
 

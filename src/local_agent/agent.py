@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import datetime, timezone
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from pathlib import Path
 import time
 from typing import Any
@@ -29,7 +29,6 @@ from .compaction import valid_recent_messages as _valid_recent_messages
 from .config import AgentConfig
 from .config import normalize_approval_mode
 from .design_evidence import cross_root_design_evidence_roots
-from .design_evidence import DesignEvidenceCoverageSteerer
 from .llm import LlmError
 from .llm import OpenAICompatibleClient
 from .patch.anchored import display_workspace_path
@@ -38,11 +37,12 @@ from .patch.anchored import resolve_workspace_path
 from .planner import render_planner_explore_context
 from .patch_reviewer import review_input_summary
 from .patch_reviewer import review_input_metadata
-from .requirement_evidence import RequirementEvidence
 from .requirement_evidence import is_requirement_source_path
 from .requirement_evidence import render_pinned_requirement_evidence
 from .requirement_evidence import update_requirement_evidence
-from .run_collector import RunCollector
+from .run_context import EvidenceRecord
+from .run_context import RunContext
+from .run_context import SoftToolRequirement
 from .protocol.events import AgentEvent
 from .protocol.events import EventEmitter
 from .protocol.events import EventSink
@@ -71,7 +71,6 @@ from .steering.termination import synthetic_tool_stop_message
 from .steering.termination import termination_message
 from .task_contract import generate_requirement_contract
 from .task_contract import render_contract_context
-from .task_contract import RequirementContract
 from .tools.argument_normalization import normalize_compatibility_arguments
 from .tools import create_default_registry
 from .tools.base import ToolContext
@@ -84,7 +83,6 @@ from .tools.relevance import is_low_relevance_patch_path
 from .tools.relevance import path_matches_any
 from .tools.relevance import request_mentions_config_or_path
 from .tool_choice_queue import ToolChoiceDecision
-from .tool_choice_queue import ToolChoiceQueue
 from .tool_choice_queue import ToolResultSummary
 
 
@@ -249,26 +247,6 @@ READ_FILE_DRIFT_GUARD_EDIT_KEYWORDS = {
     "实现",
     "写入",
 }
-@dataclass
-class SoftToolRequirement:
-    kind: str
-    allowed_dirs: tuple[Path, ...]
-    candidate_files: tuple[Path, ...] = ()
-    steers: int = 0
-    satisfied: bool = False
-
-
-@dataclass(frozen=True)
-class EvidenceRecord:
-    tool: str
-    subject: str
-    summary: str
-    status: str = "ok"
-
-    def render(self) -> str:
-        return f"- [{self.status}] {self.tool} {self.subject}: {self.summary}"
-
-
 class AgentRuntime:
     def __init__(
         self,
@@ -289,44 +267,12 @@ class AgentRuntime:
         self._recent_useless_lsp_symbol_query_keys: list[str] = []
         self._recent_read_file_path_keys: list[str] = []
         self._recent_semantic_exploration_keys: list[str] = []
-        self._read_file_range_counts: dict[tuple[str, int, str], int] = {}
         self._duplicate_tool_guard_hits = 0
         self._useless_search_pattern_guard_hits = 0
         self._useless_lsp_symbol_guard_hits = 0
         self._repeated_read_file_guard_hits = 0
         self._semantic_exploration_guard_hits = 0
-        self._tool_loop_steering = ToolLoopSteeringRegistry()
-        self._no_edit_final_hygiene_steers = 0
-        self._final_structure_steers = 0
-        self._read_only_evidence_steers = 0
-        self._requirement_evidence_steers = 0
-        self._design_evidence_steers = 0
-        self._source_evidence_false_negative_steers = 0
-        self._source_grounded_numeric_steers = 0
-        self._completion_audit_steers = 0
-        self._patch_reviewer_steers = 0
-        self._read_file_evidence_paths: list[str] = []
-        self._source_evidence: list[SourceEvidence] = []
-        self._pinned_requirement_evidence: list[RequirementEvidence] = []
-        self._successful_patch_preview_signatures: set[str] = set()
-        self._strong_relevance_paths: list[str] = []
-        self._evidence_records: list[EvidenceRecord] = []
-        self._workspace_root_evidence_recorded = False
-        self._current_user_request: str | None = None
-        self._read_file_drift_guard_enabled = False
-        self._force_final_answer_without_tools = False
-        self._temporary_tool_allowlist: set[str] | None = None
-        self._tool_choice_queue = ToolChoiceQueue()
-        self._tool_choice_allowed_tool_names: set[str] | None = None
-        self._tool_choice_steering_signatures: set[str] = set()
-        self._tool_choice_results: list[ToolResultSummary] = []
-        self._tool_choice_tool_names: list[str] = []
-        self._requirement_contract: RequirementContract | None = None
-        self._requirement_contract_context = ""
-        self._design_evidence_coverage = DesignEvidenceCoverageSteerer()
-        self._design_evidence_read_paths: list[str] = []
-        self._soft_tool_requirement: SoftToolRequirement | None = None
-        self._run_collector = RunCollector()
+        self._run = RunContext()
         self._last_run_summary: dict[str, Any] | None = None
         self._final_answer_steerers: tuple[FinalAnswerSteerer, ...] = (
             ReadOnlyEvidenceSteerer(max_steers=MAX_READ_ONLY_EVIDENCE_STEERS),
@@ -387,7 +333,6 @@ class AgentRuntime:
     def run(self, prompt: str) -> str:
         run_id = self._events.start_run()
         started_monotonic = time.monotonic()
-        self._start_run_collector(run_id, prompt, started_monotonic)
         deadline = (
             started_monotonic + self._config.budget_seconds
             if self._config.budget_seconds is not None
@@ -397,39 +342,25 @@ class AgentRuntime:
         self._session.append("git_baseline", git_baseline)
         run_start_index = len(self._messages)
         model_prompt = _with_workflow_nudge(prompt)
-        self._current_user_request = prompt
-        self._tool_loop_steering.reset()
-        self._no_edit_final_hygiene_steers = 0
-        self._final_structure_steers = 0
-        self._read_only_evidence_steers = 0
-        self._requirement_evidence_steers = 0
-        self._design_evidence_steers = 0
-        self._source_evidence_false_negative_steers = 0
-        self._source_grounded_numeric_steers = 0
-        self._completion_audit_steers = 0
-        self._patch_reviewer_steers = 0
-        self._read_file_range_counts = {}
-        self._read_file_evidence_paths = []
-        self._source_evidence = []
-        self._pinned_requirement_evidence = []
-        self._successful_patch_preview_signatures = set()
-        self._strong_relevance_paths = []
-        self._evidence_records = []
-        self._workspace_root_evidence_recorded = False
-        self._temporary_tool_allowlist = None
-        self._tool_choice_allowed_tool_names = None
-        self._tool_choice_steering_signatures = set()
-        self._tool_choice_results = []
-        self._tool_choice_tool_names = []
-        self._requirement_contract = generate_requirement_contract(prompt)
-        self._requirement_contract_context = render_contract_context(self._requirement_contract)
+        requirement_contract = generate_requirement_contract(prompt)
+        requirement_contract_context = render_contract_context(requirement_contract)
         design_evidence_roots = (
             cross_root_design_evidence_roots(self._config.workspace, self._config.allowed_dirs, prompt)
-            if self._requirement_contract.task_kind == "read-only"
+            if requirement_contract.task_kind == "read-only"
             else ()
         )
-        self._design_evidence_coverage.reset(design_evidence_roots)
-        self._design_evidence_read_paths = []
+        self._run.begin(
+            run_id=run_id,
+            started_monotonic=started_monotonic,
+            deadline_monotonic=deadline,
+            run_start_index=run_start_index,
+            git_baseline=git_baseline,
+            prompt=prompt,
+            requirement_contract=requirement_contract,
+            requirement_contract_context=requirement_contract_context,
+            design_evidence_roots=design_evidence_roots,
+        )
+        self._start_run_collector(run_id, prompt, started_monotonic)
         self._messages.append({"role": "user", "content": model_prompt})
         self._session.append("user", {"content": prompt})
         self._events.emit("UserMessage", {"content": prompt})
@@ -437,25 +368,25 @@ class AgentRuntime:
             "runtime_steering",
             {
                 "kind": "requirement_contract",
-                "task_kind": self._requirement_contract.task_kind,
-                "objective": self._requirement_contract.objective,
+                "task_kind": self._run.requirement_contract.task_kind,
+                "objective": self._run.requirement_contract.objective,
             },
         )
-        if self._design_evidence_coverage.roots:
+        if self._run.design_evidence_coverage.roots:
             self._session.append(
                 "runtime_steering",
-                {"kind": "design_evidence_roots", "roots": list(self._design_evidence_coverage.roots)},
+                {"kind": "design_evidence_roots", "roots": list(self._run.design_evidence_coverage.roots)},
             )
         if model_prompt != prompt:
             self._session.append("workflow_nudge", {"content": WORKFLOW_NUDGE})
-        self._read_file_drift_guard_enabled = _should_guard_repeated_read_file(prompt)
-        self._soft_tool_requirement = _initial_soft_tool_requirement(
+        self._run.read_file_drift_guard_enabled = _should_guard_repeated_read_file(prompt)
+        self._run.soft_tool_requirement = _initial_soft_tool_requirement(
             prompt,
             self._config.workspace,
             self._config.allowed_dirs,
         )
-        if self._soft_tool_requirement is not None:
-            self._append_soft_tool_requirement_message(self._soft_tool_requirement)
+        if self._run.soft_tool_requirement is not None:
+            self._append_soft_tool_requirement_message(self._run.soft_tool_requirement)
         self._record_workspace_root_evidence()
         tool_context = replace(
             self._tool_context,
@@ -482,11 +413,11 @@ class AgentRuntime:
                     "step": step,
                     "message_count": len(messages_for_model),
                     "tool_schema_count": len(tools_for_model),
-                    "force_final_answer": self._force_final_answer_without_tools,
+                    "force_final_answer": self._run.force_final_answer_without_tools,
                 },
             )
-            force_final_answer = self._force_final_answer_without_tools
-            self._force_final_answer_without_tools = False
+            force_final_answer = self._run.force_final_answer_without_tools
+            self._run.force_final_answer_without_tools = False
             response = self._client.chat(
                 messages_for_model,
                 tools_for_model,
@@ -589,7 +520,7 @@ class AgentRuntime:
                     read_file_evidence=self._read_file_evidence_summary(),
                     request_summary=self._final_answer_request_summary(),
                 )
-                termination_reason = self._tool_loop_steering.termination_reason(tool_loop_steering_signals)
+                termination_reason = self._run.tool_loop_steering.termination_reason(tool_loop_steering_signals)
                 if termination_reason is not None:
                     self._append_synthetic_tool_results(
                         tool_calls[index + 1 :],
@@ -601,7 +532,7 @@ class AgentRuntime:
                         run_start_index,
                         reason=termination_reason,
                     )
-                tool_loop_steering = self._tool_loop_steering.decide(tool_loop_steering_signals)
+                tool_loop_steering = self._run.tool_loop_steering.decide(tool_loop_steering_signals)
                 if tool_loop_steering is not None:
                     self._apply_tool_loop_steering(tool_loop_steering)
                     self._append_synthetic_tool_results(
@@ -622,16 +553,16 @@ class AgentRuntime:
         )
 
     def _tools_for_model(self) -> list[dict[str, Any]]:
-        if self._force_final_answer_without_tools:
+        if self._run.force_final_answer_without_tools:
             return []
         allowed_names: set[str] | None = None
-        if self._temporary_tool_allowlist is not None:
-            allowed_names = set(self._temporary_tool_allowlist)
-        requirement = self._soft_tool_requirement
+        if self._run.temporary_tool_allowlist is not None:
+            allowed_names = set(self._run.temporary_tool_allowlist)
+        requirement = self._run.soft_tool_requirement
         if requirement is not None and not requirement.satisfied:
             allowed_names = _intersect_optional_tool_allowlist(allowed_names, {"list_files", "read_file"})
-        if self._tool_choice_allowed_tool_names is not None:
-            allowed_names = _intersect_optional_tool_allowlist(allowed_names, self._tool_choice_allowed_tool_names)
+        if self._run.tool_choice_allowed_tool_names is not None:
+            allowed_names = _intersect_optional_tool_allowlist(allowed_names, self._run.tool_choice_allowed_tool_names)
         if allowed_names is None:
             return self._registry.schemas()
         return [
@@ -641,27 +572,27 @@ class AgentRuntime:
         ]
 
     def _apply_tool_choice_queue_if_needed(self, deadline: float | None = None) -> None:
-        contract = self._requirement_contract
+        contract = self._run.requirement_contract
         if contract is None:
-            self._tool_choice_allowed_tool_names = None
+            self._run.tool_choice_allowed_tool_names = None
             return
-        decision = self._tool_choice_queue.evaluate(
+        decision = self._run.tool_choice_queue.evaluate(
             task_kind=contract.task_kind,
-            prompt=self._current_user_request or "",
-            tool_names=self._tool_choice_tool_names,
-            tool_results=self._tool_choice_results,
+            prompt=self._run.current_user_request or "",
+            tool_names=self._run.tool_choice_tool_names,
+            tool_results=self._run.tool_choice_results,
             available_tool_names=self._available_registry_tool_names(),
-            design_evidence_roots=self._design_evidence_coverage.roots,
+            design_evidence_roots=self._run.design_evidence_coverage.roots,
         )
-        self._tool_choice_allowed_tool_names = set(decision.allowed_tool_names)
-        coverage = self._design_evidence_coverage.observe(
+        self._run.tool_choice_allowed_tool_names = set(decision.allowed_tool_names)
+        coverage = self._run.design_evidence_coverage.observe(
             queue_requires_steering=decision.steering_required,
             read_paths=(
                 result.path
-                for result in self._tool_choice_results
+                for result in self._run.tool_choice_results
                 if result.name == "read_file" and not result.is_error
             ),
-            tool_count=len(self._tool_choice_results),
+            tool_count=len(self._run.tool_choice_results),
             deadline=deadline,
             request_summary=self._final_answer_request_summary(),
         )
@@ -674,22 +605,22 @@ class AgentRuntime:
             )
             if coverage.message is not None:
                 self._messages.append({"role": "user", "content": coverage.message})
-                self._force_final_answer_without_tools = coverage.force_final_answer_without_tools
-                self._temporary_tool_allowlist = None
+                self._run.force_final_answer_without_tools = coverage.force_final_answer_without_tools
+                self._run.temporary_tool_allowlist = None
                 return
-        if self._force_final_answer_without_tools:
+        if self._run.force_final_answer_without_tools:
             return
         if not decision.steering_required:
             return
-        signature = _tool_choice_steering_signature(decision, len(self._tool_choice_results))
-        if signature in self._tool_choice_steering_signatures:
+        signature = _tool_choice_steering_signature(decision, len(self._run.tool_choice_results))
+        if signature in self._run.tool_choice_steering_signatures:
             return
-        if _tool_choice_signature_count(self._tool_choice_steering_signatures, decision.rule_id) >= (
+        if _tool_choice_signature_count(self._run.tool_choice_steering_signatures, decision.rule_id) >= (
             MAX_TOOL_CHOICE_QUEUE_STEERS_PER_SIGNATURE
         ):
             return
-        self._tool_choice_steering_signatures.add(signature)
-        content = _tool_choice_steering_message(decision, self._current_user_request)
+        self._run.tool_choice_steering_signatures.add(signature)
+        content = _tool_choice_steering_message(decision, self._run.current_user_request)
         self._messages.append({"role": "user", "content": content})
         self._session.append(
             "runtime_steering",
@@ -796,7 +727,7 @@ class AgentRuntime:
         return normalized
 
     def _start_run_collector(self, run_id: str, prompt: str, started_monotonic: float) -> None:
-        self._run_collector.start(
+        self._run.collector.start(
             run_id,
             prompt,
             started_monotonic,
@@ -808,40 +739,40 @@ class AgentRuntime:
                 "semantic_exploration": self._semantic_exploration_guard_hits,
             },
             steer_start={
-                "duplicate_tool_final_answer": self._tool_loop_steering.count("duplicate_tool_final_answer"),
-                "useless_search_pattern_final_answer": self._tool_loop_steering.count("useless_search_pattern_final_answer"),
-                "useless_lsp_symbol_final_answer": self._tool_loop_steering.count("useless_lsp_symbol_final_answer"),
-                "repeated_read_file_final_answer": self._tool_loop_steering.count("repeated_read_file_final_answer"),
-                "semantic_exploration": self._tool_loop_steering.count("semantic_exploration"),
+                "duplicate_tool_final_answer": self._run.tool_loop_steering.count("duplicate_tool_final_answer"),
+                "useless_search_pattern_final_answer": self._run.tool_loop_steering.count("useless_search_pattern_final_answer"),
+                "useless_lsp_symbol_final_answer": self._run.tool_loop_steering.count("useless_lsp_symbol_final_answer"),
+                "repeated_read_file_final_answer": self._run.tool_loop_steering.count("repeated_read_file_final_answer"),
+                "semantic_exploration": self._run.tool_loop_steering.count("semantic_exploration"),
             },
         )
 
     def _record_llm_request(self) -> None:
-        self._run_collector.record_llm_request()
+        self._run.collector.record_llm_request()
 
     def _record_context_compaction(self) -> None:
-        self._run_collector.record_context_compaction()
+        self._run.collector.record_context_compaction()
 
     def _record_llm_context_summary(self) -> None:
-        self._run_collector.mark_llm_context_summary()
+        self._run.collector.mark_llm_context_summary()
 
     def _record_local_context_summary(self) -> None:
-        self._run_collector.mark_local_context_summary()
+        self._run.collector.mark_local_context_summary()
 
     def _record_tool_started_for_run(self, name: str) -> None:
-        self._run_collector.record_tool_started(name)
+        self._run.collector.record_tool_started(name)
 
     def _record_tool_finished_for_run(self, *, is_error: bool) -> None:
-        self._run_collector.record_tool_finished(is_error=is_error)
+        self._run.collector.record_tool_finished(is_error=is_error)
 
     def _record_tool_result_for_run(self, *, is_error: bool, useless: bool) -> None:
-        self._run_collector.record_tool_result(is_error=is_error, useless=useless)
+        self._run.collector.record_tool_result(is_error=is_error, useless=useless)
 
     def _record_synthetic_tool_result_for_run(self) -> None:
-        self._run_collector.record_synthetic_tool_result()
+        self._run.collector.record_synthetic_tool_result()
 
     def _finish_run_summary(self, reason: str) -> dict[str, Any]:
-        payload = self._run_collector.finish(
+        payload = self._run.collector.finish(
             reason,
             guard_values={
                 "duplicate_tool": self._duplicate_tool_guard_hits,
@@ -851,19 +782,19 @@ class AgentRuntime:
                 "semantic_exploration": self._semantic_exploration_guard_hits,
             },
             steering_values={
-                "duplicate_tool_final_answer": self._tool_loop_steering.count("duplicate_tool_final_answer"),
-                "useless_search_pattern_final_answer": self._tool_loop_steering.count("useless_search_pattern_final_answer"),
-                "useless_lsp_symbol_final_answer": self._tool_loop_steering.count("useless_lsp_symbol_final_answer"),
-                "repeated_read_file_final_answer": self._tool_loop_steering.count("repeated_read_file_final_answer"),
-                "semantic_exploration": self._tool_loop_steering.count("semantic_exploration"),
-                "no_edit_final_hygiene": self._no_edit_final_hygiene_steers,
-                "final_structure": self._final_structure_steers,
-                "read_only_evidence": self._read_only_evidence_steers,
-                "source_evidence_false_negative": self._source_evidence_false_negative_steers,
-                "source_grounded_numeric": self._source_grounded_numeric_steers,
-                "patch_reviewer": self._patch_reviewer_steers,
-                "completion_audit": self._completion_audit_steers,
-                "soft_tool_requirement": self._soft_tool_requirement.steers if self._soft_tool_requirement else 0,
+                "duplicate_tool_final_answer": self._run.tool_loop_steering.count("duplicate_tool_final_answer"),
+                "useless_search_pattern_final_answer": self._run.tool_loop_steering.count("useless_search_pattern_final_answer"),
+                "useless_lsp_symbol_final_answer": self._run.tool_loop_steering.count("useless_lsp_symbol_final_answer"),
+                "repeated_read_file_final_answer": self._run.tool_loop_steering.count("repeated_read_file_final_answer"),
+                "semantic_exploration": self._run.tool_loop_steering.count("semantic_exploration"),
+                "no_edit_final_hygiene": self._run.final_answer_steers.get("no_edit_final_hygiene", 0),
+                "final_structure": self._run.final_answer_steers.get("final_structure", 0),
+                "read_only_evidence": self._run.final_answer_steers.get("read_only_evidence", 0),
+                "source_evidence_false_negative": self._run.final_answer_steers.get("source_evidence_false_negative", 0),
+                "source_grounded_numeric": self._run.final_answer_steers.get("source_grounded_numeric", 0),
+                "patch_reviewer": self._run.final_answer_steers.get("patch_reviewer", 0),
+                "completion_audit": self._run.final_answer_steers.get("completion_audit", 0),
+                "soft_tool_requirement": self._run.soft_tool_requirement.steers if self._run.soft_tool_requirement else 0,
             },
         )
         self._last_run_summary = payload
@@ -938,9 +869,9 @@ class AgentRuntime:
     ) -> list[dict[str, Any]]:
         evidence_ledger = self._evidence_ledger_summary()
         planner_explore_context = render_planner_explore_context(
-            self._requirement_contract,
-            prompt=self._current_user_request,
-            tool_results=list(self._tool_choice_results),
+            self._run.requirement_contract,
+            prompt=self._run.current_user_request,
+            tool_results=list(self._run.tool_choice_results),
         )
         return _provider_safe_messages(
             _messages_with_runtime_context(
@@ -951,9 +882,9 @@ class AgentRuntime:
                 self._config.workspace,
                 self._user_config_dir,
                 self._config.allowed_dirs,
-                self._current_user_request,
-                self._requirement_contract_context,
-                render_pinned_requirement_evidence(self._pinned_requirement_evidence),
+                self._run.current_user_request,
+                self._run.requirement_contract_context,
+                render_pinned_requirement_evidence(self._run.pinned_requirement_evidence),
             )
         )
 
@@ -1106,16 +1037,16 @@ class AgentRuntime:
     ) -> ToolResult:
         read_file_key = (
             _read_file_path_key(name, arguments, self._config.workspace, self._config.allowed_dirs)
-            if self._read_file_drift_guard_enabled
+            if self._run.read_file_drift_guard_enabled
             else None
         )
         read_file_range_key = (
             _read_file_range_key(name, arguments, self._config.workspace, self._config.allowed_dirs)
-            if self._read_file_drift_guard_enabled
+            if self._run.read_file_drift_guard_enabled
             else None
         )
         if read_file_range_key is not None:
-            range_count = self._read_file_range_counts.get(read_file_range_key, 0)
+            range_count = self._run.read_file_range_counts.get(read_file_range_key, 0)
             if range_count >= MAX_READ_FILE_SUCCESSES_PER_RANGE_IN_RUN:
                 self._repeated_read_file_guard_hits += 1
                 return self._repeated_read_file_result(
@@ -1187,8 +1118,8 @@ class AgentRuntime:
             else:
                 self._recent_useless_lsp_symbol_query_keys = []
         if read_file_range_key is not None and not result.is_error:
-            self._read_file_range_counts[read_file_range_key] = (
-                self._read_file_range_counts.get(read_file_range_key, 0) + 1
+            self._run.read_file_range_counts[read_file_range_key] = (
+                self._run.read_file_range_counts.get(read_file_range_key, 0) + 1
             )
         return result
 
@@ -1252,11 +1183,11 @@ class AgentRuntime:
         payload = {
             "kind": decision.kind,
             **decision.payload,
-            "steer_count": self._tool_loop_steering.count(decision.kind),
+            "steer_count": self._run.tool_loop_steering.count(decision.kind),
         }
         self._session.append("runtime_steering", payload)
-        self._force_final_answer_without_tools = decision.force_final_answer_without_tools
-        self._temporary_tool_allowlist = decision.temporary_tool_allowlist
+        self._run.force_final_answer_without_tools = decision.force_final_answer_without_tools
+        self._run.temporary_tool_allowlist = decision.temporary_tool_allowlist
 
     def _tool_loop_stop_message(self, kind: str) -> str:
         return (
@@ -1282,39 +1213,39 @@ class AgentRuntime:
             self._config.allowed_dirs,
         )
         canonical_path = str(resolved_path)
-        if canonical_path not in self._design_evidence_read_paths:
-            self._design_evidence_read_paths.append(canonical_path)
-            self._design_evidence_read_paths = self._design_evidence_read_paths[-40:]
+        if canonical_path not in self._run.design_evidence_read_paths:
+            self._run.design_evidence_read_paths.append(canonical_path)
+            self._run.design_evidence_read_paths = self._run.design_evidence_read_paths[-40:]
         display_path = _display_read_file_evidence_path(
             self._config.workspace,
             raw_path.strip(),
             self._config.allowed_dirs,
         )
-        if display_path in self._read_file_evidence_paths:
-            self._source_evidence.append(SourceEvidence(display_path, result.content))
-            self._source_evidence = self._source_evidence[-40:]
+        if display_path in self._run.read_file_evidence_paths:
+            self._run.source_evidence.append(SourceEvidence(display_path, result.content))
+            self._run.source_evidence = self._run.source_evidence[-40:]
             self._maybe_pin_requirement_evidence(display_path, result.content)
             return
-        self._read_file_evidence_paths.append(display_path)
-        self._read_file_evidence_paths = self._read_file_evidence_paths[-20:]
-        self._source_evidence.append(SourceEvidence(display_path, result.content))
-        self._source_evidence = self._source_evidence[-40:]
+        self._run.read_file_evidence_paths.append(display_path)
+        self._run.read_file_evidence_paths = self._run.read_file_evidence_paths[-20:]
+        self._run.source_evidence.append(SourceEvidence(display_path, result.content))
+        self._run.source_evidence = self._run.source_evidence[-40:]
         self._maybe_pin_requirement_evidence(display_path, result.content)
 
     def _maybe_pin_requirement_evidence(self, path: str, content: str) -> None:
-        candidate_paths = self._soft_tool_requirement.candidate_files if self._soft_tool_requirement else ()
+        candidate_paths = self._run.soft_tool_requirement.candidate_files if self._run.soft_tool_requirement else ()
         if not is_requirement_source_path(path, candidate_paths):
             return
-        self._pinned_requirement_evidence = update_requirement_evidence(
-            self._pinned_requirement_evidence,
+        self._run.pinned_requirement_evidence = update_requirement_evidence(
+            self._run.pinned_requirement_evidence,
             path=path,
             content=content,
         )
 
     def _record_tool_choice_result(self, name: str, arguments: str | dict[str, Any], result: ToolResult) -> None:
-        self._tool_choice_tool_names.append(name)
-        self._tool_choice_tool_names = self._tool_choice_tool_names[-80:]
-        self._tool_choice_results.append(
+        self._run.tool_choice_tool_names.append(name)
+        self._run.tool_choice_tool_names = self._run.tool_choice_tool_names[-80:]
+        self._run.tool_choice_results.append(
             ToolResultSummary(
                 name=name,
                 content=review_input_summary(name, result.content, max_chars=6000),
@@ -1324,7 +1255,7 @@ class AgentRuntime:
                 metadata=review_input_metadata(name, result.content),
             )
         )
-        self._tool_choice_results = self._tool_choice_results[-80:]
+        self._run.tool_choice_results = self._run.tool_choice_results[-80:]
 
     def _record_tool_evidence(self, name: str, arguments: str | dict[str, Any], result: ToolResult) -> None:
         self._record_strong_relevance_paths(name, arguments, result)
@@ -1360,14 +1291,14 @@ class AgentRuntime:
             raw_path.strip(),
             self._config.allowed_dirs,
         )
-        self._source_evidence = [item for item in self._source_evidence if item.path != display_path]
+        self._run.source_evidence = [item for item in self._run.source_evidence if item.path != display_path]
 
     def _append_evidence_record(self, record: EvidenceRecord) -> None:
         rendered = record.render()
-        if self._evidence_records and self._evidence_records[-1].render() == rendered:
+        if self._run.evidence_records and self._run.evidence_records[-1].render() == rendered:
             return
-        self._evidence_records.append(record)
-        self._evidence_records = self._evidence_records[-EVIDENCE_LEDGER_MAX_RECORDS:]
+        self._run.evidence_records.append(record)
+        self._run.evidence_records = self._run.evidence_records[-EVIDENCE_LEDGER_MAX_RECORDS:]
         self._session.append(
             "evidence",
             {
@@ -1379,9 +1310,9 @@ class AgentRuntime:
         )
 
     def _record_workspace_root_evidence(self) -> None:
-        if self._workspace_root_evidence_recorded:
+        if self._run.workspace_root_evidence_recorded:
             return
-        self._workspace_root_evidence_recorded = True
+        self._run.workspace_root_evidence_recorded = True
         markers = _workspace_root_markers(self._config.workspace)
         if not markers:
             return
@@ -1411,9 +1342,9 @@ class AgentRuntime:
         elif name.startswith("lsp_"):
             paths = _first_result_line_paths(result.content, limit=8)
         for path in paths:
-            if path and path not in self._strong_relevance_paths:
-                self._strong_relevance_paths.append(path)
-        self._strong_relevance_paths = self._strong_relevance_paths[-30:]
+            if path and path not in self._run.strong_relevance_paths:
+                self._run.strong_relevance_paths.append(path)
+        self._run.strong_relevance_paths = self._run.strong_relevance_paths[-30:]
 
     def _patch_relevance_denial_reason(self, raw_path: str, resolved_path: Path) -> str | None:
         display_path = display_workspace_path(
@@ -1421,17 +1352,17 @@ class AgentRuntime:
             resolved_path,
             self._config.allowed_dirs,
         )
-        if not path_matches_any(display_path, tuple(self._read_file_evidence_paths)):
+        if not path_matches_any(display_path, tuple(self._run.read_file_evidence_paths)):
             return (
                 f"Patch relevance gate: refusing real apply_patch for {display_path!r} because that file "
                 "has not been read with read_file in this run. Call read_file on the exact target first; "
                 "apply_patch dry_run=true previews are still allowed."
             )
         if (
-            is_code_implementation_request(self._current_user_request)
+            is_code_implementation_request(self._run.current_user_request)
             and is_low_relevance_patch_path(display_path)
-            and not request_mentions_config_or_path(self._current_user_request, display_path)
-            and not path_matches_any(display_path, tuple(self._strong_relevance_paths))
+            and not request_mentions_config_or_path(self._run.current_user_request, display_path)
+            and not path_matches_any(display_path, tuple(self._run.strong_relevance_paths))
         ):
             return (
                 f"Patch relevance gate: refusing real apply_patch for {display_path!r} because the current "
@@ -1443,10 +1374,10 @@ class AgentRuntime:
         return None
 
     def _patch_preview_denial_reason(self, args: dict[str, Any], resolved_path: Path) -> str | None:
-        if not _request_requires_patch_preview(self._current_user_request):
+        if not _request_requires_patch_preview(self._run.current_user_request):
             return None
         signature = _patch_preview_signature(args, resolved_path)
-        if signature in self._successful_patch_preview_signatures:
+        if signature in self._run.successful_patch_preview_signatures:
             return None
         return (
             "Preview contract: this task explicitly requires a patch preview before a real write. "
@@ -1480,12 +1411,12 @@ class AgentRuntime:
             )
         except PatchError:
             return
-        self._successful_patch_preview_signatures.add(_patch_preview_signature(normalized, resolved_path))
+        self._run.successful_patch_preview_signatures.add(_patch_preview_signature(normalized, resolved_path))
 
     def _read_file_evidence_summary(self) -> str:
-        if not self._read_file_evidence_paths:
+        if not self._run.read_file_evidence_paths:
             return ""
-        recent_paths = self._read_file_evidence_paths[-12:]
+        recent_paths = self._run.read_file_evidence_paths[-12:]
         lines = [
             "",
             "",
@@ -1499,13 +1430,13 @@ class AgentRuntime:
         subject = _display_read_file_range_subject(range_key, self._config.workspace, self._config.allowed_dirs)
         matches = [
             record.render()
-            for record in reversed(self._evidence_records)
+            for record in reversed(self._run.evidence_records)
             if record.tool == "read_file" and record.subject == subject
         ]
         return "\n".join(reversed(matches[:3]))
 
     def _evidence_ledger_summary(self) -> str:
-        if not self._evidence_records:
+        if not self._run.evidence_records:
             return ""
         lines = [
             "[Evidence ledger]",
@@ -1513,15 +1444,15 @@ class AgentRuntime:
             "In final answers, cite exact paths only when they appear here or in tool results; label guessed files/classes as unverified.",
             "Do not claim workspace root files are missing when workspace evidence lists them.",
         ]
-        lines.extend(record.render() for record in self._evidence_records[-EVIDENCE_LEDGER_CONTEXT_RECORDS:])
+        lines.extend(record.render() for record in self._run.evidence_records[-EVIDENCE_LEDGER_CONTEXT_RECORDS:])
         return _one_line_block("\n".join(lines), max_chars=EVIDENCE_LEDGER_CONTEXT_CHAR_LIMIT)
 
     def _final_answer_request_summary(self) -> str:
-        if not self._current_user_request:
+        if not self._run.current_user_request:
             return ""
         return (
             "\n\nOriginal user request to satisfy now:\n"
-            f"- {_one_line(self._current_user_request, max_chars=1200)}"
+            f"- {_one_line(self._run.current_user_request, max_chars=1200)}"
         )
 
     def _decide_final_answer_steering(
@@ -1546,19 +1477,19 @@ class AgentRuntime:
 
     def _final_answer_context(self, content: str, run_start_index: int) -> FinalAnswerContext:
         return FinalAnswerContext(
-            request=self._current_user_request,
+            request=self._run.current_user_request,
             content=content,
             messages=self._messages,
             run_start_index=run_start_index,
-            requirement_contract=self._requirement_contract,
-            tool_results=list(self._tool_choice_results),
-            read_file_evidence_paths=list(self._read_file_evidence_paths),
-            source_evidence=list(self._source_evidence),
-            requirement_evidence=list(self._pinned_requirement_evidence),
-            required_design_evidence_roots=self._design_evidence_coverage.roots,
-            design_evidence_read_paths=list(self._design_evidence_read_paths),
+            requirement_contract=self._run.requirement_contract,
+            tool_results=list(self._run.tool_choice_results),
+            read_file_evidence_paths=list(self._run.read_file_evidence_paths),
+            source_evidence=list(self._run.source_evidence),
+            requirement_evidence=list(self._run.pinned_requirement_evidence),
+            required_design_evidence_roots=self._run.design_evidence_coverage.roots,
+            design_evidence_read_paths=list(self._run.design_evidence_read_paths),
             open_todos=self._open_todo_summary(),
-            is_code_implementation_request=is_code_implementation_request(self._current_user_request),
+            is_code_implementation_request=is_code_implementation_request(self._run.current_user_request),
             steer_counts=self._final_answer_steer_counts(),
         )
 
@@ -1571,52 +1502,28 @@ class AgentRuntime:
             "steer_count": steer_count,
         }
         self._session.append("runtime_steering", payload)
-        self._force_final_answer_without_tools = decision.force_final_answer_without_tools
-        self._temporary_tool_allowlist = decision.temporary_tool_allowlist
+        self._run.force_final_answer_without_tools = decision.force_final_answer_without_tools
+        self._run.temporary_tool_allowlist = decision.temporary_tool_allowlist
 
     def _final_answer_steer_counts(self) -> dict[str, int]:
         return {
-            "read_only_evidence": self._read_only_evidence_steers,
-            "requirement_evidence": self._requirement_evidence_steers,
-            "design_evidence": self._design_evidence_steers,
-            "design_evidence_final": self._design_evidence_coverage.final_steers,
-            "no_edit_final_hygiene": self._no_edit_final_hygiene_steers,
-            "final_structure": self._final_structure_steers,
-            "source_evidence_false_negative": self._source_evidence_false_negative_steers,
-            "source_grounded_numeric": self._source_grounded_numeric_steers,
-            "patch_reviewer": self._patch_reviewer_steers,
-            "completion_audit": self._completion_audit_steers,
+            "read_only_evidence": self._run.final_answer_steers.get("read_only_evidence", 0),
+            "requirement_evidence": self._run.final_answer_steers.get("requirement_evidence", 0),
+            "design_evidence": self._run.final_answer_steers.get("design_evidence", 0),
+            "design_evidence_final": self._run.design_evidence_coverage.final_steers,
+            "no_edit_final_hygiene": self._run.final_answer_steers.get("no_edit_final_hygiene", 0),
+            "final_structure": self._run.final_answer_steers.get("final_structure", 0),
+            "source_evidence_false_negative": self._run.final_answer_steers.get("source_evidence_false_negative", 0),
+            "source_grounded_numeric": self._run.final_answer_steers.get("source_grounded_numeric", 0),
+            "patch_reviewer": self._run.final_answer_steers.get("patch_reviewer", 0),
+            "completion_audit": self._run.final_answer_steers.get("completion_audit", 0),
         }
 
     def _increment_final_answer_steer_count(self, kind: str) -> int:
-        if kind == "read_only_evidence":
-            self._read_only_evidence_steers += 1
-            return self._read_only_evidence_steers
-        if kind == "requirement_evidence":
-            self._requirement_evidence_steers += 1
-            return self._requirement_evidence_steers
-        if kind == "design_evidence":
-            self._design_evidence_steers += 1
-            return self._design_evidence_steers
-        if kind == "no_edit_final_hygiene":
-            self._no_edit_final_hygiene_steers += 1
-            return self._no_edit_final_hygiene_steers
-        if kind == "final_structure":
-            self._final_structure_steers += 1
-            return self._final_structure_steers
-        if kind == "source_evidence_false_negative":
-            self._source_evidence_false_negative_steers += 1
-            return self._source_evidence_false_negative_steers
-        if kind == "source_grounded_numeric":
-            self._source_grounded_numeric_steers += 1
-            return self._source_grounded_numeric_steers
-        if kind == "completion_audit":
-            self._completion_audit_steers += 1
-            return self._completion_audit_steers
-        if kind == "patch_reviewer":
-            self._patch_reviewer_steers += 1
-            return self._patch_reviewer_steers
-        return 0
+        if kind not in self._final_answer_steer_counts():
+            return 0
+        self._run.final_answer_steers[kind] = self._run.final_answer_steers.get(kind, 0) + 1
+        return self._run.final_answer_steers[kind]
 
     def _append_soft_tool_requirement_message(self, requirement: SoftToolRequirement) -> None:
         content = _soft_tool_requirement_message(requirement)
@@ -1631,11 +1538,11 @@ class AgentRuntime:
         )
 
     def _needs_soft_tool_requirement_steer(self) -> bool:
-        requirement = self._soft_tool_requirement
+        requirement = self._run.soft_tool_requirement
         return requirement is not None and not requirement.satisfied
 
     def _steer_for_soft_tool_requirement(self) -> bool:
-        requirement = self._soft_tool_requirement
+        requirement = self._run.soft_tool_requirement
         if requirement is None or requirement.satisfied:
             return False
         if requirement.steers >= MAX_SOFT_TOOL_REQUIREMENT_STEERS:
@@ -1653,7 +1560,7 @@ class AgentRuntime:
         return True
 
     def _soft_tool_requirement_stop_message(self) -> str:
-        requirement = self._soft_tool_requirement
+        requirement = self._run.soft_tool_requirement
         if requirement is None:
             return "Stopped because a required tool step was not completed."
         if requirement.kind == "authored_skill":
@@ -1669,7 +1576,7 @@ class AgentRuntime:
         )
 
     def _observe_soft_tool_requirement(self, name: str, arguments: str | dict[str, Any], result: ToolResult) -> None:
-        requirement = self._soft_tool_requirement
+        requirement = self._run.soft_tool_requirement
         if requirement is None or requirement.satisfied or result.is_error:
             return
         if name != "read_file":

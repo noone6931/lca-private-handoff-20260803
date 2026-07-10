@@ -1660,9 +1660,9 @@ class AgentRuntimeTests(unittest.TestCase):
                 approval_mode="yolo",
             )
             runtime = AgentRuntime(config, show_tool_logs=False)
-            runtime._current_user_request = "请实现用户名规范化，并补充单元测试。"
-            runtime._requirement_contract = generate_requirement_contract(runtime._current_user_request)
-            runtime._tool_choice_results = [
+            runtime._run.current_user_request = "请实现用户名规范化，并补充单元测试。"
+            runtime._run.requirement_contract = generate_requirement_contract(runtime._run.current_user_request)
+            runtime._run.tool_choice_results = [
                 ToolResultSummary("read_file", "class UserService {}", path="src/UserService.java"),
                 ToolResultSummary("apply_patch", "Applied patch", path="src/UserService.java", changed=True),
                 ToolResultSummary(
@@ -1703,9 +1703,9 @@ class AgentRuntimeTests(unittest.TestCase):
                 approval_mode="yolo",
             )
             runtime = AgentRuntime(config, show_tool_logs=False)
-            runtime._current_user_request = "请修复用户名规范化，并补充单元测试。"
-            runtime._requirement_contract = generate_requirement_contract(runtime._current_user_request)
-            runtime._tool_choice_results = [
+            runtime._run.current_user_request = "请修复用户名规范化，并补充单元测试。"
+            runtime._run.requirement_contract = generate_requirement_contract(runtime._run.current_user_request)
+            runtime._run.tool_choice_results = [
                 ToolResultSummary("read_file", "class UserService {}", path="src/UserService.java"),
                 ToolResultSummary("apply_patch", "Applied patch", path="src/UserService.java", changed=True),
                 ToolResultSummary(
@@ -1744,12 +1744,11 @@ class AgentRuntimeTests(unittest.TestCase):
             )
             with patch("local_agent.agent.OpenAICompatibleClient", _FinalClient):
                 runtime = AgentRuntime(config, show_tool_logs=False)
-                runtime._completion_audit_steers = 2
-                runtime._patch_reviewer_steers = 2
+                runtime._run.final_answer_steers["completion_audit"] = 2
+                runtime._run.final_answer_steers["patch_reviewer"] = 2
                 runtime.run("简单回答 OK")
 
-        self.assertEqual(runtime._completion_audit_steers, 0)
-        self.assertEqual(runtime._patch_reviewer_steers, 0)
+        self.assertEqual(runtime._run.final_answer_steers, {})
 
     def test_read_only_evidence_gate_allows_negative_search_evidence(self) -> None:
         _ReadOnlyEvidenceNoMatchClient.calls = []
@@ -2054,7 +2053,7 @@ class AgentRuntimeTests(unittest.TestCase):
 
             messages = runtime._provider_safe_runtime_messages(runtime._messages, [])
 
-        self.assertEqual(len(runtime._pinned_requirement_evidence), 1)
+        self.assertEqual(len(runtime._run.pinned_requirement_evidence), 1)
         self.assertIn("[Pinned requirement evidence]", messages[0]["content"])
         self.assertIn("50:支持批量合并制单。", messages[0]["content"])
 
@@ -2072,8 +2071,8 @@ class AgentRuntimeTests(unittest.TestCase):
                 approval_mode="yolo",
             )
             runtime = AgentRuntime(config, show_tool_logs=False)
-            runtime._read_file_evidence_paths = ["src/UserService.java", "src/Other.java"]
-            runtime._source_evidence = [
+            runtime._run.read_file_evidence_paths = ["src/UserService.java", "src/Other.java"]
+            runtime._run.source_evidence = [
                 SourceEvidence("src/UserService.java", "old implementation"),
                 SourceEvidence("src/Other.java", "stable implementation"),
             ]
@@ -2084,8 +2083,8 @@ class AgentRuntimeTests(unittest.TestCase):
                 ToolResult("Applied patch"),
             )
 
-        self.assertEqual(runtime._read_file_evidence_paths, ["src/UserService.java", "src/Other.java"])
-        self.assertEqual(runtime._source_evidence, [SourceEvidence("src/Other.java", "stable implementation")])
+        self.assertEqual(runtime._run.read_file_evidence_paths, ["src/UserService.java", "src/Other.java"])
+        self.assertEqual(runtime._run.source_evidence, [SourceEvidence("src/Other.java", "stable implementation")])
 
     def test_new_run_does_not_reuse_prior_run_evidence_or_read_range_counts(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -2102,18 +2101,18 @@ class AgentRuntimeTests(unittest.TestCase):
             )
             with patch("local_agent.agent.OpenAICompatibleClient", _FinalClient):
                 runtime = AgentRuntime(config, show_tool_logs=False)
-                runtime._read_file_range_counts[("src/Old.java", 1, "old")] = 3
-                runtime._read_file_evidence_paths = ["src/Old.java"]
-                runtime._strong_relevance_paths = ["src/Old.java"]
-                runtime._evidence_records = [EvidenceRecord("read_file", "src/Old.java", "old evidence")]
-                runtime._workspace_root_evidence_recorded = True
+                runtime._run.read_file_range_counts[("src/Old.java", 1, "old")] = 3
+                runtime._run.read_file_evidence_paths = ["src/Old.java"]
+                runtime._run.strong_relevance_paths = ["src/Old.java"]
+                runtime._run.evidence_records = [EvidenceRecord("read_file", "src/Old.java", "old evidence")]
+                runtime._run.workspace_root_evidence_recorded = True
 
                 runtime.run("请简短说明当前项目。")
 
-        self.assertEqual(runtime._read_file_range_counts, {})
-        self.assertEqual(runtime._read_file_evidence_paths, [])
-        self.assertEqual(runtime._strong_relevance_paths, [])
-        self.assertTrue(runtime._workspace_root_evidence_recorded)
+        self.assertEqual(runtime._run.read_file_range_counts, {})
+        self.assertEqual(runtime._run.read_file_evidence_paths, [])
+        self.assertEqual(runtime._run.strong_relevance_paths, [])
+        self.assertTrue(runtime._run.workspace_root_evidence_recorded)
         self.assertNotIn("src/Old.java", runtime._evidence_ledger_summary())
 
     def test_preview_contract_requires_matching_successful_preview_before_real_patch(self) -> None:
@@ -2133,7 +2132,7 @@ class AgentRuntimeTests(unittest.TestCase):
                 approval_mode="yolo",
             )
             runtime = AgentRuntime(config, show_tool_logs=False)
-            runtime._current_user_request = "修改前必须 apply_patch dry_run=true 预览，再真正写入。"
+            runtime._run.current_user_request = "修改前必须 apply_patch dry_run=true 预览，再真正写入。"
             args = {
                 "path": "src/UserService.java",
                 "tag": "tag",
@@ -2260,13 +2259,13 @@ class AgentRuntimeTests(unittest.TestCase):
             with patch("local_agent.agent.OpenAICompatibleClient", _FinalClient):
                 runtime = AgentRuntime(config, show_tool_logs=False)
 
-            runtime._current_user_request = "实现 Java 导入校验需求"
-            runtime._read_file_evidence_paths = ["deployMessage/nacos/app.properties"]
+            runtime._run.current_user_request = "实现 Java 导入校验需求"
+            runtime._run.read_file_evidence_paths = ["deployMessage/nacos/app.properties"]
             denied = runtime._patch_relevance_denial_reason(
                 "deployMessage/nacos/app.properties",
                 target,
             )
-            runtime._current_user_request = "请修改 nacos 配置"
+            runtime._run.current_user_request = "请修改 nacos 配置"
             allowed = runtime._patch_relevance_denial_reason(
                 "deployMessage/nacos/app.properties",
                 target,
