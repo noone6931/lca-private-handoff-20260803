@@ -48,6 +48,24 @@ _EXPLICIT_READ_ONLY_DIRECTIVES = (
     "no changes",
 )
 
+_LOCAL_EDIT_EXCLUSION_TARGETS = (
+    "readme",
+    "docs",
+    "documentation",
+    "文档",
+)
+
+_IMPLEMENTATION_WORKFLOW_MARKERS = (
+    "apply_patch",
+    "dry_run",
+    "dry run",
+    "run_tests",
+    "git_diff",
+    "真正写入",
+    "补充测试",
+    "测试改进",
+)
+
 _QUESTION_MARKERS = (
     "?",
     "？",
@@ -253,7 +271,7 @@ def classify_task_kind(user_prompt: str) -> TaskKind:
 
     lower = prompt.lower()
     has_read_only_marker = _contains_any(lower, _READ_ONLY_MARKERS)
-    has_explicit_read_only_directive = _contains_any(lower, _EXPLICIT_READ_ONLY_DIRECTIVES)
+    has_explicit_read_only_directive = _has_global_read_only_directive(lower)
     has_question_marker = _contains_any(lower, _QUESTION_MARKERS)
     has_code_evidence = _contains_any(lower, _CODE_EVIDENCE_MARKERS)
     has_design_marker = _contains_any(lower, _DESIGN_MARKERS)
@@ -303,6 +321,8 @@ def _derive_objective(prompt: str, task_kind: TaskKind) -> str:
 
 
 def _has_implementation_intent(lower_prompt: str) -> bool:
+    if _contains_any(lower_prompt, _IMPLEMENTATION_WORKFLOW_MARKERS):
+        return True
     if not _contains_any(lower_prompt, _IMPLEMENTATION_MARKERS):
         return False
 
@@ -317,6 +337,20 @@ def _has_implementation_intent(lower_prompt: str) -> bool:
         return True
     if re.search(r"(实现|修复|修改|新增|增加|添加|接入|支持|调整|重构|删除|补充|编写|创建|更新|优化|迁移).{0,16}(功能|模块|接口|测试|逻辑|校验|能力)", lower_prompt):
         return True
+    return False
+
+
+def _has_global_read_only_directive(lower_prompt: str) -> bool:
+    for directive in _EXPLICIT_READ_ONLY_DIRECTIVES:
+        start = 0
+        while True:
+            index = lower_prompt.find(directive, start)
+            if index < 0:
+                break
+            target_window = lower_prompt[index + len(directive) : index + len(directive) + 32]
+            if not _contains_any(target_window, _LOCAL_EDIT_EXCLUSION_TARGETS):
+                return True
+            start = index + len(directive)
     return False
 
 

@@ -41,6 +41,15 @@ class RequirementContractTests(unittest.TestCase):
 
         self.assertEqual(contract.task_kind, "code-implementation")
 
+    def test_local_readme_docs_exclusion_does_not_override_explicit_patch_workflow(self) -> None:
+        contract = generate_requirement_contract(
+            "请自行挑选一个极小、低风险的测试改进。先读源码和测试，随后必须 "
+            "apply_patch dry_run=true 预览、apply_patch 真正写入、run_tests、git_diff。"
+            "不要修改 README 或 docs。"
+        )
+
+        self.assertEqual(contract.task_kind, "code-implementation")
+
     def test_chinese_status_questions_are_read_only(self) -> None:
         for prompt in (
             "这个功能实现了吗？",
