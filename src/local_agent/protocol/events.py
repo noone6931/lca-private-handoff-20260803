@@ -25,6 +25,8 @@ EVENT_TYPES = {
     "ContextUpdated",
     "RunSummary",
     "RuntimeSteering",
+    "WorkspaceRootsChanged",
+    "WorkspaceMoved",
     "ErrorEvent",
 }
 

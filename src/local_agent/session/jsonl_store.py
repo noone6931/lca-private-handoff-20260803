@@ -75,6 +75,27 @@ class JsonlSessionStore:
                     )
         return _trim_recent_messages(messages, max_messages)
 
+    def load_latest_workspace_roots(self) -> dict[str, Any] | None:
+        """Return the last persisted T-128A root snapshot without replaying model messages."""
+
+        if not self.path.exists():
+            return None
+        latest: dict[str, Any] | None = None
+        with self.path.open("r", encoding="utf-8") as handle:
+            for line_number, line in enumerate(handle, start=1):
+                if not line.strip():
+                    continue
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError as exc:
+                    raise SessionError(f"Malformed JSONL at {self.path}:{line_number}") from exc
+                if record.get("event") != "workspace_roots_changed":
+                    continue
+                payload = record.get("payload")
+                if isinstance(payload, dict):
+                    latest = dict(payload)
+        return latest
+
     def _path_for_id(self, session_id: str) -> Path:
         name = session_id.removesuffix(".jsonl")
         if "/" in name or "\\" in name or name in {"", ".", ".."}:

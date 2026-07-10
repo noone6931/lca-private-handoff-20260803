@@ -27,6 +27,18 @@ class _FakeRuntime:
     def tool_summary(self) -> str:
         return "tools"
 
+    def workspace_summary(self) -> str:
+        return "workspace roots"
+
+    def add_workspace_root(self, path: str) -> None:
+        self.calls.append(("workspace-add", path))
+
+    def remove_workspace_root(self, path: str) -> None:
+        self.calls.append(("workspace-remove", path))
+
+    def reset_workspace_roots(self) -> None:
+        self.calls.append(("workspace-reset", None))
+
     def set_session_approval_mode(self, mode: str) -> None:
         self.calls.append(("mode", mode))
 
@@ -92,6 +104,27 @@ class CliTests(unittest.TestCase):
         self.assertIn("/exit", rendered)
         self.assertIn("status", rendered)
         self.assertIn("tools", rendered)
+
+    def test_workspace_repl_commands_delegate_to_runtime(self) -> None:
+        runtime = _FakeRuntime()
+        output = io.StringIO()
+
+        _handle_repl_command(runtime, "/workspace list", output)
+        _handle_repl_command(runtime, '/workspace add "/tmp/project with spaces"', output)
+        _handle_repl_command(runtime, "/add-dir /tmp/docs", output)
+        _handle_repl_command(runtime, "/workspace remove /tmp/docs", output)
+        _handle_repl_command(runtime, "/workspace reset", output)
+
+        self.assertIn("workspace roots", output.getvalue())
+        self.assertEqual(
+            runtime.calls,
+            [
+                ("workspace-add", "/tmp/project with spaces"),
+                ("workspace-add", "/tmp/docs"),
+                ("workspace-remove", "/tmp/docs"),
+                ("workspace-reset", None),
+            ],
+        )
 
     def test_unknown_terminal_command_points_to_help(self) -> None:
         runtime = _FakeRuntime()

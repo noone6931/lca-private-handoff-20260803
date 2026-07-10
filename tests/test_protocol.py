@@ -52,6 +52,14 @@ class ProtocolTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Unknown command type"):
             new_command("DoAnything", {})
 
+    def test_workspace_command_and_event_types_are_available(self) -> None:
+        command = new_command("AddWorkspaceRoot", {"path": "/repo/frontend"}, session_id="session-1")
+        emitter = EventEmitter(session_id="session-1")
+        event = emitter.emit("WorkspaceRootsChanged", {"revision": 1})
+
+        self.assertEqual(command.type, "AddWorkspaceRoot")
+        self.assertEqual(event.type, "WorkspaceRootsChanged")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -161,6 +161,17 @@ class SessionStoreTests(unittest.TestCase):
 
         self.assertEqual(messages, [{"role": "user", "content": "read README"}])
 
+    def test_load_latest_workspace_roots_uses_last_snapshot(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            store = JsonlSessionStore(workspace)
+            store.append("workspace_roots_changed", {"revision": 1, "session_roots": ["/first"]})
+            store.append("workspace_roots_changed", {"revision": 2, "session_roots": ["/second"]})
+
+            snapshot = store.load_latest_workspace_roots()
+
+        self.assertEqual(snapshot, {"revision": 2, "session_roots": ["/second"]})
+
 
 if __name__ == "__main__":
     unittest.main()

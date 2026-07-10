@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import shlex
 import sys
 from typing import TextIO
 
@@ -17,6 +18,11 @@ REPL_HELP = """Commands:
 /help                         Show this help.
 /status                       Show session, workspace, provider, budget, and approval summary.
 /tools                        List available tool names.
+/workspace list               Show primary, configured, and session workspace roots.
+/workspace add PATH           Add a session-only directory for file/search/LSP/patch tools.
+/workspace remove PATH        Remove a session-added directory.
+/workspace reset              Remove every session-added directory.
+/add-dir PATH                 Alias for /workspace add PATH.
 /approval                     Show approval settings.
 /approval mode always-ask|write|yolo
 /approval allow|prompt|deny TOOL
@@ -207,7 +213,11 @@ def _is_chat_prompt(prompt: list[str]) -> bool:
 
 def _handle_repl_command(runtime: AgentRuntime, command: str, stream: TextIO | None = None) -> None:
     output = stream or sys.stdout
-    parts = command.split()
+    try:
+        parts = shlex.split(command)
+    except ValueError as exc:
+        print(f"error: {exc}", file=output)
+        return
     if not parts:
         return
     if parts[0] in {"/help", "/?"}:
@@ -218,6 +228,38 @@ def _handle_repl_command(runtime: AgentRuntime, command: str, stream: TextIO | N
         return
     if parts[0] == "/tools":
         print(runtime.tool_summary(), file=output)
+        return
+    if parts[0] == "/add-dir":
+        try:
+            if len(parts) != 2:
+                raise ValueError("Usage: /add-dir PATH")
+            runtime.add_workspace_root(parts[1])
+            print(runtime.workspace_summary(), file=output)
+            return
+        except (ConfigError, RuntimeError, ValueError) as exc:
+            print(f"error: {exc}", file=output)
+            return
+    if parts[0] == "/workspace":
+        try:
+            if len(parts) == 2 and parts[1] == "list":
+                print(runtime.workspace_summary(), file=output)
+                return
+            if len(parts) == 3 and parts[1] == "add":
+                runtime.add_workspace_root(parts[2])
+                print(runtime.workspace_summary(), file=output)
+                return
+            if len(parts) == 3 and parts[1] == "remove":
+                runtime.remove_workspace_root(parts[2])
+                print(runtime.workspace_summary(), file=output)
+                return
+            if len(parts) == 2 and parts[1] == "reset":
+                runtime.reset_workspace_roots()
+                print(runtime.workspace_summary(), file=output)
+                return
+        except (ConfigError, RuntimeError, ValueError) as exc:
+            print(f"error: {exc}", file=output)
+            return
+        print("Usage: /workspace list|add PATH|remove PATH|reset", file=output)
         return
     if parts[0] != "/approval":
         print(f"Unknown command: {parts[0]}", file=output)
@@ -239,7 +281,7 @@ def _handle_repl_command(runtime: AgentRuntime, command: str, stream: TextIO | N
             runtime.reset_session_tool_policy(parts[2])
             print(runtime.approval_summary(), file=output)
             return
-    except (ConfigError, ValueError) as exc:
+    except (ConfigError, RuntimeError, ValueError) as exc:
         print(f"error: {exc}", file=output)
         return
     print(

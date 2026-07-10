@@ -15,6 +15,11 @@ COMMAND_TYPES = {
     "CancelRun",
     "InterruptTool",
     "ContinueSession",
+    "ListWorkspaceRoots",
+    "AddWorkspaceRoot",
+    "RemoveWorkspaceRoot",
+    "ResetWorkspaceRoots",
+    "MoveWorkspace",
 }
 
 
