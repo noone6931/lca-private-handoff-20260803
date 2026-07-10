@@ -158,3 +158,16 @@ T-124 的 reset 修复了表面泄漏，但任务状态仍分散在 `AgentRuntim
 | 重复控制 | 同文件使用相邻或不同 range 读取，避开了同范围重复 guard；最终又回读整文件。 | 现有 guard 能挡 exact/近似重复，但对“为寻找一个很小改动而无界深读”的探索成本仍缺少阶段化收束。 |
 
 下一步不立即新增 agent.py guard。先在带输出重定向的独立 worktree 复跑，排除本次外部终端截断对会话收尾的影响；若现象复现，再优先在现有 Planner/ToolChoiceQueue 或 ToolLoop registry 中收紧“已选定小改目标后只允许 preview/write/test/diff”的阶段转换，而不在主循环增加第四套控制分支。
+
+### T-126 精确目标复跑（通过，20260710）
+
+重定向终端输出后，隔离 worktree session `20260710T154432520729Z` 将目标收窄为仅给 `tests/test_run_collector.py` 补一个 `RunCollector.finish()` 未调用 `start()` 时的边界测试。结果如下：
+
+| 环节 | 事实 |
+|---|---|
+| 任务控制 | 首个工具调用就是 `todo_add`，随后只读取 `tests/test_run_collector.py` 与 `src/local_agent/run_collector.py`。 |
+| 编辑 | 前两次锚点范围不精确而被拒绝；模型重新读取并以正确参数完成 `apply_patch dry_run=true`，再以同锚点真实写入。 |
+| 验证 | `python -m unittest tests.test_run_collector -v` 通过 3 个测试；`git_diff` 仅显示 `tests/test_run_collector.py` 的 7 行新增。 |
+| 交付 | 最终回答按“改动、验证、diff、风险”四项给出，worktree 无额外文件修改。 |
+
+结论：P0b 的 RunContext/RunCollector 重构没有破坏受控小改闭环；第一个会话的核心问题仍是“模型自主选点时探索过宽”，不是 preview、写入、测试或 diff 管道失效。后续应以真实失败样本决定是否收紧现有 Planner/ToolChoiceQueue 阶段转换。
