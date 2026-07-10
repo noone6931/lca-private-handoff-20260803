@@ -7,6 +7,7 @@ from typing import Any, Protocol
 
 from ..completion_audit import audit_completion
 from ..completion_audit import render_completion_audit_message
+from ..design_evidence import missing_design_evidence_roots
 from ..patch_reviewer import render_patch_review_message
 from ..patch_reviewer import review_patch
 from ..requirement_evidence import RequirementEvidence
@@ -236,6 +237,8 @@ class FinalAnswerContext:
     is_code_implementation_request: bool
     steer_counts: dict[str, int]
     requirement_evidence: list[RequirementEvidence] = field(default_factory=list)
+    required_design_evidence_roots: tuple[str, ...] = ()
+    design_evidence_read_paths: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -321,6 +324,37 @@ class RequirementEvidenceSteerer:
             kind=self.kind,
             message=steering,
             payload={"issues": issues, "sources": [item.path for item in context.requirement_evidence]},
+        )
+
+
+class DesignEvidenceSteerer:
+    kind = "design_evidence"
+
+    def __init__(self, *, max_steers: int) -> None:
+        self._max_steers = max_steers
+
+    def decide(self, context: FinalAnswerContext) -> SteeringDecision | None:
+        if context.steer_counts.get(self.kind, 0) >= self._max_steers:
+            return None
+        missing_roots = missing_design_evidence_roots(
+            context.required_design_evidence_roots,
+            context.design_evidence_read_paths,
+        )
+        if not missing_roots:
+            return None
+        steering = (
+            "Runtime steering: this cross-root design task cannot finalize yet because the required source evidence "
+            "coverage is incomplete. Use read/search/LSP tools only until each missing code root has at least one "
+            "successful source-file read. Do not infer front-end or back-end reuse from a different root.\n"
+            + "\n".join(f"- Missing source read under: {root}" for root in missing_roots)
+            + f"{final_answer_request_summary(context.request)}"
+        )
+        return SteeringDecision(
+            kind=self.kind,
+            message=steering,
+            payload={"missing_roots": list(missing_roots)},
+            force_final_answer_without_tools=False,
+            temporary_tool_allowlist=set(READ_ONLY_EVIDENCE_TOOLS),
         )
 
 

@@ -136,6 +136,22 @@ class ToolChoiceQueueTests(unittest.TestCase):
         self.assertIn("apply_patch", after_read.allowed_tool_names)
         self.assertIn("run_tests", after_read.allowed_tool_names)
 
+    def test_requirement_prompt_does_not_treat_source_read_as_requirement_evidence(self) -> None:
+        decision = evaluate_tool_choice_state(
+            task_kind="allowed_dir",
+            prompt="根据 allowed-dir 里的需求文档完成改造。",
+            tool_results=[
+                ToolResultSummary(
+                    "read_file",
+                    "public class PaymentService {}",
+                    path="/workspace/backend/src/PaymentService.java",
+                )
+            ],
+        )
+
+        self.assertTrue(decision.steering_required)
+        self.assertEqual(decision.rule_id, "requirement_document_read")
+
     def test_read_only_task_filters_write_and_exec_tools(self) -> None:
         decision = ToolChoiceQueue().evaluate(
             task_kind="read_only",
@@ -148,6 +164,34 @@ class ToolChoiceQueueTests(unittest.TestCase):
         self.assertFalse(READ_ONLY_FORBIDDEN_TOOL_NAMES.intersection(decision.allowed_tool_names))
         self.assertIn("read_file", decision.allowed_tool_names)
         self.assertIn("search_code", decision.allowed_tool_names)
+
+    def test_cross_root_design_requires_a_code_read_from_each_root(self) -> None:
+        backend = "/workspace/backend"
+        frontend = "/workspace/frontend"
+        after_backend_read = evaluate_tool_choice_state(
+            task_kind="read_only",
+            prompt="请只读设计前后端改造方案，不要修改文件。",
+            tool_results=[ToolResultSummary("read_file", "class Backend {}", path=f"{backend}/src/App.java")],
+            design_evidence_roots=(backend, frontend),
+        )
+
+        self.assertTrue(after_backend_read.steering_required)
+        self.assertEqual(after_backend_read.rule_id, f"cross_root_design_evidence:{frontend}")
+        self.assertEqual(after_backend_read.missing_requirements, (f"code_read:{frontend}",))
+        self.assertIn("read_file", after_backend_read.allowed_tool_names)
+        self.assertNotIn("apply_patch", after_backend_read.allowed_tool_names)
+
+        after_frontend_read = evaluate_tool_choice_state(
+            task_kind="read_only",
+            prompt="请只读设计前后端改造方案，不要修改文件。",
+            tool_results=[
+                ToolResultSummary("read_file", "class Backend {}", path=f"{backend}/src/App.java"),
+                ToolResultSummary("read_file", "export default {}", path=f"{frontend}/src/views/List.vue"),
+            ],
+            design_evidence_roots=(backend, frontend),
+        )
+
+        self.assertFalse(after_frontend_read.steering_required)
 
 
 if __name__ == "__main__":

@@ -28,6 +28,8 @@ from .compaction import truncate_recent_tool_outputs as _truncate_recent_tool_ou
 from .compaction import valid_recent_messages as _valid_recent_messages
 from .config import AgentConfig
 from .config import normalize_approval_mode
+from .design_evidence import cross_root_design_evidence_roots
+from .design_evidence import missing_design_evidence_roots
 from .llm import LlmError
 from .llm import OpenAICompatibleClient
 from .patch.anchored import display_workspace_path
@@ -50,6 +52,7 @@ from .steering.final_answer import FinalAnswerContext
 from .steering.final_answer import FinalAnswerSteerer
 from .steering.final_answer import FinalStructureSteerer
 from .steering.final_answer import CompletionAuditSteerer
+from .steering.final_answer import DesignEvidenceSteerer
 from .steering.final_answer import NoEditFinalHygieneSteerer
 from .steering.final_answer import PatchReviewSteerer
 from .steering.final_answer import READ_ONLY_EVIDENCE_TOOLS
@@ -143,6 +146,9 @@ MAX_NO_EDIT_FINAL_HYGIENE_STEERS = 2
 MAX_FINAL_STRUCTURE_STEERS = 2
 MAX_READ_ONLY_EVIDENCE_STEERS = 2
 MAX_REQUIREMENT_EVIDENCE_STEERS = 2
+MAX_DESIGN_EVIDENCE_STEERS = 2
+MAX_DESIGN_EVIDENCE_FOLLOWUP_TOOL_CALLS = 6
+DESIGN_EVIDENCE_FINAL_RESERVE_SECONDS = 45.0
 MAX_SOURCE_EVIDENCE_FALSE_NEGATIVE_STEERS = 2
 MAX_SOURCE_GROUNDED_NUMERIC_STEERS = 2
 MAX_COMPLETION_AUDIT_STEERS = 2
@@ -322,6 +328,8 @@ class AgentRuntime:
         self._final_structure_steers = 0
         self._read_only_evidence_steers = 0
         self._requirement_evidence_steers = 0
+        self._design_evidence_steers = 0
+        self._design_evidence_final_steers = 0
         self._source_evidence_false_negative_steers = 0
         self._source_grounded_numeric_steers = 0
         self._completion_audit_steers = 0
@@ -344,6 +352,9 @@ class AgentRuntime:
         self._tool_choice_tool_names: list[str] = []
         self._requirement_contract: RequirementContract | None = None
         self._requirement_contract_context = ""
+        self._design_evidence_roots: tuple[str, ...] = ()
+        self._design_evidence_read_paths: list[str] = []
+        self._design_evidence_covered_at_tool_count: int | None = None
         self._soft_tool_requirement: SoftToolRequirement | None = None
         self._run_stats: RunStats | None = None
         self._last_run_summary: dict[str, Any] | None = None
@@ -351,6 +362,7 @@ class AgentRuntime:
         self._final_answer_steerers: tuple[FinalAnswerSteerer, ...] = (
             ReadOnlyEvidenceSteerer(max_steers=MAX_READ_ONLY_EVIDENCE_STEERS),
             RequirementEvidenceSteerer(max_steers=MAX_REQUIREMENT_EVIDENCE_STEERS),
+            DesignEvidenceSteerer(max_steers=MAX_DESIGN_EVIDENCE_STEERS),
             NoEditFinalHygieneSteerer(max_steers=MAX_NO_EDIT_FINAL_HYGIENE_STEERS),
             FinalStructureSteerer(max_steers=MAX_FINAL_STRUCTURE_STEERS),
             SourceEvidenceFalseNegativeSteerer(max_steers=MAX_SOURCE_EVIDENCE_FALSE_NEGATIVE_STEERS),
@@ -421,6 +433,8 @@ class AgentRuntime:
         self._final_structure_steers = 0
         self._read_only_evidence_steers = 0
         self._requirement_evidence_steers = 0
+        self._design_evidence_steers = 0
+        self._design_evidence_final_steers = 0
         self._source_evidence_false_negative_steers = 0
         self._source_grounded_numeric_steers = 0
         self._completion_audit_steers = 0
@@ -435,6 +449,13 @@ class AgentRuntime:
         self._tool_choice_tool_names = []
         self._requirement_contract = generate_requirement_contract(prompt)
         self._requirement_contract_context = render_contract_context(self._requirement_contract)
+        self._design_evidence_roots = (
+            cross_root_design_evidence_roots(self._config.workspace, self._config.allowed_dirs, prompt)
+            if self._requirement_contract.task_kind == "read-only"
+            else ()
+        )
+        self._design_evidence_read_paths = []
+        self._design_evidence_covered_at_tool_count = None
         self._messages.append({"role": "user", "content": model_prompt})
         self._session.append("user", {"content": prompt})
         self._events.emit("UserMessage", {"content": prompt})
@@ -446,6 +467,11 @@ class AgentRuntime:
                 "objective": self._requirement_contract.objective,
             },
         )
+        if self._design_evidence_roots:
+            self._session.append(
+                "runtime_steering",
+                {"kind": "design_evidence_roots", "roots": list(self._design_evidence_roots)},
+            )
         if model_prompt != prompt:
             self._session.append("workflow_nudge", {"content": WORKFLOW_NUDGE})
         self._read_file_drift_guard_enabled = _should_guard_repeated_read_file(prompt)
@@ -473,7 +499,7 @@ class AgentRuntime:
 
             self._record_llm_request()
             self._session.append("llm_request", {"step": step})
-            self._apply_tool_choice_queue_if_needed()
+            self._apply_tool_choice_queue_if_needed(deadline)
             messages_for_model = self._messages_for_model(deadline)
             tools_for_model = self._tools_for_model()
             self._events.emit(
@@ -665,7 +691,7 @@ class AgentRuntime:
             if schema.get("function", {}).get("name") in allowed_names
         ]
 
-    def _apply_tool_choice_queue_if_needed(self) -> None:
+    def _apply_tool_choice_queue_if_needed(self, deadline: float | None = None) -> None:
         contract = self._requirement_contract
         if contract is None:
             self._tool_choice_allowed_tool_names = None
@@ -676,8 +702,11 @@ class AgentRuntime:
             tool_names=self._tool_choice_tool_names,
             tool_results=self._tool_choice_results,
             available_tool_names=self._available_registry_tool_names(),
+            design_evidence_roots=self._design_evidence_roots,
         )
         self._tool_choice_allowed_tool_names = set(decision.allowed_tool_names)
+        if self._steer_after_design_evidence_coverage(decision, deadline):
+            return
         if not decision.steering_required:
             return
         signature = _tool_choice_steering_signature(decision, len(self._tool_choice_results))
@@ -700,6 +729,74 @@ class AgentRuntime:
                 "reason": decision.reason,
             },
         )
+
+    def _steer_after_design_evidence_coverage(
+        self,
+        decision: ToolChoiceDecision,
+        deadline: float | None = None,
+    ) -> bool:
+        if not self._design_evidence_roots or decision.steering_required:
+            return False
+        source_paths = [
+            result.path
+            for result in self._tool_choice_results
+            if result.name == "read_file" and not result.is_error
+        ]
+        if missing_design_evidence_roots(self._design_evidence_roots, source_paths):
+            return False
+        tool_count = len(self._tool_choice_results)
+        reserve_required = (
+            deadline is not None
+            and deadline - time.monotonic() <= DESIGN_EVIDENCE_FINAL_RESERVE_SECONDS
+        )
+        if self._design_evidence_covered_at_tool_count is None:
+            self._design_evidence_covered_at_tool_count = tool_count
+            self._session.append(
+                "runtime_steering",
+                {
+                    "kind": "design_evidence_covered",
+                    "roots": list(self._design_evidence_roots),
+                    "tool_count": tool_count,
+                },
+            )
+            if not reserve_required:
+                return False
+        if self._design_evidence_final_steers:
+            return False
+        followup_limit_reached = (
+            tool_count - self._design_evidence_covered_at_tool_count
+            >= MAX_DESIGN_EVIDENCE_FOLLOWUP_TOOL_CALLS
+        )
+        if not reserve_required and not followup_limit_reached:
+            return False
+        stop_reason = "deadline_reserve" if reserve_required else "followup_limit"
+        self._design_evidence_final_steers += 1
+        self._messages.append(
+            {
+                "role": "user",
+                "content": (
+                    "Runtime steering: the required requirement/backend/frontend evidence matrix is complete, "
+                    "and the bounded follow-up exploration allowance is exhausted. Do not call more tools. "
+                    "Produce the requested design now, separate verified facts from 推断/建议, and list remaining "
+                    "uncertainty instead of continuing to search."
+                    f"{self._final_answer_request_summary()}"
+                ),
+            }
+        )
+        self._session.append(
+            "runtime_steering",
+            {
+                "kind": "design_evidence_final",
+                "roots": list(self._design_evidence_roots),
+                "covered_at_tool_count": self._design_evidence_covered_at_tool_count,
+                "tool_count": tool_count,
+                "followup_limit": MAX_DESIGN_EVIDENCE_FOLLOWUP_TOOL_CALLS,
+                "reason": stop_reason,
+            },
+        )
+        self._force_final_answer_without_tools = True
+        self._temporary_tool_allowlist = None
+        return True
 
     def _available_registry_tool_names(self) -> tuple[str, ...]:
         if hasattr(self._registry, "tool_names"):
@@ -1446,6 +1543,15 @@ class AgentRuntime:
         raw_path = parsed.get("path")
         if not isinstance(raw_path, str) or not raw_path.strip():
             return
+        resolved_path = resolve_workspace_path(
+            self._config.workspace,
+            raw_path.strip(),
+            self._config.allowed_dirs,
+        )
+        canonical_path = str(resolved_path)
+        if canonical_path not in self._design_evidence_read_paths:
+            self._design_evidence_read_paths.append(canonical_path)
+            self._design_evidence_read_paths = self._design_evidence_read_paths[-40:]
         display_path = _display_read_file_evidence_path(
             self._config.workspace,
             raw_path.strip(),
@@ -1715,6 +1821,8 @@ class AgentRuntime:
             read_file_evidence_paths=list(self._read_file_evidence_paths),
             source_evidence=list(self._source_evidence),
             requirement_evidence=list(self._pinned_requirement_evidence),
+            required_design_evidence_roots=self._design_evidence_roots,
+            design_evidence_read_paths=list(self._design_evidence_read_paths),
             open_todos=self._open_todo_summary(),
             is_code_implementation_request=is_code_implementation_request(self._current_user_request),
             steer_counts=self._final_answer_steer_counts(),
@@ -1736,6 +1844,8 @@ class AgentRuntime:
         return {
             "read_only_evidence": self._read_only_evidence_steers,
             "requirement_evidence": self._requirement_evidence_steers,
+            "design_evidence": self._design_evidence_steers,
+            "design_evidence_final": self._design_evidence_final_steers,
             "no_edit_final_hygiene": self._no_edit_final_hygiene_steers,
             "final_structure": self._final_structure_steers,
             "source_evidence_false_negative": self._source_evidence_false_negative_steers,
@@ -1751,6 +1861,9 @@ class AgentRuntime:
         if kind == "requirement_evidence":
             self._requirement_evidence_steers += 1
             return self._requirement_evidence_steers
+        if kind == "design_evidence":
+            self._design_evidence_steers += 1
+            return self._design_evidence_steers
         if kind == "no_edit_final_hygiene":
             self._no_edit_final_hygiene_steers += 1
             return self._no_edit_final_hygiene_steers

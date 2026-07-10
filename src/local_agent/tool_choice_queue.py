@@ -5,6 +5,8 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from .design_evidence import missing_design_evidence_roots
+
 
 DEFAULT_TOOL_NAMES = frozenset(
     {
@@ -254,6 +256,7 @@ class RequiredToolGate:
         tool_names: Iterable[str] | None = None,
         tool_results: Iterable[ToolResultSummary | Mapping[str, Any] | str] | None = None,
         available_tool_names: Iterable[str] | None = None,
+        design_evidence_roots: Iterable[str] | None = None,
     ) -> ToolChoiceDecision:
         return evaluate_tool_choice_state(
             task_kind=task_kind,
@@ -261,6 +264,7 @@ class RequiredToolGate:
             tool_names=tool_names,
             tool_results=tool_results,
             available_tool_names=available_tool_names,
+            design_evidence_roots=design_evidence_roots,
         )
 
 
@@ -275,6 +279,7 @@ def evaluate_tool_choice_state(
     tool_names: Iterable[str] | None = None,
     tool_results: Iterable[ToolResultSummary | Mapping[str, Any] | str] | None = None,
     available_tool_names: Iterable[str] | None = None,
+    design_evidence_roots: Iterable[str] | None = None,
 ) -> ToolChoiceDecision:
     results = tuple(_normalize_tool_result(result) for result in (tool_results or ()))
     seen_tool_names = _tool_name_set(tool_names, results)
@@ -307,6 +312,24 @@ def evaluate_tool_choice_state(
             rule_id="code_evidence",
             missing_requirements=("code_evidence",),
             preferred_tool_names=evidence_preferred,
+        )
+
+    missing_design_roots = missing_design_evidence_roots(
+        tuple(design_evidence_roots or ()),
+        (result.path for result in results if _successful_tool_result(result) and result.name == "read_file"),
+    )
+    if missing_design_roots:
+        target_root = missing_design_roots[0]
+        return ToolChoiceDecision(
+            steering_required=True,
+            allowed_tool_names=_allowed_subset(CODE_EVIDENCE_ALLOWED_TOOL_NAMES, allowed_tools),
+            reason=(
+                "cross_root_design_evidence missing: this read-only design task needs at least one successful "
+                "source-file read from each declared code root before it can finalize."
+            ),
+            rule_id=f"cross_root_design_evidence:{target_root}",
+            missing_requirements=(f"code_read:{target_root}",),
+            preferred_tool_names=("search_code", "read_file"),
         )
 
     if _implementation_needs_explore_before_write(task_kind, prompt, seen_tool_names, results):
@@ -463,12 +486,11 @@ def _has_requirement_doc_read(prompt: str, results: tuple[ToolResultSummary, ...
     read_results = [result for result in results if _successful_tool_result(result) and result.name == "read_file"]
     if not read_results:
         return False
-    prompt_text = _lower_text(prompt)
     for result in read_results:
         result_text = _lower_text(" ".join(part for part in (result.path, result.content) if part))
         if any(marker in result_text for marker in DOC_READ_MARKERS):
             return True
-    return any(keyword in prompt_text for keyword in REQUIREMENT_DOC_KEYWORDS)
+    return False
 
 
 def _implementation_needs_explore_before_write(

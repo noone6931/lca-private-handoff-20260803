@@ -93,4 +93,13 @@ T-115 的结论不是“百炼已经完全高效”，而是：安全可逆的 p
 | ID | 问题 | OMP 架构原则 | LCA 措施 | 状态 |
 |---|---|---|---|---|
 | PT-043 | LLM compaction 可把需求正文压缩为错误业务流程，导致最终设计把后期规划或推测说成当前范围。 | 关键 current-task/context 需要独立于普通历史压缩保存，并拥有更高权威级别。 | T-120 pinned requirement evidence + 需求路径/行号 final gate；session `20260710T025606504484Z` 已不再编造双审/支付当前范围。 | 已缓解，继续观察。 |
-| PT-044 | 真实设计任务在后端候选目录反复 list/search/read，未覆盖前端最小证据集，最终只能给出弱复用结论。 | OMP ToolChoiceQueue 用 requirement/active-loop observation 把缺失关键工具升级为 soft/hard requirement，并对病态探索设小上限。 | T-121 设计 evidence matrix：需求已读后，按用户声明的前后端 roots 要求至少各有一个命中后的 `read_file` 证据；满足最小覆盖后限制低价值继续探索并收束回答。 | 开放，P0。 |
+| PT-044 | 真实设计任务在后端候选目录反复 list/search/read，未覆盖前端最小证据集，最终只能给出弱复用结论。 | OMP ToolChoiceQueue 用 requirement/active-loop observation 把缺失关键工具升级为 soft/hard requirement，并对病态探索设小上限。 | T-121 设计 evidence matrix：需求已读后，按用户声明的前后端 roots 要求至少各有一个命中后的 `read_file` 证据；满足最小覆盖后限制低价值继续探索并收束回答。session `20260710T032336652934Z` 已读 requirement、`zqylpayment` Java、`msp-pay` JS/Vue 后以 final 收束。 | 已关闭 MVP，继续观察调用成本。 |
+
+## T-121 跨前后端 Evidence Matrix 复测（20260710）
+
+| 项目 | 事实 | 结论 |
+|---|---|---|
+| 最小矩阵 | `design_evidence.py` 仅在只读设计/架构类请求且存在两个以上代码 root 时启用。ToolChoiceQueue 在需求文档读取后，逐个限制为 `search_code` / `read_file` / LSP，直到每个 root 至少有一份成功源码读取。 | 不把“读过需求”或“读过其中一个仓库”误当作前后端设计证据已足够。 |
+| 初轮修正 | 初版 final steerer 使用展示用相对路径判断 root 归属；主 workspace 的 `src/...` 因此被误判为未覆盖。 | 运行时另存 canonical absolute source paths，展示/引用仍保留相对路径；两种路径职责不再混用。 |
+| 收束策略 | 矩阵覆盖后保留有限补读；接近 deadline 时直接撤回 tools，为最终回答预留 45 秒。 | 对齐 OMP 的 deadline-first 控制原则：步数只是局部护栏，不让探索吃掉最终交付时间。 |
+| `20260710T032336652934Z` | 先读 V1.3 需求，再读 `msp-pay` 的 `platformPayment.js` / Vue 页面和 `zqylpayment` 的 Java 源码；矩阵完成后 runtime 发出 `design_evidence_final`，下一次 LLM 请求 `tool_schema_count=0`。最终 `termination_reason=final`，127 秒、16 次 LLM 请求、19 次只读工具、0 tool error。 | 通过：最小跨前后端证据覆盖与最终收束均生效。模型仍有 5 次 `list_files` 和 6 次 `search_code`，后续压测继续关注探索成本。 |

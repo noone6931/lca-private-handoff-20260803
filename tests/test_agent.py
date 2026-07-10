@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import subprocess
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -14,6 +15,7 @@ from local_agent.config import AgentConfig
 from local_agent.protocol.events import ListEventSink
 from local_agent.requirement_evidence import RequirementEvidence
 from local_agent.steering.final_answer import SourceEvidence
+from local_agent.steering.final_answer import DesignEvidenceSteerer
 from local_agent.steering.final_answer import FinalAnswerContext
 from local_agent.steering.final_answer import RequirementEvidenceSteerer
 from local_agent.steering.final_answer import SourceEvidenceFalseNegativeSteerer
@@ -21,6 +23,7 @@ from local_agent.steering.final_answer import request_needs_source_grounded_nume
 from local_agent.steering.final_answer import source_numeric_issues
 from local_agent.task_contract import generate_requirement_contract
 from local_agent.tool_choice_queue import ToolResultSummary
+from local_agent.tool_choice_queue import ToolChoiceDecision
 from local_agent.tools.base import ToolResult
 
 
@@ -1945,6 +1948,94 @@ class AgentRuntimeTests(unittest.TestCase):
         )
 
         self.assertIsNone(RequirementEvidenceSteerer(max_steers=2).decide(context))
+
+    def test_design_evidence_gate_blocks_final_until_each_code_root_is_read(self) -> None:
+        backend = "/workspace/backend"
+        frontend = "/workspace/frontend"
+        context = FinalAnswerContext(
+            request="请只读设计前后端改造方案，不要修改文件。",
+            content="当前设计已完成。",
+            messages=[],
+            run_start_index=0,
+            requirement_contract=generate_requirement_contract("请只读设计前后端改造方案，不要修改文件。"),
+            tool_results=[],
+            read_file_evidence_paths=[f"{backend}/src/App.java"],
+            source_evidence=[],
+            open_todos=[],
+            is_code_implementation_request=False,
+            steer_counts={},
+            required_design_evidence_roots=(backend, frontend),
+            design_evidence_read_paths=[f"{backend}/src/App.java"],
+        )
+
+        decision = DesignEvidenceSteerer(max_steers=2).decide(context)
+
+        self.assertIsNotNone(decision)
+        self.assertEqual(decision.kind, "design_evidence")
+        self.assertIn(frontend, decision.message)
+        self.assertFalse(decision.force_final_answer_without_tools)
+
+    def test_design_evidence_coverage_has_bounded_followup_before_forced_final(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=workspace,
+                approval_mode="yolo",
+            )
+            runtime = AgentRuntime(config, show_tool_logs=False)
+            backend = "/workspace/backend"
+            frontend = "/workspace/frontend"
+            runtime._design_evidence_roots = (backend, frontend)
+            runtime._tool_choice_results = [
+                ToolResultSummary("read_file", path=f"{backend}/src/App.java"),
+                ToolResultSummary("read_file", path=f"{frontend}/src/views/List.vue"),
+            ]
+            complete = ToolChoiceDecision(False, frozenset({"read_file"}), "complete")
+
+            self.assertFalse(runtime._steer_after_design_evidence_coverage(complete))
+            runtime._tool_choice_results.extend(
+                ToolResultSummary("search_code", path=backend) for _ in range(6)
+            )
+
+            self.assertTrue(runtime._steer_after_design_evidence_coverage(complete))
+
+        self.assertTrue(runtime._force_final_answer_without_tools)
+        self.assertEqual(runtime._design_evidence_final_steers, 1)
+
+    def test_design_evidence_coverage_reserves_time_for_final_answer(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=workspace,
+                approval_mode="yolo",
+            )
+            runtime = AgentRuntime(config, show_tool_logs=False)
+            backend = "/workspace/backend"
+            frontend = "/workspace/frontend"
+            runtime._design_evidence_roots = (backend, frontend)
+            runtime._tool_choice_results = [
+                ToolResultSummary("read_file", path=f"{backend}/src/App.java"),
+                ToolResultSummary("read_file", path=f"{frontend}/src/views/List.vue"),
+            ]
+            complete = ToolChoiceDecision(False, frozenset({"read_file"}), "complete")
+
+            self.assertTrue(
+                runtime._steer_after_design_evidence_coverage(
+                    complete,
+                    deadline=time.monotonic() + 1,
+                )
+            )
+
+        self.assertTrue(runtime._force_final_answer_without_tools)
+        self.assertEqual(runtime._design_evidence_final_steers, 1)
 
     def test_read_requirement_document_is_pinned_into_runtime_context(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

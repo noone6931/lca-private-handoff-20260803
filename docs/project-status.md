@@ -30,7 +30,7 @@
 
 ## 当前进度
 
-当前项目已完成 P8 前端协议与交互基础 MVP，P9 真实需求使用准备已覆盖项目边界、源码验证、LSP 韧性和服务费结算链路压测，并进入 P10 Intelligence Runtime 骨架。用户可以用自然语言描述任务，而不是每次手写工具顺序；Runtime 通过 RequirementContract、Planner/Explore、MiniToolChoiceQueue、CompletionAudit 和二阶段 Patch Reviewer 保持任务目标、证据、写入、测试和 diff 的闭环。2026-07-10 的 T-113 将 Patch Reviewer 前移到成功 `git_diff` 之后；T-114 要求 blocked/no-edit 收尾必须有工具观察到的阻断证据；T-115 收敛安全 provider scalar 参数方言；T-116 用 hard preview gate 阻止未预览写入；T-117 消除 diff/test 数字误拦；T-118 修复待写入 `read-only` 字面量误分类；T-119 修正实现任务 final-guard scope；T-120 将成功读取的需求文档固定为跨 compaction 的权威证据。当前重点是 T-121：真实设计任务必须覆盖用户声明的前后端最小源码证据集，再收束回答。详见 `docs/pressure-test-2026-07-10.md`。Runtime 继续产出 typed events 和 `run_summary`，CLI/session/tool 日志和 terminal frontend 共用事件流。
+当前项目已完成 P8 前端协议与交互基础 MVP，P9 真实需求使用准备已覆盖项目边界、源码验证、LSP 韧性和服务费结算链路压测，并进入 P10 Intelligence Runtime 骨架。用户可以用自然语言描述任务，而不是每次手写工具顺序；Runtime 通过 RequirementContract、Planner/Explore、MiniToolChoiceQueue、CompletionAudit 和二阶段 Patch Reviewer 保持任务目标、证据、写入、测试和 diff 的闭环。2026-07-10 的 T-113 将 Patch Reviewer 前移到成功 `git_diff` 之后；T-114 要求 blocked/no-edit 收尾必须有工具观察到的阻断证据；T-115 收敛安全 provider scalar 参数方言；T-116 用 hard preview gate 阻止未预览写入；T-117 消除 diff/test 数字误拦；T-118 修复待写入 `read-only` 字面量误分类；T-119 修正实现任务 final-guard scope；T-120 将成功读取的需求文档固定为跨 compaction 的权威证据；T-121 让跨前后端设计在需求、主后端、用户指定前端三类证据都具备后再收束，且展示路径不再干扰 root 归属判断。真实复测 `20260710T032336652934Z` 以 `final` 结束。详见 `docs/pressure-test-2026-07-10.md`。Runtime 继续产出 typed events 和 `run_summary`，CLI/session/tool 日志和 terminal frontend 共用事件流。
 
 已具备的核心能力：
 
@@ -43,7 +43,7 @@
 - `apply_patch` 已支持 `replace`、`insert_before`、`insert_after`，并兼容 Python 3.12。
 - 非交互审批、LLM 非 JSON 响应、session 恢复坏尾部、search_code 绝对路径泄漏等问题已经修复。
 - 已完成 Agent 自举测试：能够通过百炼模型调用工具读取、修改、测试和查看 diff。
-- 测试基线：273 个测试在正常本地环境通过。
+- 测试基线：280 个测试在正常本地环境通过。
 
 当前已具备：
 
@@ -150,7 +150,7 @@
 | P7 | 高级工程能力轻量版 | 已完成 MVP 版 | 已完成 OMP 风格 auto summary、多语言 LSP/light fallback、LSP 兼容别名、multi-root workspace roots 与工具观察提示、allowed-dir soft tool requirement、Markdown memory 启动注入、learn、可选 memory consolidation、authored skills discovery、综合压测记录、重复工具调用熔断、duplicate-tool forced-final steering、同文件切片读取漂移 guard、search_code 空搜索词跨路径 guard、path escape roots hint、LSP 空 query guard、Current task contract、Evidence Ledger、tool result pruning、todo steering、跨项目 env-file、用户级 `--state-dir` runtime state 分层、relevance gate、implementation-quality reviewer、safe new-file policy 和 no-edit final hygiene；path-scoped rules、DAP、subagents、完整 reviewer、AST edit、managed skills 继续后置。 |
 | P8 | 前端协议与交互基础 | 已完成 MVP 版 | T-076 已完成 Event/Command Protocol v1、EventSink、CLI stderr renderer 和 session `event_v1`；T-077 已完成 terminal-native frontend，而不是 fullscreen 重 TUI。 |
 | P9 | 真实需求使用准备 | 已完成阶段性 MVP | 已完成项目边界分析、真实需求模板、企业项目只读源码验证、Java LSP 韧性、拓展服务费结算链路压测和服务范围复核；后续继续按真实需求推进设计/实现切片。 |
-| P10 | Intelligence Runtime 骨架 | 进行中 | 按 OMP 架构原则补单 Agent 内部的目标契约、工具选择队列、完成审计、两阶段计划和 reviewer。当前已完成 RequirementContract、CompletionAudit、裁剪版 MiniToolChoiceQueue、Planner/Explore 两阶段、post-diff Patch Reviewer、no-edit evidence gate、provider-safe tool_call 参数清洗、T-115~T-119 运行时护栏，以及 T-120 pinned requirement evidence；下一步 T-121 以 evidence matrix 收束真实设计任务的跨项目探索。 |
+| P10 | Intelligence Runtime 骨架 | 进行中 | 按 OMP 架构原则补单 Agent 内部的目标契约、工具选择队列、完成审计、两阶段计划和 reviewer。当前已完成 RequirementContract、CompletionAudit、裁剪版 MiniToolChoiceQueue、Planner/Explore 两阶段、post-diff Patch Reviewer、no-edit evidence gate、provider-safe tool_call 参数清洗、T-115~T-121 运行时护栏。T-121 已在真实跨前后端设计任务中验证需求/后端/前端最小 evidence matrix；下一步继续收敛真实实现任务与工具调用成本。 |
 
 ## 已完成功能
 
@@ -212,7 +212,7 @@
 | 二阶段 Patch Reviewer | 已完成 MVP 版 | `src/local_agent/patch_reviewer.py` 在成功 `git_diff` 后立即消费 write / `git_diff` / search/LSP 证据；显式要求测试却没有测试 diff、公开 API 未做写后调用方检索、低相关或 comment-only patch 均会触发 runtime steering，并只开放受控修复/验证/回滚工具；最终回答前仍保留兜底审查。 |
 | no-edit evidence gate | 已完成 | CompletionAudit 不再接受只有“blocked/unexecuted”的文字自述；必须有 search/LSP 未命中、路径缺失、relevance/approval 拒绝等工具证据，才允许实现任务在无 diff 时收尾。 |
 | ToolRegistry 参数归一 | 已完成 MVP 版 | `src/local_agent/tools/argument_normalization.py` 在 schema 校验前仅映射已观测 scalar alias；冲突值直接拒绝，随后仍执行原 schema、approval、path/hash 和 anchored patch 校验。 |
-| 测试基线 | 已完成 | 本地正常环境下 273 个测试通过。 |
+| 测试基线 | 已完成 | 本地正常环境下 280 个测试通过。 |
 
 ## 下一步 Todo
 
@@ -325,7 +325,7 @@
 | T-118 | quoted read-only literal task classification | 已完成 | P10 | 实现任务里待写入的 `只读` / `read-only` 文本或断言不会再被当作禁止修改指令；明确实现意图优先。 |
 | T-119 | 实现任务 final-guard scope / CompletionAudit priority | 已完成并压测 | P10 | source-backed numeric/evidence final guard 现在只处理 `read-only` contract；真实会话 `20260710T022516812575Z` 在两处初始 patch 失败后仍完成 preview、写入、定向 6 测试和 diff。无写入时的 `SourceEvidenceFalseNegative` 继续仅做 todo/git 收尾卫生。 |
 | T-120 | Pinned requirement evidence / compaction authority | 已完成 MVP 并复测 | P10 | 真实设计 session `20260710T024503106586Z` 因多轮 LLM compaction 编造需求范围；成功读取的 requirement/spec Markdown 现在作为高优先级 pinned context 注入每次 provider request，最终稿要求 requirement 文件路径/行号。复测不再把双审/支付写成本期范围。 |
-| T-121 | 真实设计 evidence matrix / cross-root ToolChoiceQueue | 待开始 | P10 | T-120 复测虽纠正需求事实，却在后端探索 57 次调用且未覆盖前端最小证据集，导致复用设计过弱。 |
+| T-121 | 真实设计 evidence matrix / cross-root ToolChoiceQueue | 已完成并真实复测 | P10 | 新增 `design_evidence.py`，跨 root 只读设计任务必须在主 workspace 和用户指定代码目录各成功读取至少一份源码；ToolChoiceQueue 逐 root 约束工具，final steerer 复核 canonical path 覆盖。覆盖后限制补读并在 deadline 接近时预留最终回答时间。session `20260710T032336652934Z` 127 秒、19 次只读工具、0 错误，以 final 收束。 |
 
 ## 风险清单
 
@@ -372,7 +372,7 @@
 | R-059 | source numeric guard 会误拦 diff/test 观测数字 | 已关闭 MVP 版 | T-117 后 hunk 坐标、`+8/-0` 与测试数不再进入源码数字比对。 | 保持枚举/状态码/接口常量的源码核验，跳过 apply_patch/tag/diff/test observation。 |
 | R-060 | source-backed final guard 抢占未完成实现任务的修复空间 | 已关闭 MVP 版 | T-119 真实写入会话在初始 patch 失败后继续完成预览、写入、测试和 diff，未触发 final steering。 | 源码数字/证据类 final guard 仅用于 `read-only` contract；实现任务由 CompletionAudit、Patch Reviewer 和 ToolChoiceQueue 驱动受控修复。 |
 | R-061 | requirement source 被 LLM compaction 改写，真实设计范围漂移 | 已缓解，继续观察 | session `20260710T024503106586Z` 将后期规划写为本期双审/支付；T-120 复测已纠正当前期事实，但仍需验证更多需求格式。 | requirement/spec 读取结果作为独立 pinned context；普通 summary 只能辅助导航，最终需求事实要求 requirement path:line。 |
-| R-062 | 跨前后端设计未覆盖最小源码证据集就持续探索 | 开放，T-121 | session `20260710T025606504484Z` 57 次工具调用中没有读取前端候选源码，最终只能给出弱复用结论。 | 按 OMP ToolChoiceQueue/soft escalation 思路，为用户明确的 cross-root 设计任务建立最小 evidence matrix；未覆盖的 root 先 soft/hard-require `read_file`，覆盖后限制继续猜路径。 |
+| R-062 | 跨前后端设计未覆盖最小源码证据集就持续探索 | 已关闭 MVP，继续观察 | session `20260710T025606504484Z` 57 次工具调用中没有读取前端候选源码，最终只能给出弱复用结论。 | T-121 按 OMP ToolChoiceQueue/soft escalation 建立最小 evidence matrix；session `20260710T032336652934Z` 已读取需求、后端 Java 与前端 JS/Vue 后 final 收束。后续继续观察探索成本。 |
 | R-033 | no-edit 停止路径可能跳过收束工具 | 已关闭 MVP 版 | T-074 复跑中模型正确停止，但没有维护 todo，也没有调用 `git_diff` 输出“无改动”证据；这会降低最终报告的可审计性。 | T-075 已参考 OMP current task / tool-choice steering 思路落地：no-edit stop 前缺 git/todo 收束会被 runtime steering 纠偏，并临时限制工具到 todo/git hygiene 集合。 |
 | R-034 | 过早做 fullscreen 重 TUI 可能拖慢核心能力 | 新增，中 | 如果把第一版前端理解成 Textual/fullscreen/pane/mouse/overlay，容易提前引入 scrollback、copy/paste、resize、输入法和渲染刷新问题。 | 第一版明确命名为 Terminal Frontend：`prompt_toolkit` 只管输入，`rich` 只管结构化输出，保留原生 terminal scrollback；先做 Event/Command Protocol，后续有真实瓶颈再升级 Textual/Bubble Tea/Ratatui/自研 renderer。 |
 | R-035 | Runtime 与前端输出耦合会阻碍后续终端体验 | 已关闭 MVP 版 | 如果工具日志、审批显示和最终输出继续散落在 Runtime/CLI print 中，后续 `prompt_toolkit + rich` 前端会难以复用和 replay。 | T-076 已参考 OMP runtime/TUI 分层思路，落地 dataclass Event/Command Protocol 和 `EventSink`；Runtime 产出 typed events，CLI 只是第一消费者。 |
@@ -433,7 +433,7 @@
 | 项目 | 结论 | 依据 |
 |---|---|---|
 | 主链路 | 通过 | 百炼真实小改复测已跑通 todo、dry_run、apply_patch、session allow、rollback、run_tests、git_diff。 |
-| 测试 | 通过 | P5 收口时 90 个 unittest、compileall、xlsx 检查、diff check 均通过；P10 当前代码已跑通 267 个 unittest。 |
+| 测试 | 通过 | P5 收口时 90 个 unittest、compileall、xlsx 检查、diff check 均通过；P10 当前代码已跑通 280 个 unittest。 |
 | 日用入口 | 通过 | README 已补只读分析和小改任务命令模板。 |
 | 开放风险 | 可接受 | shell 仍非沙箱、prompt injection 仍需靠审批和封闭 VM；provider/model 专用 tokenizer、输出 reserve、managed skills、完整 reviewer 和完整 OMP ToolChoiceQueue 继续后置评估。 |
 | 下一阶段 | P10 Intelligence Runtime 继续收束 | T-109~T-120 已补 RequirementContract、CompletionAudit、MiniToolChoiceQueue、Planner/Explore、post-diff Patch Reviewer、no-edit evidence gate、ToolRegistry 参数归一、preview contract、numeric guard scope、literal 分类、实现任务 final-guard scope和 pinned requirement evidence；下一步做 T-121 evidence matrix，先收束真实跨项目设计质量。 |
