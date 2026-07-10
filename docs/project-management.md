@@ -126,7 +126,7 @@ python3 scripts/sync_project_excel.py
 | Planner/Explore | 已完成 MVP 版 | `src/local_agent/planner.py`、`src/local_agent/tool_choice_queue.py`、`src/local_agent/agent.py` | 实现任务在 explore 阶段只开放 list/read/search/LSP/todo/ask/git 状态检查；读到本地证据后进入 ready_to_implement，写后进入 verify | 真实实现压测 |
 | 二阶段 Patch Reviewer | 已完成 MVP 版 | `src/local_agent/patch_reviewer.py`、`src/local_agent/steering/final_answer.py`、`src/local_agent/agent.py` | 成功 `git_diff` 后立即检查显式测试 diff、公开 API 调用方和已有 diff reviewer finding；若有风险，停止同批后续工具并只开放修复/验证/回滚，最终回答仍有兜底审查 | T-115 真实小改已复测；下一步 T-116 preview contract |
 | No-edit evidence gate | 已完成 MVP 版 | `src/local_agent/completion_audit.py` | 实现任务的 blocked/no-edit 必须由 search/LSP 未命中、路径缺失、runtime relevance/approval 拒绝等工具事实支撑；模型文本不足以放行 | 继续真实任务观察 |
-| 测试覆盖 | 已完成 | 当前 267 个测试通过 | unittest 通过；同步 Excel 后检查 xlsx | 日用反馈补测 |
+| 测试覆盖 | 已完成 | 当前 273 个测试通过 | unittest 通过；同步 Excel 后检查 xlsx | 日用反馈补测 |
 
 ## 下一步 Todo
 
@@ -251,6 +251,8 @@ python3 scripts/sync_project_excel.py
 | T-117 | P1 | P10 | Source numeric guard scope correction | 已完成 MVP | Agent | T-115 复测中 diff hunk、+/- 统计和测试数量被误判为源码状态码数字，触发两次无工具重写。 | 仅在请求/最终回答含真正的枚举、状态码、接口、字段或独立 `code` 数字事实时启用；跳过 apply_patch/tag/diff/test observation。后续压测 run summary 不再触发该 guard。 |
 | T-118 | P0 | P10 | quoted read-only literal task classification | 已完成 | Agent | 实现任务要写入 `只读`/`read-only` 文本或测试断言时，deterministic classifier 把数据误当作禁止修改指令。 | 明确实现意图优先；仅 `不要修改` / `do not edit` / `no changes` 等真正禁止修改的指令覆盖。新增回归测试。 |
 | T-119 | P1 | P10 | 实现任务 final-guard scope / CompletionAudit priority | 已完成并压测 | Agent | 源码数字/证据类 final guard 不能抢占实现任务的锚点修复、补测试和验证。 | T-119 将这类 final guard 限定为 `read-only` contract；真实 session `20260710T022516812575Z` 在两处初始 patch 失败后仍完成两份文件 preview、写入、定向 6 测试和 diff。 |
+| T-120 | P0 | P10 | Pinned requirement evidence / compaction authority | 已完成 MVP 并复测 | Agent | 真实服务费结算设计 session `20260710T024503106586Z` 经 12 次 LLM summary 后将后期规划误写为当前双审/支付流程。 | 成功 `read_file` 的 requirement/spec Markdown 以高优先级 pinned context 注入每次 provider request；最终需求事实要求真实 requirement path:line。session `20260710T025606504484Z` 已不再编造双审/支付当前范围。 |
+| T-121 | P0 | P10 | 真实设计 evidence matrix / cross-root ToolChoiceQueue | 待开始 | Agent | T-120 复测仍在后端候选目录进行 57 次调用，未读取用户声明前端，造成复用结论过弱。 | 对齐 OMP ToolChoiceQueue：需求已读后，对用户声明的前后端 roots 建立最小 `read_file` evidence requirement；未覆盖 root 先 soft/hard escalate，覆盖后限制低价值路径探索并收束。 |
 
 ## 风险与决策
 
@@ -295,6 +297,8 @@ python3 scripts/sync_project_excel.py
 | 风险 | R-058 | 高 | raw diff / bulk todo 形式无法安全映射到细粒度工具 | 已缓解，继续观察 | T-116 真实复测确认这类输入保持明确失败；未发生未经 anchored/hash/preview 验证的写入。 | 参考 OMP 工具协议边界：不把不等价结构自动拆成带副作用的多次调用；preview contract 拦真实写入，后续只改善可行动反馈。 |
 | 风险 | R-059 | 中 | source numeric guard 会误拦 diff/test 观测数字 | 已关闭 MVP 版 | T-115 将 hunk 坐标、`+8/-0` 和测试计数送入源码数字比对；T-117 后续复测未再触发该 guard。 | 保持枚举/状态码/接口常量的源码校验，排除 apply_patch/tag/diff/test 工具观测数字。 |
 | 风险 | R-060 | 中 | source-backed final guard 抢占未完成实现任务的修复空间 | 已关闭 MVP 版 | T-119 真实写入会话在初始 patch 失败后继续完成 preview、写入、测试和 diff，run summary 未记录 final steering。 | 源码数字/证据类 final guard 仅用于 `read-only` contract；实现任务继续由 CompletionAudit、Patch Reviewer 和 ToolChoiceQueue 驱动受控修复。 |
+| 风险 | R-061 | 高 | requirement source 被 LLM compaction 改写，真实设计范围漂移 | 已缓解，继续观察 | session `20260710T024503106586Z` 将后期规划编造成当前双审/支付；T-120 复测已修正当前期事实。 | 按 OMP current context 优先级：需求正文独立 pinned，普通 compaction summary 只能辅助导航；最终需求事实要求 path:line。 |
+| 风险 | R-062 | 高 | 跨前后端设计未覆盖最小源码证据集就持续探索 | 开放，T-121 | session `20260710T025606504484Z` 57 次调用却未读取前端候选源码，最终复用结论不足。 | 按 OMP ToolChoiceQueue / soft escalation，为 user-declared roots 建立 evidence matrix 和小上限。 |
 | 风险 | R-032 | 高 | 真实实现可能退化成低价值注释 patch | 已缓解并复跑 | T-073 复跑 session `20260709T021349259159Z` 中模型定位到相关 Java 文件，但因 `write_file` 被 deny，最终只给 DTO 字段补 JavaDoc；这不能算真实业务实现 | T-074 已补 implementation-quality reviewer：本轮代码 diff 若只有注释/文档改动，`git_diff` 会提示不能声称行为、校验、解析或测试覆盖变化；复跑 session `20260709T025706579604Z` 没有再做 comment-only patch。 |
 | 风险 | R-033 | 中 | no-edit 停止路径可能跳过收束工具 | 已关闭 MVP 版 | T-074 复跑中模型正确停止并说明目标实现属于 `zqyl-investment-plan`，但没有维护 todo，也没有调用 git_diff 证明无改动 | T-075 已参考 OMP current task / tool-choice steering 思路：no-edit stop 缺 todo/git 收束时会触发 runtime steering，并临时只开放 todo/git hygiene 工具。 |
 | 风险 | R-035 | 中 | Runtime 与前端输出耦合会阻碍后续终端体验 | 已关闭 MVP 版 | 工具日志、审批显示、最终输出如果继续散落在 Runtime/CLI print，后续 `prompt_toolkit + rich` 前端难以复用和 replay | T-076 已参考 OMP runtime/TUI 分层思路：Runtime 产出 typed events，CLI 只是第一消费者，session 写 `event_v1`。 |
@@ -354,12 +358,12 @@ python3 scripts/sync_project_excel.py
 
 | 项目 | 结论 | 依据 | 后续 |
 |---|---|---|---|
-| 阶段判断 | P10 Intelligence Runtime 骨架进行中 | T-076/T-107 已完成 typed events、terminal frontend、项目边界分析、run summary、真实需求压测、Java LSP 韧性、source-grounded numeric guard 和 token budget；T-109~T-119 已补 contract/audit/queue/planner/reviewer/no-edit evidence/ToolRegistry 归一、preview contract 与 final-guard scope。真实小改交付链路已跑通，但工具调用效率仍不合格。 | 保持 OMP 的“协议边界 + active loop observer + 小上限”原则，下一步基于 PT-042 降低 anchored patch 试错；结构拆分仍按独立边界推进，不再往 `agent.py` 堆新 guard。 |
+| 阶段判断 | P10 Intelligence Runtime 骨架进行中 | T-076/T-107 已完成 typed events、terminal frontend、项目边界分析、run summary、真实需求压测、Java LSP 韧性、source-grounded numeric guard 和 token budget；T-109~T-120 已补 contract/audit/queue/planner/reviewer/no-edit evidence/ToolRegistry 归一、preview contract、final-guard scope与 pinned requirement evidence。真实小改交付链路已跑通，但跨项目设计的工具调用效率和 evidence coverage 仍不合格。 | 按 OMP 的“协议边界 + active loop observer + ToolChoiceQueue 小上限”原则，先做 T-121 evidence matrix；结构拆分仍按独立边界推进，不再往 `agent.py` 堆新 guard。 |
 | 与 OMP 的主要差距 | 差距集中在高级工程化，不阻塞低风险实战 | 完整 reviewer/subagents、完整 LSP/DAP、browser/TUI、AST edit、managed skills 仍后置；ToolChoiceQueue 已有裁剪版 MVP | 由压测失败形态触发 |
 | 已关闭风险 | P0/P1 runtime 风险已基本收口 | Python 3.12 patch、非交互审批、orphan tool_calls、max_steps、allowed-dir、重复工具、证据漂移、diff 混淆等均已有修复或缓解 | 继续用真实任务验证 |
 | reviewer 决策 | 先保留轻量实现质量 gate | T-074 已补 no-comment-only reviewer，复跑未再产生伪实现 | 继续用真实任务验证；若后续出现更复杂 patch 质量问题，再补完整 reviewer/subagent |
 | ToolChoiceQueue 决策 | 已做裁剪版 MiniToolChoiceQueue | 当前覆盖只读证据、需求文档前置读取、写后测试/diff hygiene；不做完整多队列/并发/子任务调度 | 后续若仍出现关键工具不用/乱用，再扩展 queue 规则；若出现 patch/总结质量不稳，补 reviewer。 |
-| 下一步 | Anchored patch 参数效率 / 真实需求回归 | T-119 已证明初始 patch 失败后仍能继续完成受控修复；剩余主要问题是 provider 首次命中 anchored patch schema 的效率。 | 维持 hard preview/hash 边界，不自动执行 raw diff；用真实需求观察并仅归一安全等价的新参数方言。 |
+| 下一步 | 真实设计 evidence matrix / ToolChoiceQueue | T-120 已修正需求正文被摘要改写，但复测暴露前后端证据覆盖不足和探索扩散。 | 先实现 T-121，再重跑服务费结算只读设计；anchored patch 参数效率继续作为后续独立风险观察。 |
 
 ## P7 综合压测问题
 
@@ -405,7 +409,7 @@ python3 scripts/sync_project_excel.py
 | 项目 | 结论 | 依据 |
 |---|---|---|
 | 主链路 | 通过 | 百炼真实小改复测已跑通 todo、dry_run、apply_patch、session allow、rollback、run_tests、git_diff。 |
-| 测试 | 通过 | P5 收口时 90 个 unittest、compileall、xlsx 检查、diff check 均通过；P10 当前代码已跑通 267 个 unittest。 |
+| 测试 | 通过 | P5 收口时 90 个 unittest、compileall、xlsx 检查、diff check 均通过；P10 当前代码已跑通 273 个 unittest。 |
 | 日用入口 | 通过 | README 已补只读分析和小改任务命令模板。 |
 | 开放风险 | 可接受 | shell 仍非沙箱、prompt injection 仍需靠审批和封闭 VM；provider/model 专用 tokenizer、输出 reserve、managed skills、完整 reviewer 和完整 OMP ToolChoiceQueue 继续后置评估。 |
 | 下一阶段 | 真实需求设计与实现压测 | 已验证默认工作流、auto summary、多语言 LSP/light fallback、multi-root、startup memory、learn、authored skills、runtime state dir、多项目只读压测主链路、relevance gate、implementation-quality gate、no-edit final hygiene、semantic exploration guard、terminal input isolation、Event/Command Protocol、Terminal Frontend MVP、项目边界分析 MVP、source-grounded numeric guard 和 token budget MVP；下一步复测服务费结算证据链，确认现有能力复用点和必须新建能力后再进入实现设计。 |

@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from dataclasses import field
 from typing import Any, Protocol
 
 from ..completion_audit import audit_completion
 from ..completion_audit import render_completion_audit_message
 from ..patch_reviewer import render_patch_review_message
 from ..patch_reviewer import review_patch
+from ..requirement_evidence import RequirementEvidence
+from ..requirement_evidence import requirement_fact_citation_issues
 from ..task_contract import RequirementContract
 from ..tool_choice_queue import ToolResultSummary
 
@@ -232,6 +235,7 @@ class FinalAnswerContext:
     open_todos: list[str]
     is_code_implementation_request: bool
     steer_counts: dict[str, int]
+    requirement_evidence: list[RequirementEvidence] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -285,6 +289,38 @@ class ReadOnlyEvidenceSteerer:
             payload={},
             force_final_answer_without_tools=False,
             temporary_tool_allowlist=set(READ_ONLY_EVIDENCE_TOOLS),
+        )
+
+
+class RequirementEvidenceSteerer:
+    kind = "requirement_evidence"
+
+    def __init__(self, *, max_steers: int) -> None:
+        self._max_steers = max_steers
+
+    def decide(self, context: FinalAnswerContext) -> SteeringDecision | None:
+        if context.steer_counts.get(self.kind, 0) >= self._max_steers:
+            return None
+        if context.requirement_contract is not None and context.requirement_contract.task_kind == "code-implementation":
+            return None
+        issues = requirement_fact_citation_issues(context.content, context.requirement_evidence)
+        if not issues:
+            return None
+        sources = ", ".join(item.path for item in context.requirement_evidence)
+        steering = (
+            "Runtime steering: the previous read-only design answer states requirement facts without an exact "
+            "requirement-file path and line citation. Do not call tools. Rewrite the final answer using the pinned "
+            "requirement evidence as the authority. Remove any workflow that is not in the requirement source, and "
+            "label new classes, fields, routes, or integration choices as 推断/建议 rather than verified facts.\n"
+            f"- Requirement sources: {sources}\n"
+            "- Cite every requirement fact as `path:line`; do not cite a made-up section or line.\n"
+            f"- Missing condition: {', '.join(issues)}"
+            f"{final_answer_request_summary(context.request)}"
+        )
+        return SteeringDecision(
+            kind=self.kind,
+            message=steering,
+            payload={"issues": issues, "sources": [item.path for item in context.requirement_evidence]},
         )
 
 

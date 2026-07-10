@@ -29,11 +29,11 @@
 - `tests/test_agent.py` 覆盖 post-diff Reviewer 在模型尝试最终回答前返回 `requested_test_missing`。
 - `tests/test_completion_audit.py` 覆盖“无工具阻断证据的 blocked/no-edit 必须失败”和“搜索未命中可作为真实 no-edit 证据”。
 - `tests/test_patch_reviewer.py` 覆盖“加测试/加一个测试”视为显式测试请求，且没有测试 diff 时必须产生 `requested_test_missing`。
-- 本轮本地完整验证：`PYTHONPATH=src python3 -m unittest discover -s tests`，267 tests OK；`python3 -m compileall src tests` 与 `git diff --check` 通过。
+- 本轮本地完整验证：`PYTHONPATH=src python3 -m unittest discover -s tests`，273 tests OK；`python3 -m compileall src tests` 与 `git diff --check` 通过。
 
 ## 下一步
 
-T-119 已完成短小真实写入复测。下一步不是放宽 anchored patch 或把 raw diff 自动执行，而是基于失败样本降低 provider 的参数试错次数，重点观察 PT-039 的效率问题。
+T-120 已完成“真实需求文档跨 compaction 固定”MVP，并用服务费结算需求复测。下一步转向 T-121：设计任务的 evidence matrix / ToolChoiceQueue 收束，避免模型在没有覆盖前后端最小证据集时继续扩散探索。
 
 ## T-115 复测（20260710）
 
@@ -81,3 +81,16 @@ T-115 的结论不是“百炼已经完全高效”，而是：安全可逆的 p
 |---|---|---|---|
 | PT-041 | `SourceEvidenceFalseNegative` 与源码数字/证据类 final guard 的适用边界需要明确。 | `SourceEvidenceFalseNegative` 仍只负责“无写入时”的 todo/git 收尾卫生；源码数字/证据核验类 final guard 仅用于 `read-only` contract。 | 已关闭 MVP，真实复测通过。 |
 | PT-042 | 百炼在 anchored patch 上仍会尝试不完整参数或整块式 patch，导致明显试错成本。 | 保持 ToolRegistry 的有限 scalar alias 归一、明确 schema 错误和 hard preview gate；不自动拆解 raw diff/bulk todo。后续仅在出现安全等价的新样本时扩展兼容。 | 开放，P1。 |
+
+## T-120 真实需求设计复测（20260710）
+
+| Session | 事实 | 结论 |
+|---|---|---|
+| `20260710T024503106586Z` | 读取 V1.3 需求、前端和后端后，运行 51 次工具调用、28 次 compaction（其中 12 次 LLM summary）。最终稿把后期规划的复核/签章/自动发送误写为本期双审/支付流程，并编造账单确认、外部对账等范围。 | 不可作为设计交付。需求正文在多次摘要后失去权威性，且 final guard 只检查“有无证据/数字”，不能检查“需求事实是否来自需求正文”。 |
+| T-120 修复 | 新增 `requirement_evidence.py`：成功读取的 requirement/spec Markdown 作为 pinned runtime evidence，每次 provider request 均以高于 compaction summary 的优先级注入；只读设计最终稿若陈述需求事实，必须给真实 requirement 文件路径和行号，否则触发 final rewrite。 | 对齐 OMP “关键上下文不可被普通压缩替代”的原则；摘要继续用于历史导航，不再充当需求事实来源。 |
+| `20260710T025606504484Z` | 极小 `context_char_budget=12000` 下运行 57 次工具调用、39 次 compaction（20 次 LLM summary）。最终需求事实已恢复为制单/已制单、Word、下载、回退和筛选条件，未再把双审/支付写成本期范围。 | T-120 对“需求事实漂移”有效，但仍未达到可交付设计质量：模型只写 `V1.3.md 第…`，未稳定输出完整 requirement path；未读取前端候选项目且后端复用结论过窄；探索成本仍过高。 |
+
+| ID | 问题 | OMP 架构原则 | LCA 措施 | 状态 |
+|---|---|---|---|---|
+| PT-043 | LLM compaction 可把需求正文压缩为错误业务流程，导致最终设计把后期规划或推测说成当前范围。 | 关键 current-task/context 需要独立于普通历史压缩保存，并拥有更高权威级别。 | T-120 pinned requirement evidence + 需求路径/行号 final gate；session `20260710T025606504484Z` 已不再编造双审/支付当前范围。 | 已缓解，继续观察。 |
+| PT-044 | 真实设计任务在后端候选目录反复 list/search/read，未覆盖前端最小证据集，最终只能给出弱复用结论。 | OMP ToolChoiceQueue 用 requirement/active-loop observation 把缺失关键工具升级为 soft/hard requirement，并对病态探索设小上限。 | T-121 设计 evidence matrix：需求已读后，按用户声明的前后端 roots 要求至少各有一个命中后的 `read_file` 证据；满足最小覆盖后限制低价值继续探索并收束回答。 | 开放，P0。 |

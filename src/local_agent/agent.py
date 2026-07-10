@@ -35,6 +35,10 @@ from .patch.anchored import PatchError
 from .patch.anchored import resolve_workspace_path
 from .planner import render_planner_explore_context
 from .patch_reviewer import review_input_summary
+from .requirement_evidence import RequirementEvidence
+from .requirement_evidence import is_requirement_source_path
+from .requirement_evidence import render_pinned_requirement_evidence
+from .requirement_evidence import update_requirement_evidence
 from .protocol.events import AgentEvent
 from .protocol.events import EventEmitter
 from .protocol.events import EventSink
@@ -50,6 +54,7 @@ from .steering.final_answer import NoEditFinalHygieneSteerer
 from .steering.final_answer import PatchReviewSteerer
 from .steering.final_answer import READ_ONLY_EVIDENCE_TOOLS
 from .steering.final_answer import ReadOnlyEvidenceSteerer
+from .steering.final_answer import RequirementEvidenceSteerer
 from .steering.final_answer import SourceEvidenceFalseNegativeSteerer
 from .steering.final_answer import request_mentions_todo
 from .steering.final_answer import SourceEvidence
@@ -137,6 +142,7 @@ MAX_SOFT_TOOL_REQUIREMENT_STEERS = 3
 MAX_NO_EDIT_FINAL_HYGIENE_STEERS = 2
 MAX_FINAL_STRUCTURE_STEERS = 2
 MAX_READ_ONLY_EVIDENCE_STEERS = 2
+MAX_REQUIREMENT_EVIDENCE_STEERS = 2
 MAX_SOURCE_EVIDENCE_FALSE_NEGATIVE_STEERS = 2
 MAX_SOURCE_GROUNDED_NUMERIC_STEERS = 2
 MAX_COMPLETION_AUDIT_STEERS = 2
@@ -315,12 +321,14 @@ class AgentRuntime:
         self._no_edit_final_hygiene_steers = 0
         self._final_structure_steers = 0
         self._read_only_evidence_steers = 0
+        self._requirement_evidence_steers = 0
         self._source_evidence_false_negative_steers = 0
         self._source_grounded_numeric_steers = 0
         self._completion_audit_steers = 0
         self._patch_reviewer_steers = 0
         self._read_file_evidence_paths: list[str] = []
         self._source_evidence: list[SourceEvidence] = []
+        self._pinned_requirement_evidence: list[RequirementEvidence] = []
         self._successful_patch_preview_signatures: set[str] = set()
         self._strong_relevance_paths: list[str] = []
         self._evidence_records: list[EvidenceRecord] = []
@@ -342,6 +350,7 @@ class AgentRuntime:
         self._pending_compaction_summary_mode: str | None = None
         self._final_answer_steerers: tuple[FinalAnswerSteerer, ...] = (
             ReadOnlyEvidenceSteerer(max_steers=MAX_READ_ONLY_EVIDENCE_STEERS),
+            RequirementEvidenceSteerer(max_steers=MAX_REQUIREMENT_EVIDENCE_STEERS),
             NoEditFinalHygieneSteerer(max_steers=MAX_NO_EDIT_FINAL_HYGIENE_STEERS),
             FinalStructureSteerer(max_steers=MAX_FINAL_STRUCTURE_STEERS),
             SourceEvidenceFalseNegativeSteerer(max_steers=MAX_SOURCE_EVIDENCE_FALSE_NEGATIVE_STEERS),
@@ -411,11 +420,13 @@ class AgentRuntime:
         self._no_edit_final_hygiene_steers = 0
         self._final_structure_steers = 0
         self._read_only_evidence_steers = 0
+        self._requirement_evidence_steers = 0
         self._source_evidence_false_negative_steers = 0
         self._source_grounded_numeric_steers = 0
         self._completion_audit_steers = 0
         self._patch_reviewer_steers = 0
         self._source_evidence = []
+        self._pinned_requirement_evidence = []
         self._successful_patch_preview_signatures = set()
         self._temporary_tool_allowlist = None
         self._tool_choice_allowed_tool_names = None
@@ -995,6 +1006,7 @@ class AgentRuntime:
                 self._config.allowed_dirs,
                 self._current_user_request,
                 self._requirement_contract_context,
+                render_pinned_requirement_evidence(self._pinned_requirement_evidence),
             )
         )
 
@@ -1442,11 +1454,23 @@ class AgentRuntime:
         if display_path in self._read_file_evidence_paths:
             self._source_evidence.append(SourceEvidence(display_path, result.content))
             self._source_evidence = self._source_evidence[-40:]
+            self._maybe_pin_requirement_evidence(display_path, result.content)
             return
         self._read_file_evidence_paths.append(display_path)
         self._read_file_evidence_paths = self._read_file_evidence_paths[-20:]
         self._source_evidence.append(SourceEvidence(display_path, result.content))
         self._source_evidence = self._source_evidence[-40:]
+        self._maybe_pin_requirement_evidence(display_path, result.content)
+
+    def _maybe_pin_requirement_evidence(self, path: str, content: str) -> None:
+        candidate_paths = self._soft_tool_requirement.candidate_files if self._soft_tool_requirement else ()
+        if not is_requirement_source_path(path, candidate_paths):
+            return
+        self._pinned_requirement_evidence = update_requirement_evidence(
+            self._pinned_requirement_evidence,
+            path=path,
+            content=content,
+        )
 
     def _record_tool_choice_result(self, name: str, arguments: str | dict[str, Any], result: ToolResult) -> None:
         self._tool_choice_tool_names.append(name)
@@ -1690,6 +1714,7 @@ class AgentRuntime:
             tool_results=list(self._tool_choice_results),
             read_file_evidence_paths=list(self._read_file_evidence_paths),
             source_evidence=list(self._source_evidence),
+            requirement_evidence=list(self._pinned_requirement_evidence),
             open_todos=self._open_todo_summary(),
             is_code_implementation_request=is_code_implementation_request(self._current_user_request),
             steer_counts=self._final_answer_steer_counts(),
@@ -1710,6 +1735,7 @@ class AgentRuntime:
     def _final_answer_steer_counts(self) -> dict[str, int]:
         return {
             "read_only_evidence": self._read_only_evidence_steers,
+            "requirement_evidence": self._requirement_evidence_steers,
             "no_edit_final_hygiene": self._no_edit_final_hygiene_steers,
             "final_structure": self._final_structure_steers,
             "source_evidence_false_negative": self._source_evidence_false_negative_steers,
@@ -1722,6 +1748,9 @@ class AgentRuntime:
         if kind == "read_only_evidence":
             self._read_only_evidence_steers += 1
             return self._read_only_evidence_steers
+        if kind == "requirement_evidence":
+            self._requirement_evidence_steers += 1
+            return self._requirement_evidence_steers
         if kind == "no_edit_final_hygiene":
             self._no_edit_final_hygiene_steers += 1
             return self._no_edit_final_hygiene_steers
@@ -2788,6 +2817,7 @@ def _messages_with_runtime_context(
     allowed_dirs: tuple[Path, ...] = (),
     current_user_request: str | None = None,
     requirement_contract_context: str = "",
+    pinned_requirement_evidence: str = "",
 ) -> list[dict[str, Any]]:
     updated = list(messages)
     workspace_roots = _workspace_roots_context(workspace, allowed_dirs)
@@ -2798,6 +2828,8 @@ def _messages_with_runtime_context(
         updated = _messages_with_no_edit_final_hygiene(updated, current_user_request, todo_summary)
     if requirement_contract_context:
         updated = _messages_with_requirement_contract(updated, requirement_contract_context)
+    if pinned_requirement_evidence:
+        updated = _messages_with_pinned_requirement_evidence(updated, pinned_requirement_evidence)
     if planner_explore_context:
         updated = _messages_with_planner_explore_context(updated, planner_explore_context)
     if evidence_ledger:
@@ -2857,6 +2889,21 @@ def _messages_with_requirement_contract(messages: list[dict[str, Any]], requirem
     content = str(base.get("content") or "")
     first_marker = content.find("[Requirement contract]")
     last_marker = content.rfind("[Requirement contract]")
+    if first_marker != -1 and first_marker != last_marker:
+        base["content"] = content[:last_marker].rstrip()
+    return [base, *non_system]
+
+
+def _messages_with_pinned_requirement_evidence(
+    messages: list[dict[str, Any]],
+    pinned_requirement_evidence: str,
+) -> list[dict[str, Any]]:
+    system_messages = [message for message in messages if message.get("role") == "system"]
+    non_system = [message for message in messages if message.get("role") != "system"]
+    base = _system_message_with_appended_context(system_messages, pinned_requirement_evidence)
+    content = str(base.get("content") or "")
+    first_marker = content.find("[Pinned requirement evidence]")
+    last_marker = content.rfind("[Pinned requirement evidence]")
     if first_marker != -1 and first_marker != last_marker:
         base["content"] = content[:last_marker].rstrip()
     return [base, *non_system]

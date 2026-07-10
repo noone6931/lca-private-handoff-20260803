@@ -12,8 +12,10 @@ from local_agent.compaction import resolve_compaction_threshold_chars
 from local_agent.compaction import resolve_compaction_threshold_tokens
 from local_agent.config import AgentConfig
 from local_agent.protocol.events import ListEventSink
+from local_agent.requirement_evidence import RequirementEvidence
 from local_agent.steering.final_answer import SourceEvidence
 from local_agent.steering.final_answer import FinalAnswerContext
+from local_agent.steering.final_answer import RequirementEvidenceSteerer
 from local_agent.steering.final_answer import SourceEvidenceFalseNegativeSteerer
 from local_agent.steering.final_answer import request_needs_source_grounded_numeric_facts
 from local_agent.steering.final_answer import source_numeric_issues
@@ -1893,6 +1895,87 @@ class AgentRuntimeTests(unittest.TestCase):
         decision = SourceEvidenceFalseNegativeSteerer(max_steers=2).decide(context)
 
         self.assertIsNone(decision)
+
+    def test_requirement_evidence_gate_requires_requirement_path_and_line_citation(self) -> None:
+        contract = generate_requirement_contract("请只读分析需求方案，不要修改文件，并区分事实和推断。")
+        evidence = RequirementEvidence(
+            "docs/需求文档-拓展服务费结算V1.3.md",
+            "50:制单页签支持单行制单与批量合并制单。",
+        )
+        context = FinalAnswerContext(
+            request="请只读分析需求方案，不要修改文件，并区分事实和推断。",
+            content="需求文档要求先做账单确认和双审。",
+            messages=[],
+            run_start_index=0,
+            requirement_contract=contract,
+            tool_results=[],
+            read_file_evidence_paths=[evidence.path],
+            source_evidence=[],
+            open_todos=[],
+            is_code_implementation_request=False,
+            steer_counts={},
+            requirement_evidence=[evidence],
+        )
+
+        decision = RequirementEvidenceSteerer(max_steers=2).decide(context)
+
+        self.assertIsNotNone(decision)
+        self.assertEqual(decision.kind, "requirement_evidence")
+        self.assertIn("docs/需求文档-拓展服务费结算V1.3.md", decision.message)
+
+    def test_requirement_evidence_gate_accepts_real_requirement_path_and_line_citation(self) -> None:
+        contract = generate_requirement_contract("请只读分析需求方案，不要修改文件，并区分事实和推断。")
+        evidence = RequirementEvidence(
+            "docs/需求文档-拓展服务费结算V1.3.md",
+            "50:制单页签支持单行制单与批量合并制单。",
+        )
+        context = FinalAnswerContext(
+            request="请只读分析需求方案，不要修改文件，并区分事实和推断。",
+            content="需求事实：docs/需求文档-拓展服务费结算V1.3.md:50 支持单行制单和批量合并制单。",
+            messages=[],
+            run_start_index=0,
+            requirement_contract=contract,
+            tool_results=[],
+            read_file_evidence_paths=[evidence.path],
+            source_evidence=[],
+            open_todos=[],
+            is_code_implementation_request=False,
+            steer_counts={},
+            requirement_evidence=[evidence],
+        )
+
+        self.assertIsNone(RequirementEvidenceSteerer(max_steers=2).decide(context))
+
+    def test_read_requirement_document_is_pinned_into_runtime_context(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            requirements = workspace / "requirements"
+            requirements.mkdir()
+            document = requirements / "需求文档-结算.md"
+            document.write_text("# 需求\n50:支持批量合并制单。\n", encoding="utf-8")
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=workspace,
+                allowed_dirs=(requirements,),
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+            )
+            runtime = AgentRuntime(config, show_tool_logs=False)
+            runtime._record_read_file_evidence(
+                "read_file",
+                {"path": str(document)},
+                ToolResult("[requirements/需求文档-结算.md#tag]\n50:支持批量合并制单。"),
+            )
+
+            messages = runtime._provider_safe_runtime_messages(runtime._messages, [])
+
+        self.assertEqual(len(runtime._pinned_requirement_evidence), 1)
+        self.assertIn("[Pinned requirement evidence]", messages[0]["content"])
+        self.assertIn("50:支持批量合并制单。", messages[0]["content"])
 
     def test_successful_write_invalidates_only_stale_source_snapshot_for_that_path(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
