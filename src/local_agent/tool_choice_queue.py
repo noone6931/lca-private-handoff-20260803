@@ -82,7 +82,7 @@ CANDIDATE_STATE_TOOL_NAMES = frozenset(
         "todo_update",
     }
 )
-CANDIDATE_DELIVERY_TOOL_NAMES = frozenset({"apply_patch", *CANDIDATE_STATE_TOOL_NAMES})
+CANDIDATE_DELIVERY_TOOL_NAMES = frozenset({"apply_patch", "read_file", *CANDIDATE_STATE_TOOL_NAMES})
 CANDIDATE_REMEDIATION_TOOL_NAMES = frozenset({*CANDIDATE_DELIVERY_TOOL_NAMES, "read_file"})
 CANDIDATE_TEST_TOOL_NAMES = frozenset({"run_tests", *CANDIDATE_STATE_TOOL_NAMES})
 CANDIDATE_DIFF_TOOL_NAMES = frozenset({"git_diff", *CANDIDATE_STATE_TOOL_NAMES})
@@ -252,6 +252,7 @@ class ToolChoiceDecision:
     rule_id: str | None = None
     missing_requirements: tuple[str, ...] = ()
     preferred_tool_names: tuple[str, ...] = ()
+    scoped_read_paths: tuple[str, ...] = ()
 
     @property
     def needs_steering(self) -> bool:
@@ -394,6 +395,7 @@ def evaluate_tool_choice_state(
                 rule_id="autonomous_small_change_candidate",
                 missing_requirements=("patch_preview_or_write",),
                 preferred_tool_names=preferred,
+                scoped_read_paths=candidate_paths,
             )
         if not _has_verification_after_last_write("run_tests", seen_tool_names, results):
             return ToolChoiceDecision(

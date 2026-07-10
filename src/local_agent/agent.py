@@ -543,6 +543,7 @@ class AgentRuntime:
             design_evidence_roots=self._run.design_evidence_coverage.roots,
         )
         self._run.tool_choice_allowed_tool_names = set(decision.allowed_tool_names)
+        self._run.tool_choice_read_file_paths = set(decision.scoped_read_paths) if decision.scoped_read_paths else None
         coverage = self._run.design_evidence_coverage.observe(
             queue_requires_steering=decision.steering_required,
             read_paths=(
@@ -982,8 +983,13 @@ class AgentRuntime:
         tool_context: ToolContext,
     ) -> ToolResult:
         allowed_tools = self._effective_runtime_tool_allowlist()
-        if allowed_tools is not None:
-            tool_context = replace(tool_context, runtime_tool_allowlist=frozenset(allowed_tools))
+        scoped_read_paths = self._effective_runtime_read_file_paths()
+        if allowed_tools is not None or scoped_read_paths is not None:
+            tool_context = replace(
+                tool_context,
+                runtime_tool_allowlist=frozenset(allowed_tools) if allowed_tools is not None else None,
+                runtime_read_file_paths=scoped_read_paths,
+            )
         read_file_key = (
             _read_file_path_key(name, arguments, self._config.workspace, self._config.allowed_dirs)
             if self._run.read_file_drift_guard_enabled
@@ -1044,6 +1050,19 @@ class AgentRuntime:
                 self._run.read_file_range_counts.get(read_file_range_key, 0) + 1
             )
         return result
+
+    def _effective_runtime_read_file_paths(self) -> frozenset[str] | None:
+        raw_paths = self._run.tool_choice_read_file_paths
+        if raw_paths is None:
+            return None
+        resolved_paths: set[str] = set()
+        for raw_path in raw_paths:
+            try:
+                resolved = resolve_workspace_path(self._config.workspace, raw_path, self._config.allowed_dirs)
+            except PatchError:
+                continue
+            resolved_paths.add(str(resolved))
+        return frozenset(resolved_paths)
 
     def _repeated_read_file_result(self, path_key: str, prior_count: int, *, evidence: str = "") -> ToolResult:
         evidence_note = f"\nExisting evidence:\n{evidence}" if evidence else ""

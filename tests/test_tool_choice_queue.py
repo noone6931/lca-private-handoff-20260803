@@ -89,6 +89,8 @@ class ToolChoiceQueueTests(unittest.TestCase):
         self.assertNotIn("search_code", decision.allowed_tool_names)
         self.assertNotIn("run_tests", decision.allowed_tool_names)
         self.assertNotIn("git_diff", decision.allowed_tool_names)
+        self.assertIn("read_file", decision.allowed_tool_names)
+        self.assertEqual(decision.scoped_read_paths, ("src/UserService.java", "tests/UserServiceTest.java"))
 
     def test_scoped_docs_exclusion_keeps_autonomous_candidate_delivery_enabled(self) -> None:
         decision = evaluate_tool_choice_state(

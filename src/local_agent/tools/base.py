@@ -36,6 +36,7 @@ class ToolContext:
     patch_preview_checker: Callable[[dict[str, Any], Path], str | None] | None = None
     event_callback: Callable[[str, dict[str, Any]], None] | None = None
     runtime_tool_allowlist: frozenset[str] | None = None
+    runtime_read_file_paths: frozenset[str] | None = None
 
 
 def tool_state_dir(context: ToolContext) -> Path:
@@ -101,6 +102,9 @@ class ToolRegistry:
                 return ToolResult("Tool arguments must be a JSON object.", is_error=True)
             arguments, compatibility_notes = normalize_compatibility_arguments(name, arguments)
             arguments = validate_tool_arguments(tool.input_schema, arguments)
+            scope_denial = _runtime_read_file_scope_denial_reason(name, arguments, context)
+            if scope_denial:
+                return ToolResult(scope_denial, is_error=True)
             result = tool.handler(arguments, context)
             if compatibility_notes:
                 return ToolResult(
@@ -112,6 +116,28 @@ class ToolRegistry:
             return result
         except Exception as exc:  # noqa: BLE001 - tool errors must be returned to the model.
             return ToolResult(f"{type(exc).__name__}: {exc}", is_error=True)
+
+
+def _runtime_read_file_scope_denial_reason(
+    name: str,
+    arguments: dict[str, Any],
+    context: ToolContext,
+) -> str | None:
+    if name != "read_file" or context.runtime_read_file_paths is None:
+        return None
+    raw_path = arguments.get("path")
+    if not isinstance(raw_path, str) or not raw_path.strip():
+        return None
+    path = Path(raw_path).expanduser()
+    if not path.is_absolute():
+        path = context.workspace / path
+    if str(path.resolve()) in context.runtime_read_file_paths:
+        return None
+    allowed = ", ".join(sorted(context.runtime_read_file_paths)) or "(none)"
+    return (
+        "Runtime candidate read restriction: read_file may only revisit the selected candidate paths at this step. "
+        f"Allowed paths: {allowed}. Use apply_patch, or retry a listed path with a narrower range."
+    )
 
 
 def _approval_denial_reason(tool: Tool, context: ToolContext) -> str | None:

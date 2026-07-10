@@ -445,6 +445,28 @@ class ToolTests(unittest.TestCase):
         self.assertIn("Runtime tool choice restriction", result.content)
         self.assertEqual(calls, [])
 
+    def test_registry_limits_candidate_read_to_selected_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            selected = workspace / "selected.py"
+            unrelated = workspace / "unrelated.py"
+            selected.write_text("selected = True\n", encoding="utf-8")
+            unrelated.write_text("unrelated = True\n", encoding="utf-8")
+            context = ToolContext(
+                workspace=workspace,
+                approval_mode="yolo",
+                runtime_tool_allowlist=frozenset({"read_file"}),
+                runtime_read_file_paths=frozenset({str(selected)}),
+            )
+            registry = ToolRegistry(file_tools())
+
+            permitted = registry.execute("read_file", {"path": "selected.py"}, context)
+            denied = registry.execute("read_file", {"path": "unrelated.py"}, context)
+
+        self.assertFalse(permitted.is_error)
+        self.assertTrue(denied.is_error)
+        self.assertIn("Runtime candidate read restriction", denied.content)
+
     def test_list_files_skips_agent_and_cache_dirs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp).resolve()
