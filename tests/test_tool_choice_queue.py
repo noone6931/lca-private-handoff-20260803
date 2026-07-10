@@ -4,6 +4,7 @@ import unittest
 
 from local_agent.tool_choice_queue import READ_ONLY_FORBIDDEN_TOOL_NAMES
 from local_agent.tool_choice_queue import PLANNER_EXPLORE_TOOL_NAMES
+from local_agent.tool_choice_queue import POST_DIFF_REMEDIATION_TOOL_NAMES
 from local_agent.tool_choice_queue import ToolChoiceQueue
 from local_agent.tool_choice_queue import ToolResultSummary
 from local_agent.tool_choice_queue import evaluate_tool_choice_state
@@ -82,6 +83,26 @@ class ToolChoiceQueueTests(unittest.TestCase):
         self.assertFalse(decision.steering_required)
         self.assertEqual(decision.missing_requirements, ())
         self.assertIn("apply_patch", decision.allowed_tool_names)
+        self.assertIn("run_tests", decision.allowed_tool_names)
+
+    def test_post_diff_pending_tests_keeps_focused_repair_tools_available(self) -> None:
+        decision = evaluate_tool_choice_state(
+            task_kind="implementation",
+            prompt="实现用户名规范化，并补充单元测试。",
+            tool_names=["read_file", "apply_patch", "git_diff"],
+            tool_results=[
+                ToolResultSummary("read_file", "class UserService {}", path="src/UserService.java"),
+                ToolResultSummary("apply_patch", "Applied patch", changed=True),
+                ToolResultSummary("git_diff", "diff --git a/src/UserService.java b/src/UserService.java"),
+            ],
+        )
+
+        self.assertTrue(decision.steering_required)
+        self.assertEqual(decision.rule_id, "implementation_final_hygiene")
+        self.assertIn("run_tests_or_cannot_test_explanation", decision.missing_requirements)
+        self.assertEqual(decision.allowed_tool_names, POST_DIFF_REMEDIATION_TOOL_NAMES)
+        self.assertIn("apply_patch", decision.allowed_tool_names)
+        self.assertIn("read_file", decision.allowed_tool_names)
         self.assertIn("run_tests", decision.allowed_tool_names)
 
     def test_requirement_doc_task_must_read_doc_before_full_toolset(self) -> None:

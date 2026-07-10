@@ -68,6 +68,19 @@ PLANNER_EXPLORE_TOOL_NAMES = frozenset(
         "todo_update",
     }
 )
+POST_DIFF_REMEDIATION_TOOL_NAMES = frozenset(
+    {
+        "apply_patch",
+        "git_diff",
+        "lsp_definition",
+        "lsp_references",
+        "read_file",
+        "rollback_patch",
+        "run_tests",
+        "search_code",
+        "write_file",
+    }
+)
 WRITE_TOOL_NAMES = frozenset({"apply_patch", "rollback_patch", "write_file"})
 READ_ONLY_FORBIDDEN_TOOL_NAMES = frozenset(
     {
@@ -315,13 +328,20 @@ def evaluate_tool_choice_state(
         if "git_diff" in implementation_missing:
             allowed.append("git_diff")
         if "run_tests_or_cannot_test_explanation" in implementation_missing:
-            allowed.append("run_tests")
+            # A first git_diff can expose a reviewer finding that requires another focused
+            # edit or a test addition. Keep verification pending while allowing that repair;
+            # CompletionAudit remains the hard final-answer gate.
+            if "git_diff" not in implementation_missing:
+                allowed.extend(POST_DIFF_REMEDIATION_TOOL_NAMES)
+            else:
+                allowed.append("run_tests")
         return ToolChoiceDecision(
             steering_required=True,
             allowed_tool_names=_allowed_subset(allowed, allowed_tools),
             reason=(
                 "implementation_final_hygiene missing: implementation tasks need git_diff before final; "
-                "after a write they also need run_tests or an explicit cannot-test explanation."
+                "after a write they also need run_tests or an explicit cannot-test explanation. Once a diff exists, "
+                "focused repair/test tools remain available so post-diff reviewer findings can be fixed before verification."
             ),
             rule_id="implementation_final_hygiene",
             missing_requirements=tuple(implementation_missing),
@@ -530,6 +550,7 @@ __all__ = [
     "CODE_EVIDENCE_TOOL_NAMES",
     "DEFAULT_TOOL_NAMES",
     "PLANNER_EXPLORE_TOOL_NAMES",
+    "POST_DIFF_REMEDIATION_TOOL_NAMES",
     "READ_ONLY_FORBIDDEN_TOOL_NAMES",
     "REQUIREMENT_DOC_TOOL_NAMES",
     "RequiredToolGate",

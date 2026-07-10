@@ -17,10 +17,10 @@ python3 scripts/sync_project_excel.py
 | 字段 | 当前值 | 说明 |
 |---|---|---|
 | 最终目标 | 个人本地编程助手 Agent | 本地优先、封闭 VM 可用、只访问指定 AI API，能读代码、搜代码、改代码、跑测试、生成 diff、沉淀项目记忆。 |
-| 当前阶段 | P10：Intelligence Runtime 骨架 | P9 已完成真实需求使用准备的阶段性 MVP：项目边界分析、真实需求模板、企业项目只读源码验证、Java LSP 韧性、拓展服务费结算链路压测和服务范围复核；2026-07-09 继续完成 T-106 source-grounded numeric guard / FinalAnswer Steerer 第一块抽象、T-107 token budget + reserve MVP、T-108 source-grounded numeric/token budget 复测、T-109 RequirementContract、T-110 CompletionAudit、T-111 MiniToolChoiceQueue、T-112 Planner/Explore。下一步是二阶段 reviewer。 |
+| 当前阶段 | P10：Intelligence Runtime 骨架 | P9 已完成真实需求使用准备的阶段性 MVP：项目边界分析、真实需求模板、企业项目只读源码验证、Java LSP 韧性、拓展服务费结算链路压测和服务范围复核；2026-07-10 已完成 T-106 source-grounded numeric guard / FinalAnswer Steerer 第一块抽象、T-107 token budget + reserve MVP、T-108 source-grounded numeric/token budget 复测、T-109 RequirementContract、T-110 CompletionAudit、T-111 MiniToolChoiceQueue、T-112 Planner/Explore、T-113 二阶段 Patch Reviewer。下一步用真实小改压测验证 reviewer 是否能驱动模型补测试、查调用方或诚实停止。 |
 | 推荐入口 | `./agent "阅读当前项目"` | 自动设置 `PYTHONPATH=src`，默认当前目录为 workspace。 |
 | Token 配置 | 环境变量 / `--env-file` / `.env` | `./agent` 会自动加载安装目录 `.env`，也可显式传 `--env-file`；真实环境变量优先。 |
-| 测试数 | 244 | 完整 unittest 通过；xlsx 同步后继续检查。 |
+| 测试数 | 253 | 完整 unittest 通过；xlsx 同步后继续检查。 |
 | 默认 budget_seconds | 600 | 单次任务默认 10 分钟墙钟预算；`--budget-seconds 0` 可关闭。 |
 | 默认 max_steps | 0 | 表示不限步；仅在用户显式设置时作为防失控保险丝。 |
 | 预算执行 | 细粒度 | LLM 请求和 shell/run_tests timeout 会按剩余预算夹紧；deadline 到期会补齐未执行工具结果。 |
@@ -63,7 +63,7 @@ python3 scripts/sync_project_excel.py
 | P7 | 高级工程能力轻量版 | OMP 风格 auto summary、多语言 LSP/light fallback、LSP 兼容别名、LSP best-effort 置信度提示、multi-root workspace roots、allowed-dir soft tool requirement、startup context/rules、startup memory、learn、memory consolidation、authored skills discovery、重复工具调用熔断、duplicate-tool forced-final steering、同文件切片读取漂移 guard、空搜索词跨路径 guard、path escape roots hint、LSP 空 query guard、Current task contract、Evidence Ledger、tool result pruning、todo steering、跨项目 env-file、runtime state dir、真实项目压测记录、relevance gate / diff reviewer、implementation-quality reviewer、safe new-file policy、no-edit final hygiene | 已完成 MVP 版 | 100% | 高级轻量能力主线已收口，后续按真实压测失败形态补 path-scoped rules、完整 reviewer 或 ToolChoiceQueue；架构债按 OMP 原则渐进拆 `agent.py`。 |
 | P8 | 前端协议与交互基础 | Event/Command Protocol、event replay、terminal-native frontend | 已完成 MVP 版 | 100% | T-076/T-077 已完成；完整 async command bus 和更重 UI 后置，下一步按用户项目边界做项目清单分析压测。 |
 | P9 | 真实需求使用准备 | 项目边界分析、用户确认项目范围、源码验证、实现设计 | 进行中 | 40% | T-078 已完成项目边界分析 MVP；T-083 已固化压测模板；T-084 已完成 qwen3-coder-next 只读源码验证压测并记录新问题。 |
-| P10 | Intelligence Runtime 骨架 | RequirementContract、CompletionAudit、MiniToolChoiceQueue、Planner/Explore、Reviewer | 进行中 | 60% | 已完成 RequirementContract、CompletionAudit、MiniToolChoiceQueue 和 Planner/Explore MVP；下一步 Reviewer。 |
+| P10 | Intelligence Runtime 骨架 | RequirementContract、CompletionAudit、MiniToolChoiceQueue、Planner/Explore、Reviewer | 进行中 | 75% | 已完成 RequirementContract、CompletionAudit、MiniToolChoiceQueue、Planner/Explore 和二阶段 Patch Reviewer MVP；下一步真实小改复测。 |
 
 ## 已完成功能
 
@@ -124,7 +124,8 @@ python3 scripts/sync_project_excel.py
 | Terminal input isolation | 已完成 MVP 版 | `src/local_agent/terminal_io.py`、`src/local_agent/cli.py`、`src/local_agent/frontends/terminal/app.py` | 一次性 CLI / REPL / terminal chat 在 agent run 期间关闭 TTY echo；approval / ask_user 会恢复输入并 flush 误敲缓冲 | 继续真实交互压测 |
 | 项目边界分析 | 已完成 MVP 版 | `.local-agent/memory/enterprise-service-boundary.md`、`.local-agent/skills/project-scope-analysis/SKILL.md`、`src/local_agent/agent.py` | 只根据需求和服务边界圈项目范围；analysis-only 不走实现 hygiene；点名 skill 会先读正文；缺表格/段落会强制无工具重答 | 用真实需求继续压测 |
 | Planner/Explore | 已完成 MVP 版 | `src/local_agent/planner.py`、`src/local_agent/tool_choice_queue.py`、`src/local_agent/agent.py` | 实现任务在 explore 阶段只开放 list/read/search/LSP/todo/ask/git 状态检查；读到本地证据后进入 ready_to_implement，写后进入 verify | 真实实现压测 |
-| 测试覆盖 | 已完成 | 当前 244 个测试通过 | unittest 通过；同步 Excel 后检查 xlsx | 日用反馈补测 |
+| 二阶段 Patch Reviewer | 已完成 MVP 版 | `src/local_agent/patch_reviewer.py`、`src/local_agent/steering/final_answer.py` | 写后读取 `git_diff` 的结构化 diff/reviewer 信号，检查显式要求的测试是否进入 diff、公开 API 是否在写后检索调用方、低相关/注释型 patch 是否被处理；发现问题时只开放修复/验证/回滚工具，随后再走 CompletionAudit | 真实小改压测 |
+| 测试覆盖 | 已完成 | 当前 253 个测试通过 | unittest 通过；同步 Excel 后检查 xlsx | 日用反馈补测 |
 
 ## 下一步 Todo
 
@@ -242,6 +243,7 @@ python3 scripts/sync_project_excel.py
 | T-110 | P0 | P10 | CompletionAudit 完整版 | 已完成 | Agent | 最终回答前逐项核对 contract，解决“缺证据却说完成” | 新增 `src/local_agent/completion_audit.py`，按 RequirementContract 核对验收项、证据项和验证项；证据型只读回答缺源码路径/证据状态会强制无工具重写，实现任务写后缺 `run_tests` / `git_diff` 会只开放缺失验证工具；session payload 记录 missing audit items。 |
 | T-111 | P0 | P10 | MiniToolChoiceQueue MVP | 已完成并集成 | Zeno + Agent | 解决只读证据任务过早回答、需求文档未读、写后缺测试/diff 的工具选择问题 | 新增 `src/local_agent/tool_choice_queue.py` 和测试；runtime 根据 contract/task kind、工具摘要和可用工具集合，阶段性收窄 tool schemas 并追加 runtime steering。 |
 | T-112 | P0 | P10 | Planner/Explore 两阶段 MVP | 已完成 | Agent | 复杂实现任务先只读侦察和形成计划，再进入写入，减少上来乱改 | 新增 `src/local_agent/planner.py` 和测试；runtime 注入 `[Planner / Explore]` 阶段上下文；MiniToolChoiceQueue 在 explore 阶段隐藏写入/执行工具，读到本地证据后释放写入工具。 |
+| T-113 | P0 | P10 | 二阶段 Patch Reviewer MVP | 已完成 | Agent | 仅有 `git_diff` 警告不足以阻止模型把无关/注释型 patch 说成完成；写后需要独立检查“是否满足契约、是否漏测试/调用方”。 | 新增 `src/local_agent/patch_reviewer.py`：读取已收集的 write / `git_diff` / search/LSP 结果，阻断缺显式测试 diff、公开 API 无写后调用方检索、低相关或 comment-only diff；`PatchReviewSteerer` 在 CompletionAudit 前收束到修复、验证、回滚工具。ToolChoiceQueue 在已有 diff 但待验证时保留受控修复工具，避免 reviewer 与 queue 互相卡死。 |
 
 ## 风险与决策
 
@@ -276,7 +278,7 @@ python3 scripts/sync_project_excel.py
 | 风险 | R-027 | 中 | 模型可能把 `read_file` header 的 `path#tag` 整串误当成 patch tag | 已关闭 | 小实现压测 session `20260708T092554037057Z` 中 dry_run 前三次因 `tag=README.md#3988a904` 失败，第四次改成纯 hash 后成功 | 已加双保险：`read_file` 显式输出 pure tag；`apply_patch` 兼容误传的 `path#tag` / `[path#tag]`，但仍用 hash 校验当前文件。 |
 | 风险 | R-028 | 中 | 脏工作区下最终 diff 摘要可能混入非本轮改动 | 已关闭 MVP 版 | 小实现压测 session `20260708T092554037057Z` 的 `git_diff` 同时包含 README 小改和正在开发的 Evidence Ledger 代码 diff；模型能分辨但依赖推理 | 已参考 OMP task/worktree/session state：run start 记录 baseline，`git_diff` 对照本轮 patch records 输出归因提示；同一文件若运行前已 dirty 且本轮又修改，会标成 mixed。 |
 | 风险 | R-029 | 中 | 最终 diff 细节可能被模型过度简化或说错 | 已关闭并复测通过 | T-069 复测 session `20260708T094926471758Z` 中 attribution 分类正确，但模型没有准确描述实际 diff hunk；低价值 README smoke-test 改动已撤回 | 已参考 OMP runtime state/tool observation：`git_diff` 追加结构化 diff summary，直接提供文件级增删统计和 hunk snippets；百炼复测 session `20260708T100128250335Z` 已正确引用 summary 和 attribution。 |
-| 风险 | R-030 | 中 | 过早补完整 reviewer / ToolChoiceQueue 会增加复杂度但未必命中当前痛点 | 已触发裁剪版 MVP，继续受控 | T-108/T-105 类压测证明仅靠 prompt 和 final steering 仍会出现关键证据没读够就下结论；但完整 OMP ToolChoiceQueue/reviewer/subagents 仍过重 | 已按 OMP 工具调度原则裁剪出 MiniToolChoiceQueue，只覆盖只读证据、需求文档前置读取、写后测试/diff hygiene；完整 reviewer、Planner/Explore、subagents 继续等真实失败样本触发。 |
+| 风险 | R-030 | 中 | 过早补完整 reviewer / ToolChoiceQueue 会增加复杂度但未必命中当前痛点 | 已缓解，继续受控 | T-108/T-105 类压测证明仅靠 prompt 和 final steering 仍会出现关键证据没读够就下结论；完整 OMP ToolChoiceQueue/reviewer/subagents 仍过重。 | 已按 OMP 工具调度原则裁剪出 MiniToolChoiceQueue、Planner/Explore 和二阶段 Patch Reviewer；Reviewer 仅消费已有 diff/工具证据，不引入第二个 Agent。完整多队列调度和 subagents 继续等真实失败样本触发。 |
 | 风险 | R-031 | 高 | 真实实现任务可能产生无关 patch | 已缓解，继续观察 | T-072 session `20260709T013441841983Z` 读取正确需求后漂移到 Nacos/Redis 配置，并把无关注释当成实现锚点；dry_run/hash 校验只能保证位置正确，不能保证业务相关 | 已完成 T-073：真实写入前目标文件必须已读；代码实现任务写部署/配置类低相关路径会被拦截或要求用户确认；workspace-root evidence 和 diff reviewer 已落地；复跑未再触碰 `deployMessage/nacos`。 |
 | 风险 | R-053 | 高 | 源码证据型最终回答可能误报数字/状态码 | 已关闭 MVP 版，继续压测 | T-105 session `20260709T092951071920Z` 读到 `PreOrderStatusEnum.MAKING(2)` / `MADE(3)`，最终却误报为 `50/60` | 参考 OMP runtime evidence/steering 边界：新增 source-grounded numeric final steerer，记录本轮 `read_file` 源码证据；最终回答涉及枚举、状态码、接口、字段等数字事实时，若与已读源码片段不一致，会强制无工具重写并要求标注未确认。 |
 | 风险 | R-054 | 高 | `agent.py` steering/guard 继续膨胀 | 已开始缓解，继续拆 | review 指出 compaction 已拆出，但 semantic/read-only/final guard 又继续进入 `agent.py`，不符合 OMP 一职责一文件原则 | 已完成 FinalAnswer Steerer 第一块抽象：最终回答相关 steering 移到 `src/local_agent/steering/final_answer.py`；后续继续按低风险边界拆 evidence ledger、run collector、startup context、memory consolidation 和 semantic exploration steerer。 |
@@ -335,18 +337,18 @@ python3 scripts/sync_project_excel.py
 | ADR | ADR-032 | 2026-07-09 | LSP 按 OMP client 思路做可选外部 adapter，保留 light fallback | 已接受并落地 | 已完成 T-093 | Java/TypeScript/Vue 的完整代码导航应优先交给成熟 language server；但 LCA 仍不在运行时自动下载依赖，也不把外部 server 作为默认强依赖。封闭 VM 可预置 jdtls/npm 包，或用 `AGENT_LSP_*_COMMAND` 指向离线安装路径。 |
 | ADR | ADR-033 | 2026-07-09 | Final-answer steering 先抽统一 Steerer 协议的一块，不再把最终回答 guard 塞进 `agent.py` | 已接受并落地 | 已完成 T-106 | 对标 OMP“主循环调度，guard/observer/reviewer 分离”的原则；本轮先抽 final-answer steering，降低回归面并直接修 T-105 枚举误报，后续再拆 semantic/evidence/run collector。 |
 | ADR | ADR-034 | 2026-07-09 | Token budget 采用本地估算 + reserve，字符预算保留兜底 | 已接受并落地 | 已完成 T-107 | OMP 按 token/context window 管理 compaction 并预留下一轮预算；LCA 当前不引入重 tokenizer 依赖，先用 CJK/ASCII 轻量估算触发压缩，`context_char_budget` 继续作为 fallback。 |
-| ADR | ADR-035 | 2026-07-09 | P10 采用裁剪版 Intelligence Runtime，不一次性复制 OMP 大系统 | 已接受并落地部分 | 已完成 T-109/T-110/T-111/T-112 | T-108 证明需要比 prompt 更硬的目标契约、完成审计和工具调度；但 LCA 仍是单用户、单 Agent、本地 MVP。当前先落地 RequirementContract + CompletionAudit + MiniToolChoiceQueue + Planner/Explore，后续再补 reviewer。 |
+| ADR | ADR-035 | 2026-07-09 | P10 采用裁剪版 Intelligence Runtime，不一次性复制 OMP 大系统 | 已接受并落地部分 | 已完成 T-109/T-110/T-111/T-112/T-113 | T-108 证明需要比 prompt 更硬的目标契约、完成审计和工具调度；但 LCA 仍是单用户、单 Agent、本地 MVP。当前已落地 RequirementContract + CompletionAudit + MiniToolChoiceQueue + Planner/Explore + Patch Reviewer；不引入第二个 Agent。 |
 
 ## 阶段回顾
 
 | 项目 | 结论 | 依据 | 后续 |
 |---|---|---|---|
-| 阶段判断 | P10 Intelligence Runtime 骨架进行中 | T-076/T-107 已完成 typed events、terminal frontend、项目边界分析、run summary、真实需求压测、Java LSP 韧性、source-grounded numeric guard 和 token budget；T-108 复测证明 provider-safe/numeric guard 有效但暴露证据未读够就下结论；T-109/T-110/T-111/T-112 已补 RequirementContract、CompletionAudit、MiniToolChoiceQueue 和 Planner/Explore | 下一步进入二阶段 Reviewer，或继续按 OMP 边界拆 evidence/run collector/startup/memory，而不是继续堆 `agent.py`。 |
+| 阶段判断 | P10 Intelligence Runtime 骨架进行中 | T-076/T-107 已完成 typed events、terminal frontend、项目边界分析、run summary、真实需求压测、Java LSP 韧性、source-grounded numeric guard 和 token budget；T-108 复测证明 provider-safe/numeric guard 有效但暴露证据未读够就下结论；T-109/T-110/T-111/T-112/T-113 已补 RequirementContract、CompletionAudit、MiniToolChoiceQueue、Planner/Explore 和 Patch Reviewer。 | 下一步用真实小改压测验证 reviewer，然后按 OMP 边界拆 evidence/run collector/startup/memory，而不是继续堆 `agent.py`。 |
 | 与 OMP 的主要差距 | 差距集中在高级工程化，不阻塞低风险实战 | 完整 reviewer/subagents、完整 LSP/DAP、browser/TUI、AST edit、managed skills 仍后置；ToolChoiceQueue 已有裁剪版 MVP | 由压测失败形态触发 |
 | 已关闭风险 | P0/P1 runtime 风险已基本收口 | Python 3.12 patch、非交互审批、orphan tool_calls、max_steps、allowed-dir、重复工具、证据漂移、diff 混淆等均已有修复或缓解 | 继续用真实任务验证 |
 | reviewer 决策 | 先保留轻量实现质量 gate | T-074 已补 no-comment-only reviewer，复跑未再产生伪实现 | 继续用真实任务验证；若后续出现更复杂 patch 质量问题，再补完整 reviewer/subagent |
 | ToolChoiceQueue 决策 | 已做裁剪版 MiniToolChoiceQueue | 当前覆盖只读证据、需求文档前置读取、写后测试/diff hygiene；不做完整多队列/并发/子任务调度 | 后续若仍出现关键工具不用/乱用，再扩展 queue 规则；若出现 patch/总结质量不稳，补 reviewer。 |
-| 下一步 | 二阶段 Reviewer + 真实需求设计链路 | T-109/T-110/T-111/T-112 已补 contract/audit/queue/planner，最终回答和工具选择主骨架已具备 | 先做写后 reviewer，或用服务费结算需求继续压测实现设计链路。 |
+| 下一步 | Patch Reviewer 真实小改复测 | T-109/T-110/T-111/T-112/T-113 已补 contract/audit/queue/planner/reviewer，最终回答、工具选择和写后审查主骨架已具备 | 用一个显式要求“改代码并补测试”的小任务，验证模型会补测试/检索调用方/复查 diff，而不是绕过 reviewer。 |
 
 ## P7 综合压测问题
 
@@ -390,7 +392,7 @@ python3 scripts/sync_project_excel.py
 | 项目 | 结论 | 依据 |
 |---|---|---|
 | 主链路 | 通过 | 百炼真实小改复测已跑通 todo、dry_run、apply_patch、session allow、rollback、run_tests、git_diff。 |
-| 测试 | 通过 | P5 收口时 90 个 unittest、compileall、xlsx 检查、diff check 均通过；P10 当前代码已跑通 244 个 unittest。 |
+| 测试 | 通过 | P5 收口时 90 个 unittest、compileall、xlsx 检查、diff check 均通过；P10 当前代码已跑通 253 个 unittest。 |
 | 日用入口 | 通过 | README 已补只读分析和小改任务命令模板。 |
 | 开放风险 | 可接受 | shell 仍非沙箱、prompt injection 仍需靠审批和封闭 VM；provider/model 专用 tokenizer、输出 reserve、managed skills、完整 reviewer 和完整 OMP ToolChoiceQueue 继续后置评估。 |
 | 下一阶段 | 真实需求设计与实现压测 | 已验证默认工作流、auto summary、多语言 LSP/light fallback、multi-root、startup memory、learn、authored skills、runtime state dir、多项目只读压测主链路、relevance gate、implementation-quality gate、no-edit final hygiene、semantic exploration guard、terminal input isolation、Event/Command Protocol、Terminal Frontend MVP、项目边界分析 MVP、source-grounded numeric guard 和 token budget MVP；下一步复测服务费结算证据链，确认现有能力复用点和必须新建能力后再进入实现设计。 |

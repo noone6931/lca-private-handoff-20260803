@@ -12,6 +12,8 @@ from local_agent.compaction import resolve_compaction_threshold_chars
 from local_agent.compaction import resolve_compaction_threshold_tokens
 from local_agent.config import AgentConfig
 from local_agent.protocol.events import ListEventSink
+from local_agent.task_contract import generate_requirement_contract
+from local_agent.tool_choice_queue import ToolResultSummary
 
 
 def _tool_names_from_schema_call(tools: list[dict]) -> set[str]:
@@ -1630,6 +1632,70 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertEqual(len(steering_records), 1)
         self.assertGreaterEqual(steering_records[0]["payload"]["missing_count"], 1)
         self.assertEqual(runtime._last_run_summary["steering_counts"], {"completion_audit": 1})
+
+    def test_patch_reviewer_steers_after_diff_when_requested_test_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=workspace,
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+            )
+            runtime = AgentRuntime(config, show_tool_logs=False)
+            runtime._current_user_request = "请实现用户名规范化，并补充单元测试。"
+            runtime._requirement_contract = generate_requirement_contract(runtime._current_user_request)
+            runtime._tool_choice_results = [
+                ToolResultSummary("read_file", "class UserService {}", path="src/UserService.java"),
+                ToolResultSummary("apply_patch", "Applied patch", path="src/UserService.java", changed=True),
+                ToolResultSummary(
+                    "git_diff",
+                    (
+                        "diff --git a/src/UserService.java b/src/UserService.java\n"
+                        "--- a/src/UserService.java\n"
+                        "+++ b/src/UserService.java\n"
+                        "@@ -1 +1 @@\n"
+                        "-    private String normalize(String value) { return value; }\n"
+                        "+    private String normalize(String value) { return value.trim(); }\n"
+                        "\n[diff summary]\n- Total: 1 file(s), +1 -1, 1 hunk(s).\n"
+                    ),
+                ),
+            ]
+
+            decision = runtime._decide_final_answer_steering("已完成用户名规范化。", 0)
+
+        self.assertIsNotNone(decision)
+        assert decision is not None
+        self.assertEqual(decision.kind, "patch_reviewer")
+        self.assertIn("requested_test_missing", str(decision.payload))
+        self.assertFalse(decision.force_final_answer_without_tools)
+        self.assertIn("apply_patch", decision.temporary_tool_allowlist or set())
+        self.assertIn("run_tests", decision.temporary_tool_allowlist or set())
+
+    def test_final_answer_steer_counts_reset_at_the_start_of_each_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=Path(tmp).resolve(),
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _FinalClient):
+                runtime = AgentRuntime(config, show_tool_logs=False)
+                runtime._completion_audit_steers = 2
+                runtime._patch_reviewer_steers = 2
+                runtime.run("简单回答 OK")
+
+        self.assertEqual(runtime._completion_audit_steers, 0)
+        self.assertEqual(runtime._patch_reviewer_steers, 0)
 
     def test_read_only_evidence_gate_allows_negative_search_evidence(self) -> None:
         _ReadOnlyEvidenceNoMatchClient.calls = []

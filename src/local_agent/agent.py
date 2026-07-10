@@ -34,6 +34,7 @@ from .patch.anchored import display_workspace_path
 from .patch.anchored import PatchError
 from .patch.anchored import resolve_workspace_path
 from .planner import render_planner_explore_context
+from .patch_reviewer import review_input_summary
 from .protocol.events import AgentEvent
 from .protocol.events import EventEmitter
 from .protocol.events import EventSink
@@ -46,6 +47,7 @@ from .steering.final_answer import FinalAnswerSteerer
 from .steering.final_answer import FinalStructureSteerer
 from .steering.final_answer import CompletionAuditSteerer
 from .steering.final_answer import NoEditFinalHygieneSteerer
+from .steering.final_answer import PatchReviewSteerer
 from .steering.final_answer import READ_ONLY_EVIDENCE_TOOLS
 from .steering.final_answer import ReadOnlyEvidenceSteerer
 from .steering.final_answer import SourceEvidenceFalseNegativeSteerer
@@ -137,6 +139,7 @@ MAX_READ_ONLY_EVIDENCE_STEERS = 2
 MAX_SOURCE_EVIDENCE_FALSE_NEGATIVE_STEERS = 2
 MAX_SOURCE_GROUNDED_NUMERIC_STEERS = 2
 MAX_COMPLETION_AUDIT_STEERS = 2
+MAX_PATCH_REVIEW_STEERS = 2
 MAX_TOOL_CHOICE_QUEUE_STEERS_PER_SIGNATURE = 1
 INVALID_TOOL_CALL_NAME = "__invalid_tool_call"
 WORKFLOW_NUDGE = (
@@ -314,6 +317,7 @@ class AgentRuntime:
         self._source_evidence_false_negative_steers = 0
         self._source_grounded_numeric_steers = 0
         self._completion_audit_steers = 0
+        self._patch_reviewer_steers = 0
         self._read_file_evidence_paths: list[str] = []
         self._source_evidence: list[SourceEvidence] = []
         self._strong_relevance_paths: list[str] = []
@@ -340,6 +344,7 @@ class AgentRuntime:
             FinalStructureSteerer(max_steers=MAX_FINAL_STRUCTURE_STEERS),
             SourceEvidenceFalseNegativeSteerer(max_steers=MAX_SOURCE_EVIDENCE_FALSE_NEGATIVE_STEERS),
             SourceGroundedNumericSteerer(max_steers=MAX_SOURCE_GROUNDED_NUMERIC_STEERS),
+            PatchReviewSteerer(max_steers=MAX_PATCH_REVIEW_STEERS),
             CompletionAuditSteerer(max_steers=MAX_COMPLETION_AUDIT_STEERS),
         )
         self._state_dir = config.state_dir or config.workspace / ".local-agent"
@@ -406,6 +411,8 @@ class AgentRuntime:
         self._read_only_evidence_steers = 0
         self._source_evidence_false_negative_steers = 0
         self._source_grounded_numeric_steers = 0
+        self._completion_audit_steers = 0
+        self._patch_reviewer_steers = 0
         self._source_evidence = []
         self._temporary_tool_allowlist = None
         self._tool_choice_allowed_tool_names = None
@@ -865,6 +872,7 @@ class AgentRuntime:
             "read_only_evidence": self._read_only_evidence_steers,
             "source_evidence_false_negative": self._source_evidence_false_negative_steers,
             "source_grounded_numeric": self._source_grounded_numeric_steers,
+            "patch_reviewer": self._patch_reviewer_steers,
             "completion_audit": self._completion_audit_steers,
             "soft_tool_requirement": self._soft_tool_requirement.steers if self._soft_tool_requirement else 0,
         }
@@ -1431,7 +1439,7 @@ class AgentRuntime:
         self._tool_choice_results.append(
             ToolResultSummary(
                 name=name,
-                content=_one_line_block(result.content, max_chars=2000),
+                content=review_input_summary(name, result.content, max_chars=6000),
                 is_error=result.is_error,
                 useless=result.useless,
                 path=_tool_choice_argument_path(arguments),
@@ -1617,6 +1625,7 @@ class AgentRuntime:
             "final_structure": self._final_structure_steers,
             "source_evidence_false_negative": self._source_evidence_false_negative_steers,
             "source_grounded_numeric": self._source_grounded_numeric_steers,
+            "patch_reviewer": self._patch_reviewer_steers,
             "completion_audit": self._completion_audit_steers,
         }
 
@@ -1639,6 +1648,9 @@ class AgentRuntime:
         if kind == "completion_audit":
             self._completion_audit_steers += 1
             return self._completion_audit_steers
+        if kind == "patch_reviewer":
+            self._patch_reviewer_steers += 1
+            return self._patch_reviewer_steers
         return 0
 
     def _append_soft_tool_requirement_message(self, requirement: SoftToolRequirement) -> None:

@@ -6,6 +6,8 @@ from typing import Any, Protocol
 
 from ..completion_audit import audit_completion
 from ..completion_audit import render_completion_audit_message
+from ..patch_reviewer import render_patch_review_message
+from ..patch_reviewer import review_patch
 from ..task_contract import RequirementContract
 from ..tool_choice_queue import ToolResultSummary
 
@@ -459,6 +461,34 @@ class CompletionAuditSteerer:
                 request=context.request,
                 final_content=context.content,
             ),
+            payload=result.payload(),
+            force_final_answer_without_tools=not allowed_tools,
+            temporary_tool_allowlist=allowed_tools or None,
+        )
+
+
+class PatchReviewSteerer:
+    """Enforce deterministic post-diff review before the completion audit closes a write task."""
+
+    kind = "patch_reviewer"
+
+    def __init__(self, *, max_steers: int) -> None:
+        self._max_steers = max_steers
+
+    def decide(self, context: FinalAnswerContext) -> SteeringDecision | None:
+        if context.steer_counts.get(self.kind, 0) >= self._max_steers:
+            return None
+        result = review_patch(
+            context.requirement_contract,
+            request=context.request,
+            tool_results=context.tool_results,
+        )
+        if result.passed:
+            return None
+        allowed_tools = set(result.allowed_tool_names())
+        return SteeringDecision(
+            kind=self.kind,
+            message=render_patch_review_message(result, request=context.request),
             payload=result.payload(),
             force_final_answer_without_tools=not allowed_tools,
             temporary_tool_allowlist=allowed_tools or None,
