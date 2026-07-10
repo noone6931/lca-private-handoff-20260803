@@ -436,7 +436,7 @@
 | 测试 | 通过 | P5 收口时 90 个 unittest、compileall、xlsx 检查、diff check 均通过；P10 当前代码已跑通 280 个 unittest。 |
 | 日用入口 | 通过 | README 已补只读分析和小改任务命令模板。 |
 | 开放风险 | 可接受 | shell 仍非沙箱、prompt injection 仍需靠审批和封闭 VM；provider/model 专用 tokenizer、输出 reserve、managed skills、完整 reviewer 和完整 OMP ToolChoiceQueue 继续后置评估。 |
-| 下一阶段 | P10 Intelligence Runtime 继续收束 | T-109~T-120 已补 RequirementContract、CompletionAudit、MiniToolChoiceQueue、Planner/Explore、post-diff Patch Reviewer、no-edit evidence gate、ToolRegistry 参数归一、preview contract、numeric guard scope、literal 分类、实现任务 final-guard scope和 pinned requirement evidence；下一步做 T-121 evidence matrix，先收束真实跨项目设计质量。 |
+| 下一阶段 | P10 Intelligence Runtime 继续收束 | T-109~T-121 已补 RequirementContract、CompletionAudit、MiniToolChoiceQueue、Planner/Explore、post-diff Patch Reviewer、no-edit evidence gate、ToolRegistry 参数归一、preview contract、numeric guard scope、literal 分类、实现任务 final-guard scope、pinned requirement evidence 和 cross-root evidence matrix；下一步进入边界明确的真实需求设计和小改验证。 |
 
 ## 推荐工作流
 
@@ -471,6 +471,6 @@
 
 用户确认本文件后，建议按以下顺序继续：
 
-1. 做 T-121：在跨项目只读设计任务中建立最小 evidence matrix，先覆盖需求、主后端和用户声明前端，再允许模型继续深挖或收束回答。
-2. 用 `msp-pay` / `zqylpayment` 重跑服务费结算设计，验收真实 requirement path:line、前后端各至少一个代码证据、所有新增方案明确标注推断/建议。
-3. 在新失败样本证明有安全等价映射时，再扩展 ToolRegistry 参数归一；不要自动执行 raw diff 或 bulk todo。
+1. 选一个服务边界和验收条件明确的真实需求切片，先做 evidence-backed 设计，再进入小改、测试和 diff reviewer 闭环。
+2. 继续用 `msp-pay` / `zqylpayment` 做服务费结算复核时，验收真实 requirement path:line、前后端各至少一个代码证据、所有新增方案明确标注推断/建议。
+3. 只在新失败样本证明存在安全等价映射时扩展 ToolRegistry 参数归一；不要自动执行 raw diff 或 bulk todo。

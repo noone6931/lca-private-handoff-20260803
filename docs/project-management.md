@@ -63,7 +63,7 @@ python3 scripts/sync_project_excel.py
 | P7 | 高级工程能力轻量版 | OMP 风格 auto summary、多语言 LSP/light fallback、LSP 兼容别名、LSP best-effort 置信度提示、multi-root workspace roots、allowed-dir soft tool requirement、startup context/rules、startup memory、learn、memory consolidation、authored skills discovery、重复工具调用熔断、duplicate-tool forced-final steering、同文件切片读取漂移 guard、空搜索词跨路径 guard、path escape roots hint、LSP 空 query guard、Current task contract、Evidence Ledger、tool result pruning、todo steering、跨项目 env-file、runtime state dir、真实项目压测记录、relevance gate / diff reviewer、implementation-quality reviewer、safe new-file policy、no-edit final hygiene | 已完成 MVP 版 | 100% | 高级轻量能力主线已收口，后续按真实压测失败形态补 path-scoped rules、完整 reviewer 或 ToolChoiceQueue；架构债按 OMP 原则渐进拆 `agent.py`。 |
 | P8 | 前端协议与交互基础 | Event/Command Protocol、event replay、terminal-native frontend | 已完成 MVP 版 | 100% | T-076/T-077 已完成；完整 async command bus 和更重 UI 后置，下一步按用户项目边界做项目清单分析压测。 |
 | P9 | 真实需求使用准备 | 项目边界分析、用户确认项目范围、源码验证、实现设计 | 进行中 | 40% | T-078 已完成项目边界分析 MVP；T-083 已固化压测模板；T-084 已完成 qwen3-coder-next 只读源码验证压测并记录新问题。 |
-| P10 | Intelligence Runtime 骨架 | RequirementContract、CompletionAudit、MiniToolChoiceQueue、Planner/Explore、Reviewer | 进行中 | 86% | 已完成 RequirementContract、CompletionAudit、MiniToolChoiceQueue、Planner/Explore、post-diff Patch Reviewer、no-edit evidence gate、ToolRegistry 参数归一、preview contract、numeric guard scope 和 quoted literal 分类修复；下一步 source-evidence false-negative 收束。 |
+| P10 | Intelligence Runtime 骨架 | RequirementContract、CompletionAudit、MiniToolChoiceQueue、Planner/Explore、Reviewer | 进行中 | 90% | 已完成 RequirementContract、CompletionAudit、MiniToolChoiceQueue、Planner/Explore、post-diff Patch Reviewer、no-edit evidence gate、ToolRegistry 参数归一、preview contract、numeric guard scope、quoted literal 分类、pinned requirement evidence 与 cross-root evidence matrix；下一步以真实需求设计/小改验证这些护栏的协同效果。 |
 
 ## 已完成功能
 
@@ -358,12 +358,12 @@ python3 scripts/sync_project_excel.py
 
 | 项目 | 结论 | 依据 | 后续 |
 |---|---|---|---|
-| 阶段判断 | P10 Intelligence Runtime 骨架进行中 | T-076/T-107 已完成 typed events、terminal frontend、项目边界分析、run summary、真实需求压测、Java LSP 韧性、source-grounded numeric guard 和 token budget；T-109~T-120 已补 contract/audit/queue/planner/reviewer/no-edit evidence/ToolRegistry 归一、preview contract、final-guard scope与 pinned requirement evidence。真实小改交付链路已跑通，但跨项目设计的工具调用效率和 evidence coverage 仍不合格。 | 按 OMP 的“协议边界 + active loop observer + ToolChoiceQueue 小上限”原则，先做 T-121 evidence matrix；结构拆分仍按独立边界推进，不再往 `agent.py` 堆新 guard。 |
+| 阶段判断 | P10 Intelligence Runtime 骨架进行中 | T-076/T-107 已完成 typed events、terminal frontend、项目边界分析、run summary、真实需求压测、Java LSP 韧性、source-grounded numeric guard 和 token budget；T-109~T-121 已补 contract/audit/queue/planner/reviewer/no-edit evidence/ToolRegistry 归一、preview contract、final-guard scope、pinned requirement evidence 与 cross-root evidence matrix。真实小改交付链路已跑通，跨项目设计的最小 evidence coverage 也已验证。 | 继续按 OMP 的“协议边界 + active loop observer + ToolChoiceQueue 小上限”原则，用真实需求设计和小改压测检验协同效果；结构拆分仍按独立边界推进。 |
 | 与 OMP 的主要差距 | 差距集中在高级工程化，不阻塞低风险实战 | 完整 reviewer/subagents、完整 LSP/DAP、browser/TUI、AST edit、managed skills 仍后置；ToolChoiceQueue 已有裁剪版 MVP | 由压测失败形态触发 |
 | 已关闭风险 | P0/P1 runtime 风险已基本收口 | Python 3.12 patch、非交互审批、orphan tool_calls、max_steps、allowed-dir、重复工具、证据漂移、diff 混淆等均已有修复或缓解 | 继续用真实任务验证 |
 | reviewer 决策 | 先保留轻量实现质量 gate | T-074 已补 no-comment-only reviewer，复跑未再产生伪实现 | 继续用真实任务验证；若后续出现更复杂 patch 质量问题，再补完整 reviewer/subagent |
 | ToolChoiceQueue 决策 | 已做裁剪版 MiniToolChoiceQueue | 当前覆盖只读证据、需求文档前置读取、写后测试/diff hygiene；不做完整多队列/并发/子任务调度 | 后续若仍出现关键工具不用/乱用，再扩展 queue 规则；若出现 patch/总结质量不稳，补 reviewer。 |
-| 下一步 | 真实设计 evidence matrix / ToolChoiceQueue | T-120 已修正需求正文被摘要改写，但复测暴露前后端证据覆盖不足和探索扩散。 | 先实现 T-121，再重跑服务费结算只读设计；anchored patch 参数效率继续作为后续独立风险观察。 |
+| 下一步 | 真实需求设计与小改压测 | T-121 已在服务费结算任务中验证需求、后端与前端最小 evidence coverage，并以 final 收束。 | 选择一个范围和验收边界明确的真实切片：先产出 evidence-backed 设计，再实施小改、运行测试和 diff reviewer；anchored patch 参数效率继续作为独立风险观察。 |
 
 ## P7 综合压测问题
 
@@ -412,7 +412,7 @@ python3 scripts/sync_project_excel.py
 | 测试 | 通过 | P5 收口时 90 个 unittest、compileall、xlsx 检查、diff check 均通过；P10 当前代码已跑通 280 个 unittest。 |
 | 日用入口 | 通过 | README 已补只读分析和小改任务命令模板。 |
 | 开放风险 | 可接受 | shell 仍非沙箱、prompt injection 仍需靠审批和封闭 VM；provider/model 专用 tokenizer、输出 reserve、managed skills、完整 reviewer 和完整 OMP ToolChoiceQueue 继续后置评估。 |
-| 下一阶段 | 真实需求设计与实现压测 | 已验证默认工作流、auto summary、多语言 LSP/light fallback、multi-root、startup memory、learn、authored skills、runtime state dir、多项目只读压测主链路、relevance gate、implementation-quality gate、no-edit final hygiene、semantic exploration guard、terminal input isolation、Event/Command Protocol、Terminal Frontend MVP、项目边界分析 MVP、source-grounded numeric guard 和 token budget MVP；下一步复测服务费结算证据链，确认现有能力复用点和必须新建能力后再进入实现设计。 |
+| 下一阶段 | 真实需求设计与实现压测 | 已验证默认工作流、auto summary、多语言 LSP/light fallback、multi-root、startup memory、learn、authored skills、runtime state dir、多项目只读压测主链路、relevance gate、implementation-quality gate、no-edit final hygiene、semantic exploration guard、terminal input isolation、Event/Command Protocol、Terminal Frontend MVP、项目边界分析 MVP、source-grounded numeric guard、token budget、pinned requirement evidence 和 cross-root evidence matrix；下一步进入一项边界明确的真实需求设计和小改验证。 |
 
 ## 推荐工作流
 
