@@ -26,8 +26,7 @@ def todo_tools() -> list[Tool]:
         Tool(
             name="todo_add",
             description=(
-                "Add a task to the current session todo list. Required fields: id and task. "
-                "Compatibility aliases key->id and content->task are accepted, but id/task are preferred."
+                "Add a task to the current session todo list. Required fields: id and task."
             ),
             tier="state",
             input_schema={
@@ -35,8 +34,6 @@ def todo_tools() -> list[Tool]:
                 "properties": {
                     "id": {"type": "string"},
                     "task": {"type": "string"},
-                    "key": {"type": "string"},
-                    "content": {"type": "string"},
                     "status": {"type": "string", "enum": TODO_STATUSES},
                     "note": {"type": "string"},
                 },
@@ -47,8 +44,7 @@ def todo_tools() -> list[Tool]:
         Tool(
             name="todo_update",
             description=(
-                "Update a task in the current session todo list. Required field: id. "
-                "Compatibility aliases key->id and content->task are accepted, but id/task are preferred."
+                "Update a task in the current session todo list. Required field: id."
             ),
             tier="state",
             input_schema={
@@ -56,8 +52,6 @@ def todo_tools() -> list[Tool]:
                 "properties": {
                     "id": {"type": "string"},
                     "task": {"type": "string"},
-                    "key": {"type": "string"},
-                    "content": {"type": "string"},
                     "status": {"type": "string", "enum": TODO_STATUSES},
                     "note": {"type": "string"},
                 },

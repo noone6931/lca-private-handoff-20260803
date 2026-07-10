@@ -12,8 +12,10 @@ from local_agent.compaction import resolve_compaction_threshold_chars
 from local_agent.compaction import resolve_compaction_threshold_tokens
 from local_agent.config import AgentConfig
 from local_agent.protocol.events import ListEventSink
+from local_agent.steering.final_answer import SourceEvidence
 from local_agent.task_contract import generate_requirement_contract
 from local_agent.tool_choice_queue import ToolResultSummary
+from local_agent.tools.base import ToolResult
 
 
 def _tool_names_from_schema_call(tools: list[dict]) -> set[str]:
@@ -1867,6 +1869,35 @@ class AgentRuntimeTests(unittest.TestCase):
             runtime._last_run_summary["steering_counts"],
             {"source_evidence_false_negative": 1},
         )
+
+    def test_successful_write_invalidates_only_stale_source_snapshot_for_that_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=workspace,
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+            )
+            runtime = AgentRuntime(config, show_tool_logs=False)
+            runtime._read_file_evidence_paths = ["src/UserService.java", "src/Other.java"]
+            runtime._source_evidence = [
+                SourceEvidence("src/UserService.java", "old implementation"),
+                SourceEvidence("src/Other.java", "stable implementation"),
+            ]
+
+            runtime._invalidate_stale_source_evidence_after_write(
+                "apply_patch",
+                {"path": "src/UserService.java"},
+                ToolResult("Applied patch"),
+            )
+
+        self.assertEqual(runtime._read_file_evidence_paths, ["src/UserService.java", "src/Other.java"])
+        self.assertEqual(runtime._source_evidence, [SourceEvidence("src/Other.java", "stable implementation")])
 
     def test_evidence_ledger_is_sent_to_provider_context_after_tool_results(self) -> None:
         _ReadFileThenFinalClient.calls = []

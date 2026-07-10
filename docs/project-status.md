@@ -30,7 +30,7 @@
 
 ## 当前进度
 
-当前项目已完成 P8 前端协议与交互基础 MVP，P9 真实需求使用准备已覆盖项目边界、源码验证、LSP 韧性和服务费结算链路压测，并进入 P10 Intelligence Runtime 骨架。用户可以用自然语言描述任务，而不是每次手写工具顺序；Runtime 通过 RequirementContract、Planner/Explore、MiniToolChoiceQueue、CompletionAudit 和二阶段 Patch Reviewer 保持任务目标、证据、写入、测试和 diff 的闭环。2026-07-10 的 T-113 将 Patch Reviewer 前移到成功 `git_diff` 之后；T-114 要求 blocked/no-edit 收尾必须有工具观察到的阻断证据。完整端到端 reviewer 压测仍未标记通过：百炼频繁错传 `apply_patch` / `todo_*` 参数，当前下一步是 T-115 在 ToolRegistry 边界做受限兼容归一后重跑。详见 `docs/pressure-test-2026-07-10.md`。Runtime 继续产出 typed events 和 `run_summary`，CLI/session/tool 日志和 terminal frontend 共用事件流。
+当前项目已完成 P8 前端协议与交互基础 MVP，P9 真实需求使用准备已覆盖项目边界、源码验证、LSP 韧性和服务费结算链路压测，并进入 P10 Intelligence Runtime 骨架。用户可以用自然语言描述任务，而不是每次手写工具顺序；Runtime 通过 RequirementContract、Planner/Explore、MiniToolChoiceQueue、CompletionAudit 和二阶段 Patch Reviewer 保持任务目标、证据、写入、测试和 diff 的闭环。2026-07-10 的 T-113 将 Patch Reviewer 前移到成功 `git_diff` 之后；T-114 要求 blocked/no-edit 收尾必须有工具观察到的阻断证据；T-115 将已观测的 provider scalar 参数方言收敛到 ToolRegistry 单一边界，并完成真实小改复测。复测仍暴露 raw diff/bulk todo 不能安全归一、preview 未被强制以及 numeric guard 误拦工具统计，分别进入 T-116/T-117。详见 `docs/pressure-test-2026-07-10.md`。Runtime 继续产出 typed events 和 `run_summary`，CLI/session/tool 日志和 terminal frontend 共用事件流。
 
 已具备的核心能力：
 
@@ -43,7 +43,7 @@
 - `apply_patch` 已支持 `replace`、`insert_before`、`insert_after`，并兼容 Python 3.12。
 - 非交互审批、LLM 非 JSON 响应、session 恢复坏尾部、search_code 绝对路径泄漏等问题已经修复。
 - 已完成 Agent 自举测试：能够通过百炼模型调用工具读取、修改、测试和查看 diff。
-- 测试基线：257 个测试在正常本地环境通过。
+- 测试基线：261 个测试在正常本地环境通过。
 
 当前已具备：
 
@@ -150,7 +150,7 @@
 | P7 | 高级工程能力轻量版 | 已完成 MVP 版 | 已完成 OMP 风格 auto summary、多语言 LSP/light fallback、LSP 兼容别名、multi-root workspace roots 与工具观察提示、allowed-dir soft tool requirement、Markdown memory 启动注入、learn、可选 memory consolidation、authored skills discovery、综合压测记录、重复工具调用熔断、duplicate-tool forced-final steering、同文件切片读取漂移 guard、search_code 空搜索词跨路径 guard、path escape roots hint、LSP 空 query guard、Current task contract、Evidence Ledger、tool result pruning、todo steering、跨项目 env-file、用户级 `--state-dir` runtime state 分层、relevance gate、implementation-quality reviewer、safe new-file policy 和 no-edit final hygiene；path-scoped rules、DAP、subagents、完整 reviewer、AST edit、managed skills 继续后置。 |
 | P8 | 前端协议与交互基础 | 已完成 MVP 版 | T-076 已完成 Event/Command Protocol v1、EventSink、CLI stderr renderer 和 session `event_v1`；T-077 已完成 terminal-native frontend，而不是 fullscreen 重 TUI。 |
 | P9 | 真实需求使用准备 | 已完成阶段性 MVP | 已完成项目边界分析、真实需求模板、企业项目只读源码验证、Java LSP 韧性、拓展服务费结算链路压测和服务范围复核；后续继续按真实需求推进设计/实现切片。 |
-| P10 | Intelligence Runtime 骨架 | 进行中 | 按 OMP 架构原则补单 Agent 内部的目标契约、工具选择队列、完成审计、两阶段计划和 reviewer。当前已完成 RequirementContract、CompletionAudit、裁剪版 MiniToolChoiceQueue、Planner/Explore 两阶段、post-diff Patch Reviewer、no-edit evidence gate 和 provider-safe tool_call 参数清洗；下一步 T-115 ToolRegistry 受限参数归一后重跑真实小改。 |
+| P10 | Intelligence Runtime 骨架 | 进行中 | 按 OMP 架构原则补单 Agent 内部的目标契约、工具选择队列、完成审计、两阶段计划和 reviewer。当前已完成 RequirementContract、CompletionAudit、裁剪版 MiniToolChoiceQueue、Planner/Explore 两阶段、post-diff Patch Reviewer、no-edit evidence gate、provider-safe tool_call 参数清洗和 T-115 ToolRegistry 受限参数归一；下一步 T-116 preview contract 与 T-117 numeric guard scope。 |
 
 ## 已完成功能
 
@@ -211,7 +211,8 @@
 | Planner/Explore | 已完成 MVP 版 | `src/local_agent/planner.py` 渲染实现任务阶段上下文；`ToolChoiceQueue` 在实现任务还没有本地代码/需求证据前只开放探索工具，读到证据后再释放写入工具。 |
 | 二阶段 Patch Reviewer | 已完成 MVP 版 | `src/local_agent/patch_reviewer.py` 在成功 `git_diff` 后立即消费 write / `git_diff` / search/LSP 证据；显式要求测试却没有测试 diff、公开 API 未做写后调用方检索、低相关或 comment-only patch 均会触发 runtime steering，并只开放受控修复/验证/回滚工具；最终回答前仍保留兜底审查。 |
 | no-edit evidence gate | 已完成 | CompletionAudit 不再接受只有“blocked/unexecuted”的文字自述；必须有 search/LSP 未命中、路径缺失、relevance/approval 拒绝等工具证据，才允许实现任务在无 diff 时收尾。 |
-| 测试基线 | 已完成 | 本地正常环境下 257 个测试通过。 |
+| ToolRegistry 参数归一 | 已完成 MVP 版 | `src/local_agent/tools/argument_normalization.py` 在 schema 校验前仅映射已观测 scalar alias；冲突值直接拒绝，随后仍执行原 schema、approval、path/hash 和 anchored patch 校验。 |
+| 测试基线 | 已完成 | 本地正常环境下 261 个测试通过。 |
 
 ## 下一步 Todo
 
@@ -318,7 +319,9 @@
 | T-112 | Planner/Explore 两阶段 MVP | 已完成 | P10 | 新增 `src/local_agent/planner.py`，实现任务按 explore / ready_to_implement / verify 阶段注入 runtime context；MiniToolChoiceQueue 在 explore 阶段隐藏写入/执行工具，只开放 list/read/search/LSP/todo/ask/git 状态检查工具。 |
 | T-113 | 二阶段 Patch Reviewer MVP | 已完成并压测修正 | P10 | 新增 `src/local_agent/patch_reviewer.py` 和 runtime steerer：成功 `git_diff` 后立即独立核对 RequirementContract；缺显式测试 diff、公开 API 未查调用方、低相关或 comment-only patch 会跳过同批后续调用，转入受控修复/验证/回滚。最终回答前仍有兜底审查。 |
 | T-114 | no-edit evidence gate | 已完成 | P10 | CompletionAudit 现在要求无写入收尾必须有工具观察到的阻断条件；无 search/LSP 未命中、路径缺失、relevance/approval 拒绝等证据时，会开放 read/search/apply_patch 继续任务。 |
-| T-115 | Tool argument compatibility normalization | 待开始 | P10 | 百炼压测多次出现旧式 `apply_patch` 字段、字符串行号和 todo status 方言，造成大量无效调用与 token 浪费；将在 ToolRegistry 单一边界受限归一已知别名/数值，不放宽任意 schema。 |
+| T-115 | Tool argument compatibility normalization | 已完成并压测 | P10 | ToolRegistry 现在仅归一 `file_hash*` / `source_hash_tag` / `hash_tag -> tag`、`old_str/new_str`、`mode=edit`、整数/布尔字符串、`run_tests.cmd` 和 todo `key/content/pending`；冲突值直接拒绝。session `20260710T020730075094Z` 完成 2 文件、定向 6 测试和 +8/-0 diff。 |
+| T-116 | Preview contract / unsafe structured-call gate | 待开始 | P10 | raw `patch_content` diff、todo array 不是单工具参数别名，不能安全自动拆解；真实复测也没有成功完成 dry-run preview。 |
+| T-117 | Source numeric guard scope correction | 待开始 | P10 | diff hunk、增删统计和测试计数被误判为源码状态/枚举数字，导致最终回答无意义重写。 |
 
 ## 风险清单
 
@@ -360,7 +363,9 @@
 | R-054 | `agent.py` steering/guard 继续膨胀 | 已开始缓解，继续拆 | review 指出 compaction 已拆出，但 final/read-only/semantic guard 继续堆在 `agent.py`。 | 已完成 FinalAnswer Steerer 第一块抽象；后续继续拆 Evidence Ledger、run collector、startup context、memory consolidation 和 semantic exploration steerer。 |
 | R-055 | 无效 tool_call 参数会污染下一轮 provider 请求 | 已关闭 MVP 版 | T-108 首轮复测中百炼拒绝历史消息：无效工具调用的 `function.arguments` 为空或畸形 JSON，导致下一轮 HTTP 400。 | 已在 assistant message 入历史前把工具名、id、arguments 统一归一为 provider-safe JSON object 字符串；空/畸形参数写入 `_invalid_arguments`，并补回归测试。 |
 | R-056 | read_file 行号会干扰源码数字事实比对 | 已关闭 MVP 版 | T-108 窄复测中，模型把枚举状态误报成 1/3/5；numeric guard 因 read_file 内容含 `1:`、`3:`、`5:` 行号而误以为这些数字有源码证据。 | source numeric guard 比对前会剥离 read_file 行号前缀，再判断状态码/枚举值是否出现在源码内容中；新增回归测试覆盖错误数字刚好等于行号的情况。 |
-| R-057 | provider 的工具参数方言导致有效任务无法进入写入/验证闭环 | 开放，T-115 | 20260710 三轮百炼压测中出现 `file_hash`/`old_str`/`new_str`、`mode=edit`、字符串行号、`todo_add status=pending` 和原始 `<tool_call>` 文本；73 次工具调用中有 16 次错误。 | 按 OMP 的 tool-call 归一边界设计 T-115：只在 ToolRegistry 接收明确列出的兼容别名，原始 schema 和 anchored 安全校验仍生效。 |
+| R-057 | provider 的工具参数方言导致有效任务无法进入写入/验证闭环 | 已缓解，继续观察 | T-115 真实复测已跑通源码、测试、定向测试和 diff；安全的 scalar alias 已集中归一。 | 只在 ToolRegistry 映射明确已观测的 scalar alias，原 schema、hash、approval 和 anchored patch 校验仍生效；raw diff / bulk todo 继续拒绝并由 T-116 处理。 |
+| R-058 | raw diff / bulk todo 无法安全映射到细粒度工具 | 开放，T-116 | `patch_content` unified diff、`todo` / `todo_items` 数组和不完整 patch 参数造成大量无效调用。 | 不做隐式多操作拆解；以 preview contract 和可行动 schema error 引导到 anchored patch / 单条 todo。 |
+| R-059 | source numeric guard 会误拦 diff/test 观测数字 | 开放，T-117 | T-115 复测中 hunk 坐标、`+8/-0` 与测试数触发两次无工具重写。 | 区分枚举/状态码/接口常量与 git/test tool evidence。 |
 | R-033 | no-edit 停止路径可能跳过收束工具 | 已关闭 MVP 版 | T-074 复跑中模型正确停止，但没有维护 todo，也没有调用 `git_diff` 输出“无改动”证据；这会降低最终报告的可审计性。 | T-075 已参考 OMP current task / tool-choice steering 思路落地：no-edit stop 前缺 git/todo 收束会被 runtime steering 纠偏，并临时限制工具到 todo/git hygiene 集合。 |
 | R-034 | 过早做 fullscreen 重 TUI 可能拖慢核心能力 | 新增，中 | 如果把第一版前端理解成 Textual/fullscreen/pane/mouse/overlay，容易提前引入 scrollback、copy/paste、resize、输入法和渲染刷新问题。 | 第一版明确命名为 Terminal Frontend：`prompt_toolkit` 只管输入，`rich` 只管结构化输出，保留原生 terminal scrollback；先做 Event/Command Protocol，后续有真实瓶颈再升级 Textual/Bubble Tea/Ratatui/自研 renderer。 |
 | R-035 | Runtime 与前端输出耦合会阻碍后续终端体验 | 已关闭 MVP 版 | 如果工具日志、审批显示和最终输出继续散落在 Runtime/CLI print 中，后续 `prompt_toolkit + rich` 前端会难以复用和 replay。 | T-076 已参考 OMP runtime/TUI 分层思路，落地 dataclass Event/Command Protocol 和 `EventSink`；Runtime 产出 typed events，CLI 只是第一消费者。 |
@@ -421,10 +426,10 @@
 | 项目 | 结论 | 依据 |
 |---|---|---|
 | 主链路 | 通过 | 百炼真实小改复测已跑通 todo、dry_run、apply_patch、session allow、rollback、run_tests、git_diff。 |
-| 测试 | 通过 | P5 收口时 90 个 unittest、compileall、xlsx 检查、diff check 均通过；P10 当前代码已跑通 257 个 unittest。 |
+| 测试 | 通过 | P5 收口时 90 个 unittest、compileall、xlsx 检查、diff check 均通过；P10 当前代码已跑通 261 个 unittest。 |
 | 日用入口 | 通过 | README 已补只读分析和小改任务命令模板。 |
 | 开放风险 | 可接受 | shell 仍非沙箱、prompt injection 仍需靠审批和封闭 VM；provider/model 专用 tokenizer、输出 reserve、managed skills、完整 reviewer 和完整 OMP ToolChoiceQueue 继续后置评估。 |
-| 下一阶段 | P10 Intelligence Runtime 真实复测 | T-109~T-114 已补 RequirementContract、CompletionAudit、MiniToolChoiceQueue、Planner/Explore、post-diff Patch Reviewer 和 no-edit evidence gate；下一步先做 T-115 参数归一，再跑显式要求测试的小改任务。 |
+| 下一阶段 | P10 Intelligence Runtime 继续收束 | T-109~T-115 已补 RequirementContract、CompletionAudit、MiniToolChoiceQueue、Planner/Explore、post-diff Patch Reviewer、no-edit evidence gate 和 ToolRegistry 参数归一；真实小改已完成。下一步 T-116/T-117 降低无效调用与 final churn。 |
 
 ## 推荐工作流
 
@@ -459,6 +464,6 @@
 
 用户确认本文件后，建议按以下顺序继续：
 
-1. 做 T-115：在 ToolRegistry 单一边界兼容已经观测到的 `apply_patch` / todo 参数别名和数值类型，原始 schema、hash 校验、权限和 anchored patch 安全边界不放宽。
-2. 重跑显式要求“改代码并补测试”的真实小改，观察 Patch Reviewer 是否能驱动模型补测试、查调用方或诚实停止。
-3. 继续真实需求设计链路：基于 `msp-pay` / `zqylpayment` 现有证据输出服务费结算实现设计，明确复用点、缺口和必须补充的项目/数据来源。
+1. 做 T-116：要求 preview 的实现任务在首个 real `apply_patch` 前必须产生成功 `dry_run=true`，但 raw unified diff / bulk todo 不做隐式执行。
+2. 做 T-117：把 git/test 数字事实从 source numeric guard 中剥离，保留枚举/状态码/接口常量的源码核对。
+3. 再跑一次显式要求“改代码并补测试”的真实小改，观察无效调用量、preview、Patch Reviewer 和最终总结是否一起稳定。

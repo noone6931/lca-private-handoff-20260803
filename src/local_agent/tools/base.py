@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from ..terminal_io import terminal_input_prompt
+from .argument_normalization import normalize_compatibility_arguments
 
 
 @dataclass(frozen=True)
@@ -89,8 +90,17 @@ class ToolRegistry:
             arguments = raw_arguments if isinstance(raw_arguments, dict) else json.loads(raw_arguments or "{}")
             if not isinstance(arguments, dict):
                 return ToolResult("Tool arguments must be a JSON object.", is_error=True)
+            arguments, compatibility_notes = normalize_compatibility_arguments(name, arguments)
             arguments = validate_tool_arguments(tool.input_schema, arguments)
-            return tool.handler(arguments, context)
+            result = tool.handler(arguments, context)
+            if compatibility_notes:
+                return ToolResult(
+                    f"{result.content}\n\n[compatibility normalized] {'; '.join(compatibility_notes)}. "
+                    "Use canonical tool arguments on the next call.",
+                    is_error=result.is_error,
+                    useless=result.useless,
+                )
+            return result
         except Exception as exc:  # noqa: BLE001 - tool errors must be returned to the model.
             return ToolResult(f"{type(exc).__name__}: {exc}", is_error=True)
 

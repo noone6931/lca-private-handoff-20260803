@@ -12,7 +12,7 @@ from local_agent.lsp.client import StdioLspClient
 from local_agent.lsp.client import close_all_clients
 from local_agent.lsp.config import LspServerConfig
 from local_agent.patch.anchored import hash_text
-from local_agent.tools.base import Tool, ToolContext, ToolRegistry
+from local_agent.tools.base import Tool, ToolContext, ToolRegistry, ToolResult
 from local_agent.tools.files import file_tools, patch_file, read_file, rollback_patch, write_file
 from local_agent.tools.git import capture_git_baseline, git_diff
 from local_agent.tools.interaction import ask_user
@@ -35,6 +35,11 @@ class _FakeStdin:
         if not self._lines:
             return ""
         return self._lines.pop(0)
+
+
+def _record_command(args: dict[str, str], received: list[dict[str, str]]) -> ToolResult:
+    received.append(args)
+    return ToolResult("command accepted")
 
 
 def _write_fake_lsp_server(path: Path) -> None:
@@ -1901,7 +1906,7 @@ class ToolTests(unittest.TestCase):
 
             added = registry.execute(
                 "todo_add",
-                '{"key": "step1", "content": "Read requirement", "status": "in_progress"}',
+                '{"key": "step1", "content": "Read requirement", "status": "pending"}',
                 context,
             )
             updated = registry.execute(
@@ -1913,10 +1918,97 @@ class ToolTests(unittest.TestCase):
 
         self.assertFalse(added.is_error)
         self.assertFalse(updated.is_error)
-        self.assertIn("accepted todo compatibility alias", added.content)
+        self.assertIn("[compatibility normalized]", added.content)
         self.assertIn("key -> id", added.content)
         self.assertIn("content -> task", updated.content)
+        self.assertIn("status pending -> todo", added.content)
         self.assertIn("[done] step1: Summarize requirement", read.content)
+
+    def test_registry_normalizes_observed_apply_patch_argument_variants(self) -> None:
+        registry = ToolRegistry(file_tools())
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            target = workspace / "README.md"
+            target.write_text("old value\n", encoding="utf-8")
+            result = registry.execute(
+                "apply_patch",
+                {
+                    "path": "README.md",
+                    "file_hash": hash_text("old value\n"),
+                    "file_hash_tag": hash_text("old value\n"),
+                    "source_hash_tag": hash_text("old value\n"),
+                    "hash_tag": hash_text("old value\n"),
+                    "start_line": "1",
+                    "end_line": "1",
+                    "old_str": "old value\n",
+                    "new_str": "new value\n",
+                    "mode": "edit",
+                    "dry_run": "True",
+                },
+                ToolContext(workspace=workspace, approval_mode="yolo"),
+            )
+
+            self.assertEqual(target.read_text(encoding="utf-8"), "old value\n")
+
+        self.assertFalse(result.is_error)
+        self.assertIn("Patch preview only", result.content)
+        self.assertIn("[compatibility normalized]", result.content)
+        self.assertIn("file_hash -> tag", result.content)
+        self.assertIn("ignored redundant file_hash_tag", result.content)
+        self.assertIn("ignored redundant source_hash_tag", result.content)
+        self.assertIn("ignored redundant hash_tag", result.content)
+        self.assertIn("mode edit -> replace", result.content)
+        self.assertIn("start_line string -> integer", result.content)
+        self.assertIn("dry_run string -> boolean (true)", result.content)
+
+    def test_registry_rejects_conflicting_compatibility_aliases(self) -> None:
+        registry = ToolRegistry(file_tools())
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            result = registry.execute(
+                "apply_patch",
+                {
+                    "path": "README.md",
+                    "tag": "canonical",
+                    "file_hash": "legacy",
+                    "start_line": 1,
+                    "end_line": 1,
+                    "old_text": "old",
+                    "new_text": "new",
+                },
+                ToolContext(workspace=workspace, approval_mode="yolo"),
+            )
+
+        self.assertTrue(result.is_error)
+        self.assertIn("Conflicting compatibility arguments", result.content)
+
+    def test_registry_normalizes_cmd_for_run_tests_only(self) -> None:
+        received: list[dict[str, str]] = []
+        registry = ToolRegistry(
+            [
+                Tool(
+                    name="run_tests",
+                    description="test",
+                    tier="exec",
+                    input_schema={
+                        "type": "object",
+                        "properties": {"command": {"type": "string"}},
+                        "additionalProperties": False,
+                    },
+                    handler=lambda args, context: _record_command(args, received),
+                )
+            ]
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            result = registry.execute(
+                "run_tests",
+                {"cmd": "PYTHONPATH=src python3 -m unittest tests.test_task_contract"},
+                ToolContext(workspace=Path(tmp).resolve(), approval_mode="yolo"),
+            )
+
+        self.assertFalse(result.is_error)
+        self.assertEqual(received, [{"command": "PYTHONPATH=src python3 -m unittest tests.test_task_contract"}])
+        self.assertIn("cmd -> command", result.content)
 
     def test_todo_add_missing_arguments_returns_actionable_example(self) -> None:
         registry = ToolRegistry(todo_tools())

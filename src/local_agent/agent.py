@@ -540,6 +540,7 @@ class AgentRuntime:
                 self._record_tool_choice_result(name, arguments, result)
                 self._record_read_file_evidence(name, arguments, result)
                 self._record_tool_evidence(name, arguments, result)
+                self._invalidate_stale_source_evidence_after_write(name, arguments, result)
                 self._observe_soft_tool_requirement(name, arguments, result)
                 if name == "git_diff" and not result.is_error:
                     patch_review = self._decide_post_diff_patch_review(run_start_index)
@@ -1468,6 +1469,29 @@ class AgentRuntime:
         if record is None:
             return
         self._append_evidence_record(record)
+
+    def _invalidate_stale_source_evidence_after_write(
+        self,
+        name: str,
+        arguments: str | dict[str, Any],
+        result: ToolResult,
+    ) -> None:
+        """Do not let a pre-write read_file snapshot contradict a later successful write."""
+
+        if result.is_error or name not in {"apply_patch", "rollback_patch", "write_file"}:
+            return
+        parsed = _parse_tool_arguments(arguments)
+        if name == "apply_patch" and parsed.get("dry_run"):
+            return
+        raw_path = parsed.get("path")
+        if not isinstance(raw_path, str) or not raw_path.strip():
+            return
+        display_path = _display_read_file_evidence_path(
+            self._config.workspace,
+            raw_path.strip(),
+            self._config.allowed_dirs,
+        )
+        self._source_evidence = [item for item in self._source_evidence if item.path != display_path]
 
     def _append_evidence_record(self, record: EvidenceRecord) -> None:
         rendered = record.render()
