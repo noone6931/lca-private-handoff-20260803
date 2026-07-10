@@ -29,7 +29,7 @@ from .compaction import valid_recent_messages as _valid_recent_messages
 from .config import AgentConfig
 from .config import normalize_approval_mode
 from .design_evidence import cross_root_design_evidence_roots
-from .design_evidence import missing_design_evidence_roots
+from .design_evidence import DesignEvidenceCoverageSteerer
 from .llm import LlmError
 from .llm import OpenAICompatibleClient
 from .patch.anchored import display_workspace_path
@@ -56,7 +56,6 @@ from .steering.final_answer import CompletionAuditSteerer
 from .steering.final_answer import DesignEvidenceSteerer
 from .steering.final_answer import NoEditFinalHygieneSteerer
 from .steering.final_answer import PatchReviewSteerer
-from .steering.final_answer import READ_ONLY_EVIDENCE_TOOLS
 from .steering.final_answer import ReadOnlyEvidenceSteerer
 from .steering.final_answer import RequirementEvidenceSteerer
 from .steering.final_answer import SourceEvidenceFalseNegativeSteerer
@@ -64,6 +63,11 @@ from .steering.final_answer import request_mentions_todo
 from .steering.final_answer import SourceEvidence
 from .steering.final_answer import SourceGroundedNumericSteerer
 from .steering.final_answer import SteeringDecision
+from .steering.tool_loop import ToolLoopSignals
+from .steering.tool_loop import ToolLoopSteeringDecision
+from .steering.tool_loop import ToolLoopSteeringRegistry
+from .steering.termination import synthetic_tool_stop_message
+from .steering.termination import termination_message
 from .task_contract import generate_requirement_contract
 from .task_contract import render_contract_context
 from .task_contract import RequirementContract
@@ -123,33 +127,21 @@ EVIDENCE_LEDGER_CONTEXT_RECORDS = 18
 EVIDENCE_LEDGER_CONTEXT_CHAR_LIMIT = 6000
 MAX_IDENTICAL_TOOL_CALLS_IN_RECENT_WINDOW = 3
 REPEAT_TOOL_CALL_WINDOW = 12
-MAX_DUPLICATE_TOOL_GUARD_HITS = 8
-MAX_DUPLICATE_TOOL_FINAL_ANSWER_STEERS = 2
 MAX_USELESS_SEARCHES_PER_PATTERN_IN_RECENT_WINDOW = 8
 USELESS_SEARCH_PATTERN_WINDOW = 20
-MAX_USELESS_SEARCH_PATTERN_GUARD_HITS = 4
-MAX_USELESS_SEARCH_PATTERN_FINAL_ANSWER_STEERS = 2
 MAX_USELESS_LSP_SYMBOL_QUERIES_IN_RECENT_WINDOW = 12
 USELESS_LSP_SYMBOL_QUERY_WINDOW = 24
-MAX_USELESS_LSP_SYMBOL_GUARD_HITS = 4
-MAX_USELESS_LSP_SYMBOL_FINAL_ANSWER_STEERS = 2
 MAX_READ_FILE_CALLS_PER_FILE_IN_RECENT_WINDOW = 8
 READ_FILE_PATH_WINDOW = 14
 MAX_READ_FILE_SUCCESSES_PER_RANGE_IN_RUN = 3
-MAX_REPEATED_READ_FILE_GUARD_HITS = 4
-MAX_REPEATED_READ_FILE_FINAL_ANSWER_STEERS = 2
 MAX_SEMANTIC_EXPLORATIONS_PER_KEY_IN_RECENT_WINDOW = 4
 SEMANTIC_EXPLORATION_WINDOW = 20
-MAX_SEMANTIC_EXPLORATION_GUARD_HITS = 4
-MAX_SEMANTIC_EXPLORATION_STEERS = 2
 MAX_SOFT_TOOL_REQUIREMENT_STEERS = 3
 MAX_NO_EDIT_FINAL_HYGIENE_STEERS = 2
 MAX_FINAL_STRUCTURE_STEERS = 2
 MAX_READ_ONLY_EVIDENCE_STEERS = 2
 MAX_REQUIREMENT_EVIDENCE_STEERS = 2
 MAX_DESIGN_EVIDENCE_STEERS = 2
-MAX_DESIGN_EVIDENCE_FOLLOWUP_TOOL_CALLS = 6
-DESIGN_EVIDENCE_FINAL_RESERVE_SECONDS = 45.0
 MAX_SOURCE_EVIDENCE_FALSE_NEGATIVE_STEERS = 2
 MAX_SOURCE_GROUNDED_NUMERIC_STEERS = 2
 MAX_COMPLETION_AUDIT_STEERS = 2
@@ -316,21 +308,16 @@ class AgentRuntime:
         self._recent_semantic_exploration_keys: list[str] = []
         self._read_file_range_counts: dict[tuple[str, int, str], int] = {}
         self._duplicate_tool_guard_hits = 0
-        self._duplicate_tool_final_answer_steers = 0
         self._useless_search_pattern_guard_hits = 0
-        self._useless_search_pattern_final_answer_steers = 0
         self._useless_lsp_symbol_guard_hits = 0
-        self._useless_lsp_symbol_final_answer_steers = 0
         self._repeated_read_file_guard_hits = 0
-        self._repeated_read_file_final_answer_steers = 0
         self._semantic_exploration_guard_hits = 0
-        self._semantic_exploration_steers = 0
+        self._tool_loop_steering = ToolLoopSteeringRegistry()
         self._no_edit_final_hygiene_steers = 0
         self._final_structure_steers = 0
         self._read_only_evidence_steers = 0
         self._requirement_evidence_steers = 0
         self._design_evidence_steers = 0
-        self._design_evidence_final_steers = 0
         self._source_evidence_false_negative_steers = 0
         self._source_grounded_numeric_steers = 0
         self._completion_audit_steers = 0
@@ -353,9 +340,8 @@ class AgentRuntime:
         self._tool_choice_tool_names: list[str] = []
         self._requirement_contract: RequirementContract | None = None
         self._requirement_contract_context = ""
-        self._design_evidence_roots: tuple[str, ...] = ()
+        self._design_evidence_coverage = DesignEvidenceCoverageSteerer()
         self._design_evidence_read_paths: list[str] = []
-        self._design_evidence_covered_at_tool_count: int | None = None
         self._soft_tool_requirement: SoftToolRequirement | None = None
         self._run_stats: RunStats | None = None
         self._last_run_summary: dict[str, Any] | None = None
@@ -430,12 +416,12 @@ class AgentRuntime:
         run_start_index = len(self._messages)
         model_prompt = _with_workflow_nudge(prompt)
         self._current_user_request = prompt
+        self._tool_loop_steering.reset()
         self._no_edit_final_hygiene_steers = 0
         self._final_structure_steers = 0
         self._read_only_evidence_steers = 0
         self._requirement_evidence_steers = 0
         self._design_evidence_steers = 0
-        self._design_evidence_final_steers = 0
         self._source_evidence_false_negative_steers = 0
         self._source_grounded_numeric_steers = 0
         self._completion_audit_steers = 0
@@ -450,13 +436,13 @@ class AgentRuntime:
         self._tool_choice_tool_names = []
         self._requirement_contract = generate_requirement_contract(prompt)
         self._requirement_contract_context = render_contract_context(self._requirement_contract)
-        self._design_evidence_roots = (
+        design_evidence_roots = (
             cross_root_design_evidence_roots(self._config.workspace, self._config.allowed_dirs, prompt)
             if self._requirement_contract.task_kind == "read-only"
             else ()
         )
+        self._design_evidence_coverage.reset(design_evidence_roots)
         self._design_evidence_read_paths = []
-        self._design_evidence_covered_at_tool_count = None
         self._messages.append({"role": "user", "content": model_prompt})
         self._session.append("user", {"content": prompt})
         self._events.emit("UserMessage", {"content": prompt})
@@ -468,10 +454,10 @@ class AgentRuntime:
                 "objective": self._requirement_contract.objective,
             },
         )
-        if self._design_evidence_roots:
+        if self._design_evidence_coverage.roots:
             self._session.append(
                 "runtime_steering",
-                {"kind": "design_evidence_roots", "roots": list(self._design_evidence_roots)},
+                {"kind": "design_evidence_roots", "roots": list(self._design_evidence_coverage.roots)},
             )
         if model_prompt != prompt:
             self._session.append("workflow_nudge", {"content": WORKFLOW_NUDGE})
@@ -601,66 +587,41 @@ class AgentRuntime:
                 semantic_exploration_skipped = (
                     self._semantic_exploration_guard_hits > semantic_exploration_hits_before
                 )
-                if repeated_read_skipped and self._steer_after_repeated_read_file():
+                tool_loop_steering_signals = ToolLoopSignals(
+                    duplicate_skipped=duplicate_skipped,
+                    duplicate_tool_name=name,
+                    duplicate_guard_hits=self._duplicate_tool_guard_hits,
+                    useless_search_skipped=useless_search_skipped,
+                    useless_search_guard_hits=self._useless_search_pattern_guard_hits,
+                    useless_lsp_skipped=useless_lsp_skipped,
+                    useless_lsp_guard_hits=self._useless_lsp_symbol_guard_hits,
+                    repeated_read_skipped=repeated_read_skipped,
+                    repeated_read_guard_hits=self._repeated_read_file_guard_hits,
+                    semantic_exploration_skipped=semantic_exploration_skipped,
+                    semantic_exploration_guard_hits=self._semantic_exploration_guard_hits,
+                    read_file_evidence=self._read_file_evidence_summary(),
+                    request_summary=self._final_answer_request_summary(),
+                )
+                termination_reason = self._tool_loop_steering.termination_reason(tool_loop_steering_signals)
+                if termination_reason is not None:
                     self._append_synthetic_tool_results(
                         tool_calls[index + 1 :],
-                        self._repeated_read_file_stop_message(),
+                        synthetic_tool_stop_message(termination_reason),
+                    )
+                    return self._finish_run(
+                        termination_message(termination_reason),
+                        deadline,
+                        run_start_index,
+                        reason=termination_reason,
+                    )
+                tool_loop_steering = self._tool_loop_steering.decide(tool_loop_steering_signals)
+                if tool_loop_steering is not None:
+                    self._apply_tool_loop_steering(tool_loop_steering)
+                    self._append_synthetic_tool_results(
+                        tool_calls[index + 1 :],
+                        self._tool_loop_stop_message(tool_loop_steering.kind),
                     )
                     break
-                if self._repeated_read_file_guard_hits >= MAX_REPEATED_READ_FILE_GUARD_HITS:
-                    self._append_synthetic_tool_results(
-                        tool_calls[index + 1 :],
-                        self._repeated_read_file_stop_message(),
-                    )
-                    return self._stop_for_repeated_read_file(deadline, run_start_index)
-                if semantic_exploration_skipped and self._steer_after_semantic_exploration():
-                    self._append_synthetic_tool_results(
-                        tool_calls[index + 1 :],
-                        self._semantic_exploration_stop_message(),
-                    )
-                    break
-                if self._semantic_exploration_guard_hits >= MAX_SEMANTIC_EXPLORATION_GUARD_HITS:
-                    self._append_synthetic_tool_results(
-                        tool_calls[index + 1 :],
-                        self._semantic_exploration_stop_message(),
-                    )
-                    return self._stop_for_semantic_exploration(deadline, run_start_index)
-                if useless_search_skipped and self._steer_after_useless_search_pattern():
-                    self._append_synthetic_tool_results(
-                        tool_calls[index + 1 :],
-                        self._useless_search_pattern_stop_message(),
-                    )
-                    break
-                if self._useless_search_pattern_guard_hits >= MAX_USELESS_SEARCH_PATTERN_GUARD_HITS:
-                    self._append_synthetic_tool_results(
-                        tool_calls[index + 1 :],
-                        self._useless_search_pattern_stop_message(),
-                    )
-                    return self._stop_for_useless_search_pattern(deadline, run_start_index)
-                if useless_lsp_skipped and self._steer_after_useless_lsp_symbol_queries():
-                    self._append_synthetic_tool_results(
-                        tool_calls[index + 1 :],
-                        self._useless_lsp_symbol_stop_message(),
-                    )
-                    break
-                if self._useless_lsp_symbol_guard_hits >= MAX_USELESS_LSP_SYMBOL_GUARD_HITS:
-                    self._append_synthetic_tool_results(
-                        tool_calls[index + 1 :],
-                        self._useless_lsp_symbol_stop_message(),
-                    )
-                    return self._stop_for_useless_lsp_symbol_queries(deadline, run_start_index)
-                if duplicate_skipped and self._steer_after_duplicate_tool_call(name):
-                    self._append_synthetic_tool_results(
-                        tool_calls[index + 1 :],
-                        self._duplicate_tool_stop_message(),
-                    )
-                    break
-                if self._duplicate_tool_guard_hits >= MAX_DUPLICATE_TOOL_GUARD_HITS:
-                    self._append_synthetic_tool_results(
-                        tool_calls[index + 1 :],
-                        self._duplicate_tool_stop_message(),
-                    )
-                    return self._stop_for_duplicate_tools(deadline, run_start_index)
                 if self._deadline_exceeded(deadline):
                     self._append_synthetic_tool_results(tool_calls[index + 1 :], self._budget_stop_message())
                     return self._stop_for_budget(deadline, run_start_index)
@@ -703,10 +664,33 @@ class AgentRuntime:
             tool_names=self._tool_choice_tool_names,
             tool_results=self._tool_choice_results,
             available_tool_names=self._available_registry_tool_names(),
-            design_evidence_roots=self._design_evidence_roots,
+            design_evidence_roots=self._design_evidence_coverage.roots,
         )
         self._tool_choice_allowed_tool_names = set(decision.allowed_tool_names)
-        if self._steer_after_design_evidence_coverage(decision, deadline):
+        coverage = self._design_evidence_coverage.observe(
+            queue_requires_steering=decision.steering_required,
+            read_paths=(
+                result.path
+                for result in self._tool_choice_results
+                if result.name == "read_file" and not result.is_error
+            ),
+            tool_count=len(self._tool_choice_results),
+            deadline=deadline,
+            request_summary=self._final_answer_request_summary(),
+        )
+        if coverage is not None:
+            for kind, payload in coverage.preceding_events:
+                self._session.append("runtime_steering", {"kind": kind, **payload})
+            self._session.append(
+                "runtime_steering",
+                {"kind": coverage.kind, **coverage.payload},
+            )
+            if coverage.message is not None:
+                self._messages.append({"role": "user", "content": coverage.message})
+                self._force_final_answer_without_tools = coverage.force_final_answer_without_tools
+                self._temporary_tool_allowlist = None
+                return
+        if self._force_final_answer_without_tools:
             return
         if not decision.steering_required:
             return
@@ -730,74 +714,6 @@ class AgentRuntime:
                 "reason": decision.reason,
             },
         )
-
-    def _steer_after_design_evidence_coverage(
-        self,
-        decision: ToolChoiceDecision,
-        deadline: float | None = None,
-    ) -> bool:
-        if not self._design_evidence_roots or decision.steering_required:
-            return False
-        source_paths = [
-            result.path
-            for result in self._tool_choice_results
-            if result.name == "read_file" and not result.is_error
-        ]
-        if missing_design_evidence_roots(self._design_evidence_roots, source_paths):
-            return False
-        tool_count = len(self._tool_choice_results)
-        reserve_required = (
-            deadline is not None
-            and deadline - time.monotonic() <= DESIGN_EVIDENCE_FINAL_RESERVE_SECONDS
-        )
-        if self._design_evidence_covered_at_tool_count is None:
-            self._design_evidence_covered_at_tool_count = tool_count
-            self._session.append(
-                "runtime_steering",
-                {
-                    "kind": "design_evidence_covered",
-                    "roots": list(self._design_evidence_roots),
-                    "tool_count": tool_count,
-                },
-            )
-            if not reserve_required:
-                return False
-        if self._design_evidence_final_steers:
-            return False
-        followup_limit_reached = (
-            tool_count - self._design_evidence_covered_at_tool_count
-            >= MAX_DESIGN_EVIDENCE_FOLLOWUP_TOOL_CALLS
-        )
-        if not reserve_required and not followup_limit_reached:
-            return False
-        stop_reason = "deadline_reserve" if reserve_required else "followup_limit"
-        self._design_evidence_final_steers += 1
-        self._messages.append(
-            {
-                "role": "user",
-                "content": (
-                    "Runtime steering: the required requirement/backend/frontend evidence matrix is complete, "
-                    "and the bounded follow-up exploration allowance is exhausted. Do not call more tools. "
-                    "Produce the requested design now, separate verified facts from 推断/建议, and list remaining "
-                    "uncertainty instead of continuing to search."
-                    f"{self._final_answer_request_summary()}"
-                ),
-            }
-        )
-        self._session.append(
-            "runtime_steering",
-            {
-                "kind": "design_evidence_final",
-                "roots": list(self._design_evidence_roots),
-                "covered_at_tool_count": self._design_evidence_covered_at_tool_count,
-                "tool_count": tool_count,
-                "followup_limit": MAX_DESIGN_EVIDENCE_FOLLOWUP_TOOL_CALLS,
-                "reason": stop_reason,
-            },
-        )
-        self._force_final_answer_without_tools = True
-        self._temporary_tool_allowlist = None
-        return True
 
     def _available_registry_tool_names(self) -> tuple[str, ...]:
         if hasattr(self._registry, "tool_names"):
@@ -905,11 +821,11 @@ class AgentRuntime:
                 "semantic_exploration": self._semantic_exploration_guard_hits,
             },
             steer_start={
-                "duplicate_tool_final_answer": self._duplicate_tool_final_answer_steers,
-                "useless_search_pattern_final_answer": self._useless_search_pattern_final_answer_steers,
-                "useless_lsp_symbol_final_answer": self._useless_lsp_symbol_final_answer_steers,
-                "repeated_read_file_final_answer": self._repeated_read_file_final_answer_steers,
-                "semantic_exploration": self._semantic_exploration_steers,
+                "duplicate_tool_final_answer": self._tool_loop_steering.count("duplicate_tool_final_answer"),
+                "useless_search_pattern_final_answer": self._tool_loop_steering.count("useless_search_pattern_final_answer"),
+                "useless_lsp_symbol_final_answer": self._tool_loop_steering.count("useless_lsp_symbol_final_answer"),
+                "repeated_read_file_final_answer": self._tool_loop_steering.count("repeated_read_file_final_answer"),
+                "semantic_exploration": self._tool_loop_steering.count("semantic_exploration"),
             },
         )
 
@@ -973,23 +889,23 @@ class AgentRuntime:
         }
         steering_counts = {
             "duplicate_tool_final_answer": (
-                self._duplicate_tool_final_answer_steers
+                self._tool_loop_steering.count("duplicate_tool_final_answer")
                 - stats.steer_start.get("duplicate_tool_final_answer", 0)
             ),
             "useless_search_pattern_final_answer": (
-                self._useless_search_pattern_final_answer_steers
+                self._tool_loop_steering.count("useless_search_pattern_final_answer")
                 - stats.steer_start.get("useless_search_pattern_final_answer", 0)
             ),
             "useless_lsp_symbol_final_answer": (
-                self._useless_lsp_symbol_final_answer_steers
+                self._tool_loop_steering.count("useless_lsp_symbol_final_answer")
                 - stats.steer_start.get("useless_lsp_symbol_final_answer", 0)
             ),
             "repeated_read_file_final_answer": (
-                self._repeated_read_file_final_answer_steers
+                self._tool_loop_steering.count("repeated_read_file_final_answer")
                 - stats.steer_start.get("repeated_read_file_final_answer", 0)
             ),
             "semantic_exploration": (
-                self._semantic_exploration_steers - stats.steer_start.get("semantic_exploration", 0)
+                self._tool_loop_steering.count("semantic_exploration") - stats.steer_start.get("semantic_exploration", 0)
             ),
             "no_edit_final_hygiene": self._no_edit_final_hygiene_steers,
             "final_structure": self._final_structure_steers,
@@ -1398,139 +1314,22 @@ class AgentRuntime:
             is_error=True,
         )
 
-    def _steer_after_duplicate_tool_call(self, name: str) -> bool:
-        if self._duplicate_tool_final_answer_steers >= MAX_DUPLICATE_TOOL_FINAL_ANSWER_STEERS:
-            return False
-        self._duplicate_tool_final_answer_steers += 1
-        evidence = self._read_file_evidence_summary()
-        request_summary = self._final_answer_request_summary()
-        content = (
-            "Runtime steering: repeated identical tool calls are no longer useful. "
-            "Your next response must be a final answer without tool calls. "
-            "Use the evidence already collected, state uncertainty explicitly, and list exact next files or queries "
-            "instead of repeating prior searches."
-            f"{request_summary}"
-            f"{evidence}"
-        )
-        self._messages.append({"role": "user", "content": content})
-        self._session.append(
-            "runtime_steering",
-            {
-                "kind": "duplicate_tool_final_answer",
-                "tool": name,
-                "duplicate_hits": self._duplicate_tool_guard_hits,
-                "steer_count": self._duplicate_tool_final_answer_steers,
-            },
-        )
-        self._force_final_answer_without_tools = True
-        return True
+    def _apply_tool_loop_steering(self, decision: ToolLoopSteeringDecision) -> None:
+        self._messages.append({"role": "user", "content": decision.message})
+        payload = {
+            "kind": decision.kind,
+            **decision.payload,
+            "steer_count": self._tool_loop_steering.count(decision.kind),
+        }
+        self._session.append("runtime_steering", payload)
+        self._force_final_answer_without_tools = decision.force_final_answer_without_tools
+        self._temporary_tool_allowlist = decision.temporary_tool_allowlist
 
-    def _steer_after_useless_search_pattern(self) -> bool:
-        if self._useless_search_pattern_final_answer_steers >= MAX_USELESS_SEARCH_PATTERN_FINAL_ANSWER_STEERS:
-            return False
-        self._useless_search_pattern_final_answer_steers += 1
-        evidence = self._read_file_evidence_summary()
-        request_summary = self._final_answer_request_summary()
-        content = (
-            "Runtime steering: repeated search_code calls with the same no-match pattern are no longer useful. "
-            "Your next response must be a final answer without tool calls. "
-            "Return to the user's original requested output structure, use the evidence already collected, "
-            "state uncertainty explicitly, and list exact next files or different business terms instead of "
-            "continuing to search the same empty keyword across directories."
-            f"{request_summary}"
-            f"{evidence}"
+    def _tool_loop_stop_message(self, kind: str) -> str:
+        return (
+            f"Remaining tool calls were not executed because runtime steering '{kind}' requires the assistant "
+            "to use the collected evidence and answer the user's original request."
         )
-        self._messages.append({"role": "user", "content": content})
-        self._session.append(
-            "runtime_steering",
-            {
-                "kind": "useless_search_pattern_final_answer",
-                "guard_hits": self._useless_search_pattern_guard_hits,
-                "steer_count": self._useless_search_pattern_final_answer_steers,
-            },
-        )
-        self._force_final_answer_without_tools = True
-        return True
-
-    def _steer_after_useless_lsp_symbol_queries(self) -> bool:
-        if self._useless_lsp_symbol_final_answer_steers >= MAX_USELESS_LSP_SYMBOL_FINAL_ANSWER_STEERS:
-            return False
-        self._useless_lsp_symbol_final_answer_steers += 1
-        evidence = self._read_file_evidence_summary()
-        request_summary = self._final_answer_request_summary()
-        content = (
-            "Runtime steering: repeated lsp symbol queries with no matches are no longer useful. "
-            "Your next response must be a final answer without tool calls. "
-            "Return to the user's original requested output structure, use the evidence already collected, "
-            "state uncertainty explicitly, and list exact next files or truly different search terms instead of "
-            "continuing to guess symbol names."
-            f"{request_summary}"
-            f"{evidence}"
-        )
-        self._messages.append({"role": "user", "content": content})
-        self._session.append(
-            "runtime_steering",
-            {
-                "kind": "useless_lsp_symbol_final_answer",
-                "guard_hits": self._useless_lsp_symbol_guard_hits,
-                "steer_count": self._useless_lsp_symbol_final_answer_steers,
-            },
-        )
-        self._force_final_answer_without_tools = True
-        return True
-
-    def _steer_after_repeated_read_file(self) -> bool:
-        if self._repeated_read_file_final_answer_steers >= MAX_REPEATED_READ_FILE_FINAL_ANSWER_STEERS:
-            return False
-        self._repeated_read_file_final_answer_steers += 1
-        evidence = self._read_file_evidence_summary()
-        request_summary = self._final_answer_request_summary()
-        content = (
-            "Runtime steering: repeated read_file slices from the same file are no longer useful. "
-            "Your next response must be a final answer without tool calls. "
-            "Return to the user's original requested output structure, use the evidence already collected, "
-            "state uncertainty explicitly, and list exact next files instead of continuing to read adjacent ranges."
-            f"{request_summary}"
-            f"{evidence}"
-        )
-        self._messages.append({"role": "user", "content": content})
-        self._session.append(
-            "runtime_steering",
-            {
-                "kind": "repeated_read_file_final_answer",
-                "duplicate_hits": self._repeated_read_file_guard_hits,
-                "steer_count": self._repeated_read_file_final_answer_steers,
-            },
-        )
-        self._force_final_answer_without_tools = True
-        return True
-
-    def _steer_after_semantic_exploration(self) -> bool:
-        if self._semantic_exploration_steers >= MAX_SEMANTIC_EXPLORATION_STEERS:
-            return False
-        self._semantic_exploration_steers += 1
-        evidence = self._read_file_evidence_summary()
-        request_summary = self._final_answer_request_summary()
-        content = (
-            "Runtime steering: directory/path exploration is repeating under the same module or parent path. "
-            "Do not keep calling list_files on sibling, parent, or child guesses. "
-            "Use targeted evidence tools only: search_code with business terms, lsp_* navigation, or read_file on "
-            "exact files already discovered. If enough evidence has been collected, answer the user's original "
-            "question directly and label uncertainty explicitly."
-            f"{request_summary}"
-            f"{evidence}"
-        )
-        self._messages.append({"role": "user", "content": content})
-        self._session.append(
-            "runtime_steering",
-            {
-                "kind": "semantic_exploration",
-                "guard_hits": self._semantic_exploration_guard_hits,
-                "steer_count": self._semantic_exploration_steers,
-            },
-        )
-        self._temporary_tool_allowlist = set(READ_ONLY_EVIDENCE_TOOLS)
-        return True
 
     def _record_read_file_evidence(self, name: str, arguments: str | dict[str, Any], result: ToolResult) -> None:
         if name != "read_file" or result.is_error:
@@ -1823,7 +1622,7 @@ class AgentRuntime:
             read_file_evidence_paths=list(self._read_file_evidence_paths),
             source_evidence=list(self._source_evidence),
             requirement_evidence=list(self._pinned_requirement_evidence),
-            required_design_evidence_roots=self._design_evidence_roots,
+            required_design_evidence_roots=self._design_evidence_coverage.roots,
             design_evidence_read_paths=list(self._design_evidence_read_paths),
             open_todos=self._open_todo_summary(),
             is_code_implementation_request=is_code_implementation_request(self._current_user_request),
@@ -1847,7 +1646,7 @@ class AgentRuntime:
             "read_only_evidence": self._read_only_evidence_steers,
             "requirement_evidence": self._requirement_evidence_steers,
             "design_evidence": self._design_evidence_steers,
-            "design_evidence_final": self._design_evidence_final_steers,
+            "design_evidence_final": self._design_evidence_coverage.final_steers,
             "no_edit_final_hygiene": self._no_edit_final_hygiene_steers,
             "final_structure": self._final_structure_steers,
             "source_evidence_false_negative": self._source_evidence_false_negative_steers,
@@ -1934,12 +1733,6 @@ class AgentRuntime:
             "Stopped because the task required reading requirement/spec documents from an allowed directory, "
             "but the assistant did not call read_file on any allowed-directory document after repeated reminders. "
             "Retry with the same --allow-dir, or explicitly name the requirement file path."
-        )
-
-    def _repeated_read_file_stop_message(self) -> str:
-        return (
-            "Tool call was not executed because repeated read_file slices from the same file were no longer useful. "
-            "Use the already collected evidence and answer the user's original request."
         )
 
     def _observe_soft_tool_requirement(self, name: str, arguments: str | dict[str, Any], result: ToolResult) -> None:
@@ -2097,62 +1890,6 @@ class AgentRuntime:
     def _stop_for_budget(self, deadline: float | None, run_start_index: int) -> str:
         content = self._budget_stop_message()
         return self._finish_run(content, deadline, run_start_index, reason="budget")
-
-    def _duplicate_tool_stop_message(self) -> str:
-        return "the assistant repeated identical tool calls too many times."
-
-    def _stop_for_duplicate_tools(self, deadline: float | None, run_start_index: int) -> str:
-        content = (
-            "Stopped because the assistant repeated identical tool calls too many times. "
-            "Retry with a narrower request or ask it to answer from the evidence already collected."
-        )
-        return self._finish_run(content, deadline, run_start_index, reason="duplicate_tool_guard")
-
-    def _stop_for_repeated_read_file(self, deadline: float | None, run_start_index: int) -> str:
-        content = (
-            "Stopped because the assistant kept reading adjacent ranges from the same file. "
-            "Retry with a narrower request or ask it to answer from the evidence already collected."
-        )
-        return self._finish_run(content, deadline, run_start_index, reason="repeated_read_file_guard")
-
-    def _useless_search_pattern_stop_message(self) -> str:
-        return (
-            "Tool call was not executed because repeated search_code calls with the same no-match pattern "
-            "were no longer useful. Use the already collected evidence and answer the user's original request."
-        )
-
-    def _stop_for_useless_search_pattern(self, deadline: float | None, run_start_index: int) -> str:
-        content = (
-            "Stopped because the assistant kept searching the same no-match pattern across paths. "
-            "Retry with a narrower request or ask it to answer from the evidence already collected."
-        )
-        return self._finish_run(content, deadline, run_start_index, reason="useless_search_pattern_guard")
-
-    def _useless_lsp_symbol_stop_message(self) -> str:
-        return (
-            "Tool call was not executed because repeated lsp symbol queries with no matches "
-            "were no longer useful. Use the already collected evidence and answer the user's original request."
-        )
-
-    def _stop_for_useless_lsp_symbol_queries(self, deadline: float | None, run_start_index: int) -> str:
-        content = (
-            "Stopped because the assistant kept guessing lsp symbol queries with no matches. "
-            "Retry with a narrower request or ask it to answer from the evidence already collected."
-        )
-        return self._finish_run(content, deadline, run_start_index, reason="useless_lsp_symbol_guard")
-
-    def _semantic_exploration_stop_message(self) -> str:
-        return (
-            "Tool call was not executed because repeated list_files exploration under the same module or parent path "
-            "was no longer useful. Use targeted search_code/lsp/read_file evidence or answer from collected evidence."
-        )
-
-    def _stop_for_semantic_exploration(self, deadline: float | None, run_start_index: int) -> str:
-        content = (
-            "Stopped because the assistant kept exploring sibling, parent, or child directories in the same module. "
-            "Retry with a narrower request or ask it to use search_code/LSP evidence instead of path guessing."
-        )
-        return self._finish_run(content, deadline, run_start_index, reason="semantic_exploration_guard")
 
     def _stop_for_interrupt(self) -> str:
         content = "Stopped after user interrupt."

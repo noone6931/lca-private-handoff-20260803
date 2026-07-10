@@ -112,3 +112,16 @@ T-115 的结论不是“百炼已经完全高效”，而是：安全可逆的 p
 | 大 diff 截断会遗漏后段测试/API 改动。 | `ToolResultSummary.metadata` 保存截断前完整 diff 的 changed paths、test paths 与 public API symbols；模型上下文仍只接收有界摘要。 | 后段测试 diff 在 800 字符摘要之外时，Reviewer 仍能识别测试文件改动。 |
 | “这个功能实现了吗？”会误入实现流程。 | RequirementContract 在实现意图判断前识别常见中文状态问句。 | `实现了吗` / `当前是否支持` / `已经实现…了吗` 均回归为 read-only。 |
 | 无结果或无关读取可充当调用方检查。 | Reviewer 只接受最后写入后的非 useless、且含变更 API/类型证据的 search/LSP/read 结果。 | useless `No matches` 和无关文件读取不能再通过调用方审查。 |
+
+## T-123 P0a ToolLoop Steering Registry（20260710）
+
+本项是行为保持的架构重构，不把它伪装成新的百炼端到端压测。触发原因是 review 已确认：主循环同时保留 inline `steer_after`、独立 final steerer 和 hard-stop 阈值，新增 guard 会继续让 `agent.py` 膨胀。
+
+| 维度 | 迁移结果 | 验证 |
+|---|---|---|
+| 病态工具循环 | 新增 `steering/tool_loop.py`，以显式优先级统一重复调用、空 `search_code`、空 LSP symbol、重复 `read_file` 与语义路径探索的 soft steering。 | 独立 registry 测试覆盖优先级、soft steer 上限和 reset；既有 Agent guard 回归继续通过。 |
+| 硬停止 | 新增 `steering/termination.py`；ToolLoop registry 统一判定上述五类 guard 的 hard-stop reason，主循环只补 synthetic tool results 并完成 run。 | 既有 hard-stop 行为回归通过，tool_call/tool_result 配对边界不变。 |
+| 跨 root 设计收束 | `DesignEvidenceCoverageSteerer` 迁入 `design_evidence.py`，负责来源覆盖、有限补读和 deadline reserve 收束。 | 直接模块测试覆盖 follow-up 上限与 deadline reserve；原 cross-root evidence matrix 回归通过。 |
+| 主循环体积 | `src/local_agent/agent.py` 从 3875 行降至 3607 行。 | 本地完整验证：291 个 unittest、`compileall`、`git diff --check` 通过。 |
+
+下一步是 P0b：用 `RunContext` 收拢 `AgentRuntime` 的 run 级可变状态，并迁出 `RunStats`。在 P0b 完成前，不在 `agent.py` 增加新的 feature guard；之后再做真实小改端到端复测，观察百炼工具错误率是否继续下降。

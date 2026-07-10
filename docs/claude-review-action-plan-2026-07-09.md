@@ -8,6 +8,15 @@ Claude review 的方向基本成立：`agent.py` 已经偏大，context budget �
 
 但执行顺序不采用“先 P0 大拆分”。当前首要目标是让 LCA 今天能稳定用于真实需求分析和小改实现；因此先做低风险、可验证、直接改善日用体验的改动，再在真实压测暴露稳定失败形态后拆模块。
 
+## 2026-07-10 P0a 纠偏
+
+T-113 至 T-121 的真实压测和回归已达到“先压测后拆分”的触发条件，因此此处的历史排序不再适用。接受最新 review 的 P0a 要求：在完成 P0b 前，禁止在 `agent.py` 新增 feature guard。
+
+- T-123 已新增 `steering/tool_loop.py` / `steering/termination.py`，将重复调用、空 search/LSP、重复 read、语义路径探索的 soft steering 和 hard stop 收敛为一个显式优先级 registry。
+- 跨 root 设计证据的覆盖与 bounded final 收束已从 `AgentRuntime` 迁入 `design_evidence.py`。
+- `agent.py` 已由 3875 行降至 3607 行；291 个 unittest、`compileall`、`git diff --check` 通过。
+- P0b 的下一步是引入 `RunContext` 收拢 run 级状态字段，并迁出 `RunStats`；此项完成前不继续叠加新的 runtime guard。
+
 ## 已立即采纳
 
 | 项目 | 状态 | LCA 处理 |

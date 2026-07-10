@@ -30,7 +30,7 @@
 
 ## 当前进度
 
-当前项目已完成 P8 前端协议与交互基础 MVP，P9 真实需求使用准备已覆盖项目边界、源码验证、LSP 韧性和服务费结算链路压测，并进入 P10 Intelligence Runtime 骨架。用户可以用自然语言描述任务，而不是每次手写工具顺序；Runtime 通过 RequirementContract、Planner/Explore、MiniToolChoiceQueue、CompletionAudit 和二阶段 Patch Reviewer 保持任务目标、证据、写入、测试和 diff 的闭环。2026-07-10 的 T-113 将 Patch Reviewer 前移到成功 `git_diff` 之后；T-114 要求 blocked/no-edit 收尾必须有工具观察到的阻断证据；T-115 收敛安全 provider scalar 参数方言；T-116 用 hard preview gate 阻止未预览写入；T-117 消除 diff/test 数字误拦；T-118 修复待写入 `read-only` 字面量误分类；T-119 修正实现任务 final-guard scope；T-120 将成功读取的需求文档固定为跨 compaction 的权威证据；T-121 让跨前后端设计在需求、主后端、用户指定前端三类证据都具备后再收束，且展示路径不再干扰 root 归属判断。真实复测 `20260710T032336652934Z` 以 `final` 结束。详见 `docs/pressure-test-2026-07-10.md`。Runtime 继续产出 typed events 和 `run_summary`，CLI/session/tool 日志和 terminal frontend 共用事件流。
+当前项目已完成 P8 前端协议与交互基础 MVP，P9 真实需求使用准备已覆盖项目边界、源码验证、LSP 韧性和服务费结算链路压测，并进入 P10 Intelligence Runtime 骨架。用户可以用自然语言描述任务，而不是每次手写工具顺序；Runtime 通过 RequirementContract、Planner/Explore、MiniToolChoiceQueue、CompletionAudit 和二阶段 Patch Reviewer 保持任务目标、证据、写入、测试和 diff 的闭环。2026-07-10 的 T-113 至 T-122 已补齐 Reviewer/Completion 的运行时事实闭环；T-123 开始归还 OMP 架构债：五类病态工具循环的 soft steering、hard stop 和跨 root 设计证据收束已迁入独立模块，`agent.py` 由 3875 行降至 3607 行，291 个 unittest 通过。P0b 接下来收拢 `RunContext` / `RunStats`，在此之前不再向 `agent.py` 新增 feature guard。详见 `docs/pressure-test-2026-07-10.md`。Runtime 继续产出 typed events 和 `run_summary`，CLI/session/tool 日志和 terminal frontend 共用事件流。
 
 已具备的核心能力：
 
@@ -150,7 +150,7 @@
 | P7 | 高级工程能力轻量版 | 已完成 MVP 版 | 已完成 OMP 风格 auto summary、多语言 LSP/light fallback、LSP 兼容别名、multi-root workspace roots 与工具观察提示、allowed-dir soft tool requirement、Markdown memory 启动注入、learn、可选 memory consolidation、authored skills discovery、综合压测记录、重复工具调用熔断、duplicate-tool forced-final steering、同文件切片读取漂移 guard、search_code 空搜索词跨路径 guard、path escape roots hint、LSP 空 query guard、Current task contract、Evidence Ledger、tool result pruning、todo steering、跨项目 env-file、用户级 `--state-dir` runtime state 分层、relevance gate、implementation-quality reviewer、safe new-file policy 和 no-edit final hygiene；path-scoped rules、DAP、subagents、完整 reviewer、AST edit、managed skills 继续后置。 |
 | P8 | 前端协议与交互基础 | 已完成 MVP 版 | T-076 已完成 Event/Command Protocol v1、EventSink、CLI stderr renderer 和 session `event_v1`；T-077 已完成 terminal-native frontend，而不是 fullscreen 重 TUI。 |
 | P9 | 真实需求使用准备 | 已完成阶段性 MVP | 已完成项目边界分析、真实需求模板、企业项目只读源码验证、Java LSP 韧性、拓展服务费结算链路压测和服务范围复核；后续继续按真实需求推进设计/实现切片。 |
-| P10 | Intelligence Runtime 骨架 | 进行中 | 按 OMP 架构原则补单 Agent 内部的目标契约、工具选择队列、完成审计、两阶段计划和 reviewer。当前已完成 RequirementContract、CompletionAudit、裁剪版 MiniToolChoiceQueue、Planner/Explore 两阶段、post-diff Patch Reviewer、no-edit evidence gate、provider-safe tool_call 参数清洗、T-115~T-121 运行时护栏。T-121 已在真实跨前后端设计任务中验证需求/后端/前端最小 evidence matrix；下一步继续收敛真实实现任务与工具调用成本。 |
+| P10 | Intelligence Runtime 骨架 | 进行中 | 按 OMP 架构原则补单 Agent 内部的目标契约、工具选择队列、完成审计、两阶段计划和 reviewer。T-123 已完成 P0a：ToolLoop registry/termination 和 design-evidence coverage 已离开 `agent.py`，从 3875 降至 3607 行。下一步 P0b 引入 `RunContext` 并迁出 `RunStats`，然后复跑真实小改链路验证工具调用成本。 |
 
 ## 已完成功能
 
@@ -327,6 +327,7 @@
 | T-120 | Pinned requirement evidence / compaction authority | 已完成 MVP 并复测 | P10 | 真实设计 session `20260710T024503106586Z` 因多轮 LLM compaction 编造需求范围；成功读取的 requirement/spec Markdown 现在作为高优先级 pinned context 注入每次 provider request，最终稿要求 requirement 文件路径/行号。复测不再把双审/支付写成本期范围。 |
 | T-121 | 真实设计 evidence matrix / cross-root ToolChoiceQueue | 已完成并真实复测 | P10 | 新增 `design_evidence.py`，跨 root 只读设计任务必须在主 workspace 和用户指定代码目录各成功读取至少一份源码；ToolChoiceQueue 逐 root 约束工具，final steerer 复核 canonical path 覆盖。覆盖后限制补读并在 deadline 接近时预留最终回答时间。session `20260710T032336652934Z` 127 秒、19 次只读工具、0 错误，以 final 收束。 |
 | T-122 | 写入后验证时序与 Reviewer 事实硬化 | 已完成并回归 | P10 | `verification_timeline.py` 让 Queue、CompletionAudit 和 Patch Reviewer 只承认最后一次真实写入后的 `run_tests` / `git_diff`；Reviewer 在 diff 截断前保存 changed/test/API metadata；状态问句归为只读；调用方证据排除 useless/无关结果。 |
+| T-123 | P0a ToolLoop steering registry | 已完成并回归 | P10 | 新增 `steering/tool_loop.py` 与 `steering/termination.py`，用统一的显式优先级迁移重复调用、空 search/LSP、重复 read、语义路径探索的 soft steering/hard stop；设计 evidence coverage 迁入 `design_evidence.py`。`agent.py` 从 3875 降至 3607 行，291 个 unittest 通过；P0b `RunContext` / `RunStats` 仍未完成。 |
 
 ## 风险清单
 
@@ -365,7 +366,7 @@
 | R-031 | 真实实现任务可能产生无关 patch | 已缓解，继续观察 | T-072 session `20260709T013441841983Z` 读取正确需求后漂移到 Nacos/Redis 配置，并把无关注释当成实现锚点；这说明 dry_run/hash 校验只能保证位置正确，不能保证业务相关。 | 已完成 T-073：真实写入前要求目标文件已读；代码实现任务修改部署/配置类低相关路径会被拦截或要求用户确认；workspace-root evidence 进入 Evidence Ledger；`git_diff` 增加 reviewer 提示。T-073 复跑未再触碰 `deployMessage/nacos`。 |
 | R-032 | 真实实现可能退化成低价值注释 patch | 已缓解并复跑 | T-073 复跑 session `20260709T021349259159Z` 中模型定位到相关 Java 文件，但因 `write_file` 被 deny，最终只给 DTO 字段补 JavaDoc；这不能算真实业务实现。 | T-074 已补 implementation-quality reviewer：本轮代码 diff 若只有注释/文档改动，`git_diff` 会提醒不能声称行为、校验、解析或测试覆盖变化。复跑 session `20260709T025706579604Z` 没有再做 comment-only patch，而是在当前仓库缺目标实现时停止说明。 |
 | R-053 | 源码证据型最终回答可能误报数字/状态码 | 已关闭 MVP 版，继续压测 | T-105 中模型读到 `PreOrderStatusEnum.MAKING(2)` / `MADE(3)`，最终却误报为 `50/60`。 | 参考 OMP runtime evidence / steering：已新增 source-grounded numeric final steerer，最终回答涉及枚举、状态码、接口、字段等数字事实且与已读源码不一致时，会强制无工具重写。 |
-| R-054 | `agent.py` steering/guard 继续膨胀 | 已开始缓解，继续拆 | review 指出 compaction 已拆出，但 final/read-only/semantic guard 继续堆在 `agent.py`。 | 已完成 FinalAnswer Steerer 第一块抽象；后续继续拆 Evidence Ledger、run collector、startup context、memory consolidation 和 semantic exploration steerer。 |
+| R-054 | `agent.py` steering/guard 继续膨胀 | 已完成 P0a，P0b 进行中 | review 指出 compaction 已拆出，但 final/read-only/semantic guard 继续堆在 `agent.py`。 | T-106 已抽 FinalAnswer Steerer；T-123 已抽 ToolLoop steering/termination 与 design-evidence coverage，主文件从 3875 降至 3607 行。下一步收拢 run state 到 `RunContext` 并迁出 `RunStats`；在此之前禁止在主文件新增 feature guard。 |
 | R-055 | 无效 tool_call 参数会污染下一轮 provider 请求 | 已关闭 MVP 版 | T-108 首轮复测中百炼拒绝历史消息：无效工具调用的 `function.arguments` 为空或畸形 JSON，导致下一轮 HTTP 400。 | 已在 assistant message 入历史前把工具名、id、arguments 统一归一为 provider-safe JSON object 字符串；空/畸形参数写入 `_invalid_arguments`，并补回归测试。 |
 | R-056 | read_file 行号会干扰源码数字事实比对 | 已关闭 MVP 版 | T-108 窄复测中，模型把枚举状态误报成 1/3/5；numeric guard 因 read_file 内容含 `1:`、`3:`、`5:` 行号而误以为这些数字有源码证据。 | source numeric guard 比对前会剥离 read_file 行号前缀，再判断状态码/枚举值是否出现在源码内容中；新增回归测试覆盖错误数字刚好等于行号的情况。 |
 | R-057 | provider 的工具参数方言导致有效任务无法进入写入/验证闭环 | 已缓解，继续观察 | T-115 真实复测已跑通源码、测试、定向测试和 diff；安全的 scalar alias 已集中归一。 | 只在 ToolRegistry 映射明确已观测的 scalar alias，原 schema、hash、approval 和 anchored patch 校验仍生效；raw diff / bulk todo 继续拒绝并由 T-116 处理。 |
@@ -434,10 +435,10 @@
 | 项目 | 结论 | 依据 |
 |---|---|---|
 | 主链路 | 通过 | 百炼真实小改复测已跑通 todo、dry_run、apply_patch、session allow、rollback、run_tests、git_diff。 |
-| 测试 | 通过 | P5 收口时 90 个 unittest、compileall、xlsx 检查、diff check 均通过；P10 当前代码已跑通 287 个 unittest。 |
+| 测试 | 通过 | P5 收口时 90 个 unittest、compileall、xlsx 检查、diff check 均通过；P10 当前代码已跑通 291 个 unittest。 |
 | 日用入口 | 通过 | README 已补只读分析和小改任务命令模板。 |
 | 开放风险 | 可接受 | shell 仍非沙箱、prompt injection 仍需靠审批和封闭 VM；provider/model 专用 tokenizer、输出 reserve、managed skills、完整 reviewer 和完整 OMP ToolChoiceQueue 继续后置评估。 |
-| 下一阶段 | P10 Intelligence Runtime 继续收束 | T-109~T-121 已补 RequirementContract、CompletionAudit、MiniToolChoiceQueue、Planner/Explore、post-diff Patch Reviewer、no-edit evidence gate、ToolRegistry 参数归一、preview contract、numeric guard scope、literal 分类、实现任务 final-guard scope、pinned requirement evidence 和 cross-root evidence matrix；下一步进入边界明确的真实需求设计和小改验证。 |
+| 下一阶段 | P10 Intelligence Runtime 继续收束 | T-109~T-122 已补 RequirementContract、CompletionAudit、MiniToolChoiceQueue、Planner/Explore、post-diff Patch Reviewer、no-edit evidence gate、ToolRegistry 参数归一、preview contract、numeric guard scope、literal 分类、实现任务 final-guard scope、pinned requirement evidence 和 cross-root evidence matrix；T-123 已抽 ToolLoop registry。下一步先完成 P0b `RunContext` / `RunStats`，再进入边界明确的真实需求设计和小改验证。 |
 
 ## 推荐工作流
 

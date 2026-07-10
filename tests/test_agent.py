@@ -12,6 +12,7 @@ from local_agent.agent import AgentRuntime
 from local_agent.compaction import resolve_compaction_threshold_chars
 from local_agent.compaction import resolve_compaction_threshold_tokens
 from local_agent.config import AgentConfig
+from local_agent.design_evidence import DesignEvidenceCoverageSteerer
 from local_agent.protocol.events import ListEventSink
 from local_agent.requirement_evidence import RequirementEvidence
 from local_agent.steering.final_answer import SourceEvidence
@@ -1976,66 +1977,54 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertFalse(decision.force_final_answer_without_tools)
 
     def test_design_evidence_coverage_has_bounded_followup_before_forced_final(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            workspace = Path(tmp).resolve()
-            config = AgentConfig(
-                provider="openai-compatible",
-                api_base_url="https://example.invalid/v1",
-                api_key="token",
-                model="model",
-                workspace=workspace,
-                approval_mode="yolo",
-            )
-            runtime = AgentRuntime(config, show_tool_logs=False)
-            backend = "/workspace/backend"
-            frontend = "/workspace/frontend"
-            runtime._design_evidence_roots = (backend, frontend)
-            runtime._tool_choice_results = [
-                ToolResultSummary("read_file", path=f"{backend}/src/App.java"),
-                ToolResultSummary("read_file", path=f"{frontend}/src/views/List.vue"),
-            ]
-            complete = ToolChoiceDecision(False, frozenset({"read_file"}), "complete")
+        backend = "/workspace/backend"
+        frontend = "/workspace/frontend"
+        steerer = DesignEvidenceCoverageSteerer()
+        steerer.reset((backend, frontend))
+        source_paths = [f"{backend}/src/App.java", f"{frontend}/src/views/List.vue"]
 
-            self.assertFalse(runtime._steer_after_design_evidence_coverage(complete))
-            runtime._tool_choice_results.extend(
-                ToolResultSummary("search_code", path=backend) for _ in range(6)
-            )
+        covered = steerer.observe(
+            queue_requires_steering=False,
+            read_paths=source_paths,
+            tool_count=2,
+            deadline=None,
+            request_summary="",
+        )
+        final = steerer.observe(
+            queue_requires_steering=False,
+            read_paths=source_paths,
+            tool_count=8,
+            deadline=None,
+            request_summary="",
+        )
 
-            self.assertTrue(runtime._steer_after_design_evidence_coverage(complete))
-
-        self.assertTrue(runtime._force_final_answer_without_tools)
-        self.assertEqual(runtime._design_evidence_final_steers, 1)
+        self.assertIsNotNone(covered)
+        self.assertEqual(covered.kind, "design_evidence_covered")
+        self.assertIsNone(covered.message)
+        self.assertIsNotNone(final)
+        self.assertEqual(final.kind, "design_evidence_final")
+        self.assertTrue(final.force_final_answer_without_tools)
+        self.assertEqual(steerer.final_steers, 1)
 
     def test_design_evidence_coverage_reserves_time_for_final_answer(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            workspace = Path(tmp).resolve()
-            config = AgentConfig(
-                provider="openai-compatible",
-                api_base_url="https://example.invalid/v1",
-                api_key="token",
-                model="model",
-                workspace=workspace,
-                approval_mode="yolo",
-            )
-            runtime = AgentRuntime(config, show_tool_logs=False)
-            backend = "/workspace/backend"
-            frontend = "/workspace/frontend"
-            runtime._design_evidence_roots = (backend, frontend)
-            runtime._tool_choice_results = [
-                ToolResultSummary("read_file", path=f"{backend}/src/App.java"),
-                ToolResultSummary("read_file", path=f"{frontend}/src/views/List.vue"),
-            ]
-            complete = ToolChoiceDecision(False, frozenset({"read_file"}), "complete")
+        backend = "/workspace/backend"
+        frontend = "/workspace/frontend"
+        steerer = DesignEvidenceCoverageSteerer()
+        steerer.reset((backend, frontend))
 
-            self.assertTrue(
-                runtime._steer_after_design_evidence_coverage(
-                    complete,
-                    deadline=time.monotonic() + 1,
-                )
-            )
+        decision = steerer.observe(
+            queue_requires_steering=False,
+            read_paths=[f"{backend}/src/App.java", f"{frontend}/src/views/List.vue"],
+            tool_count=2,
+            deadline=time.monotonic() + 1,
+            request_summary="",
+        )
 
-        self.assertTrue(runtime._force_final_answer_without_tools)
-        self.assertEqual(runtime._design_evidence_final_steers, 1)
+        self.assertIsNotNone(decision)
+        self.assertEqual(decision.kind, "design_evidence_final")
+        self.assertTrue(decision.force_final_answer_without_tools)
+        self.assertEqual(decision.preceding_events[0][0], "design_evidence_covered")
+        self.assertEqual(steerer.final_steers, 1)
 
     def test_read_requirement_document_is_pinned_into_runtime_context(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
