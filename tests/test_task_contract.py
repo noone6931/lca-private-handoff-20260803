@@ -34,6 +34,13 @@ class RequirementContractTests(unittest.TestCase):
         self.assertTrue(any("modified files" in item for item in contract.evidence_requirements))
         self.assertTrue(any("test command" in item for item in contract.verification_requirements))
 
+    def test_implementation_that_mentions_a_read_only_literal_is_not_misclassified(self) -> None:
+        contract = generate_requirement_contract(
+            "请在任务分类器中添加精确标记‘只读核实’，并补充单元测试，断言 task_kind is read-only。"
+        )
+
+        self.assertEqual(contract.task_kind, "code-implementation")
+
     def test_service_fee_settlement_design_contract_is_clarification_first(self) -> None:
         contract = generate_requirement_contract("帮我设计服务费结算需求：下单、退款、商家分账都要考虑。")
 

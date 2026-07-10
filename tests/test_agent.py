@@ -13,6 +13,10 @@ from local_agent.compaction import resolve_compaction_threshold_tokens
 from local_agent.config import AgentConfig
 from local_agent.protocol.events import ListEventSink
 from local_agent.steering.final_answer import SourceEvidence
+from local_agent.steering.final_answer import FinalAnswerContext
+from local_agent.steering.final_answer import SourceEvidenceFalseNegativeSteerer
+from local_agent.steering.final_answer import request_needs_source_grounded_numeric_facts
+from local_agent.steering.final_answer import source_numeric_issues
 from local_agent.task_contract import generate_requirement_contract
 from local_agent.tool_choice_queue import ToolResultSummary
 from local_agent.tools.base import ToolResult
@@ -1870,6 +1874,26 @@ class AgentRuntimeTests(unittest.TestCase):
             {"source_evidence_false_negative": 1},
         )
 
+    def test_source_evidence_false_negative_gate_does_not_preempt_implementation_repair(self) -> None:
+        contract = generate_requirement_contract("请实现用户注册接口邮箱唯一性校验，并补充单元测试。")
+        context = FinalAnswerContext(
+            request="请实现用户注册接口邮箱唯一性校验，并补充单元测试。",
+            content="未找到完整证据，当前测试 patch 尚未完成。",
+            messages=[],
+            run_start_index=0,
+            requirement_contract=contract,
+            tool_results=[],
+            read_file_evidence_paths=["src/UserService.java"],
+            source_evidence=[SourceEvidence("src/UserService.java", "class UserService {}")],
+            open_todos=[],
+            is_code_implementation_request=True,
+            steer_counts={},
+        )
+
+        decision = SourceEvidenceFalseNegativeSteerer(max_steers=2).decide(context)
+
+        self.assertIsNone(decision)
+
     def test_successful_write_invalidates_only_stale_source_snapshot_for_that_path(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp).resolve()
@@ -1898,6 +1922,61 @@ class AgentRuntimeTests(unittest.TestCase):
 
         self.assertEqual(runtime._read_file_evidence_paths, ["src/UserService.java", "src/Other.java"])
         self.assertEqual(runtime._source_evidence, [SourceEvidence("src/Other.java", "stable implementation")])
+
+    def test_preview_contract_requires_matching_successful_preview_before_real_patch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            target = workspace / "src" / "UserService.java"
+            target.parent.mkdir()
+            target.write_text("class UserService {}\n", encoding="utf-8")
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=workspace,
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+            )
+            runtime = AgentRuntime(config, show_tool_logs=False)
+            runtime._current_user_request = "修改前必须 apply_patch dry_run=true 预览，再真正写入。"
+            args = {
+                "path": "src/UserService.java",
+                "tag": "tag",
+                "start_line": 1,
+                "end_line": 1,
+                "old_text": "class UserService {}\n",
+                "new_text": "class UserService { void normalize() {} }\n",
+            }
+
+            denied = runtime._patch_preview_denial_reason(args, target)
+            runtime._record_successful_patch_preview("apply_patch", {**args, "dry_run": True}, ToolResult("preview"))
+            allowed = runtime._patch_preview_denial_reason(args, target)
+
+        self.assertIn("Preview contract", denied or "")
+        self.assertIsNone(allowed)
+
+    def test_source_numeric_guard_ignores_diff_and_test_observation_numbers(self) -> None:
+        evidence = [SourceEvidence("src/Status.java", "public enum Status { ACTIVE(2) }")]
+
+        diff_issues = source_numeric_issues("src/Status.java: +8 -0, 2 hunks", evidence)
+        test_issues = source_numeric_issues("Ran 6 tests in 0.001s; [exit_code] 0", evidence)
+        source_issues = source_numeric_issues("Status enum value is 3 in src/Status.java", evidence)
+
+        self.assertEqual(diff_issues, [])
+        self.assertEqual(test_issues, [])
+        self.assertEqual(len(source_issues), 1)
+
+    def test_source_numeric_guard_does_not_activate_for_patch_result_line_numbers(self) -> None:
+        content = "apply_patch 修改 src/local_agent/task_contract.py 第 33 行，tag: 17fc0b2c。"
+
+        active = request_needs_source_grounded_numeric_facts(
+            "请添加精确标记‘只读核实’，并补充单元测试。",
+            content,
+        )
+
+        self.assertFalse(active)
 
     def test_evidence_ledger_is_sent_to_provider_context_after_tool_results(self) -> None:
         _ReadFileThenFinalClient.calls = []

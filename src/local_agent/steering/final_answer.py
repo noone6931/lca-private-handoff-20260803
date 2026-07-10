@@ -368,6 +368,8 @@ class SourceGroundedNumericSteerer:
     def decide(self, context: FinalAnswerContext) -> SteeringDecision | None:
         if context.steer_counts.get(self.kind, 0) >= self._max_steers:
             return None
+        if context.requirement_contract is not None and context.requirement_contract.task_kind != "read-only":
+            return None
         if not context.source_evidence:
             return None
         if not request_needs_source_grounded_numeric_facts(context.request, context.content):
@@ -722,17 +724,21 @@ def request_needs_source_grounded_numeric_facts(request: str | None, content: st
     lowered_request = (request or "").lower()
     if not any(char.isdigit() for char in content):
         return False
+    if not (_contains_numeric_fact_marker(lowered_request) or _contains_numeric_fact_marker(content.lower())):
+        return False
     if any(keyword.lower() in lowered_request for keyword in EVIDENCE_REQUEST_KEYWORDS):
         return True
     if any(keyword.lower() in lowered_request for keyword in IMPLEMENTATION_EVIDENCE_REQUEST_KEYWORDS):
         return True
-    return any(term in content for term in {"Enum", "Status", "状态", "code", "接口", "字段"})
+    return _contains_numeric_fact_marker(content.lower())
 
 
 def source_numeric_issues(content: str, evidence: list[SourceEvidence]) -> list[dict[str, Any]]:
     issues: list[dict[str, Any]] = []
     evidence_by_key = _evidence_by_key(evidence)
     for claim in _numeric_claim_lines(content):
+        if _is_tool_observation_numeric_claim(claim):
+            continue
         claim_numbers = _number_tokens(claim)
         if not claim_numbers:
             continue
@@ -814,6 +820,28 @@ def _looks_like_numeric_table_row(line: str) -> bool:
         return False
     cells = [cell.strip() for cell in line.strip("|").split("|")]
     return any(re.fullmatch(r"-?\d+", cell) for cell in cells)
+
+
+def _is_tool_observation_numeric_claim(claim: str) -> bool:
+    lowered = claim.lower()
+    if any(
+        marker in lowered
+        for marker in {"git_diff", "run_tests", "apply_patch", "dry_run", "[exit_code]", "[diff summary]", "hunk", "tag:"}
+    ):
+        return True
+    if "@@" in claim and re.search(r"@@\s*-?\d+(?:,\d+)?\s+\+?\d+(?:,\d+)?\s*@@", claim):
+        return True
+    if re.search(r"[+-]\d+\s+[+-]\d+", claim) and re.search(r"\.(?:java|py|ts|tsx|js|jsx|vue|xml|md)\b", lowered):
+        return True
+    if re.search(r"\bran\s+\d+\s+tests?\b", lowered) or re.search(r"\b\d+\s*(?:项)?测试\b", claim):
+        return True
+    return False
+
+
+def _contains_numeric_fact_marker(text: str) -> bool:
+    if any(marker in text for marker in {"状态码", "状态", "枚举", "接口", "字段", "常量", "enum", "status"}):
+        return True
+    return bool(re.search(r"\bcode\b", text))
 
 
 def _number_tokens(content: str) -> set[str]:

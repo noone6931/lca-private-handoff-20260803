@@ -1982,6 +1982,32 @@ class ToolTests(unittest.TestCase):
         self.assertTrue(result.is_error)
         self.assertIn("Conflicting compatibility arguments", result.content)
 
+    def test_apply_patch_preview_checker_blocks_real_write_but_not_preview(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            target = workspace / "README.md"
+            target.write_text("old value\n", encoding="utf-8")
+            args = {
+                "path": "README.md",
+                "tag": hash_text("old value\n"),
+                "start_line": 1,
+                "end_line": 1,
+                "old_text": "old value\n",
+                "new_text": "new value\n",
+            }
+            context = ToolContext(
+                workspace=workspace,
+                approval_mode="yolo",
+                patch_preview_checker=lambda patch_args, path: "Preview contract: preview required.",
+            )
+
+            preview = patch_file({**args, "dry_run": True}, context)
+            real_write = patch_file(args, context)
+
+        self.assertFalse(preview.is_error)
+        self.assertTrue(real_write.is_error)
+        self.assertIn("Preview contract", real_write.content)
+
     def test_registry_normalizes_cmd_for_run_tests_only(self) -> None:
         received: list[dict[str, str]] = []
         registry = ToolRegistry(

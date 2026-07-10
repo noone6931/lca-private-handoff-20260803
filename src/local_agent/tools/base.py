@@ -33,6 +33,7 @@ class ToolContext:
     git_baseline: dict[str, Any] | None = None
     current_user_request: str | None = None
     patch_relevance_checker: Callable[[str, Path], str | None] | None = None
+    patch_preview_checker: Callable[[dict[str, Any], Path], str | None] | None = None
     event_callback: Callable[[str, dict[str, Any]], None] | None = None
 
 

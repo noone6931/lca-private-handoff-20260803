@@ -58,6 +58,7 @@ from .steering.final_answer import SteeringDecision
 from .task_contract import generate_requirement_contract
 from .task_contract import render_contract_context
 from .task_contract import RequirementContract
+from .tools.argument_normalization import normalize_compatibility_arguments
 from .tools import create_default_registry
 from .tools.base import ToolContext
 from .tools.base import ToolResult
@@ -320,6 +321,7 @@ class AgentRuntime:
         self._patch_reviewer_steers = 0
         self._read_file_evidence_paths: list[str] = []
         self._source_evidence: list[SourceEvidence] = []
+        self._successful_patch_preview_signatures: set[str] = set()
         self._strong_relevance_paths: list[str] = []
         self._evidence_records: list[EvidenceRecord] = []
         self._workspace_root_evidence_recorded = False
@@ -414,6 +416,7 @@ class AgentRuntime:
         self._completion_audit_steers = 0
         self._patch_reviewer_steers = 0
         self._source_evidence = []
+        self._successful_patch_preview_signatures = set()
         self._temporary_tool_allowlist = None
         self._tool_choice_allowed_tool_names = None
         self._tool_choice_steering_signatures = set()
@@ -449,6 +452,7 @@ class AgentRuntime:
             git_baseline=git_baseline,
             current_user_request=prompt,
             patch_relevance_checker=self._patch_relevance_denial_reason,
+            patch_preview_checker=self._patch_preview_denial_reason,
         )
 
         step = 1
@@ -538,6 +542,7 @@ class AgentRuntime:
                     useless=result.useless,
                 )
                 self._record_tool_choice_result(name, arguments, result)
+                self._record_successful_patch_preview(name, arguments, result)
                 self._record_read_file_evidence(name, arguments, result)
                 self._record_tool_evidence(name, arguments, result)
                 self._invalidate_stale_source_evidence_after_write(name, arguments, result)
@@ -1572,6 +1577,46 @@ class AgentRuntime:
                 "still allowed."
             )
         return None
+
+    def _patch_preview_denial_reason(self, args: dict[str, Any], resolved_path: Path) -> str | None:
+        if not _request_requires_patch_preview(self._current_user_request):
+            return None
+        signature = _patch_preview_signature(args, resolved_path)
+        if signature in self._successful_patch_preview_signatures:
+            return None
+        return (
+            "Preview contract: this task explicitly requires a patch preview before a real write. "
+            "Call apply_patch first with the identical path, tag, line range, old_text, new_text, and mode plus "
+            "dry_run=true. The preview must succeed before applying this patch."
+        )
+
+    def _record_successful_patch_preview(
+        self,
+        name: str,
+        arguments: str | dict[str, Any],
+        result: ToolResult,
+    ) -> None:
+        if name != "apply_patch" or result.is_error:
+            return
+        parsed = _parse_tool_arguments(arguments)
+        try:
+            normalized, _ = normalize_compatibility_arguments(name, parsed)
+        except ValueError:
+            return
+        if not normalized.get("dry_run"):
+            return
+        raw_path = normalized.get("path")
+        if not isinstance(raw_path, str) or not raw_path.strip():
+            return
+        try:
+            resolved_path = resolve_workspace_path(
+                self._config.workspace,
+                raw_path,
+                self._config.allowed_dirs,
+            )
+        except PatchError:
+            return
+        self._successful_patch_preview_signatures.add(_patch_preview_signature(normalized, resolved_path))
 
     def _read_file_evidence_summary(self) -> str:
         if not self._read_file_evidence_paths:
@@ -3447,6 +3492,29 @@ def _tool_choice_argument_path(arguments: str | dict[str, Any]) -> str | None:
         return None
     path = parsed.get("path")
     return str(path) if path is not None else None
+
+
+def _request_requires_patch_preview(request: str | None) -> bool:
+    lowered = (request or "").lower()
+    if any(marker in lowered for marker in {"skip preview", "skip dry_run", "跳过预览", "无需预览"}):
+        return False
+    if "dry_run" in lowered or "dry run" in lowered:
+        return True
+    preview_markers = {"必须预览", "先预览", "预览后", "预览 diff", "预览补丁", "patch preview"}
+    return any(marker in lowered for marker in preview_markers)
+
+
+def _patch_preview_signature(args: dict[str, Any], resolved_path: Path) -> str:
+    payload = {
+        "path": str(resolved_path),
+        "tag": args.get("tag"),
+        "start_line": args.get("start_line"),
+        "end_line": args.get("end_line"),
+        "old_text": args.get("old_text"),
+        "new_text": args.get("new_text"),
+        "mode": args.get("mode") or "replace",
+    }
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
 
 
 def _search_pattern_key(name: str, arguments: str | dict[str, Any]) -> str | None:

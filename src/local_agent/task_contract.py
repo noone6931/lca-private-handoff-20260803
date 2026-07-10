@@ -36,6 +36,18 @@ _READ_ONLY_MARKERS = (
     "no changes",
 )
 
+_EXPLICIT_READ_ONLY_DIRECTIVES = (
+    "不要修改",
+    "不修改",
+    "不改代码",
+    "不用改",
+    "无需修改",
+    "只分析",
+    "只确认",
+    "do not edit",
+    "no changes",
+)
+
 _QUESTION_MARKERS = (
     "?",
     "？",
@@ -234,15 +246,16 @@ def classify_task_kind(user_prompt: str) -> TaskKind:
 
     lower = prompt.lower()
     has_read_only_marker = _contains_any(lower, _READ_ONLY_MARKERS)
+    has_explicit_read_only_directive = _contains_any(lower, _EXPLICIT_READ_ONLY_DIRECTIVES)
     has_question_marker = _contains_any(lower, _QUESTION_MARKERS)
     has_code_evidence = _contains_any(lower, _CODE_EVIDENCE_MARKERS)
     has_design_marker = _contains_any(lower, _DESIGN_MARKERS)
     has_implementation_intent = _has_implementation_intent(lower)
 
+    if has_implementation_intent and not has_explicit_read_only_directive:
+        return "code-implementation"
     if has_read_only_marker or (has_question_marker and has_code_evidence and not has_implementation_intent):
         return "read-only"
-    if has_implementation_intent:
-        return "code-implementation"
     if _is_short_prompt(prompt) or has_design_marker:
         return "unclear"
     return "unclear"

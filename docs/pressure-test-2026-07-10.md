@@ -29,11 +29,11 @@
 - `tests/test_agent.py` 覆盖 post-diff Reviewer 在模型尝试最终回答前返回 `requested_test_missing`。
 - `tests/test_completion_audit.py` 覆盖“无工具阻断证据的 blocked/no-edit 必须失败”和“搜索未命中可作为真实 no-edit 证据”。
 - `tests/test_patch_reviewer.py` 覆盖“加测试/加一个测试”视为显式测试请求，且没有测试 diff 时必须产生 `requested_test_missing`。
-- 本轮本地完整验证：`PYTHONPATH=src python3 -m unittest discover -s tests`，257 tests OK；`python3 -m compileall src tests` 与 `git diff --check` 通过。
+- 本轮本地完整验证：`PYTHONPATH=src python3 -m unittest discover -s tests`，267 tests OK；`python3 -m compileall src tests` 与 `git diff --check` 通过。
 
 ## 下一步
 
-T-115 已完成受限 tool-argument normalization，并已在不修改 LCA 自身 runtime 的临时项目中重跑。后续重点转为 T-116 的 preview contract 和 T-117 的 numeric guard scope。
+T-119 已完成短小真实写入复测。下一步不是放宽 anchored patch 或把 raw diff 自动执行，而是基于失败样本降低 provider 的参数试错次数，重点观察 PT-039 的效率问题。
 
 ## T-115 复测（20260710）
 
@@ -51,3 +51,33 @@ T-115 已完成受限 tool-argument normalization，并已在不修改 LCA 自�
 | PT-038 | source-grounded numeric steerer 会把 diff hunk/增删统计/测试计数当成源码枚举数字，导致最终回答额外重写。 | T-117 将区分“源码状态/枚举/接口数字事实”和“git/test 工具观测数字”；后者应由 tool evidence 支持，不进入 source numeric 比对。 | 开放，P1。 |
 
 T-115 的结论不是“百炼已经完全高效”，而是：安全可逆的 provider 方言已在单一协议边界收敛；不能安全解释的结构化误调用仍明确失败并进入下一轮调度改进。
+
+## T-116/T-117/T-118 复测（20260710）
+
+| Session / 测试 | 事实 | 结论 |
+|---|---|---|
+| `20260710T021752034260Z` | `task_contract.py` 的完整 `dry_run="True"` anchored preview 成功，随后同锚点真实 patch 成功；测试文件锚点多次不匹配，任务未完成。14 次工具调用、8 次错误。 | T-116 preview contract 能允许“预览成功后同锚点写入”，但模型的锚点纠错仍不稳定。 |
+| `20260710T022049107585Z` | 未带 `dry_run` 的 real patch 被 Preview contract 拒绝，模型重复同一调用后被 duplicate guard 收束；7 次调用、5 次错误，无 workspace write。 | T-116 安全边界有效：模型不能越过 preview 直接写入。但它收到错误后尚未稳定改用 canonical preview 调用。 |
+| 本地回归 | `source_grounded_numeric` 已不再把 `apply_patch`、tag、diff/test 统计当作源码数字事实；真实 session `20260710T022049107585Z` 的 steering counts 未包含该 guard。 | T-117 MVP 修复有效。 |
+| 本地回归 | 实现任务即使正文含待写入的 `‘只读核实’` 和断言文本 `read-only`，仍会归为 `code-implementation`。 | T-118 修复 quoted/read-only literal 误分类。 |
+
+| ID | 问题 | 措施 | 状态 |
+|---|---|---|---|
+| PT-039 | preview contract 错误能阻止直接写入，但当前百炼模型常重复原调用而非改为 dry-run。 | 保持 hard pre-tool gate；下轮只基于新的失败样本改善 schema error / active-loop feedback，不降低 gate。 | 已缓解，继续观察。 |
+| PT-040 | 实现任务中的待写入文本或测试断言包含 `只读` / `read-only` 时，deterministic classifier 曾被误导为 read-only。 | T-118 让明确实现意图优先；只有“不要修改/do not edit/no changes”等真正禁止修改的指令才覆盖实现意图。 | 已修复，单元回归覆盖。 |
+| PT-041 | source-backed final guard 曾可能在未完成实现任务中抢占修复空间。 | T-119 将源码数字/证据核验类 final guard 限定为 `read-only` contract；实现任务保留 CompletionAudit、Patch Reviewer 和 ToolChoiceQueue 的受控修复链路。 | 已关闭 MVP，真实复测通过。 |
+
+## T-119 真实写入复测（20260710）
+
+临时 Git worktree 会话 `20260710T022516812575Z` 使用明确的实现任务：在两个文件中新增 `只读核实` 标记及其测试；每个文件都要求先 successful `apply_patch dry_run=true`，再以相同 anchored 参数真实写入，最后运行定向测试和 `git_diff`。
+
+| 观察 | 事实 | 结论 |
+|---|---|---|
+| 实现任务分类 | prompt 同时出现待写入的 `只读核实`、断言 `read-only` 和 “只读核实”业务句子，但 runtime 归类为 `code-implementation`。 | T-118 在真实 provider 调用下成立。 |
+| 修复控制流 | 两个文件的初始 patch 参数均有失败；模型仍继续读/修正锚点，完成每个文件的 preview 和同锚点写入，随后运行 `tests.test_task_contract`（6 tests OK）和 `git_diff`（2 files, `+8/-0`）。 | T-119 的 guard scope 修正有效：实现任务没有被 source-backed final guard 过早转入无工具最终回答。 |
+| 运行成本 | 14 次工具调用中有 6 次参数/锚点错误，`apply_patch` 调用 10 次；run summary 的 `steering_counts` 为空。 | 安全与完成性已验证，但百炼对 anchored patch schema 的一次命中率仍不理想；不应为此自动执行 raw diff 或放松 preview gate。 |
+
+| ID | 问题 | 措施 | 状态 |
+|---|---|---|---|
+| PT-041 | `SourceEvidenceFalseNegative` 与源码数字/证据类 final guard 的适用边界需要明确。 | `SourceEvidenceFalseNegative` 仍只负责“无写入时”的 todo/git 收尾卫生；源码数字/证据核验类 final guard 仅用于 `read-only` contract。 | 已关闭 MVP，真实复测通过。 |
+| PT-042 | 百炼在 anchored patch 上仍会尝试不完整参数或整块式 patch，导致明显试错成本。 | 保持 ToolRegistry 的有限 scalar alias 归一、明确 schema 错误和 hard preview gate；不自动拆解 raw diff/bulk todo。后续仅在出现安全等价的新样本时扩展兼容。 | 开放，P1。 |

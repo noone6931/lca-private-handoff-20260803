@@ -158,6 +158,10 @@ def patch_file(args: dict[str, Any], context: ToolContext) -> ToolResult:
         return ToolResult(str(exc), is_error=True)
     if not path.exists():
         return ToolResult(f"Target file does not exist: {args['path']}", is_error=True)
+    if not args.get("dry_run") and context.patch_preview_checker is not None:
+        denial_reason = context.patch_preview_checker(args, path)
+        if denial_reason:
+            return ToolResult(denial_reason, is_error=True)
     if not args.get("dry_run") and context.patch_relevance_checker is not None:
         denial_reason = context.patch_relevance_checker(str(args["path"]), path)
         if denial_reason:
