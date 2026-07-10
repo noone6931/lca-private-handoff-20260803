@@ -86,6 +86,23 @@ class ToolChoiceQueueTests(unittest.TestCase):
         self.assertNotIn("list_files", decision.allowed_tool_names)
         self.assertNotIn("search_code", decision.allowed_tool_names)
 
+    def test_scoped_docs_exclusion_keeps_autonomous_candidate_delivery_enabled(self) -> None:
+        decision = evaluate_tool_choice_state(
+            task_kind="code-implementation",
+            prompt=(
+                "请自行挑选一个极小、低风险的测试改进；随后必须 apply_patch dry_run=true 预览、"
+                "apply_patch 真正写入、run_tests、git_diff。不要修改 README 或 docs。"
+            ),
+            tool_results=[
+                ToolResultSummary("read_file", "class TerminalIo {}", path="src/local_agent/terminal_io.py"),
+                ToolResultSummary("read_file", "class TerminalIoTests {}", path="tests/test_terminal_io.py"),
+            ],
+        )
+
+        self.assertTrue(decision.steering_required)
+        self.assertEqual(decision.rule_id, "autonomous_small_change_candidate")
+        self.assertEqual(decision.allowed_tool_names, CANDIDATE_DELIVERY_TOOL_NAMES)
+
     def test_candidate_preview_error_allows_exact_read_remediation(self) -> None:
         decision = evaluate_tool_choice_state(
             task_kind="code-implementation",

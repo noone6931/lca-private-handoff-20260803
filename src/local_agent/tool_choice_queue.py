@@ -469,6 +469,12 @@ def _is_read_only_task(task_kind: str, prompt: str) -> bool:
     kind = _compact(task_kind)
     if kind in {"analysis", "question", "read_only", "readonly", "review"}:
         return True
+    # TaskContract has already distinguished a global read-only request from a
+    # local exclusion such as "do not modify README or docs". Do not reopen
+    # that classification here, or a scoped exclusion can wrongly disable the
+    # implementation workflow.
+    if kind in {"bugfix", "code_edit", "code_implementation", "edit", "feature", "fix", "implementation", "implement"}:
+        return False
     text = _lower_text(prompt)
     return any(keyword in text for keyword in READ_ONLY_KEYWORDS)
 
