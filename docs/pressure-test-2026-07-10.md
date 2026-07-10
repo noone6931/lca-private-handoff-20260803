@@ -125,3 +125,14 @@ T-115 的结论不是“百炼已经完全高效”，而是：安全可逆的 p
 | 主循环体积 | `src/local_agent/agent.py` 从 3875 行降至 3607 行。 | 本地完整验证：291 个 unittest、`compileall`、`git diff --check` 通过。 |
 
 下一步是 P0b：用 `RunContext` 收拢 `AgentRuntime` 的 run 级可变状态，并迁出 `RunStats`。在 P0b 完成前，不在 `agent.py` 增加新的 feature guard；之后再做真实小改端到端复测，观察百炼工具错误率是否继续下降。
+
+## T-124 P0b RunCollector 与跨 Run Evidence Isolation（20260710）
+
+小红的 P0b 只读审查发现一个真实连续任务错误：`read_file` 证据、Evidence Ledger、强相关路径和 “in this run” 的范围读取计数此前只在 Runtime 构造时初始化，终端复用同一个 Runtime 跑第二个任务时会错误带入上一轮状态。
+
+| 问题 | 措施 | 验证 |
+|---|---|---|
+| Run summary 仍混在 `AgentRuntime` | 新增 `run_collector.py`，承接 `RunStats`、LLM/tool/compaction 计数、summary mode 与 guard/steering delta 汇总。Runtime 只提供观测值并负责 session/event 投递。 | 独立单测覆盖计数、delta 和新 run 重置；既有 RunSummary 事件回归通过。 |
+| 连续任务的证据污染 | 每个新 run 清空 read evidence、source/pinned evidence、preview、relevance、Evidence Ledger、workspace-root 标记和 read range counts。 | 新增同一 Runtime 的跨 run 回归：旧文件证据与范围计数不会进入下一轮 ledger 或 guard。 |
+
+本项没有把 session 级审批、消息历史、summary cache 或 recent guard keys 清掉；这些仍是有意保留的连续会话状态。完整 `RunContext` / `SessionGuardState` 拆分将在下一步先明确语义后进行。

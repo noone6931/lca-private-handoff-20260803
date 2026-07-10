@@ -1,0 +1,56 @@
+from __future__ import annotations
+
+import unittest
+from unittest.mock import patch
+
+from local_agent.run_collector import RunCollector
+
+
+class RunCollectorTests(unittest.TestCase):
+    def test_collects_counts_and_calculates_deltas_from_run_start(self) -> None:
+        collector = RunCollector()
+        collector.start(
+            "run-1",
+            "read the project",
+            10.0,
+            guard_start={"duplicate_tool": 2},
+            steer_start={"duplicate_tool_final_answer": 1},
+        )
+        collector.record_llm_request()
+        collector.record_tool_started("read_file")
+        collector.record_tool_result(is_error=False, useless=True)
+        collector.mark_llm_context_summary()
+        collector.record_context_compaction()
+
+        with patch("local_agent.run_collector.time.monotonic", return_value=10.125):
+            summary = collector.finish(
+                "final",
+                guard_values={"duplicate_tool": 3},
+                steering_values={"duplicate_tool_final_answer": 2, "completion_audit": 1},
+            )
+
+        self.assertEqual(summary["elapsed_ms"], 125)
+        self.assertEqual(summary["llm_requests"], 1)
+        self.assertEqual(summary["tool_calls"], 1)
+        self.assertEqual(summary["useless_tool_results"], 1)
+        self.assertEqual(summary["compactions"], 1)
+        self.assertEqual(summary["llm_context_summaries"], 1)
+        self.assertEqual(summary["guard_hits"], {"duplicate_tool": 1})
+        self.assertEqual(
+            summary["steering_counts"],
+            {"duplicate_tool_final_answer": 1, "completion_audit": 1},
+        )
+
+    def test_start_replaces_prior_run_counters_and_pending_summary_mode(self) -> None:
+        collector = RunCollector()
+        collector.start("run-1", "first", 1.0, guard_start={}, steer_start={})
+        collector.record_llm_request()
+        collector.mark_local_context_summary()
+
+        collector.start("run-2", "second", 2.0, guard_start={}, steer_start={})
+        collector.record_context_compaction()
+
+        summary = collector.finish("final", guard_values={}, steering_values={})
+        self.assertEqual(summary["run_id"], "run-2")
+        self.assertEqual(summary["llm_requests"], 0)
+        self.assertEqual(summary["local_context_summaries"], 0)

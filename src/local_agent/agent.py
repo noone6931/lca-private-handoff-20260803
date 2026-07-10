@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import datetime, timezone
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 import time
 from typing import Any
@@ -42,6 +42,7 @@ from .requirement_evidence import RequirementEvidence
 from .requirement_evidence import is_requirement_source_path
 from .requirement_evidence import render_pinned_requirement_evidence
 from .requirement_evidence import update_requirement_evidence
+from .run_collector import RunCollector
 from .protocol.events import AgentEvent
 from .protocol.events import EventEmitter
 from .protocol.events import EventSink
@@ -268,24 +269,6 @@ class EvidenceRecord:
         return f"- [{self.status}] {self.tool} {self.subject}: {self.summary}"
 
 
-@dataclass
-class RunStats:
-    run_id: str
-    prompt_chars: int
-    started_monotonic: float
-    llm_requests: int = 0
-    tool_calls: int = 0
-    tool_errors: int = 0
-    useless_tool_results: int = 0
-    synthetic_tool_results: int = 0
-    compactions: int = 0
-    llm_context_summaries: int = 0
-    local_context_summaries: int = 0
-    tool_counts: dict[str, int] = field(default_factory=dict)
-    guard_start: dict[str, int] = field(default_factory=dict)
-    steer_start: dict[str, int] = field(default_factory=dict)
-
-
 class AgentRuntime:
     def __init__(
         self,
@@ -343,9 +326,8 @@ class AgentRuntime:
         self._design_evidence_coverage = DesignEvidenceCoverageSteerer()
         self._design_evidence_read_paths: list[str] = []
         self._soft_tool_requirement: SoftToolRequirement | None = None
-        self._run_stats: RunStats | None = None
+        self._run_collector = RunCollector()
         self._last_run_summary: dict[str, Any] | None = None
-        self._pending_compaction_summary_mode: str | None = None
         self._final_answer_steerers: tuple[FinalAnswerSteerer, ...] = (
             ReadOnlyEvidenceSteerer(max_steers=MAX_READ_ONLY_EVIDENCE_STEERS),
             RequirementEvidenceSteerer(max_steers=MAX_REQUIREMENT_EVIDENCE_STEERS),
@@ -405,7 +387,7 @@ class AgentRuntime:
     def run(self, prompt: str) -> str:
         run_id = self._events.start_run()
         started_monotonic = time.monotonic()
-        self._run_stats = self._new_run_stats(run_id, prompt, started_monotonic)
+        self._start_run_collector(run_id, prompt, started_monotonic)
         deadline = (
             started_monotonic + self._config.budget_seconds
             if self._config.budget_seconds is not None
@@ -426,9 +408,14 @@ class AgentRuntime:
         self._source_grounded_numeric_steers = 0
         self._completion_audit_steers = 0
         self._patch_reviewer_steers = 0
+        self._read_file_range_counts = {}
+        self._read_file_evidence_paths = []
         self._source_evidence = []
         self._pinned_requirement_evidence = []
         self._successful_patch_preview_signatures = set()
+        self._strong_relevance_paths = []
+        self._evidence_records = []
+        self._workspace_root_evidence_recorded = False
         self._temporary_tool_allowlist = None
         self._tool_choice_allowed_tool_names = None
         self._tool_choice_steering_signatures = set()
@@ -808,11 +795,11 @@ class AgentRuntime:
             raise ValueError(f"unknown tool: {normalized}. Known tools: {known}")
         return normalized
 
-    def _new_run_stats(self, run_id: str, prompt: str, started_monotonic: float) -> RunStats:
-        return RunStats(
-            run_id=run_id,
-            prompt_chars=len(prompt),
-            started_monotonic=started_monotonic,
+    def _start_run_collector(self, run_id: str, prompt: str, started_monotonic: float) -> None:
+        self._run_collector.start(
+            run_id,
+            prompt,
+            started_monotonic,
             guard_start={
                 "duplicate_tool": self._duplicate_tool_guard_hits,
                 "useless_search_pattern": self._useless_search_pattern_guard_hits,
@@ -830,109 +817,55 @@ class AgentRuntime:
         )
 
     def _record_llm_request(self) -> None:
-        if self._run_stats is not None:
-            self._run_stats.llm_requests += 1
+        self._run_collector.record_llm_request()
 
     def _record_context_compaction(self) -> None:
-        if self._run_stats is not None:
-            self._run_stats.compactions += 1
-            if self._pending_compaction_summary_mode == "llm":
-                self._run_stats.llm_context_summaries += 1
-            elif self._pending_compaction_summary_mode == "local":
-                self._run_stats.local_context_summaries += 1
-        self._pending_compaction_summary_mode = None
+        self._run_collector.record_context_compaction()
 
     def _record_llm_context_summary(self) -> None:
-        self._pending_compaction_summary_mode = "llm"
+        self._run_collector.mark_llm_context_summary()
 
     def _record_local_context_summary(self) -> None:
-        self._pending_compaction_summary_mode = "local"
+        self._run_collector.mark_local_context_summary()
 
     def _record_tool_started_for_run(self, name: str) -> None:
-        if self._run_stats is None:
-            return
-        self._run_stats.tool_calls += 1
-        self._run_stats.tool_counts[name] = self._run_stats.tool_counts.get(name, 0) + 1
+        self._run_collector.record_tool_started(name)
 
     def _record_tool_finished_for_run(self, *, is_error: bool) -> None:
-        if self._run_stats is not None and is_error:
-            self._run_stats.tool_errors += 1
+        self._run_collector.record_tool_finished(is_error=is_error)
 
     def _record_tool_result_for_run(self, *, is_error: bool, useless: bool) -> None:
-        if self._run_stats is not None and useless and not is_error:
-            self._run_stats.useless_tool_results += 1
+        self._run_collector.record_tool_result(is_error=is_error, useless=useless)
 
     def _record_synthetic_tool_result_for_run(self) -> None:
-        if self._run_stats is None:
-            return
-        self._run_stats.synthetic_tool_results += 1
-        self._run_stats.tool_errors += 1
+        self._run_collector.record_synthetic_tool_result()
 
     def _finish_run_summary(self, reason: str) -> dict[str, Any]:
-        stats = self._run_stats
-        if stats is None:
-            return {"termination_reason": reason}
-        guard_hits = {
-            "duplicate_tool": self._duplicate_tool_guard_hits - stats.guard_start.get("duplicate_tool", 0),
-            "useless_search_pattern": (
-                self._useless_search_pattern_guard_hits - stats.guard_start.get("useless_search_pattern", 0)
-            ),
-            "useless_lsp_symbol": (
-                self._useless_lsp_symbol_guard_hits - stats.guard_start.get("useless_lsp_symbol", 0)
-            ),
-            "repeated_read_file": (
-                self._repeated_read_file_guard_hits - stats.guard_start.get("repeated_read_file", 0)
-            ),
-            "semantic_exploration": (
-                self._semantic_exploration_guard_hits - stats.guard_start.get("semantic_exploration", 0)
-            ),
-        }
-        steering_counts = {
-            "duplicate_tool_final_answer": (
-                self._tool_loop_steering.count("duplicate_tool_final_answer")
-                - stats.steer_start.get("duplicate_tool_final_answer", 0)
-            ),
-            "useless_search_pattern_final_answer": (
-                self._tool_loop_steering.count("useless_search_pattern_final_answer")
-                - stats.steer_start.get("useless_search_pattern_final_answer", 0)
-            ),
-            "useless_lsp_symbol_final_answer": (
-                self._tool_loop_steering.count("useless_lsp_symbol_final_answer")
-                - stats.steer_start.get("useless_lsp_symbol_final_answer", 0)
-            ),
-            "repeated_read_file_final_answer": (
-                self._tool_loop_steering.count("repeated_read_file_final_answer")
-                - stats.steer_start.get("repeated_read_file_final_answer", 0)
-            ),
-            "semantic_exploration": (
-                self._tool_loop_steering.count("semantic_exploration") - stats.steer_start.get("semantic_exploration", 0)
-            ),
-            "no_edit_final_hygiene": self._no_edit_final_hygiene_steers,
-            "final_structure": self._final_structure_steers,
-            "read_only_evidence": self._read_only_evidence_steers,
-            "source_evidence_false_negative": self._source_evidence_false_negative_steers,
-            "source_grounded_numeric": self._source_grounded_numeric_steers,
-            "patch_reviewer": self._patch_reviewer_steers,
-            "completion_audit": self._completion_audit_steers,
-            "soft_tool_requirement": self._soft_tool_requirement.steers if self._soft_tool_requirement else 0,
-        }
-        payload: dict[str, Any] = {
-            "run_id": stats.run_id,
-            "termination_reason": reason,
-            "elapsed_ms": _elapsed_ms_since(stats.started_monotonic),
-            "prompt_chars": stats.prompt_chars,
-            "llm_requests": stats.llm_requests,
-            "tool_calls": stats.tool_calls,
-            "tool_errors": stats.tool_errors,
-            "useless_tool_results": stats.useless_tool_results,
-            "synthetic_tool_results": stats.synthetic_tool_results,
-            "compactions": stats.compactions,
-            "llm_context_summaries": stats.llm_context_summaries,
-            "local_context_summaries": stats.local_context_summaries,
-            "tool_counts": dict(sorted(stats.tool_counts.items())),
-            "guard_hits": {key: value for key, value in guard_hits.items() if value},
-            "steering_counts": {key: value for key, value in steering_counts.items() if value},
-        }
+        payload = self._run_collector.finish(
+            reason,
+            guard_values={
+                "duplicate_tool": self._duplicate_tool_guard_hits,
+                "useless_search_pattern": self._useless_search_pattern_guard_hits,
+                "useless_lsp_symbol": self._useless_lsp_symbol_guard_hits,
+                "repeated_read_file": self._repeated_read_file_guard_hits,
+                "semantic_exploration": self._semantic_exploration_guard_hits,
+            },
+            steering_values={
+                "duplicate_tool_final_answer": self._tool_loop_steering.count("duplicate_tool_final_answer"),
+                "useless_search_pattern_final_answer": self._tool_loop_steering.count("useless_search_pattern_final_answer"),
+                "useless_lsp_symbol_final_answer": self._tool_loop_steering.count("useless_lsp_symbol_final_answer"),
+                "repeated_read_file_final_answer": self._tool_loop_steering.count("repeated_read_file_final_answer"),
+                "semantic_exploration": self._tool_loop_steering.count("semantic_exploration"),
+                "no_edit_final_hygiene": self._no_edit_final_hygiene_steers,
+                "final_structure": self._final_structure_steers,
+                "read_only_evidence": self._read_only_evidence_steers,
+                "source_evidence_false_negative": self._source_evidence_false_negative_steers,
+                "source_grounded_numeric": self._source_grounded_numeric_steers,
+                "patch_reviewer": self._patch_reviewer_steers,
+                "completion_audit": self._completion_audit_steers,
+                "soft_tool_requirement": self._soft_tool_requirement.steers if self._soft_tool_requirement else 0,
+            },
+        )
         self._last_run_summary = payload
         self._session.append("run_summary", payload)
         self._events.emit("RunSummary", payload)
@@ -2874,13 +2807,6 @@ def _one_line(content: str, *, max_chars: int = 240) -> str:
 
 def _display_optional_int(value: int | None) -> str:
     return "disabled" if value is None else str(value)
-
-
-def _elapsed_ms_since(started_monotonic: float) -> int:
-    try:
-        return max(0, int((time.monotonic() - started_monotonic) * 1000))
-    except Exception:  # noqa: BLE001 - run summary must never break task completion.
-        return 0
 
 
 def _format_last_run_status(summary: dict[str, Any]) -> list[str]:

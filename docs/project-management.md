@@ -17,10 +17,10 @@ python3 scripts/sync_project_excel.py
 | 字段 | 当前值 | 说明 |
 |---|---|---|
 | 最终目标 | 个人本地编程助手 Agent | 本地优先、封闭 VM 可用、只访问指定 AI API，能读代码、搜代码、改代码、跑测试、生成 diff、沉淀项目记忆。 |
-| 当前阶段 | P10：Intelligence Runtime 骨架 + P0a 架构还债 | T-123 已把五类病态工具循环的软纠偏、硬停止与跨 root 设计证据收束迁入独立 steering 模块，`agent.py` 从 3875 行降至 3607 行；下一步是 P0b `RunContext`，再回到真实小改压测。详见 `docs/pressure-test-2026-07-10.md`。 |
+| 当前阶段 | P10：Intelligence Runtime 骨架 + P0b 架构还债 | T-123 已完成 ToolLoop steering 拆分；T-124 已迁出 RunCollector，并修复连续任务之间的证据/范围状态泄漏，`agent.py` 现为 3538 行。下一步是完整 `RunContext`，再回到真实小改压测。详见 `docs/pressure-test-2026-07-10.md`。 |
 | 推荐入口 | `./agent "阅读当前项目"` | 自动设置 `PYTHONPATH=src`，默认当前目录为 workspace。 |
 | Token 配置 | 环境变量 / `--env-file` / `.env` | `./agent` 会自动加载安装目录 `.env`，也可显式传 `--env-file`；真实环境变量优先。 |
-| 测试数 | 291 | 完整 unittest、compileall、xlsx 同步和 diff check 已通过。 |
+| 测试数 | 294 | 完整 unittest、compileall、xlsx 同步和 diff check 已通过。 |
 | 默认 budget_seconds | 600 | 单次任务默认 10 分钟墙钟预算；`--budget-seconds 0` 可关闭。 |
 | 默认 max_steps | 0 | 表示不限步；仅在用户显式设置时作为防失控保险丝。 |
 | 预算执行 | 细粒度 | LLM 请求和 shell/run_tests timeout 会按剩余预算夹紧；deadline 到期会补齐未执行工具结果。 |
@@ -63,7 +63,7 @@ python3 scripts/sync_project_excel.py
 | P7 | 高级工程能力轻量版 | OMP 风格 auto summary、多语言 LSP/light fallback、LSP 兼容别名、LSP best-effort 置信度提示、multi-root workspace roots、allowed-dir soft tool requirement、startup context/rules、startup memory、learn、memory consolidation、authored skills discovery、重复工具调用熔断、duplicate-tool forced-final steering、同文件切片读取漂移 guard、空搜索词跨路径 guard、path escape roots hint、LSP 空 query guard、Current task contract、Evidence Ledger、tool result pruning、todo steering、跨项目 env-file、runtime state dir、真实项目压测记录、relevance gate / diff reviewer、implementation-quality reviewer、safe new-file policy、no-edit final hygiene | 已完成 MVP 版 | 100% | 高级轻量能力主线已收口，后续按真实压测失败形态补 path-scoped rules、完整 reviewer 或 ToolChoiceQueue；架构债按 OMP 原则渐进拆 `agent.py`。 |
 | P8 | 前端协议与交互基础 | Event/Command Protocol、event replay、terminal-native frontend | 已完成 MVP 版 | 100% | T-076/T-077 已完成；完整 async command bus 和更重 UI 后置，下一步按用户项目边界做项目清单分析压测。 |
 | P9 | 真实需求使用准备 | 项目边界分析、用户确认项目范围、源码验证、实现设计 | 进行中 | 40% | T-078 已完成项目边界分析 MVP；T-083 已固化压测模板；T-084 已完成 qwen3-coder-next 只读源码验证压测并记录新问题。 |
-| P10 | Intelligence Runtime 骨架 | RequirementContract、CompletionAudit、MiniToolChoiceQueue、Planner/Explore、Reviewer | 进行中 | 92% | 已完成 RequirementContract、CompletionAudit、MiniToolChoiceQueue、Planner/Explore、post-diff Patch Reviewer、no-edit evidence gate、ToolRegistry 参数归一、preview contract、numeric guard scope、quoted literal分类、pinned requirement evidence 与 cross-root evidence matrix；T-123 已完成 P0a ToolLoop steering registry。下一步完成 P0b `RunContext` / `RunStats` 状态收拢，再以真实小改验证协同效果。 |
+| P10 | Intelligence Runtime 骨架 | RequirementContract、CompletionAudit、MiniToolChoiceQueue、Planner/Explore、Reviewer | 进行中 | 93% | 已完成 RequirementContract、CompletionAudit、MiniToolChoiceQueue、Planner/Explore、post-diff Patch Reviewer、no-edit evidence gate、ToolRegistry 参数归一、preview contract、numeric guard scope、quoted literal分类、pinned requirement evidence 与 cross-root evidence matrix；T-123 已完成 P0a ToolLoop steering registry，T-124 已迁出 RunCollector 并隔离跨 run 证据。下一步完成 P0b `RunContext` 状态收拢，再以真实小改验证协同效果。 |
 
 ## 已完成功能
 
@@ -255,6 +255,7 @@ python3 scripts/sync_project_excel.py
 | T-121 | P0 | P10 | 真实设计 evidence matrix / cross-root ToolChoiceQueue | 已完成并真实复测 | Agent | T-120 复测仍在后端候选目录进行 57 次调用，未读取用户声明前端，造成复用结论过弱。 | 跨 root 只读设计任务要求主 workspace 和每个用户指定代码目录各成功读取至少一份源码；覆盖后只保留有限补读，或接近 deadline 时预留最终回答时间。session `20260710T032336652934Z` 读取需求、`zqylpayment` Java 与 `msp-pay` JS/Vue 后以 final 收束（127 秒、19 次只读工具、0 错误）。 |
 | T-122 | P0 | P10 | 写入后验证时序与 Reviewer 事实硬化 | 已完成并回归 | Agent | review 发现此前 `run_tests` / `git_diff` 可发生在最终写入前，大 diff 截断会丢失测试/API 事实，状态问句会误分成实现任务，调用方检查可被无效结果绕过。 | 新增 `verification_timeline.py` 统一最后写入后的验证判断；Reviewer 在截断前提取完整 diff metadata；常见中文状态问句归为只读；调用方证据排除 useless/无关结果并关联变更 API。 |
 | T-123 | P0 | P10 | P0a ToolLoop steering registry | 已完成并回归 | Agent | review 指出 `agent.py` 同时存在 inline `steer_after` / hard-stop / final steerer 三条轨，新增 guard 持续膨胀主文件。 | 新增 `steering/tool_loop.py` 与 `steering/termination.py`：五类病态工具循环（重复调用、空 search/LSP、重复 read、语义路径探索）以显式优先级统一 soft steering 与 hard stop；跨 root 设计证据覆盖/收束迁入 `design_evidence.py`。`agent.py` 由 3875 降至 3607 行；291 个 unittest 回归通过。 |
+| T-124 | P0 | P10 | P0b RunCollector 与跨 run evidence reset | 已完成并回归 | Agent + 小红 | review 发现连续终端任务会保留上一轮 `read_file` 证据、relevance、evidence ledger 与“本轮范围读取次数”，可能让下一任务误判证据已满足。 | 新增 `run_collector.py` 承接 RunStats、compaction/tool 计数和 summary 计算；每轮开始清空本轮 evidence、preview、relevance 和 read range 状态，保留明确属于 session 的审批与重复调用历史。新增跨 run 泄漏和 collector 单测；`agent.py` 降至 3538 行，294 个 unittest 通过。 |
 
 ## 风险与决策
 
@@ -292,7 +293,7 @@ python3 scripts/sync_project_excel.py
 | 风险 | R-030 | 中 | 过早补完整 reviewer / ToolChoiceQueue 会增加复杂度但未必命中当前痛点 | 已缓解，继续受控 | T-108/T-105 类压测证明仅靠 prompt 和 final steering 仍会出现关键证据没读够就下结论；完整 OMP ToolChoiceQueue/reviewer/subagents 仍过重。 | 已按 OMP 工具调度原则裁剪出 MiniToolChoiceQueue、Planner/Explore 和二阶段 Patch Reviewer；Reviewer 仅消费已有 diff/工具证据，不引入第二个 Agent。完整多队列调度和 subagents 继续等真实失败样本触发。 |
 | 风险 | R-031 | 高 | 真实实现任务可能产生无关 patch | 已缓解，继续观察 | T-072 session `20260709T013441841983Z` 读取正确需求后漂移到 Nacos/Redis 配置，并把无关注释当成实现锚点；dry_run/hash 校验只能保证位置正确，不能保证业务相关 | 已完成 T-073：真实写入前目标文件必须已读；代码实现任务写部署/配置类低相关路径会被拦截或要求用户确认；workspace-root evidence 和 diff reviewer 已落地；复跑未再触碰 `deployMessage/nacos`。 |
 | 风险 | R-053 | 高 | 源码证据型最终回答可能误报数字/状态码 | 已关闭 MVP 版，继续压测 | T-105 session `20260709T092951071920Z` 读到 `PreOrderStatusEnum.MAKING(2)` / `MADE(3)`，最终却误报为 `50/60` | 参考 OMP runtime evidence/steering 边界：新增 source-grounded numeric final steerer，记录本轮 `read_file` 源码证据；最终回答涉及枚举、状态码、接口、字段等数字事实时，若与已读源码片段不一致，会强制无工具重写并要求标注未确认。 |
-| 风险 | R-054 | 高 | `agent.py` steering/guard 继续膨胀 | 已完成 P0a，P0b 进行中 | review 指出 compaction 已拆出，但 semantic/read-only/final guard 又继续进入 `agent.py`，不符合 OMP 一职责一文件原则 | T-106 已抽 FinalAnswer Steerer；T-123 已抽 ToolLoop steering/termination 与 design-evidence coverage，主文件从 3875 降至 3607 行。下一步将 run 级可变状态收拢至 `RunContext`，并迁出 `RunStats`；在此之前不在 `agent.py` 新增 feature guard。 |
+| 风险 | R-054 | 高 | `agent.py` steering/guard 继续膨胀 | P0b 进行中 | review 指出 compaction 已拆出，但 semantic/read-only/final guard 又继续进入 `agent.py`，不符合 OMP 一职责一文件原则 | T-106 已抽 FinalAnswer Steerer；T-123 已抽 ToolLoop steering/termination 与 design-evidence coverage；T-124 已抽 RunCollector 并修复跨 run evidence leak，主文件降至 3538 行。下一步收拢剩余 run state 到 `RunContext`；在此之前不在 `agent.py` 新增 feature guard。 |
 | 风险 | R-055 | 高 | 无效 tool_call 参数会污染下一轮 provider 请求 | 已关闭 MVP 版 | T-108 首轮复测中百炼拒绝历史消息：无效工具调用的 `function.arguments` 为空或畸形 JSON，导致下一轮 HTTP 400 | 已在 assistant message 入历史前把工具名、id、arguments 统一归一为 provider-safe JSON object 字符串；空/畸形参数写入 `_invalid_arguments`，并补回归测试。 |
 | 风险 | R-056 | 高 | read_file 行号会干扰源码数字事实比对 | 已关闭 MVP 版 | T-108 窄复测中，模型把枚举状态误报成 1/3/5；numeric guard 因 read_file 内容含 `1:`、`3:`、`5:` 行号而误以为这些数字有源码证据 | source numeric guard 比对前会剥离 read_file 行号前缀，再判断状态码/枚举值是否出现在源码内容中；新增回归测试覆盖错误数字刚好等于行号的情况。 |
 | 风险 | R-057 | 高 | provider 的工具参数方言导致有效任务无法进入写入/验证闭环 | 已缓解，继续观察 | T-115 已收敛 `file_hash*` / `source_hash_tag` / `hash_tag`、`old_str/new_str`、`mode=edit`、整数/布尔字符串、`run_tests.cmd` 和 todo scalar 方言；真实小改已完成源码/测试/定向测试/diff。 | 按 OMP 的 tool-call 归一边界，只在 ToolRegistry 接收明确已观测的 scalar alias；schema、hash、approval 和 anchored patch 校验不变。raw diff / bulk todo 不隐式执行，交由 T-116。 |
@@ -411,7 +412,7 @@ python3 scripts/sync_project_excel.py
 | 项目 | 结论 | 依据 |
 |---|---|---|
 | 主链路 | 通过 | 百炼真实小改复测已跑通 todo、dry_run、apply_patch、session allow、rollback、run_tests、git_diff。 |
-| 测试 | 通过 | P5 收口时 90 个 unittest、compileall、xlsx 检查、diff check 均通过；P10 当前代码已跑通 291 个 unittest。 |
+| 测试 | 通过 | P5 收口时 90 个 unittest、compileall、xlsx 检查、diff check 均通过；P10 当前代码已跑通 294 个 unittest。 |
 | 日用入口 | 通过 | README 已补只读分析和小改任务命令模板。 |
 | 开放风险 | 可接受 | shell 仍非沙箱、prompt injection 仍需靠审批和封闭 VM；provider/model 专用 tokenizer、输出 reserve、managed skills、完整 reviewer 和完整 OMP ToolChoiceQueue 继续后置评估。 |
 | 下一阶段 | 真实需求设计与实现压测 | 已验证默认工作流、auto summary、多语言 LSP/light fallback、multi-root、startup memory、learn、authored skills、runtime state dir、多项目只读压测主链路、relevance gate、implementation-quality gate、no-edit final hygiene、semantic exploration guard、terminal input isolation、Event/Command Protocol、Terminal Frontend MVP、项目边界分析 MVP、source-grounded numeric guard、token budget、pinned requirement evidence 和 cross-root evidence matrix；下一步进入一项边界明确的真实需求设计和小改验证。 |

@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from local_agent.agent import AgentRuntime
+from local_agent.agent import EvidenceRecord
 from local_agent.compaction import resolve_compaction_threshold_chars
 from local_agent.compaction import resolve_compaction_threshold_tokens
 from local_agent.config import AgentConfig
@@ -2085,6 +2086,35 @@ class AgentRuntimeTests(unittest.TestCase):
 
         self.assertEqual(runtime._read_file_evidence_paths, ["src/UserService.java", "src/Other.java"])
         self.assertEqual(runtime._source_evidence, [SourceEvidence("src/Other.java", "stable implementation")])
+
+    def test_new_run_does_not_reuse_prior_run_evidence_or_read_range_counts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=workspace,
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _FinalClient):
+                runtime = AgentRuntime(config, show_tool_logs=False)
+                runtime._read_file_range_counts[("src/Old.java", 1, "old")] = 3
+                runtime._read_file_evidence_paths = ["src/Old.java"]
+                runtime._strong_relevance_paths = ["src/Old.java"]
+                runtime._evidence_records = [EvidenceRecord("read_file", "src/Old.java", "old evidence")]
+                runtime._workspace_root_evidence_recorded = True
+
+                runtime.run("请简短说明当前项目。")
+
+        self.assertEqual(runtime._read_file_range_counts, {})
+        self.assertEqual(runtime._read_file_evidence_paths, [])
+        self.assertEqual(runtime._strong_relevance_paths, [])
+        self.assertTrue(runtime._workspace_root_evidence_recorded)
+        self.assertNotIn("src/Old.java", runtime._evidence_ledger_summary())
 
     def test_preview_contract_requires_matching_successful_preview_before_real_patch(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
