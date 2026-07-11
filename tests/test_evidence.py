@@ -77,6 +77,68 @@ class EvidenceLedgerTests(unittest.TestCase):
 
             self.assertIsNone(ledger.patch_preview_denial_reason(arguments, source, preview_required=True))
 
+    def test_path_discovery_evidence_distinguishes_complete_no_match_from_incomplete_and_exact_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            ledger = EvidenceLedger()
+            no_match = ledger.record_tool(
+                name="glob_files",
+                arguments={"paths": ["**/*.java"]},
+                result=ToolResult(
+                    "{}",
+                    useless=True,
+                    metadata={
+                        "negative_evidence_type": "path_no_match",
+                        "patterns": ["**/*.java"],
+                        "searched_scopes": [str(workspace)],
+                        "files": [],
+                        "complete": True,
+                        "truncated": False,
+                    },
+                ),
+                workspace=workspace,
+                allowed_dirs=(),
+            )
+            incomplete = ledger.record_tool(
+                name="glob_files",
+                arguments={"paths": ["**/*"]},
+                result=ToolResult(
+                    "{}",
+                    metadata={
+                        "negative_evidence_type": "incomplete",
+                        "patterns": ["**/*"],
+                        "searched_scopes": [str(workspace)],
+                        "files": ["src/App.java"],
+                        "complete": False,
+                        "truncated": True,
+                    },
+                ),
+                workspace=workspace,
+                allowed_dirs=(),
+            )
+            missing = ledger.record_tool(
+                name="read_file",
+                arguments={"path": "src/main/java"},
+                result=ToolResult(
+                    "File not found: src/main/java",
+                    is_error=True,
+                    metadata={
+                        "negative_evidence_type": "exact_path_missing",
+                        "path": "src/main/java",
+                        "complete": True,
+                    },
+                ),
+                workspace=workspace,
+                allowed_dirs=(),
+            )
+
+        self.assertEqual(no_match.status, "path_no_match")
+        self.assertEqual(incomplete.status, "incomplete")
+        self.assertEqual(missing.status, "exact_path_missing")
+        self.assertTrue(no_match.details["complete"])
+        self.assertFalse(incomplete.details["complete"])
+        self.assertEqual(missing.subject, "src/main/java")
+
 
 if __name__ == "__main__":
     unittest.main()

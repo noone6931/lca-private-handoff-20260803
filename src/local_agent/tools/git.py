@@ -125,7 +125,19 @@ def capture_git_baseline(workspace: str | PathLike[str]) -> dict[str, Any]:
 def _git(context: ToolContext, args: list[str]) -> ToolResult:
     completed = _git_raw(context.workspace, args)
     output = completed.stdout or completed.stderr or "(empty)"
-    return ToolResult(output[:30000], is_error=completed.returncode != 0)
+    is_error = completed.returncode != 0
+    metadata = {
+        "git_probe_root": str(context.workspace),
+        "git_repository": not is_error,
+    }
+    if is_error and "not a git repository" in output.lower():
+        output = (
+            f"{output.rstrip()}\n\n"
+            f"git_status checks the primary workspace only: {context.workspace}. "
+            "This does not determine whether additional roots are Git repositories. "
+            "Use /move /path/to/project before Git operations for that project."
+        )
+    return ToolResult(output[:30000], is_error=is_error, metadata=metadata)
 
 
 def _git_raw(workspace: str | PathLike[str], args: list[str]) -> subprocess.CompletedProcess[str]:

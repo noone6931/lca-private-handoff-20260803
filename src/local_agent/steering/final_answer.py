@@ -9,6 +9,9 @@ from typing import Any, Protocol
 from ..completion_audit import audit_completion
 from ..completion_audit import render_completion_audit_message
 from ..design_evidence import missing_design_evidence_roots
+from ..negative_evidence import allowed_tools_for_negative_claims
+from ..negative_evidence import render_negative_existence_issues
+from ..negative_evidence import unsupported_negative_existence_claims
 from ..patch_reviewer import render_patch_review_message
 from ..patch_reviewer import review_patch
 from ..requirement_evidence import RequirementEvidence
@@ -19,6 +22,7 @@ from ..tool_choice_queue import ToolResultSummary
 
 NO_EDIT_FINAL_HYGIENE_TOOLS = {"todo_read", "todo_add", "todo_update", "git_status", "git_diff"}
 READ_ONLY_EVIDENCE_TOOLS = {
+    "glob_files",
     "search_code",
     "read_file",
     "lsp_symbols",
@@ -518,6 +522,47 @@ class SourceEvidenceFalseNegativeSteerer:
         )
 
 
+class NegativeExistenceSteerer:
+    """Reject path/source/Git absence claims that lack matching discovery evidence."""
+
+    kind = "negative_existence"
+
+    def __init__(self, *, max_steers: int) -> None:
+        self._max_steers = max_steers
+
+    def decide(self, context: FinalAnswerContext) -> SteeringDecision | None:
+        if context.steer_counts.get(self.kind, 0) >= self._max_steers:
+            return None
+        issues = unsupported_negative_existence_claims(context.content, context.tool_results)
+        if not issues:
+            return None
+        allowed_tools = set(allowed_tools_for_negative_claims(issues))
+        issue_lines = "\n".join(f"- {issue}" for issue in render_negative_existence_issues(issues))
+        if allowed_tools:
+            action = (
+                "Use glob_files for file/extension/source-tree absence, or read_file/list_files for an exact path. "
+                "A content search no-match and a truncated directory listing cannot prove that a path is absent."
+            )
+        else:
+            action = (
+                "Do not call tools: Git checks apply only to the primary workspace. Rewrite this as unconfirmed and "
+                "tell the user to use /move before making a Git-repository conclusion about an additional root."
+            )
+        steering = (
+            "Runtime steering: the previous final answer made a path/source/Git absence claim without matching "
+            "evidence. Do not present it as verified.\n"
+            f"{issue_lines}\n{action}"
+            f"{final_answer_request_summary(context.request)}"
+        )
+        return SteeringDecision(
+            kind=self.kind,
+            message=steering,
+            payload={"issues": render_negative_existence_issues(issues)},
+            force_final_answer_without_tools=not allowed_tools,
+            temporary_tool_allowlist=allowed_tools or None,
+        )
+
+
 class CompletionAuditSteerer:
     kind = "completion_audit"
 
@@ -583,6 +628,7 @@ _HARD_GATE_LABELS = {
     "requirement_evidence": "需求事实与行号证据",
     "source_grounded_numeric": "源码数值/状态事实",
     "source_evidence_false_negative": "源码证据一致性",
+    "negative_existence": "文件/源码存在性",
     "patch_reviewer": "变更审查",
     "completion_audit": "完成验收",
     "design_evidence_final": "跨项目设计证据覆盖",

@@ -19,6 +19,7 @@ DEFAULT_TOOL_NAMES = frozenset(
         "ask_user",
         "git_diff",
         "git_status",
+        "glob_files",
         "learn",
         "list_files",
         "lsp_definition",
@@ -53,13 +54,14 @@ LSP_EVIDENCE_TOOL_NAMES = frozenset(
     }
 )
 CODE_EVIDENCE_TOOL_NAMES = frozenset({"read_file", "search_code", *LSP_EVIDENCE_TOOL_NAMES})
-CODE_EVIDENCE_ALLOWED_TOOL_NAMES = frozenset({"list_files", *CODE_EVIDENCE_TOOL_NAMES})
+CODE_EVIDENCE_ALLOWED_TOOL_NAMES = frozenset({"glob_files", "list_files", *CODE_EVIDENCE_TOOL_NAMES})
 REQUIREMENT_DOC_TOOL_NAMES = frozenset({"ask_user", "list_files", "read_file", "search_code"})
 PLANNER_EXPLORE_TOOL_NAMES = frozenset(
     {
         "ask_user",
         "git_diff",
         "git_status",
+        "glob_files",
         "list_files",
         "lsp_definition",
         "lsp_diagnostics",

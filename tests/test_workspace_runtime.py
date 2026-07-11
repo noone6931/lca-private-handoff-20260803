@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -102,6 +103,64 @@ class WorkspaceRuntimeTests(unittest.TestCase):
             )
 
         self.assertEqual(roots, (str(primary), str(frontend)))
+
+    def test_add_root_append_failure_preserves_authorization_and_session(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime, external = _root_change_runtime(Path(tmp))
+            snapshot = _workspace_change_snapshot(runtime)
+            original_append = runtime._session.append
+
+            def fail_after_writing_change(event: str, payload: dict[str, object]) -> None:
+                original_append(event, payload)
+                if event == "workspace_roots_changed":
+                    raise OSError("simulated add append failure")
+
+            with patch.object(runtime._session, "append", side_effect=fail_after_writing_change):
+                with self.assertRaisesRegex(RuntimeError, "rolled back"):
+                    runtime.add_workspace_root(str(external))
+
+            _assert_workspace_change_rolled_back(self, runtime, snapshot)
+
+    def test_remove_root_append_failure_preserves_authorization_and_session(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime, external = _root_change_runtime(Path(tmp))
+            runtime.add_workspace_root(str(external))
+            snapshot = _workspace_change_snapshot(runtime)
+            original_append = runtime._session.append
+
+            def fail_after_writing_change(event: str, payload: dict[str, object]) -> None:
+                original_append(event, payload)
+                if event == "workspace_roots_changed":
+                    raise OSError("simulated remove append failure")
+
+            with patch.object(runtime._session, "append", side_effect=fail_after_writing_change):
+                with self.assertRaisesRegex(RuntimeError, "rolled back"):
+                    runtime.remove_workspace_root(str(external))
+
+            _assert_workspace_change_rolled_back(self, runtime, snapshot)
+            self.assertIn(external, runtime._workspace_context.session)
+
+    def test_reset_roots_append_failure_preserves_authorization_and_session(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime, external = _root_change_runtime(Path(tmp))
+            another = external.parent / "another"
+            another.mkdir()
+            runtime.add_workspace_root(str(external))
+            runtime.add_workspace_root(str(another))
+            snapshot = _workspace_change_snapshot(runtime)
+            original_append = runtime._session.append
+
+            def fail_after_writing_change(event: str, payload: dict[str, object]) -> None:
+                original_append(event, payload)
+                if event == "workspace_roots_changed":
+                    raise OSError("simulated reset append failure")
+
+            with patch.object(runtime._session, "append", side_effect=fail_after_writing_change):
+                with self.assertRaisesRegex(RuntimeError, "rolled back"):
+                    runtime.reset_workspace_roots()
+
+            _assert_workspace_change_rolled_back(self, runtime, snapshot)
+            self.assertEqual(runtime._workspace_context.session, (external, another))
 
     def test_move_reloads_primary_context_and_migrates_session_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -245,6 +304,44 @@ class WorkspaceRuntimeTests(unittest.TestCase):
                 sink,
             )
 
+    def test_move_sink_failure_after_observe_does_not_roll_back_committed_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            backend = root / "backend"
+            frontend = root / "frontend"
+            state_root = root / "state-root"
+            backend.mkdir()
+            frontend.mkdir()
+            sink = _FailingAfterObserveSink()
+            backend_state = workspace_state_dir(state_root, backend)
+            frontend_state = workspace_state_dir(state_root, frontend)
+            runtime = AgentRuntime(
+                _config(backend, state_dir=backend_state, state_root=state_root),
+                show_tool_logs=False,
+                event_sink=sink,
+            )
+            session_id = runtime._session.session_id
+
+            moved = runtime.move_workspace(str(frontend))
+            records = [
+                json.loads(line)
+                for line in (frontend_state / "sessions" / f"{session_id}.jsonl").read_text(encoding="utf-8").splitlines()
+            ]
+
+            self.assertEqual(moved, frontend)
+            self.assertEqual(runtime._workspace_context.primary, frontend)
+            self.assertEqual(runtime._tool_context.workspace, frontend)
+            self.assertTrue((frontend_state / "sessions" / f"{session_id}.jsonl").exists())
+            self.assertFalse((backend_state / "sessions" / f"{session_id}.jsonl").exists())
+            self.assertTrue(any(event.type == "WorkspaceMoved" for event in sink.events))
+            self.assertTrue(
+                any(
+                    record.get("event") == "event_delivery_error"
+                    and record.get("payload", {}).get("event_type") == "WorkspaceMoved"
+                    for record in records
+                )
+            )
+
 
 def _config(
     workspace: Path,
@@ -289,6 +386,51 @@ def _move_runtime(
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(f"{category}\n", encoding="utf-8")
     return runtime, backend, frontend, backend_state, frontend_state, sink
+
+
+def _root_change_runtime(root: Path) -> tuple[AgentRuntime, Path]:
+    primary = root.resolve() / "primary"
+    external = root.resolve() / "external"
+    primary.mkdir()
+    external.mkdir()
+    return AgentRuntime(_config(primary), show_tool_logs=False), external
+
+
+def _workspace_change_snapshot(runtime: AgentRuntime) -> dict[str, object]:
+    runtime._summary_cache["cached"] = "value"
+    return {
+        "context": runtime._workspace_context,
+        "summary": runtime.workspace_summary(),
+        "revision": runtime._workspace_context.revision,
+        "tool_context": runtime._tool_context,
+        "session_guards": runtime._session_guards,
+        "summary_cache": dict(runtime._summary_cache),
+        "session": runtime._session.path.read_bytes(),
+    }
+
+
+def _assert_workspace_change_rolled_back(
+    test: unittest.TestCase,
+    runtime: AgentRuntime,
+    snapshot: dict[str, object],
+) -> None:
+    test.assertIs(runtime._workspace_context, snapshot["context"])
+    test.assertEqual(runtime.workspace_summary(), snapshot["summary"])
+    test.assertEqual(runtime._workspace_context.revision, snapshot["revision"])
+    test.assertIs(runtime._tool_context, snapshot["tool_context"])
+    test.assertIs(runtime._session_guards, snapshot["session_guards"])
+    test.assertEqual(runtime._summary_cache, snapshot["summary_cache"])
+    test.assertEqual(runtime._session.path.read_bytes(), snapshot["session"])
+
+
+class _FailingAfterObserveSink:
+    def __init__(self) -> None:
+        self.events = []
+
+    def emit(self, event) -> None:
+        self.events.append(event)
+        if event.type == "WorkspaceMoved":
+            raise OSError("simulated sink failure after observe")
 
 
 def _assert_move_rolled_back(

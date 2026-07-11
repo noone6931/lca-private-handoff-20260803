@@ -167,6 +167,15 @@ class WorkspaceContext:
             lines.append("- session: none")
         return "\n".join(lines)
 
+    def copy(self) -> "WorkspaceContext":
+        """Return an equivalent context that can be changed before Runtime commits it."""
+
+        copied = WorkspaceContext(self.primary, self._configured)
+        copied._session = list(self._session)
+        copied.session_roots = tuple(copied._session)
+        copied.revision = self.revision
+        return copied
+
     def _resolve_root(self, raw_path: str, *, require_exists: bool) -> Path:
         value = (raw_path or "").strip()
         if not value:

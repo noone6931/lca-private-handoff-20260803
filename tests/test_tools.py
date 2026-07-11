@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import shutil
 import subprocess
 import sys
@@ -14,12 +15,14 @@ from local_agent.lsp.config import LspServerConfig
 from local_agent.patch.anchored import hash_text
 from local_agent.tools.base import Tool, ToolContext, ToolRegistry, ToolResult
 from local_agent.tools.files import file_tools, patch_file, read_file, rollback_patch, write_file
-from local_agent.tools.git import capture_git_baseline, git_diff
+from local_agent.tools.git import capture_git_baseline, git_diff, git_status
 from local_agent.tools.interaction import ask_user
 from local_agent.tools.lsp import lsp_definition, lsp_diagnostics, lsp_references, lsp_status, lsp_symbols, lsp_tools
 from local_agent.tools.memory import learn, memory_read
+from local_agent.tools.search import glob_files
 from local_agent.tools.search import list_files
 from local_agent.tools.search import search_code
+from local_agent.tools.search import search_tools
 from local_agent.tools.shell import run_shell, run_tests
 from local_agent.tools.todo import todo_add, todo_read, todo_tools, todo_update
 
@@ -508,6 +511,138 @@ class ToolTests(unittest.TestCase):
 
         self.assertTrue(result.is_error)
         self.assertIn("Path escapes workspace", result.content)
+
+    def test_glob_files_is_the_only_filename_discovery_schema(self) -> None:
+        registry = ToolRegistry(search_tools())
+        schemas = {schema["function"]["name"]: schema["function"] for schema in registry.schemas()}
+
+        self.assertIn("glob_files", schemas)
+        self.assertIn("paths", schemas["glob_files"]["parameters"]["properties"])
+        self.assertIn("filename", schemas["glob_files"]["description"])
+        self.assertIn("does not search filenames", schemas["search_code"]["description"])
+        self.assertNotIn("path", schemas["glob_files"]["parameters"]["properties"])
+
+    def test_registry_compatibly_applies_observed_glob_path_scope_without_exposing_a_second_schema(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            source = workspace / "src" / "App.java"
+            source.parent.mkdir()
+            source.write_text("class App {}\n", encoding="utf-8")
+            result = ToolRegistry(search_tools()).execute(
+                "glob_files",
+                {"path": str(workspace), "paths": ["src/**/*.java"]},
+                ToolContext(workspace=workspace, approval_mode="yolo"),
+            )
+
+        payload = json.loads(result.content)
+        self.assertFalse(result.is_error)
+        self.assertEqual(payload["files"], ["src/App.java"])
+        self.assertIn("path scope applied to relative paths", payload["compatibility_normalized"])
+        self.assertEqual(result.metadata["compatibility_normalized"], ["path scope applied to relative paths"])
+
+    def test_glob_files_finds_exact_directory_and_multiple_patterns(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            java_file = workspace / "src" / "main" / "java" / "App.java"
+            java_file.parent.mkdir(parents=True)
+            java_file.write_text("class App {}\n", encoding="utf-8")
+            python_file = workspace / "scripts" / "check.py"
+            python_file.parent.mkdir()
+            python_file.write_text("print('ok')\n", encoding="utf-8")
+            context = ToolContext(workspace=workspace, approval_mode="yolo")
+
+            exact = glob_files({"paths": ["src/main/java/App.java"]}, context)
+            directory = glob_files({"paths": ["src/main"]}, context)
+            patterns = glob_files({"paths": ["src/**/*.java", "scripts/*.py"]}, context)
+
+        self.assertFalse(exact.is_error)
+        self.assertEqual(json.loads(exact.content)["files"], ["src/main/java/App.java"])
+        self.assertEqual(json.loads(directory.content)["files"], ["src/main/java/App.java"])
+        payload = json.loads(patterns.content)
+        self.assertEqual(payload["files"], ["scripts/check.py", "src/main/java/App.java"])
+        self.assertTrue(payload["complete"])
+        self.assertEqual(patterns.metadata["negative_evidence_type"], "path_match")
+
+    def test_glob_files_scans_allowed_root_without_broadening_access(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace_tmp, tempfile.TemporaryDirectory() as allowed_tmp, tempfile.TemporaryDirectory() as outside_tmp:
+            workspace = Path(workspace_tmp).resolve()
+            allowed = Path(allowed_tmp).resolve()
+            outside = Path(outside_tmp).resolve()
+            (workspace / "src").mkdir()
+            (workspace / "src" / "App.java").write_text("class App {}\n", encoding="utf-8")
+            external = allowed / "External.java"
+            external.write_text("class External {}\n", encoding="utf-8")
+            (outside / "Secret.java").write_text("class Secret {}\n", encoding="utf-8")
+            context = ToolContext(workspace=workspace, approval_mode="yolo", allowed_dirs=(allowed,))
+
+            result = glob_files({"paths": ["src/**/*.java", str(allowed / "*.java")]}, context)
+            escaped = glob_files({"paths": [str(outside / "*.java")]}, context)
+
+        payload = json.loads(result.content)
+        self.assertFalse(result.is_error)
+        self.assertEqual(payload["files"], [str(external), "src/App.java"])
+        self.assertEqual(set(payload["searched_roots"]), {str(workspace), str(allowed)})
+        self.assertTrue(escaped.is_error)
+        self.assertIn("Path escapes workspace", escaped.content)
+
+    def test_glob_files_respects_hidden_gitignore_limit_and_missing_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            (workspace / ".gitignore").write_text("ignored.py\nbuild/\n", encoding="utf-8")
+            for name in ("visible.py", ".hidden.py", "ignored.py", "a.py", "b.py", "c.py"):
+                (workspace / name).write_text("pass\n", encoding="utf-8")
+            (workspace / "build").mkdir()
+            (workspace / "build" / "generated.py").write_text("pass\n", encoding="utf-8")
+            context = ToolContext(workspace=workspace, approval_mode="yolo")
+
+            default_result = glob_files({"paths": ["**/*.py"]}, context)
+            include_all = glob_files({"paths": ["**/*.py"], "hidden": True, "gitignore": False}, context)
+            limited = glob_files({"paths": ["*.py"], "limit": 2}, context)
+            missing = glob_files({"paths": ["missing.py"]}, context)
+
+        self.assertNotIn("ignored.py", json.loads(default_result.content)["files"])
+        self.assertNotIn("build/generated.py", json.loads(default_result.content)["files"])
+        self.assertIn(".hidden.py", json.loads(include_all.content)["files"])
+        limited_payload = json.loads(limited.content)
+        self.assertTrue(limited_payload["truncated"])
+        self.assertFalse(limited_payload["complete"])
+        self.assertEqual(limited.metadata["negative_evidence_type"], "incomplete")
+        self.assertTrue(missing.is_error)
+        self.assertEqual(missing.metadata["negative_evidence_type"], "exact_path_missing")
+
+    def test_glob_files_filters_symlink_targets_outside_authorized_roots(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace_tmp, tempfile.TemporaryDirectory() as outside_tmp:
+            workspace = Path(workspace_tmp).resolve()
+            outside = Path(outside_tmp).resolve()
+            (workspace / "inside.py").write_text("inside\n", encoding="utf-8")
+            (outside / "secret.py").write_text("secret\n", encoding="utf-8")
+            try:
+                (workspace / "linked").symlink_to(outside, target_is_directory=True)
+            except OSError as exc:
+                self.skipTest(f"symlinks are unavailable: {exc}")
+
+            result = glob_files({"paths": ["**/*.py"]}, ToolContext(workspace=workspace, approval_mode="yolo"))
+
+        self.assertFalse(result.is_error)
+        self.assertEqual(json.loads(result.content)["files"], ["inside.py"])
+
+    def test_glob_files_bounds_large_structured_output_without_claiming_complete_inventory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            for index in range(400):
+                directory = workspace / f"module-{index:03d}-with-a-deliberately-long-name-for-output-sizing"
+                directory.mkdir()
+                (directory / "VeryLongSourceFileNameForGlobOutputSizing.java").write_text("class App {}\n", encoding="utf-8")
+
+            result = glob_files({"paths": ["**/*.java"], "limit": 1000}, ToolContext(workspace=workspace, approval_mode="yolo"))
+
+        payload = json.loads(result.content)
+        self.assertLessEqual(len(result.content), 30000)
+        self.assertTrue(payload["output_char_limit_reached"])
+        self.assertFalse(payload["complete"])
+        self.assertEqual(payload["negative_evidence_type"], "incomplete")
+        self.assertEqual(payload["observed_match_count"], 400)
+        self.assertLess(payload["file_count"], 400)
 
     def test_search_code_rejects_path_escape(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -2264,6 +2399,17 @@ class ToolTests(unittest.TestCase):
         self.assertIn("(empty diff)", result.content)
         self.assertIn("?? README.md", result.content)
         self.assertIn("git diff does not show untracked files", result.content)
+
+    def test_git_status_non_repository_only_describes_primary_workspace(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            result = git_status({}, ToolContext(workspace=workspace, approval_mode="yolo"))
+
+        self.assertTrue(result.is_error)
+        self.assertIn(f"primary workspace only: {workspace}", result.content)
+        self.assertIn("Use /move", result.content)
+        self.assertEqual(result.metadata["git_probe_root"], str(workspace))
+        self.assertFalse(result.metadata["git_repository"])
 
     def test_git_diff_adds_diff_summary_with_counts_and_hunk_snippets(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

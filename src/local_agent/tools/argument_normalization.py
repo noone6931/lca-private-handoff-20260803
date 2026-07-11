@@ -25,6 +25,8 @@ def normalize_compatibility_arguments(name: str, arguments: dict[str, Any]) -> t
         _normalize_dry_run_boolean(normalized, notes)
     elif name == "run_tests":
         _rename_alias(normalized, "cmd", "command", notes)
+    elif name == "glob_files":
+        _normalize_glob_path_scope(normalized, notes)
     elif name in {"todo_add", "todo_update"}:
         _rename_alias(normalized, "key", "id", notes)
         _rename_alias(normalized, "content", "task", notes)
@@ -76,3 +78,26 @@ def _normalize_todo_status(arguments: dict[str, Any], notes: list[str]) -> None:
     if arguments.get("status") == "pending":
         arguments["status"] = "todo"
         notes.append("status pending -> todo")
+
+
+def _normalize_glob_path_scope(arguments: dict[str, Any], notes: list[str]) -> None:
+    """Accept the observed provider ``path`` scope without exposing a second schema."""
+
+    raw_scope = arguments.pop("path", None)
+    if not isinstance(raw_scope, str) or not raw_scope.strip():
+        return
+    paths = arguments.get("paths")
+    if paths is None:
+        arguments["paths"] = [raw_scope]
+        notes.append("path -> paths[0]")
+        return
+    if not isinstance(paths, list) or not all(isinstance(path, str) for path in paths):
+        return
+    scoped_paths: list[str] = []
+    for path in paths:
+        if path.startswith("/") or path.startswith("~"):
+            scoped_paths.append(path)
+        else:
+            scoped_paths.append(f"{raw_scope.rstrip('/')}/{path}")
+    arguments["paths"] = scoped_paths
+    notes.append("path scope applied to relative paths")

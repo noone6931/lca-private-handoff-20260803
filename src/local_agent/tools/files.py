@@ -110,8 +110,25 @@ def read_file(args: dict[str, Any], context: ToolContext) -> ToolResult:
         path = resolve_workspace_path(context.workspace, args["path"], context.allowed_dirs)
     except PatchError as exc:
         return ToolResult(str(exc), is_error=True)
-    if not path.exists() or not path.is_file():
-        return ToolResult(f"File not found: {args['path']}", is_error=True)
+    if not path.exists():
+        return ToolResult(
+            f"File not found: {args['path']}",
+            is_error=True,
+            metadata={
+                "negative_evidence_type": "exact_path_missing",
+                "path": str(args["path"]),
+                "complete": True,
+            },
+        )
+    if not path.is_file():
+        return ToolResult(
+            f"Path is a directory, not a readable file: {args['path']}. Use list_files or glob_files for discovery.",
+            is_error=True,
+            metadata={
+                "path": str(args["path"]),
+                "complete": True,
+            },
+        )
     file_size = path.stat().st_size
     if file_size > MAX_READ_BYTES:
         return ToolResult(

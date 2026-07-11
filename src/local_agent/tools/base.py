@@ -4,9 +4,9 @@ import json
 import select
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 from ..terminal_io import terminal_input_prompt
 from .argument_normalization import normalize_compatibility_arguments
@@ -17,6 +17,7 @@ class ToolResult:
     content: str
     is_error: bool = False
     useless: bool = False
+    metadata: Mapping[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -108,11 +109,26 @@ class ToolRegistry:
                 return ToolResult(scope_denial, is_error=True)
             result = tool.handler(arguments, context)
             if compatibility_notes:
+                metadata = {**dict(result.metadata), "compatibility_normalized": list(compatibility_notes)}
+                content = result.content
+                if result.metadata.get("structured_output"):
+                    try:
+                        payload = json.loads(content)
+                        if isinstance(payload, dict):
+                            payload["compatibility_normalized"] = list(compatibility_notes)
+                            content = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True)
+                    except json.JSONDecodeError:
+                        pass
+                else:
+                    content = (
+                        f"{content}\n\n[compatibility normalized] {'; '.join(compatibility_notes)}. "
+                        "Use canonical tool arguments on the next call."
+                    )
                 return ToolResult(
-                    f"{result.content}\n\n[compatibility normalized] {'; '.join(compatibility_notes)}. "
-                    "Use canonical tool arguments on the next call.",
+                    content,
                     is_error=result.is_error,
                     useless=result.useless,
+                    metadata=metadata,
                 )
             return result
         except Exception as exc:  # noqa: BLE001 - tool errors must be returned to the model.

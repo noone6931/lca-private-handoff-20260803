@@ -4,6 +4,9 @@ import re
 from dataclasses import dataclass
 from typing import Literal
 
+from .negative_evidence import allowed_tools_for_negative_claims
+from .negative_evidence import render_negative_existence_issues
+from .negative_evidence import unsupported_negative_existence_claims
 from .task_contract import RequirementContract
 from .tool_choice_queue import CODE_EVIDENCE_TOOL_NAMES
 from .tool_choice_queue import ToolResultSummary
@@ -16,7 +19,7 @@ AuditCategory = Literal["acceptance", "evidence", "verification"]
 AuditStatus = Literal["passed", "missing"]
 
 
-EVIDENCE_TOOLS = frozenset({"list_files", *CODE_EVIDENCE_TOOL_NAMES})
+EVIDENCE_TOOLS = frozenset({"glob_files", "list_files", *CODE_EVIDENCE_TOOL_NAMES})
 IMPLEMENTATION_EVIDENCE_TOOLS = frozenset({"list_files", *CODE_EVIDENCE_TOOL_NAMES})
 IMPLEMENTATION_VERIFICATION_TOOLS = frozenset({"git_diff", "run_tests"})
 TODO_TOOLS = frozenset({"todo_read", "todo_update", "todo_add"})
@@ -257,8 +260,10 @@ def _read_only_items(
 ) -> list[CompletionAuditItem]:
     content = final_content or ""
     code_evidence = _has_successful_code_evidence(tool_results)
-    source_ref = bool(source_paths) and _mentions_source_reference(content, source_paths)
+    path_discovery_evidence = _has_complete_path_discovery_evidence(tool_results)
+    source_ref = _mentions_source_reference(content, source_paths)
     negative_evidence = _has_negative_evidence_result(tool_results)
+    unsupported_existence_claims = unsupported_negative_existence_claims(content, tool_results)
     no_edits = not workspace_write_happened(tool_results)
     items: list[CompletionAuditItem] = []
 
@@ -267,9 +272,19 @@ def _read_only_items(
         0,
         "Answer the user's question directly using repository-grounded evidence.",
     )
-    if _looks_incomplete(content):
+    if unsupported_existence_claims:
+        items.append(
+            _missing(
+                "acceptance",
+                direct_requirement,
+                "negative existence claim lacks type-matched evidence: "
+                + "; ".join(render_negative_existence_issues(unsupported_existence_claims)),
+                allowed_tools_for_negative_claims(unsupported_existence_claims),
+            )
+        )
+    elif _looks_incomplete(content):
         items.append(_missing("acceptance", direct_requirement, "draft says it is ready instead of answering"))
-    elif not code_evidence:
+    elif not code_evidence and not path_discovery_evidence:
         items.append(
             _missing(
                 "acceptance",
@@ -314,7 +329,7 @@ def _read_only_items(
         0,
         "Cite concrete file paths, symbols, commands, or search terms used as evidence.",
     )
-    if code_evidence and (source_ref or negative_evidence):
+    if (code_evidence or path_discovery_evidence) and (source_ref or negative_evidence):
         items.append(_passed("evidence", evidence_requirement, "source/search evidence is traceable"))
     else:
         items.append(
@@ -341,7 +356,7 @@ def _read_only_items(
         0,
         "Use read/search style inspection before answering code-specific claims.",
     )
-    if code_evidence:
+    if code_evidence or path_discovery_evidence:
         items.append(_passed("verification", verification_requirement, "read/search style inspection happened"))
     else:
         items.append(
@@ -385,7 +400,8 @@ def _implementation_items(
     write_happened = workspace_write_happened(tool_results)
     blocked_no_edit_claim = _looks_like_blocked_no_edit(content)
     blocked_no_edit_evidence = _has_blocked_no_edit_evidence(tool_results)
-    blocked_no_edit = blocked_no_edit_claim and blocked_no_edit_evidence
+    unsupported_existence_claims = unsupported_negative_existence_claims(content, tool_results)
+    blocked_no_edit = blocked_no_edit_claim and blocked_no_edit_evidence and not unsupported_existence_claims
     code_evidence = _has_successful_code_evidence(tool_results)
     tests_run = successful_tool_after_last_write(tool_results, "run_tests")
     diff_run = successful_tool_after_last_write(tool_results, "git_diff")
@@ -406,14 +422,20 @@ def _implementation_items(
         )
     else:
         reason = "no workspace change happened and the final answer does not clearly mark the task blocked/no-edit"
-        if blocked_no_edit_claim:
+        allowed_tools = ("read_file", "search_code", "apply_patch")
+        if unsupported_existence_claims:
+            reason = "blocked/no-edit conclusion includes unsupported negative existence claims: " + "; ".join(
+                render_negative_existence_issues(unsupported_existence_claims)
+            )
+            allowed_tools = allowed_tools_for_negative_claims(unsupported_existence_claims) or allowed_tools
+        elif blocked_no_edit_claim:
             reason = "final answer claims blocked/no-edit, but no tool result records a concrete blocking condition"
         items.append(
             _missing(
                 "acceptance",
                 implement_requirement,
                 reason,
-                ("read_file", "search_code", "apply_patch"),
+                allowed_tools,
             )
         )
 
@@ -536,6 +558,22 @@ def _has_successful_code_evidence(results: list[ToolResultSummary]) -> bool:
     return any(_successful(result) and result.name in CODE_EVIDENCE_TOOL_NAMES for result in results)
 
 
+def _has_complete_path_discovery_evidence(results: list[ToolResultSummary]) -> bool:
+    return any(
+        (
+            _successful(result)
+            and result.name == "glob_files"
+            and bool(result.metadata.get("complete"))
+            and not bool(result.metadata.get("truncated"))
+        )
+        or (
+            str(result.metadata.get("negative_evidence_type") or "") == "exact_path_missing"
+            and bool(result.metadata.get("complete"))
+        )
+        for result in results
+    )
+
+
 def _successful(result: ToolResultSummary) -> bool:
     return bool(result.name) and not result.is_error
 
@@ -570,7 +608,7 @@ def _mentions_source_reference(content: str, source_paths: list[str]) -> bool:
     for path in source_paths:
         if path and (path.lower() in lowered or path.rsplit("/", 1)[-1].lower() in lowered):
             return True
-    return any(marker in lowered for marker in {"search_code", "lsp_", "搜索词", "search term"})
+    return any(marker in lowered for marker in {"glob_files", "search_code", "lsp_", "搜索词", "search term"})
 
 
 def _has_file_path(content: str) -> bool:

@@ -70,6 +70,7 @@ from .steering.final_answer import FinalAnswerSteerer
 from .steering.final_answer import FinalStructureSteerer
 from .steering.final_answer import CompletionAuditSteerer
 from .steering.final_answer import DesignEvidenceSteerer
+from .steering.final_answer import NegativeExistenceSteerer
 from .steering.final_answer import NoEditFinalHygieneSteerer
 from .steering.final_answer import PatchReviewSteerer
 from .steering.final_answer import ReadOnlyEvidenceSteerer
@@ -103,7 +104,7 @@ SYSTEM_PROMPT = """You are a local coding agent running inside a user's workspac
 
 Default working style:
 - Work from local evidence, not guesses. Choose the tools yourself; the user should not need to spell out tool order.
-- For repo understanding, start with list_files/search_code/read_file as needed. For code navigation in Python, Java, JavaScript, TypeScript, or Vue, prefer lsp_symbols/lsp_definition/lsp_references/lsp_diagnostics before broad text search when helpful. lsp_workspace_symbols and lsp_document_symbols are compatibility aliases for lsp_symbols. Read the exact file or range before editing it.
+- For repo understanding, use glob_files for filename, extension, and directory discovery; use list_files only to browse a nearby directory and search_code only for text inside file contents. For code navigation in Python, Java, JavaScript, TypeScript, or Vue, prefer lsp_symbols/lsp_definition/lsp_references/lsp_diagnostics before broad text search when helpful. lsp_workspace_symbols and lsp_document_symbols are compatibility aliases for lsp_symbols. Read the exact file or range before editing it.
 - The primary --cwd is the main workspace. If additional directories are configured, file/search/LSP/patch tools may access those explicit paths; shell, git, session, todo, and memory remain anchored to --cwd.
 - For multi-step coding or implementation work, maintain a concise todo list with todo_add/todo_update/todo_read. For pure read-only analysis, skip todo unless the user asks for it.
 - If a requirement is ambiguous and guessing would affect the result, use ask_user. If local evidence is enough, continue without asking.
@@ -140,6 +141,7 @@ MAX_READ_ONLY_EVIDENCE_STEERS = 2
 MAX_REQUIREMENT_EVIDENCE_STEERS = 2
 MAX_DESIGN_EVIDENCE_STEERS = 2
 MAX_SOURCE_EVIDENCE_FALSE_NEGATIVE_STEERS = 2
+MAX_NEGATIVE_EXISTENCE_STEERS = 2
 MAX_SOURCE_GROUNDED_NUMERIC_STEERS = 2
 MAX_COMPLETION_AUDIT_STEERS = 2
 MAX_PATCH_REVIEW_STEERS = 2
@@ -247,6 +249,7 @@ class AgentRuntime:
             NoEditFinalHygieneSteerer(max_steers=MAX_NO_EDIT_FINAL_HYGIENE_STEERS),
             FinalStructureSteerer(max_steers=MAX_FINAL_STRUCTURE_STEERS),
             SourceEvidenceFalseNegativeSteerer(max_steers=MAX_SOURCE_EVIDENCE_FALSE_NEGATIVE_STEERS),
+            NegativeExistenceSteerer(max_steers=MAX_NEGATIVE_EXISTENCE_STEERS),
             SourceGroundedNumericSteerer(max_steers=MAX_SOURCE_GROUNDED_NUMERIC_STEERS),
             PatchReviewSteerer(max_steers=MAX_PATCH_REVIEW_STEERS),
             CompletionAuditSteerer(max_steers=MAX_COMPLETION_AUDIT_STEERS),
@@ -752,20 +755,23 @@ class AgentRuntime:
 
     def add_workspace_root(self, raw_path: str) -> Path:
         self._ensure_workspace_idle()
-        path, changed = self._workspace_context.add_session_root(raw_path)
-        self._record_workspace_roots_change("add", path, changed)
+        next_context = self._workspace_context.copy()
+        path, changed = next_context.add_session_root(raw_path)
+        self._record_workspace_roots_change(next_context, "add", path, changed)
         return path
 
     def remove_workspace_root(self, raw_path: str) -> Path:
         self._ensure_workspace_idle()
-        path, changed = self._workspace_context.remove_session_root(raw_path)
-        self._record_workspace_roots_change("remove", path, changed)
+        next_context = self._workspace_context.copy()
+        path, changed = next_context.remove_session_root(raw_path)
+        self._record_workspace_roots_change(next_context, "remove", path, changed)
         return path
 
     def reset_workspace_roots(self) -> None:
         self._ensure_workspace_idle()
-        changed = self._workspace_context.reset_session_roots()
-        self._record_workspace_roots_change("reset", None, changed)
+        next_context = self._workspace_context.copy()
+        changed = next_context.reset_session_roots()
+        self._record_workspace_roots_change(next_context, "reset", None, changed)
 
     def move_workspace(self, raw_path: str) -> Path:
         """Move this session's primary workspace without losing its session identity."""
@@ -837,7 +843,6 @@ class AgentRuntime:
             self._last_run_summary = None
             close_all_clients()
             self._session.append("workspace_moved", payload)
-            self._events.emit("WorkspaceMoved", payload)
         except Exception as exc:  # noqa: BLE001 - every post-migration commit must compensate.
             self._workspace_context = previous_workspace_context
             self._state_dir = previous_state_dir
@@ -861,24 +866,60 @@ class AgentRuntime:
                 self._session.path = previous_session_location[2]
             detail = f"; rollback failed: {rollback_error}" if rollback_error is not None else ""
             raise WorkspaceMigrationError(f"Workspace move failed and was rolled back: {exc}{detail}") from exc
+        self._emit_post_commit_event("WorkspaceMoved", payload)
         return next_context.primary
 
     def _ensure_workspace_idle(self) -> None:
         if self._is_running:
             raise RuntimeError("Workspace roots can only be changed while the runtime is idle.")
 
-    def _record_workspace_roots_change(self, operation: str, path: Path | None, changed: bool) -> None:
+    def _record_workspace_roots_change(
+        self,
+        next_context: WorkspaceContext,
+        operation: str,
+        path: Path | None,
+        changed: bool,
+    ) -> None:
         if not changed:
             return
+        payload = next_context.snapshot(operation=operation, path=path, changed=True)
+        previous_session_bytes = self._session.path.read_bytes()
+        try:
+            self._session.append("workspace_roots_changed", payload)
+        except Exception as exc:  # noqa: BLE001 - append can fail after partially writing JSONL.
+            rollback_error: Exception | None = None
+            try:
+                self._session.path.write_bytes(previous_session_bytes)
+            except Exception as rollback_exc:  # noqa: BLE001 - expose failed compensation to the caller.
+                rollback_error = rollback_exc
+            detail = f"; session rollback failed: {rollback_error}" if rollback_error is not None else ""
+            raise RuntimeError(f"Workspace root change failed and was rolled back: {exc}{detail}") from exc
+
+        self._workspace_context = next_context
         self._tool_context = replace(
             self._tool_context,
-            allowed_dirs=self._workspace_context.additional_roots,
+            allowed_dirs=next_context.additional_roots,
         )
         self._session_guards = SessionGuardState()
-        self._summary_cache.clear()
-        payload = self._workspace_context.snapshot(operation=operation, path=path, changed=True)
-        self._session.append("workspace_roots_changed", payload)
-        self._events.emit("WorkspaceRootsChanged", payload)
+        self._summary_cache = {}
+        self._emit_post_commit_event("WorkspaceRootsChanged", payload)
+
+    def _emit_post_commit_event(self, event_type: str, payload: dict[str, object]) -> None:
+        """Notify an external sink without turning a committed workspace change into a rollback."""
+
+        try:
+            self._events.emit(event_type, payload)
+        except Exception as exc:  # noqa: BLE001 - sinks are observer-only after commit.
+            try:
+                self._session.append(
+                    "event_delivery_error",
+                    {
+                        "event_type": event_type,
+                        "error": f"{type(exc).__name__}: {exc}",
+                    },
+                )
+            except Exception:
+                pass
 
     def _restore_session_workspace_roots(self) -> tuple[Path, ...]:
         snapshot = self._session.load_latest_workspace_roots()
@@ -1460,7 +1501,10 @@ class AgentRuntime:
                 is_error=result.is_error,
                 useless=result.useless,
                 path=_tool_choice_argument_path(arguments),
-                metadata=review_input_metadata(name, result.content),
+                metadata={
+                    **review_input_metadata(name, result.content),
+                    **dict(result.metadata),
+                },
             )
         )
         self._run.tool_choice_results = self._run.tool_choice_results[-80:]
@@ -1501,6 +1545,7 @@ class AgentRuntime:
                 "subject": record.subject,
                 "status": record.status,
                 "summary": record.summary,
+                "details": dict(record.details),
             },
         )
 
@@ -1675,6 +1720,7 @@ class AgentRuntime:
             "no_edit_final_hygiene": self._run.final_answer_steers.get("no_edit_final_hygiene", 0),
             "final_structure": self._run.final_answer_steers.get("final_structure", 0),
             "source_evidence_false_negative": self._run.final_answer_steers.get("source_evidence_false_negative", 0),
+            "negative_existence": self._run.final_answer_steers.get("negative_existence", 0),
             "source_grounded_numeric": self._run.final_answer_steers.get("source_grounded_numeric", 0),
             "patch_reviewer": self._run.final_answer_steers.get("patch_reviewer", 0),
             "completion_audit": self._run.final_answer_steers.get("completion_audit", 0),

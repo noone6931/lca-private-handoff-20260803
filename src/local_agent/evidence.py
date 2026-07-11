@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from .patch.anchored import display_workspace_path
 from .patch.anchored import PatchError
@@ -33,6 +33,7 @@ class EvidenceRecord:
     subject: str
     summary: str
     status: str = "ok"
+    details: Mapping[str, Any] = field(default_factory=dict)
 
     def render(self) -> str:
         return f"- [{self.status}] {self.tool} {self.subject}: {self.summary}"
@@ -295,8 +296,46 @@ def build_tool_evidence_record(
     allowed_dirs: tuple[Path, ...],
 ) -> EvidenceRecord | None:
     parsed = parse_tool_arguments(arguments)
-    if result.is_error and name not in {"apply_patch", "git_diff", "git_status", "rollback_patch", "run_tests", "shell", "write_file"}:
+    metadata = dict(result.metadata)
+    negative_type = str(metadata.get("negative_evidence_type") or "")
+    if result.is_error and negative_type != "exact_path_missing" and name not in {
+        "apply_patch",
+        "git_diff",
+        "git_status",
+        "rollback_patch",
+        "run_tests",
+        "shell",
+        "write_file",
+    }:
         return None
+    if name == "glob_files":
+        patterns = metadata.get("patterns")
+        pattern_text = ", ".join(str(pattern) for pattern in patterns) if isinstance(patterns, list) else "(unknown)"
+        files = metadata.get("files")
+        file_count = len(files) if isinstance(files, list) else metadata.get("file_count", 0)
+        scopes = metadata.get("searched_scopes")
+        scope_text = ", ".join(str(scope) for scope in scopes) if isinstance(scopes, list) else "(unknown)"
+        summary = f"{file_count} file(s) for {pattern_text}; scopes: {scope_text}."
+        if metadata.get("truncated"):
+            summary += " Result limit reached; scan is incomplete."
+        if metadata.get("missing_paths"):
+            summary += " Missing paths: " + ", ".join(str(path) for path in metadata["missing_paths"]) + "."
+        return EvidenceRecord(
+            "glob_files",
+            f"patterns={pattern_text}",
+            summary,
+            status=negative_type or "ok",
+            details=metadata,
+        )
+    if negative_type == "exact_path_missing":
+        raw_path = str(metadata.get("path") or parsed.get("path") or "(unknown)")
+        return EvidenceRecord(
+            name,
+            raw_path,
+            "Exact path was not found.",
+            status="exact_path_missing",
+            details=metadata,
+        )
     if name == "read_file" and not result.is_error:
         raw_path = parsed.get("path")
         if not isinstance(raw_path, str) or not raw_path.strip():
@@ -316,7 +355,13 @@ def build_tool_evidence_record(
         raw_path = str(parsed.get("path") or ".").strip() or "."
         subject = f"pattern={pattern!r} path={raw_path!r}"
         if result.useless or result.content.strip().startswith("No matches."):
-            return EvidenceRecord("search_code", subject, "No matches returned.", status="no_match")
+            return EvidenceRecord(
+                "search_code",
+                subject,
+                "No matches returned.",
+                status=negative_type or "content_no_match",
+                details=metadata,
+            )
         paths = first_search_result_paths(result.content, limit=5)
         summary = "Matched files: " + ", ".join(paths) if paths else "Returned matches; inspect the search_code tool result for exact lines."
         return EvidenceRecord("search_code", subject, summary)
