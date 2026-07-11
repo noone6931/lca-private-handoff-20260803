@@ -43,11 +43,17 @@ fixtures:
     PYTHONPATH=src python3 scripts/run_benchmarks.py --live --provider bailian --env-file .env
 
 The live report is useful for tracking provider-specific tool selection and
-repair behavior. It is not part of unit tests and may vary across models.
+repair behavior. It is not part of unit tests and may vary across models. Use
+`--preserve-failed-sessions` only when fixture-session JSONL is needed for
+diagnosis; it is off by default.
 
 ## Interpreting Reports
 
-Every result includes success or failure, termination reason, elapsed time, LLM
-requests, tool calls, tool errors, useless and repeated-call guards, compaction,
-acceptance checks, changed files, test evidence, and residual risk. A benchmark
-must not be made to pass by adding task-specific Runtime keyword branches.
+Every result includes success or failure, session/run identity, termination
+reason, elapsed time, LLM requests, tool calls, bounded redacted tool-error
+summaries, useless and repeated-call guards, compaction effectiveness (estimated
+token reduction and zero-gain runs), acceptance checks, changed files, test
+evidence, and residual risk. Deterministic tasks can lock exact wording; live
+tasks use provider-neutral normalized terms/regex plus root-coverage checks, so
+valid provider phrasing is not reported as a false failure. A benchmark must not
+be made to pass by adding task-specific Runtime keyword branches.

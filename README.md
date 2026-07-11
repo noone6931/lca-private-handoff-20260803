@@ -34,7 +34,7 @@ DASHSCOPE_API_KEY=your-token
 
 `.env` 已被 `.gitignore` 忽略，不会进入提交。
 
-跨项目使用时，推荐把 token 放在 `local-coding-agent` 安装目录的 `.env` 中，然后用这里的 `./agent --cwd /path/to/other-project ...` 启动。`./agent` 会自动把安装目录 `.env` 作为 `--env-file` 传给 CLI，使 provider 凭据和目标 workspace 解耦。优先级是：真实环境变量 > 显式 `--env-file` > 目标 `--cwd/.env`。
+跨项目使用时，推荐把 token 放在用户级 `~/.config/local-coding-agent/.env` 中（可用 `AGENT_CONFIG_DIR` 改目录），然后从任意目标项目启动。显式 `--env-file` 适合一次性覆盖；`./agent` 仍会把 LCA checkout 的 `.env` 作为显式 env-file 加载，方便开发期使用。优先级是：真实环境变量 > 显式 `--env-file` > 用户级 `.env` > 目标 `--cwd/.env`。
 
 如果不用 `./agent` 启动，也可以显式指定：
 
@@ -303,6 +303,19 @@ ${XDG_STATE_HOME:-~/.local/state}/local-coding-agent/workspaces/<workspace-key>/
 PYTHONPATH=src python3 -m unittest discover -s tests
 python3 -m compileall src tests
 ```
+
+## 稳定版与开发版
+
+在 LCA checkout 安装离线 launcher，并发布经过完整本地门禁的 stable snapshot：
+
+```bash
+python3 scripts/lca_release.py install
+lca-release publish
+```
+
+之后 `lca` 运行 stable snapshot，`lca-dev` 运行当前 checkout；`lca-release status` 查看来源，`lca-release rollback RELEASE_ID` 原子回退。snapshot 不复制 checkout 的 `.env` 或任何密钥，stable/dev 共用用户级 provider config。
+
+安装后先运行 `type -a lca` 和 `lca --source`（或 `lca --version`）确认命令来源。若 zsh alias 仍指向 checkout 的 `agent`，请手动删除该 alias，或把它改名为 `lca-dev`；安装程序不会修改 `~/.zshrc`。
 
 ## 开发项目管理同步
 
