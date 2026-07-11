@@ -4,6 +4,7 @@ import unittest
 
 from local_agent.tool_choice_queue import READ_ONLY_FORBIDDEN_TOOL_NAMES
 from local_agent.tool_choice_queue import WORKSPACE_INVENTORY_TOOL_NAMES
+from local_agent.tool_choice_queue import WORKSPACE_INVENTORY_DISCOVERY_TOOL_NAMES
 from local_agent.tool_choice_queue import CANDIDATE_DELIVERY_TOOL_NAMES
 from local_agent.tool_choice_queue import CANDIDATE_DIFF_TOOL_NAMES
 from local_agent.tool_choice_queue import CANDIDATE_REMEDIATION_TOOL_NAMES
@@ -27,12 +28,13 @@ class ToolChoiceQueueTests(unittest.TestCase):
 
         self.assertTrue(decision.steering_required)
         self.assertEqual(decision.rule_id, "workspace_inventory_discovery")
-        self.assertEqual(decision.allowed_tool_names, WORKSPACE_INVENTORY_TOOL_NAMES)
+        self.assertEqual(decision.allowed_tool_names, WORKSPACE_INVENTORY_DISCOVERY_TOOL_NAMES)
         self.assertEqual(decision.preferred_tool_names, ("glob_files",))
         self.assertEqual(len(decision.tool_call_hints), 1)
         self.assertIn('"/workspace/agent/**/pom.xml"', decision.tool_call_hints[0])
         self.assertIn('"/workspace/project/**/pom.xml"', decision.tool_call_hints[0])
         self.assertNotIn('""', decision.tool_call_hints[0])
+        self.assertEqual(decision.required_glob_roots, ("/workspace/agent", "/workspace/project"))
 
     def test_workspace_inventory_stays_within_discovery_tools_after_glob(self) -> None:
         decision = evaluate_tool_choice_state(
@@ -78,6 +80,8 @@ class ToolChoiceQueueTests(unittest.TestCase):
         self.assertEqual(decision.preferred_tool_names, ("glob_files",))
         self.assertIn('"/workspace/agent/**/pom.xml"', decision.tool_call_hints[0])
         self.assertNotIn('"/workspace/project/**/pom.xml"', decision.tool_call_hints[0])
+        self.assertEqual(decision.allowed_tool_names, WORKSPACE_INVENTORY_DISCOVERY_TOOL_NAMES)
+        self.assertEqual(decision.required_glob_roots, ("/workspace/agent",))
 
     def test_inventory_markers_do_not_override_code_implementation_flow(self) -> None:
         decision = evaluate_tool_choice_state(

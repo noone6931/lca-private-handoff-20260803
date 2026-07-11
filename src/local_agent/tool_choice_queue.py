@@ -58,6 +58,7 @@ CODE_EVIDENCE_TOOL_NAMES = frozenset({"read_file", "search_code", *LSP_EVIDENCE_
 CODE_EVIDENCE_ALLOWED_TOOL_NAMES = frozenset({"glob_files", "list_files", *CODE_EVIDENCE_TOOL_NAMES})
 REQUIREMENT_DOC_TOOL_NAMES = frozenset({"ask_user", "list_files", "read_file", "search_code"})
 WORKSPACE_INVENTORY_TOOL_NAMES = frozenset({"glob_files", "list_files", "read_file"})
+WORKSPACE_INVENTORY_DISCOVERY_TOOL_NAMES = frozenset({"glob_files"})
 MAX_WORKSPACE_INVENTORY_DISCOVERY_CALLS_PER_ROOT = 2
 MAX_WORKSPACE_INVENTORY_DISCOVERY_CALLS = 8
 PLANNER_EXPLORE_TOOL_NAMES = frozenset(
@@ -280,6 +281,7 @@ class ToolChoiceDecision:
     missing_requirements: tuple[str, ...] = ()
     preferred_tool_names: tuple[str, ...] = ()
     tool_call_hints: tuple[str, ...] = ()
+    required_glob_roots: tuple[str, ...] = ()
     scoped_read_paths: tuple[str, ...] = ()
     scoped_read_budget: int | None = None
     stop_message: str | None = None
@@ -567,7 +569,7 @@ def _workspace_inventory_decision(
     if not successful_globs:
         return ToolChoiceDecision(
             steering_required=True,
-            allowed_tool_names=_allowed_subset(WORKSPACE_INVENTORY_TOOL_NAMES, allowed_tools),
+            allowed_tool_names=_allowed_subset(WORKSPACE_INVENTORY_DISCOVERY_TOOL_NAMES, allowed_tools),
             reason=(
                 "workspace_inventory discovery missing: filename/path inventory must use glob_files before "
                 "drawing repository, language, source-tree, or build-layout conclusions."
@@ -576,6 +578,7 @@ def _workspace_inventory_decision(
             missing_requirements=("path_discovery_evidence",),
             preferred_tool_names=("glob_files",),
             tool_call_hints=(_inventory_glob_call_hint(roots),),
+            required_glob_roots=roots,
         )
     covered_roots = _inventory_covered_roots(successful_globs)
     missing_roots = tuple(root for root in roots if root not in covered_roots)
@@ -583,7 +586,7 @@ def _workspace_inventory_decision(
     if missing_roots:
         return ToolChoiceDecision(
             steering_required=True,
-            allowed_tool_names=_allowed_subset(WORKSPACE_INVENTORY_TOOL_NAMES, allowed_tools),
+            allowed_tool_names=_allowed_subset(WORKSPACE_INVENTORY_DISCOVERY_TOOL_NAMES, allowed_tools),
             reason=(
                 "workspace_inventory root coverage missing: run a bounded glob_files discovery for each uncovered "
                 f"workspace root before finalizing. Uncovered roots: {', '.join(missing_roots)}."
@@ -592,6 +595,7 @@ def _workspace_inventory_decision(
             missing_requirements=tuple(f"path_discovery:{root}" for root in missing_roots),
             preferred_tool_names=("glob_files",),
             tool_call_hints=(_inventory_glob_call_hint(missing_roots),),
+            required_glob_roots=missing_roots,
             scoped_read_paths=scoped_read_paths,
             scoped_read_budget=len(scoped_read_paths) or None,
         )

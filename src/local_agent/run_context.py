@@ -47,6 +47,7 @@ class RunContext:
     tool_choice_allowed_tool_names: set[str] | None = None
     tool_choice_read_file_paths: set[str] | None = None
     tool_choice_read_file_remaining: int | None = None
+    tool_choice_required_glob_roots: set[str] | None = None
     tool_choice_steering_signatures: set[str] = field(default_factory=set)
     tool_choice_results: list[ToolResultSummary] = field(default_factory=list)
     tool_choice_tool_names: list[str] = field(default_factory=list)

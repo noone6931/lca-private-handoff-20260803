@@ -43,6 +43,7 @@ class ToolContext:
     runtime_tool_allowlist: frozenset[str] | None = None
     runtime_read_file_paths: frozenset[str] | None = None
     runtime_read_file_remaining: int | None = None
+    runtime_glob_required_roots: frozenset[str] | None = None
 
 
 def tool_state_dir(context: ToolContext) -> Path:
@@ -121,6 +122,9 @@ class ToolRegistry:
             scope_denial = _runtime_read_file_scope_denial_reason(name, arguments, context)
             if scope_denial:
                 return ToolResult(scope_denial, is_error=True)
+            glob_scope_denial = _runtime_glob_scope_denial_reason(name, arguments, context)
+            if glob_scope_denial:
+                return ToolResult(glob_scope_denial, is_error=True)
             result = tool.handler(arguments, context)
             if compatibility_notes:
                 metadata = {**dict(result.metadata), "compatibility_normalized": list(compatibility_notes)}
@@ -190,6 +194,46 @@ def _runtime_read_file_scope_denial_reason(
         "Runtime candidate read restriction: read_file may only revisit the selected candidate paths at this step. "
         f"Allowed paths: {allowed}. Use apply_patch, or retry a listed path with a narrower range."
     )
+
+
+def _runtime_glob_scope_denial_reason(
+    name: str,
+    arguments: dict[str, Any],
+    context: ToolContext,
+) -> str | None:
+    """Require inventory discovery to cover each root before broader exploration."""
+
+    if name != "glob_files" or context.runtime_glob_required_roots is None:
+        return None
+    raw_paths = arguments.get("paths")
+    if not isinstance(raw_paths, list) or not all(isinstance(path, str) for path in raw_paths):
+        return None
+    missing = [
+        root
+        for root in sorted(context.runtime_glob_required_roots)
+        if not _glob_paths_cover_root(raw_paths, Path(root), context.workspace)
+    ]
+    if not missing:
+        return None
+    rendered = ", ".join(missing)
+    return (
+        "Runtime workspace inventory restriction: glob_files must explicitly cover every currently uncovered "
+        f"workspace root before other exploration. Missing root scopes: {rendered}. "
+        "Use absolute root-prefixed manifest/source patterns for additional roots; do not retry a primary-only glob."
+    )
+
+
+def _glob_paths_cover_root(raw_paths: list[str], root: Path, workspace: Path) -> bool:
+    root_text = str(root.resolve())
+    for raw_path in raw_paths:
+        expanded = str(Path(raw_path).expanduser())
+        if not Path(expanded).is_absolute():
+            if root.resolve() == workspace.resolve():
+                return True
+            continue
+        if expanded == root_text or expanded.startswith(root_text + "/"):
+            return True
+    return False
 
 
 def _approval_denial_reason(tool: Tool, context: ToolContext) -> str | None:

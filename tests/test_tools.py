@@ -576,6 +576,34 @@ class ToolTests(unittest.TestCase):
         self.assertTrue(empty.is_error)
         self.assertIn("non-empty authorized path or pattern", empty.content)
 
+    def test_registry_requires_every_inventory_root_before_running_glob(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            primary = root / "primary"
+            additional = root / "additional"
+            primary.mkdir()
+            additional.mkdir()
+            (primary / "pom.xml").write_text("<project />\n", encoding="utf-8")
+            (additional / "pom.xml").write_text("<project />\n", encoding="utf-8")
+            registry = ToolRegistry(search_tools())
+            context = ToolContext(
+                workspace=primary,
+                allowed_dirs=(additional,),
+                approval_mode="yolo",
+                runtime_glob_required_roots=frozenset({str(primary), str(additional)}),
+            )
+
+            primary_only = registry.execute("glob_files", {"paths": ["**/pom.xml"]}, context)
+            both_roots = registry.execute(
+                "glob_files",
+                {"paths": ["**/pom.xml", f"{additional}/**/pom.xml"]},
+                context,
+            )
+
+        self.assertTrue(primary_only.is_error)
+        self.assertIn(str(additional), primary_only.content)
+        self.assertFalse(both_roots.is_error)
+
     def test_registry_normalizes_search_code_camel_case_string_result_limit(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp).resolve()

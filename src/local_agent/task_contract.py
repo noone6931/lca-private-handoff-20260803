@@ -445,7 +445,17 @@ def _mostly_ascii(text: str) -> bool:
 
 
 def _contains_any(text: str, markers: tuple[str, ...]) -> bool:
-    return any(marker in text for marker in markers)
+    for marker in markers:
+        # ASCII intent markers must be standalone tokens. A substring check turns
+        # ``additional workspace`` into the implementation verb ``add``.
+        if marker.isascii() and re.fullmatch(r"[a-z0-9_+./ -]+", marker):
+            escaped = re.escape(marker)
+            if re.search(rf"(?<![a-z0-9_]){escaped}(?![a-z0-9_])", text):
+                return True
+            continue
+        if marker in text:
+            return True
+    return False
 
 
 def _truncate(text: str, max_length: int) -> str:

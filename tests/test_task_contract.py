@@ -59,6 +59,14 @@ class RequirementContractTests(unittest.TestCase):
             with self.subTest(prompt=prompt):
                 self.assertEqual(generate_requirement_contract(prompt).task_kind, "read-only")
 
+    def test_additional_workspace_inventory_is_not_misclassified_as_add_implementation(self) -> None:
+        prompt = (
+            "帮我分析下现在的项目代码都有哪些。只读：不要运行 shell、测试或写入。"
+            "请覆盖当前 primary 和所有已授权 additional workspace root。"
+        )
+
+        self.assertEqual(generate_requirement_contract(prompt).task_kind, "read-only")
+
     def test_service_fee_settlement_design_contract_is_clarification_first(self) -> None:
         contract = generate_requirement_contract("帮我设计服务费结算需求：下单、退款、商家分账都要考虑。")
 
