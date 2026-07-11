@@ -2130,6 +2130,27 @@ class AgentRuntimeTests(unittest.TestCase):
             with self.subTest(content=content):
                 self.assertEqual(phantom_tool_evidence_claims(content, []), ())
 
+    def test_tool_usage_evidence_gate_rejects_mixed_recommendation_and_fake_results(self) -> None:
+        mixed_claims = (
+            "建议调用 run_tests，但根据 run_tests 的结果测试全部通过。",
+            "You should run run_tests, and its results show all tests passed.",
+        )
+
+        for content in mixed_claims:
+            with self.subTest(content=content):
+                self.assertEqual(phantom_tool_evidence_claims(content, []), ("run_tests",))
+
+    def test_tool_usage_evidence_gate_allows_future_condition_recommendations(self) -> None:
+        future_conditions = (
+            "建议调用 run_tests，测试全部通过后再合并。",
+            "建议调用 run_tests，如果测试通过再合并。",
+            "Please run run_tests, and merge only if the tests pass.",
+        )
+
+        for content in future_conditions:
+            with self.subTest(content=content):
+                self.assertEqual(phantom_tool_evidence_claims(content, []), ())
+
     def test_tool_usage_evidence_gate_keeps_unobserved_lsp_result_claim(self) -> None:
         claims = phantom_tool_evidence_claims(
             "根据 lsp_symbols 的结果，未提供匹配定义。",

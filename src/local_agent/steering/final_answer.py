@@ -1025,6 +1025,37 @@ def _tool_reference_is_recommendation(segment: str, tool: str) -> bool:
     else:
         escaped_tool = re.escape(tool)
         tool_pattern = rf"(?<![a-z0-9_]){escaped_tool}(?![a-z0-9_])"
+    matches = list(re.finditer(tool_pattern, segment))
+    if not matches:
+        return False
+    saw_recommendation = False
+    for match in matches:
+        clause = _tool_reference_clause(segment, match.start(), match.end())
+        if _clause_marks_tool_recommendation(clause, tool_pattern):
+            saw_recommendation = True
+            continue
+        return False
+    trailing = segment[matches[-1].end() :]
+    if _looks_like_result_backreference(trailing):
+        return False
+    return saw_recommendation
+
+
+def _tool_reference_clause(segment: str, start: int, end: int) -> str:
+    left = max(
+        segment.rfind(marker, 0, start)
+        for marker in (",", "，", "。", ";", "；", "!", "！", "?", "？")
+    )
+    right_candidates = [
+        index
+        for marker in (",", "，", "。", ";", "；", "!", "！", "?", "？")
+        if (index := segment.find(marker, end)) != -1
+    ]
+    right = min(right_candidates) if right_candidates else len(segment)
+    return segment[left + 1 : right]
+
+
+def _clause_marks_tool_recommendation(clause: str, tool_pattern: str) -> bool:
     chinese_recommendation = (
         r"(?:建议|推荐|下一步|后续|请|应当|应该|可以|可通过|可使用|需要)"
         r"(?:\s*(?:先|再|直接|使用|调用|运行|通过|借助|用))*\s*"
@@ -1035,8 +1066,34 @@ def _tool_reference_is_recommendation(segment: str, tool: str) -> bool:
         r"(?:\s+(?:to|using|use|calling|call|run))*\s+"
     )
     return bool(
-        re.search(chinese_recommendation + tool_pattern, segment)
-        or re.search(english_recommendation + tool_pattern, segment)
+        re.search(chinese_recommendation + tool_pattern, clause)
+        or re.search(english_recommendation + tool_pattern, clause)
+    )
+
+
+def _looks_like_result_backreference(trailing: str) -> bool:
+    if _looks_like_future_tool_condition(trailing):
+        return False
+    return bool(
+        re.search(
+            r"(?:its|their|the)\s+results?\s+(?:show|shows|indicate|indicates|confirm|confirms)"
+            r"|(?:根据|依照).{0,24}结果"
+            r"|(?:结果|输出)\s*(?:显示|表明|说明|证明)"
+            r"|all tests passed"
+            r"|测试(?:全部)?通过",
+            trailing,
+        )
+    )
+
+
+def _looks_like_future_tool_condition(trailing: str) -> bool:
+    return bool(
+        re.search(
+            r"(?:如果|若|待).{0,24}测试(?:全部)?通过"
+            r"|测试(?:全部)?通过后(?:再|再行|再做|再去)"
+            r"|(?:if|once|after)\s+(?:the\s+)?tests?\s+(?:pass|passed)\b",
+            trailing,
+        )
     )
 
 
