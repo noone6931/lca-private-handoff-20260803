@@ -69,6 +69,8 @@ class ToolChoiceQueueTests(unittest.TestCase):
         self.assertEqual(decision.allowed_tool_names, WORKSPACE_INVENTORY_TOOL_NAMES)
         self.assertNotIn("search_code", decision.allowed_tool_names)
         self.assertNotIn("shell", decision.allowed_tool_names)
+        self.assertEqual(decision.scoped_read_paths, ())
+        self.assertIsNone(decision.scoped_read_budget)
 
     def test_workspace_inventory_requires_each_workspace_root_to_have_glob_evidence(self) -> None:
         decision = evaluate_tool_choice_state(

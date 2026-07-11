@@ -408,8 +408,6 @@ class AgentRuntime:
             if self._deadline_exceeded(deadline):
                 return self._stop_for_budget(deadline, run_start_index)
 
-            self._record_llm_request()
-            self._session.append("llm_request", {"step": step})
             tool_choice_stop_message = self._apply_tool_choice_queue_if_needed(deadline)
             if tool_choice_stop_message is not None:
                 return self._finish_run(
@@ -420,12 +418,23 @@ class AgentRuntime:
                 )
             messages_for_model = self._messages_for_model(deadline)
             tools_for_model = self._tools_for_model()
+            tool_schema_names = [
+                str(schema.get("function", {}).get("name") or "")
+                for schema in tools_for_model
+                if isinstance(schema, Mapping)
+            ]
+            self._record_llm_request()
+            self._session.append(
+                "llm_request",
+                {"step": step, "tool_schema_names": tool_schema_names},
+            )
             self._events.emit(
                 "LlmRequest",
                 {
                     "step": step,
                     "message_count": len(messages_for_model),
                     "tool_schema_count": len(tools_for_model),
+                    "tool_schema_names": tool_schema_names,
                     "force_final_answer": self._run.force_final_answer_without_tools,
                 },
             )

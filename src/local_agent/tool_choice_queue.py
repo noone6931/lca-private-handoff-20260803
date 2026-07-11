@@ -584,7 +584,6 @@ def _workspace_inventory_decision(
         )
     covered_roots = _inventory_covered_roots(successful_globs)
     missing_roots = tuple(root for root in roots if root not in covered_roots)
-    scoped_read_paths = _inventory_read_paths(successful_globs)
     if missing_roots:
         return ToolChoiceDecision(
             steering_required=True,
@@ -598,8 +597,6 @@ def _workspace_inventory_decision(
             preferred_tool_names=("glob_files",),
             tool_call_hints=(_inventory_glob_call_hint(missing_roots),),
             required_glob_roots=missing_roots,
-            scoped_read_paths=scoped_read_paths,
-            scoped_read_budget=len(scoped_read_paths) or None,
         )
     return ToolChoiceDecision(
         steering_required=False,
@@ -613,8 +610,6 @@ def _workspace_inventory_decision(
             "Do not repeat a completed identical glob_files call. Use an uncovered root or a narrower pattern if more "
             "evidence is needed."
         ),
-        scoped_read_paths=scoped_read_paths,
-        scoped_read_budget=len(scoped_read_paths) or None,
     )
 
 
@@ -728,27 +723,6 @@ def _inventory_glob_call_hint(roots: Iterable[str]) -> str:
         "Use this bounded multi-root discovery call exactly (do not send an empty paths entry): "
         f"glob_files({json.dumps(arguments, ensure_ascii=False)})"
     )
-
-
-def _inventory_read_paths(results: Iterable[ToolResultSummary]) -> tuple[str, ...]:
-    paths: list[str] = []
-    for result in results:
-        files = result.metadata.get("files")
-        if not isinstance(files, (list, tuple)):
-            continue
-        for raw_path in files:
-            path = str(raw_path)
-            if not _is_inventory_read_candidate(path) or path in paths:
-                continue
-            paths.append(path)
-            if len(paths) >= 4:
-                return tuple(paths)
-    return tuple(paths)
-
-
-def _is_inventory_read_candidate(path: str) -> bool:
-    name = path.replace("\\", "/").rsplit("/", 1)[-1].lower()
-    return name in {"pom.xml", "package.json", "pyproject.toml", "build.gradle", "build.gradle.kts", "readme.md"}
 
 
 def _is_implementation_task(task_kind: str, prompt: str) -> bool:
