@@ -13,7 +13,7 @@ class WorkspaceContextError(ValueError):
 
 @dataclass
 class WorkspaceContext:
-    """Mutable session roots while the configured primary workspace stays fixed."""
+    """Mutable roots and primary workspace for one session."""
 
     primary: Path
     configured_roots: tuple[Path, ...] = ()
@@ -37,7 +37,15 @@ class WorkspaceContext:
 
     @property
     def additional_roots(self) -> tuple[Path, ...]:
-        return (*self._configured, *self._session)
+        roots: list[Path] = []
+        for root in (*self._configured, *self._session):
+            # A root contained by the current primary is already reachable. Keep a
+            # parent root because it represents pre-existing broader permission.
+            if root == self.primary or _is_within(root, self.primary):
+                continue
+            if root not in roots:
+                roots.append(root)
+        return tuple(roots)
 
     @property
     def all_roots(self) -> tuple[Path, ...]:
@@ -45,11 +53,11 @@ class WorkspaceContext:
 
     @property
     def configured(self) -> tuple[Path, ...]:
-        return self._configured
+        return tuple(root for root in self._configured if root != self.primary and not _is_within(root, self.primary))
 
     @property
     def session(self) -> tuple[Path, ...]:
-        return tuple(self._session)
+        return tuple(root for root in self._session if root != self.primary and not _is_within(root, self.primary))
 
     def add_session_root(self, raw_path: str) -> tuple[Path, bool]:
         candidate = self._resolve_root(raw_path, require_exists=True)
@@ -89,6 +97,37 @@ class WorkspaceContext:
         self.revision += 1
         return True
 
+    def moved_primary(self, raw_path: str) -> tuple["WorkspaceContext", bool]:
+        """Return a validated next context without mutating this session context."""
+
+        target = self._resolve_root(raw_path, require_exists=True)
+        if target == self.primary:
+            return self, False
+
+        # The old primary stays accessible after /move. Existing session roots are
+        # retained unless the new primary already covers them.
+        carried_roots: list[Path] = []
+        for root in (self.primary, *self._session):
+            configured_covers_root = any(
+                root == configured or _is_within(root, configured) for configured in self._configured
+            )
+            if root == target or _is_within(root, target) or root in carried_roots or configured_covers_root:
+                continue
+            carried_roots.append(root)
+        if len(carried_roots) > MAX_SESSION_ROOTS:
+            raise WorkspaceContextError(
+                "Cannot move workspace because preserving the old primary would exceed the session root limit. "
+                "Remove an unused session root first."
+            )
+
+        moved = WorkspaceContext(target, self._configured)
+        # These roots were already authorized before the move. Assign them directly
+        # so moving into a child of the old primary does not look like new escalation.
+        moved._session = carried_roots
+        moved.session_roots = tuple(carried_roots)
+        moved.revision = self.revision + 1
+        return moved, True
+
     def restore_session_roots(self, paths: tuple[str, ...], revision: int) -> tuple[Path, ...]:
         self._session.clear()
         self.session_roots = ()
@@ -111,19 +150,19 @@ class WorkspaceContext:
             "path": str(path) if path is not None else None,
             "changed": changed,
             "primary": str(self.primary),
-            "configured_roots": [str(root) for root in self._configured],
-            "session_roots": [str(root) for root in self._session],
+            "configured_roots": [str(root) for root in self.configured],
+            "session_roots": [str(root) for root in self.session],
             "revision": self.revision,
         }
 
     def summary(self) -> str:
         lines = [f"Workspace roots (revision {self.revision}):", f"- primary: {self.primary}"]
-        if self._configured:
-            lines.extend(f"- configured: {root}" for root in self._configured)
+        if self.configured:
+            lines.extend(f"- configured: {root}" for root in self.configured)
         else:
             lines.append("- configured: none")
-        if self._session:
-            lines.extend(f"- session: {root}" for root in self._session)
+        if self.session:
+            lines.extend(f"- session: {root}" for root in self.session)
         else:
             lines.append("- session: none")
         return "\n".join(lines)
@@ -146,8 +185,6 @@ def _normalize_configured_roots(primary: Path, roots: tuple[Path, ...]) -> tuple
     normalized: list[Path] = []
     for raw_root in roots:
         root = _canonical_directory(raw_root, label="configured root")
-        if root == primary or _is_within(root, primary):
-            continue
         if any(root == known or _is_within(root, known) for known in normalized):
             continue
         if any(_is_within(known, root) for known in normalized):

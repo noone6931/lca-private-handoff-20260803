@@ -3,11 +3,13 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from local_agent.agent import AgentRuntime
 from local_agent.config import AgentConfig
 from local_agent.design_evidence import cross_root_design_evidence_roots
 from local_agent.protocol.events import ListEventSink
+from local_agent.state import workspace_state_dir
 
 
 class WorkspaceRuntimeTests(unittest.TestCase):
@@ -100,8 +102,83 @@ class WorkspaceRuntimeTests(unittest.TestCase):
 
         self.assertEqual(roots, (str(primary), str(frontend)))
 
+    def test_move_reloads_primary_context_and_migrates_session_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            backend = root / "backend"
+            frontend = root / "frontend"
+            state_root = root / "state-root"
+            (backend / ".local-agent").mkdir(parents=True)
+            (frontend / ".local-agent").mkdir(parents=True)
+            (backend / ".local-agent" / "AGENTS.md").write_text("BACKEND_CONTEXT\n", encoding="utf-8")
+            (frontend / ".local-agent" / "AGENTS.md").write_text("FRONTEND_CONTEXT\n", encoding="utf-8")
+            legacy_file = backend / "legacy.txt"
+            legacy_file.write_text("still readable\n", encoding="utf-8")
+            sink = ListEventSink()
+            backend_state = workspace_state_dir(state_root, backend)
+            runtime = AgentRuntime(
+                _config(backend, state_dir=backend_state, state_root=state_root),
+                show_tool_logs=False,
+                event_sink=sink,
+            )
+            session_id = runtime._session.session_id
+            todo_path = backend_state / "todos" / f"{session_id}.json"
+            patch_path = backend_state / "patches" / f"{session_id}.jsonl"
+            todo_path.parent.mkdir(parents=True)
+            patch_path.parent.mkdir(parents=True)
+            todo_path.write_text('[]\n', encoding="utf-8")
+            patch_path.write_text('{"id":"patch-1"}\n', encoding="utf-8")
 
-def _config(workspace: Path, *, state_dir: Path | None = None) -> AgentConfig:
+            with patch("local_agent.agent.close_all_clients") as close_clients:
+                moved = runtime.move_workspace(str(frontend))
+
+            frontend_state = workspace_state_dir(state_root, frontend)
+            old_read = runtime._registry.execute("read_file", {"path": str(legacy_file)}, runtime._tool_context)
+            reopened = AgentRuntime(
+                _config(frontend, state_dir=frontend_state, state_root=state_root),
+                show_tool_logs=False,
+                session_id=session_id,
+            )
+            self.assertEqual(moved, frontend)
+            self.assertEqual(runtime._workspace_context.primary, frontend)
+            self.assertEqual(runtime._tool_context.workspace, frontend)
+            self.assertEqual(runtime._state_dir, frontend_state)
+            self.assertIn(backend, runtime._workspace_context.session)
+            self.assertFalse((backend_state / "sessions" / f"{session_id}.jsonl").exists())
+            self.assertTrue((frontend_state / "sessions" / f"{session_id}.jsonl").exists())
+            self.assertTrue((frontend_state / "todos" / f"{session_id}.json").exists())
+            self.assertTrue((frontend_state / "patches" / f"{session_id}.jsonl").exists())
+            self.assertIn("FRONTEND_CONTEXT", str(runtime._messages[0]["content"]))
+            self.assertNotIn("BACKEND_CONTEXT", str(runtime._messages[0]["content"]))
+            self.assertFalse(old_read.is_error)
+            self.assertIn(backend, reopened._workspace_context.session)
+            self.assertTrue(any(event.type == "WorkspaceMoved" for event in sink.events))
+            close_clients.assert_called_once()
+
+    def test_move_is_rejected_while_runtime_is_active(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            backend = root / "backend"
+            frontend = root / "frontend"
+            backend.mkdir()
+            frontend.mkdir()
+            state_root = root / "state-root"
+            runtime = AgentRuntime(
+                _config(backend, state_dir=workspace_state_dir(state_root, backend), state_root=state_root),
+                show_tool_logs=False,
+            )
+            runtime._is_running = True
+
+            with self.assertRaisesRegex(RuntimeError, "idle"):
+                runtime.move_workspace(str(frontend))
+
+
+def _config(
+    workspace: Path,
+    *,
+    state_dir: Path | None = None,
+    state_root: Path | None = None,
+) -> AgentConfig:
     return AgentConfig(
         provider="openai-compatible",
         api_base_url="https://example.invalid/v1",
@@ -109,6 +186,7 @@ def _config(workspace: Path, *, state_dir: Path | None = None) -> AgentConfig:
         model="model",
         workspace=workspace,
         state_dir=state_dir,
+        state_root=state_root,
         max_steps=0,
         budget_seconds=None,
         approval_mode="yolo",

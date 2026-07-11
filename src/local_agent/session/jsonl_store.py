@@ -76,7 +76,7 @@ class JsonlSessionStore:
         return _trim_recent_messages(messages, max_messages)
 
     def load_latest_workspace_roots(self) -> dict[str, Any] | None:
-        """Return the last persisted T-128A root snapshot without replaying model messages."""
+        """Return the latest T-128 root state without replaying model messages."""
 
         if not self.path.exists():
             return None
@@ -89,12 +89,24 @@ class JsonlSessionStore:
                     record = json.loads(line)
                 except json.JSONDecodeError as exc:
                     raise SessionError(f"Malformed JSONL at {self.path}:{line_number}") from exc
-                if record.get("event") != "workspace_roots_changed":
+                if record.get("event") not in {"workspace_roots_changed", "workspace_moved"}:
                     continue
                 payload = record.get("payload")
                 if isinstance(payload, dict):
                     latest = dict(payload)
         return latest
+
+    def relocate(self, state_dir: Path) -> None:
+        """Point this store at an already-migrated session file in a new state dir."""
+
+        resolved_state_dir = state_dir.expanduser().resolve()
+        session_dir = resolved_state_dir / "sessions"
+        path = session_dir / f"{self.session_id}.jsonl"
+        if not path.exists():
+            raise SessionError(f"Relocated session file not found: {path}")
+        self.state_dir = resolved_state_dir
+        self.session_dir = session_dir
+        self.path = path
 
     def _path_for_id(self, session_id: str) -> Path:
         name = session_id.removesuffix(".jsonl")

@@ -33,6 +33,7 @@ class AgentConfig:
     model: str
     workspace: Path
     state_dir: Path | None = None
+    state_root: Path | None = None
     allowed_dirs: tuple[Path, ...] = ()
     max_steps: int = DEFAULT_MAX_STEPS
     budget_seconds: int | None = DEFAULT_BUDGET_SECONDS
@@ -212,6 +213,7 @@ def load_config(
         model=resolved_model,
         workspace=workspace,
         state_dir=resolved_state_dir,
+        state_root=resolved_state_root,
         allowed_dirs=resolved_allowed_dirs,
         max_steps=resolved_max_steps,
         budget_seconds=resolved_budget_seconds,

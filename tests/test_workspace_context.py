@@ -71,7 +71,44 @@ class WorkspaceContextTests(unittest.TestCase):
             missing = restored.restore_session_roots((str(roots[0]), str(root / "missing")), revision=9)
             self.assertEqual(restored.session, (roots[0],))
             self.assertEqual(restored.revision, 9)
-            self.assertEqual(missing, (root / "missing",))
+        self.assertEqual(missing, (root / "missing",))
+
+    def test_move_promotes_new_primary_and_keeps_previous_primary_accessible(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            backend = root / "backend"
+            frontend = root / "frontend"
+            docs = root / "docs"
+            backend.mkdir()
+            frontend.mkdir()
+            docs.mkdir()
+            context = WorkspaceContext(backend, (docs,))
+            context.add_session_root(str(frontend))
+
+            moved, changed = context.moved_primary(str(frontend))
+
+        self.assertTrue(changed)
+        self.assertEqual(moved.primary, frontend)
+        self.assertEqual(moved.configured, (docs,))
+        self.assertEqual(moved.session, (backend,))
+        self.assertEqual(moved.additional_roots, (docs, backend))
+        self.assertEqual(moved.revision, 2)
+
+    def test_move_to_configured_root_keeps_configured_authorization_for_later_moves(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            backend = root / "backend"
+            frontend = root / "frontend"
+            backend.mkdir()
+            frontend.mkdir()
+            context = WorkspaceContext(backend, (frontend,))
+
+            moved, _ = context.moved_primary(str(frontend))
+            returned, _ = moved.moved_primary(str(backend))
+
+        self.assertEqual(moved.configured, ())
+        self.assertEqual(returned.primary, backend)
+        self.assertEqual(returned.configured, (frontend,))
 
 
 if __name__ == "__main__":

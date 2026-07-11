@@ -32,6 +32,7 @@ from .design_evidence import cross_root_design_evidence_roots
 from .evidence import EvidenceRecord
 from .llm import LlmError
 from .llm import OpenAICompatibleClient
+from .lsp.client import close_all_clients
 from .patch.anchored import display_workspace_path
 from .patch.anchored import PatchError
 from .patch.anchored import resolve_workspace_path
@@ -57,7 +58,9 @@ from .protocol.events import StderrEventSink
 from .session.jsonl_store import JsonlSessionStore
 from .session_guard_state import SessionGuardState
 from .state import default_config_root
+from .state import workspace_state_dir
 from .workspace_context import WorkspaceContext
+from .workspace_migration import migrate_session_artifacts
 from .steering.final_answer import FinalAnswerContext
 from .steering.final_answer import FinalAnswerSteerer
 from .steering.final_answer import FinalStructureSteerer
@@ -244,6 +247,7 @@ class AgentRuntime:
             CompletionAuditSteerer(max_steers=MAX_COMPLETION_AUDIT_STEERS),
         )
         self._state_dir = config.state_dir or config.workspace / ".local-agent"
+        self._state_root = config.state_root
         self._session = JsonlSessionStore(
             config.workspace,
             state_dir=self._state_dir,
@@ -256,20 +260,9 @@ class AgentRuntime:
             sink=sink,
             recorder=self._record_event_v1,
         )
-        missing_roots = self._restore_session_workspace_roots()
         self._user_config_dir = default_config_root()
-        system_prompt = build_system_prompt(
-            SYSTEM_PROMPT,
-            config.workspace,
-            self._user_config_dir,
-            state_dir=self._state_dir,
-            allowed_dirs=self._workspace_context.additional_roots,
-            startup_context_char_limit=STARTUP_CONTEXT_CHAR_LIMIT,
-            startup_memory_char_limit=STARTUP_MEMORY_CHAR_LIMIT,
-            startup_skills_char_limit=STARTUP_SKILLS_CHAR_LIMIT,
-            max_authored_skills=MAX_AUTHORED_SKILLS,
-            max_skill_description_chars=MAX_SKILL_DESCRIPTION_CHARS,
-        )
+        missing_roots = self._restore_session_workspace_roots()
+        system_prompt = self._build_system_prompt()
         self._messages: list[dict[str, Any]] = [
             {"role": "system", "content": system_prompt},
             *self._session.load_messages(),
@@ -322,14 +315,14 @@ class AgentRuntime:
             if self._config.budget_seconds is not None
             else None
         )
-        git_baseline = capture_git_baseline(self._config.workspace)
+        git_baseline = capture_git_baseline(self._workspace_context.primary)
         self._session.append("git_baseline", git_baseline)
         run_start_index = len(self._messages)
         model_prompt = _with_workflow_nudge(prompt)
         requirement_contract = generate_requirement_contract(prompt)
         requirement_contract_context = render_contract_context(requirement_contract)
         design_evidence_roots = (
-            cross_root_design_evidence_roots(self._config.workspace, self._workspace_context.additional_roots, prompt)
+            cross_root_design_evidence_roots(self._workspace_context.primary, self._workspace_context.additional_roots, prompt)
             if requirement_contract.task_kind == "read-only"
             else ()
         )
@@ -366,7 +359,7 @@ class AgentRuntime:
         self._run.read_file_drift_guard_enabled = _should_guard_repeated_read_file(prompt)
         self._run.soft_tool_requirement = initial_soft_tool_requirement(
             prompt,
-            self._config.workspace,
+            self._workspace_context.primary,
             self._workspace_context.additional_roots,
             max_skill_description_chars=MAX_SKILL_DESCRIPTION_CHARS,
         )
@@ -722,6 +715,57 @@ class AgentRuntime:
         changed = self._workspace_context.reset_session_roots()
         self._record_workspace_roots_change("reset", None, changed)
 
+    def move_workspace(self, raw_path: str) -> Path:
+        """Move this session's primary workspace without losing its session identity."""
+
+        self._ensure_workspace_idle()
+        next_context, changed = self._workspace_context.moved_primary(raw_path)
+        if not changed:
+            return self._workspace_context.primary
+        if self._state_root is None:
+            raise RuntimeError(
+                "Cannot move a runtime without a workspace-partitioned state root. Restart with --state-dir first."
+            )
+
+        previous_primary = self._workspace_context.primary
+        next_state_dir = workspace_state_dir(self._state_root, next_context.primary)
+        # Loading startup sources is intentionally done before moving any artifact.
+        # A read failure must not leave the session split across two state dirs.
+        next_system_prompt = self._build_system_prompt_for(next_context, next_state_dir)
+        migrate_session_artifacts(
+            source_state_dir=self._state_dir,
+            target_state_dir=next_state_dir,
+            session_id=self._session.session_id,
+        )
+        self._workspace_context = next_context
+        self._state_dir = next_state_dir
+        self._session.relocate(next_state_dir)
+        self._tool_context = replace(
+            self._tool_context,
+            workspace=next_context.primary,
+            state_dir=next_state_dir,
+            allowed_dirs=next_context.additional_roots,
+        )
+        self._messages = [
+            {"role": "system", "content": next_system_prompt},
+            *(message for message in self._messages if message.get("role") != "system"),
+        ]
+        self._run = RunContext()
+        self._session_guards = SessionGuardState()
+        self._summary_cache.clear()
+        self._last_run_summary = None
+        close_all_clients()
+        payload = next_context.snapshot(operation="move", path=next_context.primary, changed=True)
+        payload.update(
+            {
+                "previous_primary": str(previous_primary),
+                "state_dir": str(next_state_dir),
+            }
+        )
+        self._session.append("workspace_moved", payload)
+        self._events.emit("WorkspaceMoved", payload)
+        return next_context.primary
+
     def _ensure_workspace_idle(self) -> None:
         if self._is_running:
             raise RuntimeError("Workspace roots can only be changed while the runtime is idle.")
@@ -755,6 +799,23 @@ class AgentRuntime:
         except (TypeError, ValueError):
             normalized_revision = 0
         return self._workspace_context.restore_session_roots(tuple(raw_paths), normalized_revision)
+
+    def _build_system_prompt(self) -> str:
+        return self._build_system_prompt_for(self._workspace_context, self._state_dir)
+
+    def _build_system_prompt_for(self, workspace_context: WorkspaceContext, state_dir: Path) -> str:
+        return build_system_prompt(
+            SYSTEM_PROMPT,
+            workspace_context.primary,
+            self._user_config_dir,
+            state_dir=state_dir,
+            allowed_dirs=workspace_context.additional_roots,
+            startup_context_char_limit=STARTUP_CONTEXT_CHAR_LIMIT,
+            startup_memory_char_limit=STARTUP_MEMORY_CHAR_LIMIT,
+            startup_skills_char_limit=STARTUP_SKILLS_CHAR_LIMIT,
+            max_authored_skills=MAX_AUTHORED_SKILLS,
+            max_skill_description_chars=MAX_SKILL_DESCRIPTION_CHARS,
+        )
 
     def set_session_approval_mode(self, mode: str) -> None:
         self._tool_context = replace(self._tool_context, approval_mode=normalize_approval_mode(mode))
@@ -922,7 +983,7 @@ class AgentRuntime:
                 todo_summary,
                 evidence_ledger,
                 planner_explore_context,
-                self._config.workspace,
+                self._workspace_context.primary,
                 self._user_config_dir,
                 self._workspace_context.additional_roots,
                 self._run.current_user_request,
@@ -1088,12 +1149,12 @@ class AgentRuntime:
                 runtime_read_file_remaining=self._run.tool_choice_read_file_remaining,
             )
         read_file_key = (
-            _read_file_path_key(name, arguments, self._config.workspace, self._workspace_context.additional_roots)
+            _read_file_path_key(name, arguments, self._workspace_context.primary, self._workspace_context.additional_roots)
             if self._run.read_file_drift_guard_enabled
             else None
         )
         read_file_range_key = (
-            _read_file_range_key(name, arguments, self._config.workspace, self._workspace_context.additional_roots)
+            _read_file_range_key(name, arguments, self._workspace_context.primary, self._workspace_context.additional_roots)
             if self._run.read_file_drift_guard_enabled
             else None
         )
@@ -1104,7 +1165,7 @@ class AgentRuntime:
                 return self._repeated_read_file_result(
                     _display_read_file_range_key(
                         read_file_range_key,
-                        self._config.workspace,
+                        self._workspace_context.primary,
                         self._workspace_context.additional_roots,
                     ),
                     range_count,
@@ -1116,7 +1177,7 @@ class AgentRuntime:
         semantic_exploration_key = _semantic_exploration_key(
             name,
             arguments,
-            self._config.workspace,
+            self._workspace_context.primary,
             self._workspace_context.additional_roots,
         )
         decision = self._session_guards.before_tool(
@@ -1155,7 +1216,7 @@ class AgentRuntime:
         resolved_paths: set[str] = set()
         for raw_path in raw_paths:
             try:
-                resolved = resolve_workspace_path(self._config.workspace, raw_path, self._workspace_context.additional_roots)
+                resolved = resolve_workspace_path(self._workspace_context.primary, raw_path, self._workspace_context.additional_roots)
             except PatchError:
                 continue
             resolved_paths.add(str(resolved))
@@ -1239,7 +1300,7 @@ class AgentRuntime:
             self._run.evidence.record_read_file(
                 arguments=arguments,
                 result=result,
-                workspace=self._config.workspace,
+                workspace=self._workspace_context.primary,
                 allowed_dirs=self._workspace_context.additional_roots,
                 requirement_candidates=requirement.candidate_files if requirement is not None else (),
             )
@@ -1265,7 +1326,7 @@ class AgentRuntime:
             name=name,
             arguments=arguments,
             result=result,
-            workspace=self._config.workspace,
+            workspace=self._workspace_context.primary,
             allowed_dirs=self._workspace_context.additional_roots,
         )
         if record is not None:
@@ -1281,7 +1342,7 @@ class AgentRuntime:
             name=name,
             arguments=arguments,
             result=result,
-            workspace=self._config.workspace,
+            workspace=self._workspace_context.primary,
             allowed_dirs=self._workspace_context.additional_roots,
         )
 
@@ -1299,16 +1360,16 @@ class AgentRuntime:
         )
 
     def _record_workspace_root_evidence(self) -> None:
-        record = self._run.evidence.record_workspace_root(self._config.workspace)
+        record = self._run.evidence.record_workspace_root(self._workspace_context.primary)
         if record is not None:
             self._append_evidence_record(record)
 
     def _patch_relevance_denial_reason(self, raw_path: str, resolved_path: Path) -> str | None:
-        display_path = display_workspace_path(self._config.workspace, resolved_path, self._workspace_context.additional_roots)
+        display_path = display_workspace_path(self._workspace_context.primary, resolved_path, self._workspace_context.additional_roots)
         return self._run.evidence.patch_relevance_denial_reason(
             raw_path,
             resolved_path,
-            workspace=self._config.workspace,
+            workspace=self._workspace_context.primary,
             allowed_dirs=self._workspace_context.additional_roots,
             is_code_implementation_request=is_code_implementation_request(self._run.current_user_request),
             request_mentions_config_or_path=request_mentions_config_or_path(self._run.current_user_request, display_path),
@@ -1331,7 +1392,7 @@ class AgentRuntime:
             name=name,
             arguments=arguments,
             result=result,
-            workspace=self._config.workspace,
+            workspace=self._workspace_context.primary,
             allowed_dirs=self._workspace_context.additional_roots,
         )
 
@@ -1339,7 +1400,7 @@ class AgentRuntime:
         return self._run.evidence.read_file_summary()
 
     def _evidence_for_read_file_range(self, range_key: tuple[str, int, str]) -> str:
-        subject = _display_read_file_range_subject(range_key, self._config.workspace, self._workspace_context.additional_roots)
+        subject = _display_read_file_range_subject(range_key, self._workspace_context.primary, self._workspace_context.additional_roots)
         return self._run.evidence.evidence_for_read_file_range(subject)
 
     def _evidence_ledger_summary(self) -> str:
@@ -1466,7 +1527,7 @@ class AgentRuntime:
             name=name,
             arguments=arguments,
             result=result,
-            workspace=self._config.workspace,
+            workspace=self._workspace_context.primary,
             allowed_dirs=self._workspace_context.additional_roots,
         )
         if path is not None and requirement is not None:
@@ -1538,7 +1599,7 @@ class AgentRuntime:
         if not extracted:
             return
         memory_root = _memory_consolidation_root(
-            self._config.workspace,
+            self._workspace_context.primary,
             self._state_dir,
             self._config.memory_scope,
         )

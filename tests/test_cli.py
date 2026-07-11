@@ -39,6 +39,9 @@ class _FakeRuntime:
     def reset_workspace_roots(self) -> None:
         self.calls.append(("workspace-reset", None))
 
+    def move_workspace(self, path: str) -> None:
+        self.calls.append(("workspace-move", path))
+
     def set_session_approval_mode(self, mode: str) -> None:
         self.calls.append(("mode", mode))
 
@@ -114,6 +117,7 @@ class CliTests(unittest.TestCase):
         _handle_repl_command(runtime, "/add-dir /tmp/docs", output)
         _handle_repl_command(runtime, "/workspace remove /tmp/docs", output)
         _handle_repl_command(runtime, "/workspace reset", output)
+        _handle_repl_command(runtime, '/move "/tmp/new primary"', output)
 
         self.assertIn("workspace roots", output.getvalue())
         self.assertEqual(
@@ -123,6 +127,7 @@ class CliTests(unittest.TestCase):
                 ("workspace-add", "/tmp/docs"),
                 ("workspace-remove", "/tmp/docs"),
                 ("workspace-reset", None),
+                ("workspace-move", "/tmp/new primary"),
             ],
         )
 

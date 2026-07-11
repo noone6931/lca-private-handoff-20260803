@@ -23,6 +23,7 @@ REPL_HELP = """Commands:
 /workspace remove PATH        Remove a session-added directory.
 /workspace reset              Remove every session-added directory.
 /add-dir PATH                 Alias for /workspace add PATH.
+/move PATH                    Move the session primary workspace and reload project context.
 /approval                     Show approval settings.
 /approval mode always-ask|write|yolo
 /approval allow|prompt|deny TOOL
@@ -261,6 +262,16 @@ def _handle_repl_command(runtime: AgentRuntime, command: str, stream: TextIO | N
             return
         print("Usage: /workspace list|add PATH|remove PATH|reset", file=output)
         return
+    if parts[0] == "/move":
+        try:
+            if len(parts) != 2:
+                raise ValueError("Usage: /move PATH")
+            runtime.move_workspace(parts[1])
+            print(runtime.workspace_summary(), file=output)
+            return
+        except (ConfigError, RuntimeError, ValueError) as exc:
+            print(f"error: {exc}", file=output)
+            return
     if parts[0] != "/approval":
         print(f"Unknown command: {parts[0]}", file=output)
         print("Type /help for commands.", file=output)
