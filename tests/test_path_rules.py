@@ -141,6 +141,71 @@ class PathRuleTests(unittest.TestCase):
         self.assertIn("PRIMARY_RULE", matched)
         self.assertNotIn("ADDITIONAL_RULE", matched)
 
+    def test_skips_external_rule_file_symlink_without_loading_its_body(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            parent = Path(tmp).resolve()
+            root = parent / "root"
+            outside = parent / "outside.md"
+            outside.write_text(_rule_text("OUTSIDE_SECRET_RULE_BODY", "outside"), encoding="utf-8")
+            rules_dir = root / ".local-agent" / "rules"
+            rules_dir.mkdir(parents=True)
+            (rules_dir / "leak.md").symlink_to(outside)
+
+            index = discover_path_scoped_rules((root,))
+            matched = matching_path_rule_context(index, (root / "src/App.java",))
+
+        self.assertEqual(index.rules, ())
+        self.assertTrue(any("outside its workspace root" in item.message for item in index.diagnostics))
+        self.assertNotIn("OUTSIDE_SECRET_RULE_BODY", matched)
+
+    def test_skips_external_rules_directory_symlink(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            parent = Path(tmp).resolve()
+            root = parent / "root"
+            outside_rules = parent / "outside-rules"
+            outside_rules.mkdir(parents=True)
+            (outside_rules / "leak.md").write_text(_rule_text("OUTSIDE_DIR_BODY", "outside"), encoding="utf-8")
+            rules_parent = root / ".local-agent"
+            rules_parent.mkdir(parents=True)
+            (rules_parent / "rules").symlink_to(outside_rules, target_is_directory=True)
+
+            index = discover_path_scoped_rules((root,))
+
+        self.assertEqual(index.rules, ())
+        self.assertTrue(any("outside its workspace root" in item.message for item in index.diagnostics))
+
+    def test_skips_broken_rule_symlink_but_keeps_regular_rule(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            _write_rule(root, "valid.md", _rule_text("VALID_BODY", "valid"))
+            rules_dir = root / ".local-agent" / "rules"
+            (rules_dir / "broken.md").symlink_to(root / "missing.md")
+
+            index = discover_path_scoped_rules((root,))
+            matched = matching_path_rule_context(index, (root / "src/App.java",))
+
+        self.assertEqual(len(index.rules), 1)
+        self.assertIn("VALID_BODY", matched)
+        self.assertTrue(any("broken or unreadable symlink" in item.message for item in index.diagnostics))
+
+    def test_allows_rule_symlink_resolving_inside_workspace_and_reads_resolved_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            target_dir = root / "rule-targets"
+            target_dir.mkdir()
+            target = target_dir / "inside.md"
+            target.write_text(_rule_text("INSIDE_LINK_BODY", "inside"), encoding="utf-8")
+            rules_dir = root / ".local-agent" / "rules"
+            rules_dir.mkdir(parents=True)
+            (rules_dir / "linked.md").symlink_to(target)
+
+            index = discover_path_scoped_rules((root,))
+            matched = matching_path_rule_context(index, (root / "src/App.java",))
+
+        self.assertEqual(len(index.rules), 1)
+        self.assertEqual(index.rules[0].source, target)
+        self.assertIn("INSIDE_LINK_BODY", matched)
+
 
 def _write_rule(root: Path, name: str, text: str) -> None:
     rules_dir = root / ".local-agent" / "rules"

@@ -46,11 +46,15 @@ def discover_path_scoped_rules(roots: Iterable[Path]) -> PathRuleIndex:
     rules: list[PathRule] = []
     diagnostics: list[PathRuleDiagnostic] = []
     for root in normalized_roots:
-        rules_dir = root / RULES_DIRECTORY
-        if not rules_dir.is_dir():
+        lexical_rules_dir = root / RULES_DIRECTORY
+        rules_dir, rules_dir_diagnostic = _resolve_path_within_root(root, lexical_rules_dir)
+        if rules_dir_diagnostic is not None:
+            diagnostics.append(rules_dir_diagnostic)
+            continue
+        if rules_dir is None:
             continue
         candidates = sorted(
-            (path for path in rules_dir.glob("*.md") if path.is_file()),
+            rules_dir.glob("*.md"),
             key=lambda path: path.name.lower(),
         )
         if len(candidates) > MAX_RULE_FILES_PER_ROOT:
@@ -61,7 +65,16 @@ def discover_path_scoped_rules(roots: Iterable[Path]) -> PathRuleIndex:
                 )
             )
             candidates = candidates[:MAX_RULE_FILES_PER_ROOT]
-        for source in candidates:
+        for lexical_source in candidates:
+            source, source_diagnostic = _resolve_path_within_root(root, lexical_source)
+            if source_diagnostic is not None:
+                diagnostics.append(source_diagnostic)
+                continue
+            if source is None:
+                continue
+            if not source.is_file():
+                diagnostics.append(PathRuleDiagnostic(lexical_source, "Rule candidate is not a regular file."))
+                continue
             rule, rule_diagnostics = _load_rule(root, source)
             diagnostics.extend(rule_diagnostics)
             if rule is not None:
@@ -71,6 +84,25 @@ def discover_path_scoped_rules(roots: Iterable[Path]) -> PathRuleIndex:
         rules=tuple(sorted(rules, key=lambda rule: (rule.priority, str(rule.source).lower()))),
         diagnostics=tuple(diagnostics),
     )
+
+
+def _resolve_path_within_root(root: Path, candidate: Path) -> tuple[Path | None, PathRuleDiagnostic | None]:
+    """Resolve a discovery path before reading it and reject symlink escapes."""
+
+    if not candidate.exists() and not candidate.is_symlink():
+        return None, None
+    try:
+        resolved = candidate.resolve(strict=True)
+    except OSError:
+        return None, PathRuleDiagnostic(candidate, "Rule path is a broken or unreadable symlink and was skipped.")
+    try:
+        resolved.relative_to(root)
+    except ValueError:
+        return None, PathRuleDiagnostic(
+            candidate,
+            "Rule path resolves outside its workspace root and was skipped.",
+        )
+    return resolved, None
 
 
 def render_path_rule_metadata(index: PathRuleIndex) -> str:
