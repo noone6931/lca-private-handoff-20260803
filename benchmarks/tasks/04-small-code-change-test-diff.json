@@ -1,7 +1,7 @@
 {
   "id": "small-code-change-test-diff",
   "title": "Small code change with preview, test, and diff",
-  "prompt": "修复 src/math.py 中 subtract 的计算错误。修改前必须 read_file，先 dry_run 预览，再 apply_patch 写入；随后运行 tests.test_math 并 git_diff。最后说明修改、测试和 diff。",
+  "prompt": "修复 src/math.py 中 subtract 的计算错误。修改前必须 read_file，先 dry_run 预览，再 apply_patch 写入；随后运行完整测试命令 `PYTHONPATH=. python3 -m unittest tests.test_math` 并 git_diff。最后说明修改、测试和 diff。",
   "workspace_files": {
     "src/math.py": "def subtract(a, b):\n    return a + b\n",
     "tests/test_math.py": "import unittest\n\nfrom src.math import subtract\n\n\nclass MathTests(unittest.TestCase):\n    def test_subtract(self):\n        self.assertEqual(subtract(3, 1), 2)\n\n\nif __name__ == '__main__':\n    unittest.main()\n"

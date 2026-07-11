@@ -8,6 +8,7 @@ import hashlib
 import json
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import tempfile
 import time
@@ -52,6 +53,10 @@ class BenchmarkResult:
     changed_files: tuple[str, ...]
     test_evidence: tuple[str, ...]
     residual_risk: str
+    session_id: str | None = None
+    run_id: str | None = None
+    tool_error_summaries: tuple[Mapping[str, Any], ...] = ()
+    retained_session_path: str | None = None
     error: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -67,6 +72,10 @@ class BenchmarkResult:
             "changed_files": list(self.changed_files),
             "test_evidence": list(self.test_evidence),
             "residual_risk": self.residual_risk,
+            "session_id": self.session_id,
+            "run_id": self.run_id,
+            "tool_error_summaries": [dict(item) for item in self.tool_error_summaries],
+            "retained_session_path": self.retained_session_path,
             "error": self.error,
         }
 
@@ -211,15 +220,25 @@ def run_benchmark_suite(
     selected_ids: Iterable[str] = (),
     output_dir: Path | None = None,
     live_config: AgentConfig | None = None,
+    preserve_failed_sessions: bool = False,
 ) -> tuple[BenchmarkResult, ...]:
     tasks = load_benchmark_tasks(tasks_dir, selected_ids=selected_ids)
-    results = tuple(run_benchmark_task(task, live_config=live_config) for task in tasks)
+    failed_session_dir = output_dir / "failed-sessions" if output_dir is not None and preserve_failed_sessions else None
+    results = tuple(
+        run_benchmark_task(task, live_config=live_config, failed_session_dir=failed_session_dir)
+        for task in tasks
+    )
     if output_dir is not None:
         write_benchmark_reports(results, output_dir)
     return results
 
 
-def run_benchmark_task(task: BenchmarkTask, *, live_config: AgentConfig | None = None) -> BenchmarkResult:
+def run_benchmark_task(
+    task: BenchmarkTask,
+    *,
+    live_config: AgentConfig | None = None,
+    failed_session_dir: Path | None = None,
+) -> BenchmarkResult:
     mode = "live" if live_config is not None else "deterministic"
     started = time.monotonic()
     try:
@@ -255,15 +274,20 @@ def run_benchmark_task(task: BenchmarkTask, *, live_config: AgentConfig | None =
             test_evidence = _test_evidence(runtime)
             acceptance = _evaluate_acceptance(
                 task,
+                mode=mode,
                 answer=answer,
                 runtime=runtime,
                 client=client,
                 workspace=workspace,
+                named_roots=named_roots,
                 changed_files=changed_files,
                 test_evidence=test_evidence,
             )
             passed = all(bool(check["passed"]) for check in acceptance)
             elapsed_ms = max(0, int((time.monotonic() - started) * 1000))
+            retained_session_path = None
+            if not passed and failed_session_dir is not None:
+                retained_session_path = _preserve_failed_session(runtime, failed_session_dir, task.identifier)
             return BenchmarkResult(
                 identifier=task.identifier,
                 title=task.title,
@@ -276,6 +300,10 @@ def run_benchmark_task(task: BenchmarkTask, *, live_config: AgentConfig | None =
                 changed_files=tuple(changed_files),
                 test_evidence=tuple(test_evidence),
                 residual_risk=task.residual_risk,
+                session_id=runtime._session.session_id,
+                run_id=str(run_summary.get("run_id") or "") or None,
+                tool_error_summaries=tuple(_tool_error_summaries(runtime, workspace, named_roots)),
+                retained_session_path=retained_session_path,
             )
     except Exception as exc:  # noqa: BLE001 - benchmark reports failures rather than aborting the suite.
         elapsed_ms = max(0, int((time.monotonic() - started) * 1000))
@@ -392,44 +420,101 @@ def _benchmark_config(
 def _evaluate_acceptance(
     task: BenchmarkTask,
     *,
+    mode: str,
     answer: str,
     runtime: AgentRuntime,
     client: ScriptedBenchmarkClient | SchemaRecordingClient,
     workspace: Path,
+    named_roots: Mapping[str, Path],
     changed_files: list[str],
     test_evidence: list[str],
 ) -> list[dict[str, Any]]:
+    acceptance = _acceptance_for_mode(task.acceptance, mode)
     checks: list[dict[str, Any]] = []
-    required_tools = _string_list(task.acceptance.get("required_tools"))
+    required_tools = _string_list(acceptance.get("required_tools"))
     used_tools = [result.name for result in runtime._run.tool_choice_results]
     checks.append(_check("required_tools", all(name in used_tools for name in required_tools), required_tools, used_tools))
-    forbidden_tools = _string_list(task.acceptance.get("forbidden_tools"))
+    forbidden_tools = _string_list(acceptance.get("forbidden_tools"))
     checks.append(_check("forbidden_tools", not any(name in used_tools for name in forbidden_tools), forbidden_tools, used_tools))
-    expected_changed_files = sorted(_string_list(task.acceptance.get("changed_files")))
+    expected_changed_files = sorted(_string_list(acceptance.get("changed_files")))
     if expected_changed_files:
         checks.append(_check("changed_files", sorted(changed_files) == expected_changed_files, expected_changed_files, changed_files))
-    for path, expected_text in _string_mapping(task.acceptance.get("file_contains") or {}, "acceptance.file_contains", Path(task.identifier)).items():
+    for path, expected_text in _string_mapping(acceptance.get("file_contains") or {}, "acceptance.file_contains", Path(task.identifier)).items():
         target = workspace / path
         actual = target.read_text(encoding="utf-8") if target.is_file() else ""
         checks.append(_check(f"file_contains:{path}", expected_text in actual, expected_text, actual[:1000]))
-    for expected in _string_list(task.acceptance.get("answer_contains")):
+    for expected in _string_list(acceptance.get("answer_contains")):
         checks.append(_check(f"answer_contains:{expected}", expected in answer, expected, answer))
-    expected_reason = task.acceptance.get("termination_reason")
+    normalized_answer = _normalize_answer(answer)
+    for expected in _string_list(acceptance.get("answer_all_of")):
+        checks.append(
+            _check(
+                f"answer_all_of:{expected}",
+                _normalize_answer(expected) in normalized_answer,
+                expected,
+                answer,
+            )
+        )
+    any_of = _string_list(acceptance.get("answer_any_of"))
+    if any_of:
+        checks.append(
+            _check(
+                "answer_any_of",
+                any(_normalize_answer(expected) in normalized_answer for expected in any_of),
+                any_of,
+                answer,
+            )
+        )
+    for pattern in _string_list(acceptance.get("answer_regex")):
+        checks.append(
+            _check(
+                f"answer_regex:{pattern}",
+                _matches_answer_regex(pattern, answer),
+                pattern,
+                answer,
+            )
+        )
+    for pattern in _string_list(acceptance.get("answer_forbidden_regex")):
+        checks.append(
+            _check(
+                f"answer_forbidden_regex:{pattern}",
+                not _matches_answer_regex(pattern, answer),
+                pattern,
+                answer,
+            )
+        )
+    coverage_roots = _string_list(acceptance.get("glob_coverage_roots"))
+    if coverage_roots:
+        actual_roots = _glob_coverage_roots(runtime)
+        expected_roots = {
+            str(workspace) if name == "primary" else str(named_roots[name])
+            for name in coverage_roots
+            if name == "primary" or name in named_roots
+        }
+        checks.append(
+            _check(
+                "glob_coverage_roots",
+                expected_roots.issubset(actual_roots) and len(expected_roots) == len(coverage_roots),
+                sorted(expected_roots),
+                sorted(actual_roots),
+            )
+        )
+    expected_reason = acceptance.get("termination_reason")
     if isinstance(expected_reason, str):
         actual_reason = str((runtime._last_run_summary or {}).get("termination_reason") or "")
         checks.append(_check("termination_reason", actual_reason == expected_reason, expected_reason, actual_reason))
-    max_errors = task.acceptance.get("max_tool_errors")
+    max_errors = acceptance.get("max_tool_errors")
     if isinstance(max_errors, int):
         actual_errors = int((runtime._last_run_summary or {}).get("tool_errors") or 0)
         checks.append(_check("max_tool_errors", actual_errors <= max_errors, max_errors, actual_errors))
-    if task.acceptance.get("requires_test_evidence"):
+    if acceptance.get("requires_test_evidence"):
         checks.append(_check("test_evidence", bool(test_evidence), "successful run_tests result", test_evidence))
-    schema_excludes = _string_list(task.acceptance.get("schema_excludes"))
+    schema_excludes = _string_list(acceptance.get("schema_excludes"))
     if schema_excludes:
         schemas = client.tool_schema_names
         passed = bool(schemas) and all(name not in schema for schema in schemas for name in schema_excludes)
         checks.append(_check("schema_excludes", passed, schema_excludes, schemas))
-    command = task.acceptance.get("command")
+    command = acceptance.get("command")
     if isinstance(command, str) and command.strip():
         completed = subprocess.run(
             command,
@@ -452,6 +537,81 @@ def _test_evidence(runtime: AgentRuntime) -> list[str]:
             continue
         evidence.append(result.content[:1200])
     return evidence
+
+
+def _acceptance_for_mode(raw_acceptance: Mapping[str, Any], mode: str) -> dict[str, Any]:
+    """Keep deterministic wording strict while letting live providers vary phrasing."""
+
+    acceptance = {key: value for key, value in raw_acceptance.items() if key not in {"deterministic", "live"}}
+    mode_overrides = raw_acceptance.get(mode)
+    if isinstance(mode_overrides, Mapping):
+        acceptance.update(mode_overrides)
+    return acceptance
+
+
+def _normalize_answer(value: str) -> str:
+    return re.sub(r"\s+", " ", value.casefold()).strip()
+
+
+def _matches_answer_regex(pattern: str, answer: str) -> bool:
+    try:
+        return re.search(pattern, answer, flags=re.IGNORECASE | re.DOTALL) is not None
+    except re.error:
+        return False
+
+
+def _glob_coverage_roots(runtime: AgentRuntime) -> set[str]:
+    roots: set[str] = set()
+    for result in runtime._run.tool_choice_results:
+        if result.name != "glob_files" or result.is_error:
+            continue
+        searched_roots = result.metadata.get("searched_roots")
+        if not isinstance(searched_roots, (list, tuple)):
+            continue
+        for root in searched_roots:
+            if isinstance(root, str) and root:
+                roots.add(str(Path(root).expanduser().resolve()))
+    return roots
+
+
+def _tool_error_summaries(
+    runtime: AgentRuntime,
+    workspace: Path,
+    named_roots: Mapping[str, Path],
+    *,
+    max_items: int = 8,
+    max_chars: int = 500,
+) -> list[dict[str, str]]:
+    summaries: list[dict[str, str]] = []
+    redactions = [(str(workspace), "<workspace>")] + [
+        (str(root), f"<additional:{name}>") for name, root in named_roots.items()
+    ]
+    for result in runtime._run.tool_choice_results:
+        if not result.is_error:
+            continue
+        content = result.content
+        for source, replacement in redactions:
+            content = content.replace(source, replacement)
+        content = re.sub(r"(?i)\b(?:sk|ak)-[a-z0-9_-]{12,}\b", "<redacted-token>", content)
+        summaries.append(
+            {
+                "tool": result.name,
+                "summary": re.sub(r"\s+", " ", content).strip()[:max_chars],
+            }
+        )
+        if len(summaries) >= max_items:
+            break
+    return summaries
+
+
+def _preserve_failed_session(runtime: AgentRuntime, output_dir: Path, task_id: str) -> str | None:
+    source = runtime._session.path
+    if not source.is_file():
+        return None
+    output_dir.mkdir(parents=True, exist_ok=True)
+    target = output_dir / f"{task_id}-{runtime._session.session_id}.jsonl"
+    shutil.copy2(source, target)
+    return str(target)
 
 
 def _write_fixture_files(root: Path, files: Mapping[str, str]) -> None:
@@ -608,6 +768,26 @@ def _render_markdown_report(payload: Mapping[str, Any]) -> str:
         evidence = raw_result.get("test_evidence") or []
         if evidence:
             lines.append("  Test evidence: " + str(evidence[0]).replace("\n", " ")[:300])
+        session_id = raw_result.get("session_id")
+        run_id = raw_result.get("run_id")
+        if session_id or run_id:
+            lines.append(f"  Session/run: {session_id or 'n/a'} / {run_id or 'n/a'}")
+        error_summaries = raw_result.get("tool_error_summaries") or []
+        for item in error_summaries:
+            if isinstance(item, Mapping):
+                lines.append(f"  Tool error [{item.get('tool', 'unknown')}]: {item.get('summary', '')}")
+        retained_session = raw_result.get("retained_session_path")
+        if retained_session:
+            lines.append("  Retained failed session: " + str(retained_session))
+        compactions = int(summary.get("compactions") or 0)
+        if compactions:
+            lines.append(
+                "  Compaction effectiveness: "
+                f"effective={summary.get('effective_compactions', 0)}, "
+                f"zero_gain={summary.get('zero_gain_compactions', 0)}, "
+                f"max_consecutive_zero_gain={summary.get('max_consecutive_zero_gain_compactions', 0)}, "
+                f"estimated_token_reduction={summary.get('compaction_estimated_token_reduction', 0)}"
+            )
         if raw_result.get("error"):
             lines.append("  Error: " + str(raw_result["error"]))
         lines.append("  Residual risk: " + str(raw_result.get("residual_risk") or "none"))

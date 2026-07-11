@@ -54,6 +54,7 @@ def main(argv: list[str] | None = None) -> int:
         selected_ids=args.task,
         output_dir=output_dir,
         live_config=live_config,
+        preserve_failed_sessions=args.preserve_failed_sessions,
     )
     passed = sum(1 for result in results if result.passed)
     print(f"Benchmark results: {passed}/{len(results)} passed ({'live' if args.live else 'deterministic'}).")
@@ -83,6 +84,14 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--api-base-url", help="API base URL for --live.")
     parser.add_argument("--api-key", help="API key for --live.")
     parser.add_argument("--model", help="Model for --live.")
+    parser.add_argument(
+        "--preserve-failed-sessions",
+        action="store_true",
+        help=(
+            "Copy failed fixture-session JSONL files below the output directory for diagnosis. "
+            "Off by default so reports retain only bounded, redacted error summaries."
+        ),
+    )
     return parser
 
 

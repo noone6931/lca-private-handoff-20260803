@@ -42,7 +42,19 @@
     "answer_contains": [
       "只覆盖 primary"
     ],
-    "max_tool_errors": 0
+    "max_tool_errors": 0,
+    "live": {
+      "answer_contains": [],
+      "answer_regex": [
+        "(?:primary|主工作区|当前工作区).{0,120}(?:未发现|没有|不存在|no).{0,120}(?:java|\\.java)|(?:未发现|没有|不存在|no).{0,120}(?:java|\\.java).{0,120}(?:primary|主工作区|当前工作区)"
+      ],
+      "answer_forbidden_regex": [
+        "(?:所有|全部|all|any).{0,120}(?:additional|额外|授权|root|目录|工作区).{0,120}(?:未发现|没有|不存在|no).{0,120}(?:java|\\.java)"
+      ],
+      "glob_coverage_roots": [
+        "primary"
+      ]
+    }
   },
   "residual_risk": "A no-match conclusion depends on a complete non-truncated glob result and only supports the stated scope."
 }

@@ -1698,6 +1698,16 @@ class ToolTests(unittest.TestCase):
         self.assertIn("ok", result.content)
         self.assertIn("[exit_code] 0", result.content)
 
+    def test_run_tests_rejects_bare_test_module_with_actionable_command_hint(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            result = run_tests(
+                {"command": "tests.test_math"},
+                ToolContext(workspace=Path(tmp).resolve(), approval_mode="yolo"),
+            )
+
+        self.assertTrue(result.is_error)
+        self.assertIn("python3 -m unittest tests.test_math", result.content)
+
     def test_shell_timeout_is_clamped_to_remaining_budget(self) -> None:
         calls: list[dict] = []
 

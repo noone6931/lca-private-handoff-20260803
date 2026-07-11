@@ -24,6 +24,8 @@ from local_agent.steering.final_answer import FinalAnswerContext
 from local_agent.steering.final_answer import FinalAnswerSteeringSeverity
 from local_agent.steering.final_answer import RequirementEvidenceSteerer
 from local_agent.steering.final_answer import SourceEvidenceFalseNegativeSteerer
+from local_agent.steering.final_answer import ToolUsageEvidenceSteerer
+from local_agent.steering.final_answer import phantom_tool_evidence_claims
 from local_agent.steering.final_answer import SteeringDecision
 from local_agent.steering.final_answer import request_needs_source_grounded_numeric_facts
 from local_agent.steering.final_answer import source_false_negative_issues
@@ -109,6 +111,80 @@ class _WriteFileThenFinalClient:
                                 "function": {
                                     "name": "write_file",
                                     "arguments": json.dumps({"path": "generated.txt", "content": "hello\n"}),
+                                },
+                            }
+                        ],
+                    }
+                },
+            )()
+        return type("Response", (), {"message": {"content": "done"}})()
+
+
+class _PhantomToolEvidenceClient:
+    calls: list[dict] = []
+
+    def __init__(self, config: AgentConfig):
+        self.config = config
+
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
+        if len(type(self).calls) == 1:
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "call_read",
+                                "type": "function",
+                                "function": {
+                                    "name": "read_file",
+                                    "arguments": json.dumps({"path": "README.md"}),
+                                },
+                            }
+                        ],
+                    }
+                },
+            )()
+        if len(type(self).calls) == 2:
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": (
+                            "根据 LSP_* 收集的证据，lsp_symbols 和 lsp_workspace_symbols 均未提供结果。"
+                        )
+                    }
+                },
+            )()
+        return type("Response", (), {"message": {"content": "已读取 README.md；本轮没有 LSP 证据，相关结论未验证。"}})()
+
+
+class _TwoStageSchemaClient:
+    calls: list[dict] = []
+
+    def __init__(self, config: AgentConfig):
+        self.config = config
+
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
+        if len(type(self).calls) == 1:
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "call_read",
+                                "type": "function",
+                                "function": {
+                                    "name": "read_file",
+                                    "arguments": json.dumps({"path": "README.md"}),
                                 },
                             }
                         ],
@@ -1222,6 +1298,54 @@ class AgentRuntimeTests(unittest.TestCase):
             )
         )
 
+    def test_tool_choice_allowlist_is_projected_into_next_provider_schema(self) -> None:
+        _TwoStageSchemaClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            (workspace / "README.md").write_text("fixture\n", encoding="utf-8")
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=workspace,
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+            )
+            first = ToolChoiceDecision(
+                steering_required=False,
+                allowed_tool_names=frozenset({"read_file"}),
+                reason="initial evidence",
+            )
+            second = ToolChoiceDecision(
+                steering_required=False,
+                allowed_tool_names=frozenset(
+                    {
+                        "apply_patch",
+                        "git_diff",
+                        "lsp_definition",
+                        "lsp_references",
+                        "read_file",
+                        "run_tests",
+                        "search_code",
+                    }
+                ),
+                reason="implementation next step",
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _TwoStageSchemaClient):
+                runtime = AgentRuntime(config, show_tool_logs=False)
+                with patch.object(runtime._run.tool_choice_queue, "evaluate", side_effect=(first, second)):
+                    runtime.run("请读取 README.md 后说明当前项目。")
+
+        self.assertGreaterEqual(len(_TwoStageSchemaClient.calls), 2)
+        first_names = _tool_names_from_schema_call(_TwoStageSchemaClient.calls[0]["tools"])
+        second_names = _tool_names_from_schema_call(_TwoStageSchemaClient.calls[1]["tools"])
+        self.assertEqual(first_names, {"read_file"})
+        self.assertNotIn("glob_files", second_names)
+        self.assertNotIn("list_files", second_names)
+        self.assertEqual(second_names, set(second.allowed_tool_names))
+
     def test_runtime_emits_protocol_events_and_records_event_v1(self) -> None:
         _ReadFileThenFinalClient.calls = []
         with tempfile.TemporaryDirectory() as tmp:
@@ -1964,6 +2088,57 @@ class AgentRuntimeTests(unittest.TestCase):
         decision = SourceEvidenceFalseNegativeSteerer(max_steers=2).decide(context)
 
         self.assertIsNone(decision)
+
+    def test_tool_usage_evidence_gate_rejects_phantom_tool_results(self) -> None:
+        claims = phantom_tool_evidence_claims(
+            "根据 LSP_* 收集的证据，lsp_symbols 和 lsp_workspace_symbols 均未提供结果。",
+            [ToolResultSummary("read_file", "README contents")],
+        )
+        context = FinalAnswerContext(
+            request="请根据已有证据说明项目状态。",
+            content="根据 LSP_* 收集的证据，lsp_symbols 和 lsp_workspace_symbols 均未提供结果。",
+            messages=[],
+            run_start_index=0,
+            requirement_contract=generate_requirement_contract("请根据已有证据说明项目状态。"),
+            tool_results=[ToolResultSummary("read_file", "README contents")],
+            read_file_evidence_paths=["README.md"],
+            source_evidence=[],
+            open_todos=[],
+            is_code_implementation_request=False,
+            steer_counts={},
+        )
+
+        decision = ToolUsageEvidenceSteerer(max_steers=2).decide(context)
+
+        self.assertIn("lsp_*", claims)
+        self.assertIn("lsp_symbols", claims)
+        self.assertIsNotNone(decision)
+        self.assertEqual(decision.kind, "tool_usage_evidence")
+        self.assertIn("did not run", decision.message)
+
+    def test_phantom_tool_evidence_is_rewritten_using_observed_results_only(self) -> None:
+        _PhantomToolEvidenceClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            (workspace / "README.md").write_text("fixture\n", encoding="utf-8")
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=workspace,
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _PhantomToolEvidenceClient):
+                runtime = AgentRuntime(config, show_tool_logs=False)
+                result = runtime.run("请根据读取到的证据说明项目状态。")
+
+        self.assertIn("没有 LSP 证据", result)
+        self.assertNotIn("lsp_symbols 和 lsp_workspace_symbols 均未提供", result)
+        self.assertEqual(_PhantomToolEvidenceClient.calls[2]["tools"], [])
+        self.assertEqual(runtime._last_run_summary["steering_counts"], {"tool_usage_evidence": 1})
 
     def test_source_numeric_gate_accepts_requirement_citations_and_same_named_file_evidence(self) -> None:
         evidence = [

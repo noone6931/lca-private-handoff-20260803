@@ -58,7 +58,17 @@
     "answer_contains": [
       "Maven Java 项目"
     ],
-    "max_tool_errors": 0
+    "max_tool_errors": 0,
+    "live": {
+      "answer_contains": [],
+      "answer_regex": [
+        "(?:maven|pom\\.xml).{0,160}(?:java|\\.java)|(?:java|\\.java).{0,160}(?:maven|pom\\.xml)"
+      ],
+      "glob_coverage_roots": [
+        "primary",
+        "service"
+      ]
+    }
   },
   "residual_risk": "Inventory remains deliberately bounded; a large additional root may be incomplete and must be labeled as such."
 }

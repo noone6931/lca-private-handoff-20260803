@@ -20,7 +20,7 @@ class RunCollectorTests(unittest.TestCase):
         collector.record_tool_started("read_file")
         collector.record_tool_result(name="read_file", is_error=False, useless=True, metadata={})
         collector.mark_llm_context_summary()
-        collector.record_context_compaction()
+        collector.record_context_compaction(estimated_tokens_before=100, estimated_tokens_after=70)
 
         with patch("local_agent.run_collector.time.monotonic", return_value=10.125):
             summary = collector.finish(
@@ -34,6 +34,9 @@ class RunCollectorTests(unittest.TestCase):
         self.assertEqual(summary["tool_calls"], 1)
         self.assertEqual(summary["useless_tool_results"], 1)
         self.assertEqual(summary["compactions"], 1)
+        self.assertEqual(summary["effective_compactions"], 1)
+        self.assertEqual(summary["zero_gain_compactions"], 0)
+        self.assertEqual(summary["compaction_estimated_token_reduction"], 30)
         self.assertEqual(summary["llm_context_summaries"], 1)
         self.assertEqual(summary["guard_hits"], {"duplicate_tool": 1})
         self.assertEqual(
@@ -85,3 +88,19 @@ class RunCollectorTests(unittest.TestCase):
         self.assertEqual(summary["run_id"], "run-2")
         self.assertEqual(summary["llm_requests"], 0)
         self.assertEqual(summary["local_context_summaries"], 0)
+
+    def test_tracks_consecutive_zero_gain_compactions(self) -> None:
+        collector = RunCollector()
+        collector.start("run-1", "compact", 1.0, guard_start={}, steer_start={})
+        collector.record_context_compaction(estimated_tokens_before=100, estimated_tokens_after=100)
+        collector.record_context_compaction(estimated_tokens_before=100, estimated_tokens_after=101)
+        collector.record_context_compaction(estimated_tokens_before=120, estimated_tokens_after=80)
+        collector.record_context_compaction(estimated_tokens_before=90, estimated_tokens_after=90)
+
+        summary = collector.finish("final", guard_values={}, steering_values={})
+
+        self.assertEqual(summary["compactions"], 4)
+        self.assertEqual(summary["effective_compactions"], 1)
+        self.assertEqual(summary["zero_gain_compactions"], 3)
+        self.assertEqual(summary["max_consecutive_zero_gain_compactions"], 2)
+        self.assertEqual(summary["compaction_estimated_token_reduction"], 40)

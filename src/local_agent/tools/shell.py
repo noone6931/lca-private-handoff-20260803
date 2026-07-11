@@ -29,7 +29,12 @@ def shell_tools() -> list[Tool]:
     return [
         Tool(
             name="run_tests",
-            description="Run the project's test command in the workspace. Defaults to Python unittest.",
+            description=(
+                "Run a complete executable test command in the workspace. Defaults to Python unittest. "
+                "When command is provided, include its runner, for example "
+                "`PYTHONPATH=src python3 -m unittest tests.test_config`; a bare module name such as "
+                "`tests.test_config` is not an executable command."
+            ),
             tier="exec",
             input_schema={
                 "type": "object",
@@ -61,6 +66,12 @@ def shell_tools() -> list[Tool]:
 
 def run_tests(args: dict[str, Any], context: ToolContext) -> ToolResult:
     command = args.get("command") or "PYTHONPATH=src python3 -m unittest discover -s tests"
+    if _looks_like_test_module_name(command):
+        return ToolResult(
+            "run_tests command looks like a Python test module, not an executable command. "
+            f"Use `python3 -m unittest {command}` (and add PYTHONPATH=... when the project needs it).",
+            is_error=True,
+        )
     return _run_command(command, args, context, default_timeout=120)
 
 
@@ -114,3 +125,9 @@ def _clamp_timeout_to_budget(timeout: int, context: ToolContext) -> int:
     if remaining <= 0:
         return 0
     return min(timeout, max(1, int(remaining)))
+
+
+def _looks_like_test_module_name(command: object) -> bool:
+    """Reject a common ambiguous model argument without executing or guessing it."""
+
+    return isinstance(command, str) and bool(re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)+", command.strip()))

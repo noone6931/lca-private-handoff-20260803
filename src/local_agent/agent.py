@@ -81,6 +81,7 @@ from .steering.final_answer import PatchReviewSteerer
 from .steering.final_answer import ReadOnlyEvidenceSteerer
 from .steering.final_answer import RequirementEvidenceSteerer
 from .steering.final_answer import SourceEvidenceFalseNegativeSteerer
+from .steering.final_answer import ToolUsageEvidenceSteerer
 from .steering.final_answer import request_mentions_todo
 from .steering.final_answer import render_unverified_final_answer
 from .steering.final_answer import SourceGroundedNumericSteerer
@@ -148,6 +149,7 @@ MAX_READ_ONLY_EVIDENCE_STEERS = 2
 MAX_REQUIREMENT_EVIDENCE_STEERS = 2
 MAX_DESIGN_EVIDENCE_STEERS = 2
 MAX_SOURCE_EVIDENCE_FALSE_NEGATIVE_STEERS = 2
+MAX_TOOL_USAGE_EVIDENCE_STEERS = 2
 MAX_NEGATIVE_EXISTENCE_STEERS = 2
 MAX_SOURCE_GROUNDED_NUMERIC_STEERS = 2
 MAX_COMPLETION_AUDIT_STEERS = 2
@@ -257,6 +259,7 @@ class AgentRuntime:
             NoEditFinalHygieneSteerer(max_steers=MAX_NO_EDIT_FINAL_HYGIENE_STEERS),
             FinalStructureSteerer(max_steers=MAX_FINAL_STRUCTURE_STEERS),
             SourceEvidenceFalseNegativeSteerer(max_steers=MAX_SOURCE_EVIDENCE_FALSE_NEGATIVE_STEERS),
+            ToolUsageEvidenceSteerer(max_steers=MAX_TOOL_USAGE_EVIDENCE_STEERS),
             NegativeExistenceSteerer(max_steers=MAX_NEGATIVE_EXISTENCE_STEERS),
             SourceGroundedNumericSteerer(max_steers=MAX_SOURCE_GROUNDED_NUMERIC_STEERS),
             PatchReviewSteerer(max_steers=MAX_PATCH_REVIEW_STEERS),
@@ -1045,8 +1048,16 @@ class AgentRuntime:
     def _record_llm_request(self) -> None:
         self._run.collector.record_llm_request()
 
-    def _record_context_compaction(self) -> None:
-        self._run.collector.record_context_compaction()
+    def _record_context_compaction(
+        self,
+        *,
+        estimated_tokens_before: int,
+        estimated_tokens_after: int,
+    ) -> None:
+        self._run.collector.record_context_compaction(
+            estimated_tokens_before=estimated_tokens_before,
+            estimated_tokens_after=estimated_tokens_after,
+        )
 
     def _record_llm_context_summary(self) -> None:
         self._run.collector.mark_llm_context_summary()
@@ -1092,6 +1103,7 @@ class AgentRuntime:
                 "final_structure": self._run.final_answer_steers.get("final_structure", 0),
                 "read_only_evidence": self._run.final_answer_steers.get("read_only_evidence", 0),
                 "source_evidence_false_negative": self._run.final_answer_steers.get("source_evidence_false_negative", 0),
+                "tool_usage_evidence": self._run.final_answer_steers.get("tool_usage_evidence", 0),
                 "source_grounded_numeric": self._run.final_answer_steers.get("source_grounded_numeric", 0),
                 "patch_reviewer": self._run.final_answer_steers.get("patch_reviewer", 0),
                 "completion_audit": self._run.final_answer_steers.get("completion_audit", 0),
@@ -1111,6 +1123,8 @@ class AgentRuntime:
         thresholds = self._context_budget_thresholds()
         if not self._context_budget_exceeded(provider_context):
             return self._provider_safe_runtime_messages(provider_context, todo_summary)
+
+        estimated_tokens_before = _estimate_message_tokens(provider_context)
 
         system_messages = [message for message in provider_context if message.get("role") == "system"]
         non_system = [message for message in provider_context if message.get("role") != "system"]
@@ -1137,11 +1151,16 @@ class AgentRuntime:
                     "sent_messages": len(compacted),
                     "dropped_messages": len(dropped),
                     "estimated_chars": _estimate_message_chars(compacted),
-                    "estimated_tokens": _estimate_message_tokens(compacted),
+                    "estimated_tokens_before": estimated_tokens_before,
+                    "estimated_tokens_after": _estimate_message_tokens(compacted),
                 }
+                payload["estimated_tokens"] = payload["estimated_tokens_after"]
                 payload.update(thresholds)
                 self._session.append("context_compaction", payload)
-                self._record_context_compaction()
+                self._record_context_compaction(
+                    estimated_tokens_before=estimated_tokens_before,
+                    estimated_tokens_after=int(payload["estimated_tokens_after"]),
+                )
                 return self._provider_safe_runtime_messages(compacted, todo_summary)
             recent_count = max(6, recent_count // 2)
         return self._provider_safe_runtime_messages(self._messages, todo_summary)
@@ -1823,6 +1842,7 @@ class AgentRuntime:
             "no_edit_final_hygiene": self._run.final_answer_steers.get("no_edit_final_hygiene", 0),
             "final_structure": self._run.final_answer_steers.get("final_structure", 0),
             "source_evidence_false_negative": self._run.final_answer_steers.get("source_evidence_false_negative", 0),
+            "tool_usage_evidence": self._run.final_answer_steers.get("tool_usage_evidence", 0),
             "negative_existence": self._run.final_answer_steers.get("negative_existence", 0),
             "source_grounded_numeric": self._run.final_answer_steers.get("source_grounded_numeric", 0),
             "patch_reviewer": self._run.final_answer_steers.get("patch_reviewer", 0),

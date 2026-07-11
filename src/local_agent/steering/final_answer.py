@@ -247,6 +247,57 @@ TODO_REQUEST_KEYWORDS = {
     "维护 todo",
     "维护todo",
 }
+KNOWN_TOOL_EVIDENCE_NAMES = frozenset(
+    {
+        "apply_patch",
+        "ask_user",
+        "git_diff",
+        "git_status",
+        "glob_files",
+        "learn",
+        "list_files",
+        "lsp_definition",
+        "lsp_diagnostics",
+        "lsp_document_symbols",
+        "lsp_references",
+        "lsp_status",
+        "lsp_symbols",
+        "lsp_workspace_symbols",
+        "memory_read",
+        "memory_write",
+        "read_file",
+        "rollback_patch",
+        "run_tests",
+        "search_code",
+        "shell",
+        "todo_add",
+        "todo_read",
+        "todo_update",
+        "write_file",
+    }
+)
+TOOL_EVIDENCE_CLAIM_MARKERS = (
+    "based on",
+    "called",
+    "call ",
+    "no result",
+    "no results",
+    "not provide",
+    "not return",
+    "result",
+    "returned",
+    "tool output",
+    "根据",
+    "调用",
+    "结果",
+    "返回",
+    "通过",
+    "未提供",
+    "未返回",
+    "无结果",
+    "没有结果",
+    "均未",
+)
 
 
 class FinalAnswerSteeringSeverity(str, Enum):
@@ -544,6 +595,36 @@ class SourceEvidenceFalseNegativeSteerer:
             kind=self.kind,
             message=steering,
             payload={"issues": [issue["summary"] for issue in issues[:5]]},
+        )
+
+
+class ToolUsageEvidenceSteerer:
+    """Keep final claims about tool evidence aligned with observed tool results."""
+
+    kind = "tool_usage_evidence"
+
+    def __init__(self, *, max_steers: int) -> None:
+        self._max_steers = max_steers
+
+    def decide(self, context: FinalAnswerContext) -> SteeringDecision | None:
+        if context.steer_counts.get(self.kind, 0) >= self._max_steers:
+            return None
+        claimed_missing_tools = phantom_tool_evidence_claims(context.content, context.tool_results)
+        if not claimed_missing_tools:
+            return None
+        tools = ", ".join(claimed_missing_tools)
+        steering = (
+            "Runtime steering: the previous final answer claimed evidence, invocation, or an empty result from tools "
+            "that did not run in this task. Do not call tools. Rewrite the answer using only tool results actually "
+            "observed in this run; say an item is unverified rather than attributing it to an uncalled tool.\n"
+            f"- Unsupported tool-evidence claims: {tools}\n"
+            f"- Tools actually observed: {', '.join(_observed_tool_names(context.tool_results)) or 'none'}"
+            f"{final_answer_request_summary(context.request)}"
+        )
+        return SteeringDecision(
+            kind=self.kind,
+            message=steering,
+            payload={"unobserved_tools": list(claimed_missing_tools)},
         )
 
 
@@ -891,6 +972,42 @@ def tool_names_since(messages: list[dict[str, Any]], start_index: int) -> set[st
         elif message.get("role") == "assistant":
             names.update(assistant_tool_call_names(message))
     return names
+
+
+def phantom_tool_evidence_claims(
+    content: str,
+    tool_results: list[ToolResultSummary],
+) -> tuple[str, ...]:
+    """Return unobserved tools that the answer presents as run/result evidence.
+
+    Merely recommending a tool is valid. A claim must occur in the same
+    sentence-like segment as an execution/result/evidence marker, and explicit
+    statements that the tool was *not called* are deliberately ignored.
+    """
+
+    observed = set(_observed_tool_names(tool_results))
+    if not content.strip():
+        return ()
+    claimed: set[str] = set()
+    for segment in re.split(r"[\n。！？!?;]+", content.lower()):
+        if not segment.strip() or not _looks_like_tool_evidence_claim(segment):
+            continue
+        if re.search(r"(?:未|没有|not)\s*(?:调用|call(?:ed)?)", segment):
+            continue
+        for tool in KNOWN_TOOL_EVIDENCE_NAMES - observed:
+            if re.search(rf"(?<![a-z0-9_]){re.escape(tool)}(?![a-z0-9_])", segment):
+                claimed.add(tool)
+        if "lsp" not in observed and re.search(r"(?<![a-z0-9_])lsp(?:[_*][a-z0-9_*]+)?(?![a-z0-9_])", segment):
+            claimed.add("lsp_*")
+    return tuple(sorted(claimed))
+
+
+def _looks_like_tool_evidence_claim(segment: str) -> bool:
+    return any(marker in segment for marker in TOOL_EVIDENCE_CLAIM_MARKERS)
+
+
+def _observed_tool_names(tool_results: list[ToolResultSummary]) -> tuple[str, ...]:
+    return tuple(sorted({result.name for result in tool_results if result.name}))
 
 
 def assistant_tool_call_names(message: dict[str, Any]) -> list[str]:

@@ -16,6 +16,11 @@ class RunStats:
     useless_tool_results: int = 0
     synthetic_tool_results: int = 0
     compactions: int = 0
+    effective_compactions: int = 0
+    zero_gain_compactions: int = 0
+    consecutive_zero_gain_compactions: int = 0
+    max_consecutive_zero_gain_compactions: int = 0
+    compaction_estimated_token_reduction: int = 0
     llm_context_summaries: int = 0
     local_context_summaries: int = 0
     file_discovery_calls: int = 0
@@ -64,9 +69,27 @@ class RunCollector:
     def mark_local_context_summary(self) -> None:
         self._pending_compaction_summary_mode = "local"
 
-    def record_context_compaction(self) -> None:
+    def record_context_compaction(
+        self,
+        *,
+        estimated_tokens_before: int | None = None,
+        estimated_tokens_after: int | None = None,
+    ) -> None:
         if self._stats is not None:
             self._stats.compactions += 1
+            if estimated_tokens_before is not None and estimated_tokens_after is not None:
+                reduction = max(0, estimated_tokens_before - estimated_tokens_after)
+                self._stats.compaction_estimated_token_reduction += reduction
+                if reduction:
+                    self._stats.effective_compactions += 1
+                    self._stats.consecutive_zero_gain_compactions = 0
+                else:
+                    self._stats.zero_gain_compactions += 1
+                    self._stats.consecutive_zero_gain_compactions += 1
+                    self._stats.max_consecutive_zero_gain_compactions = max(
+                        self._stats.max_consecutive_zero_gain_compactions,
+                        self._stats.consecutive_zero_gain_compactions,
+                    )
             if self._pending_compaction_summary_mode == "llm":
                 self._stats.llm_context_summaries += 1
             elif self._pending_compaction_summary_mode == "local":
@@ -145,6 +168,10 @@ class RunCollector:
             "useless_tool_results": stats.useless_tool_results,
             "synthetic_tool_results": stats.synthetic_tool_results,
             "compactions": stats.compactions,
+            "effective_compactions": stats.effective_compactions,
+            "zero_gain_compactions": stats.zero_gain_compactions,
+            "max_consecutive_zero_gain_compactions": stats.max_consecutive_zero_gain_compactions,
+            "compaction_estimated_token_reduction": stats.compaction_estimated_token_reduction,
             "llm_context_summaries": stats.llm_context_summaries,
             "local_context_summaries": stats.local_context_summaries,
             "file_discovery_calls": stats.file_discovery_calls,
