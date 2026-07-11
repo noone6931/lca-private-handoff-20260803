@@ -122,6 +122,15 @@ python3 -m pip install -e ".[terminal]"
 
 `/status` 会显示当前 session、workspace、provider、approval 配置，以及最近一轮的 run summary（LLM 请求数、工具调用数、终止原因、guard/steering 触发等）。
 
+跨项目任务中，`/workspace add PATH` 只为文件、搜索、LSP 和 patch 增加一个附加 root；Git、shell、项目 memory/skills 仍锚定当前 primary。需要把整场会话切到另一个项目时使用：
+
+```text
+/move "/path/to/new-primary-project"
+/workspace list
+```
+
+`/move` 保持 session id 和 session approval，旧 primary 自动成为 session root；当前 session 的 JSONL、todo、patch log 会迁移到新 primary 的 runtime state partition，Git/shell/startup context/project memory/skills 和默认 LSP root 一起切换。下次继续该会话时，用新项目的 `--cwd` 和原 session id 启动。
+
 安装成包后也可以用：
 
 ```bash
@@ -376,6 +385,7 @@ AGENT_LSP_VUE_COMMAND="/path/to/vue-language-server --stdio"
 - 多步骤任务可使用 session 级 todo 追踪进度；未完成 todo 会作为 runtime reminder 进入模型上下文，帮助长任务保持方向；
 - 需求不清时可使用 `ask_user` 暂停并提问，也可传 `timeout_seconds` / `default_answer` 避免长任务无限等待；
 - 读、搜、写默认限制在 workspace 内；显式 `--allow-dir` / `AGENT_ALLOWED_DIRS` 可授权额外目录给文件、搜索、LSP 和 patch 工具；
+- 交互模式的 `/move PATH` 可把当前 session 的 primary workspace 原子切换到 PATH；旧 primary 仍作为 session root 可读，但 Git、shell、startup context、project memory/skills 和默认 LSP root 全部改用新 primary；
 - `shell` / `run_tests` 仍然可以执行任意本地命令；危险命令黑名单只是防手滑，不是安全沙箱，真正隔离依赖封闭 VM 和人工审批；
 - 读取文件有大小和行数限制；
 - 明显危险的 shell 命令会被拒绝；

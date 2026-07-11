@@ -101,4 +101,64 @@ primary backend workspace
 
 1. 后端 workspace 已开 chat 时，发现前端或需求目录可直接执行 `/workspace add "/path/to/project"` 或 `/add-dir "/path/to/requirements"`，再让 Agent 读取证据；不必重启。
 2. 用 `/workspace list` 核对当前 primary/configured/session 边界；临时关联目录做完后用 `/workspace remove PATH` 或 `/workspace reset` 收回。
-3. 需要让 shell、Git、startup rules、LSP primary 和项目 memory 一起切换时，等待 T-128B 的 `/move`；T-128A 故意不暗中改变这些根。
+3. T-128A 本身不暗中改变 shell、Git、startup rules、LSP primary 或项目 memory；现在需要整体切换时可使用已完成的 T-128B `/move`。
+
+---
+
+# T-128B `/move` 主工作目录真实压测（2026-07-11）
+
+## 范围与结论
+
+目标是在同一 chat session 中，从独立 backend Git workspace 移动到独立 frontend Git workspace，验证 primary cwd、session artifacts、startup context、Git/shell/LSP root 和会话恢复不会分裂：
+
+```text
+backend primary
+  -> /move frontend
+  -> frontend becomes primary
+  -> backend remains session root
+  -> read frontend + read backend + git_status
+  -> exit and reopen with frontend --cwd + same session id
+```
+
+结论：T-128B 通过。`/move` 不创建新 session；它把当前 session JSONL、todo、patch log 作为一个可回滚的 artifact 集迁移到新 primary 的 state partition，重建新项目 startup context，并清空 external LSP clients。旧 primary 自动作为 session root 保留，可继续用 file/search/LSP/patch 访问；Git 和 shell 则只锚定新 primary。
+
+## 真实压测证据
+
+| 项 | 事实 |
+|---|---|
+| 隔离会话 | `20260711T005836257738Z` |
+| 初始/目标项目 | 两个独立、干净的临时 Git repo：`backend` -> `frontend` |
+| session 命令 | `/status`、`/move frontend`、`/workspace list`、再次 `/status` 均成功；revision 为 1 |
+| primary/state 切换 | 状态输出从 backend 及其 workspace-state partition 切到 frontend 及其对应 partition |
+| startup context | backend/frontend 分别放置不同 `AGENTS.md`；Runtime 单测确认 move 后 system message 只保留 frontend context，不残留 backend block |
+| 工具边界 | 百炼在 move 后相对 `read_file README.md` 读到 `frontend view`；绝对路径读取旧 backend 得到 `backend service`；`git_status` 在 frontend primary 中返回 clean |
+| 持久化 | 新 state partition 的 JSONL 同时写入 `workspace_moved` 与 `WorkspaceMoved`，含 previous/next primary、session roots、revision、state dir |
+| 重开恢复 | 使用 `--cwd frontend --session 20260711T005836257738Z` 重开后，primary 仍为 frontend，backend 仍是 session root，state dir 仍为 frontend partition |
+| move 后小改 | 同一 session 仅修改 frontend `README.md`：`frontend view` -> `frontend view verified`；按 read -> dry-run -> apply -> `git diff --check` -> `git_diff` 完成，backend 仍无 diff |
+| 副作用 | backend 和 LCA worktree 均无 diff；frontend 仅保留压测预期的一行 diff，临时项目和 state 均在压测结束后清理 |
+
+## 压测观察、OMP 对照与措施
+
+| ID | 压测事实 | OMP 源码事实 | LCA 措施 | 状态 |
+|---|---|---|---|---|
+| PT-050 | 若只改 Runtime cwd 而不迁移 session artifacts，重开时会在旧/新 workspace state 间断裂。 | OMP 的 `/move` 会更新 session cwd、迁移 session/artifacts，再重载 cwd 相关 context。 | `workspace_migration.py` 只搬当前 session 的 JSONL/todo/patch artifacts；目标冲突或中途 `os.replace` 失败均拒绝或回滚。 | 已完成：`d3548b5`，单元 + 真实重开复测通过。 |
+| PT-051 | move 后旧项目仍需保留为已授权证据源，但 Git/shell 不应偷偷继续指向旧项目。 | OMP 将 active cwd 与 session history 分开处理；cwd 切换后 runtime project context 要重新绑定。 | `WorkspaceContext.moved_primary()` 将旧 primary 转为 session root；ToolContext.workspace、Git baseline、shell cwd、LSP client cache 和 provider workspace block 同步切换。 | 已完成：真实 `read_file` 双 root + `git_status` frontend 验证。 |
+| PT-052 | 百炼最终回复没有严格遵守“三句话”，且对 clean `git_status` 的仓库归属措辞过度保守。 | OMP 的 runtime 负责上下文/工具边界，最终表达仍受 provider 和 final steering 影响。 | 作为 P10 final-format / ToolChoiceQueue 质量样本记录；不为了格式强行放松 evidence hygiene，也不影响 move 的 runtime 正确性。 | 开放，等待同类真实任务累计后统一收束。 |
+
+## 回归验证
+
+- 新增 WorkspaceContext move、artifact 成功迁移/目标冲突/中途失败回滚、SessionStore move snapshot、Runtime move/reopen/旧 root 可读/LSP close、CLI `/move` 回归；真实链路额外覆盖 move 后 primary 内的 preview -> write -> diff check -> diff。
+- 本地验证：`PYTHONPATH=src python3 -m unittest discover -s tests` 通过 329 项；`python3 -m compileall -q src tests` 与 `git diff --check` 通过。
+- 代码提交：`d3548b5 Add session workspace move`。
+
+## 日用方式
+
+在 `./agent --chat` 中输入：
+
+```text
+/move "/path/to/new-primary-project"
+/workspace list
+/status
+```
+
+之后当前 session 的 Git、shell、startup rules、project memory/skills 和默认 LSP root 都以新项目为准；旧项目会显示为 session root。下次继续该会话时，应使用新 primary 的 `--cwd` 和原 session id。
