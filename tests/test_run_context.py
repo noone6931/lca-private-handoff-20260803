@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 
 from local_agent.run_context import EvidenceRecord
+from local_agent.run_context import MAX_FORCED_FINAL_ANSWER_CONTINUATIONS
 from local_agent.run_context import RunContext
 from local_agent.task_contract import generate_requirement_contract
 from local_agent.tool_choice_queue import ToolResultSummary
@@ -59,6 +60,18 @@ class RunContextTests(unittest.TestCase):
         self.assertEqual(context.tool_choice_results, [])
         self.assertEqual(context.final_answer_steers, {})
         self.assertEqual(context.tool_loop_steering.count("duplicate_tool_final_answer"), 0)
+
+    def test_forced_final_answer_continuations_are_bounded_and_reset_by_tool_progress(self) -> None:
+        context = RunContext()
+
+        for _ in range(MAX_FORCED_FINAL_ANSWER_CONTINUATIONS):
+            self.assertTrue(context.queue_forced_final_answer())
+        self.assertFalse(context.can_queue_forced_final_answer())
+        self.assertFalse(context.queue_forced_final_answer())
+
+        context.reset_forced_final_answer_continuations()
+        self.assertTrue(context.can_queue_forced_final_answer())
+        self.assertEqual(context.forced_final_answer_continuations, 0)
 
 
 def _duplicate_tool_signals():

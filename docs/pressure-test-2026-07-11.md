@@ -191,11 +191,40 @@ backend primary
 |---|---|---|---|---|
 | PT-053 | `tool_approval=deny` 的 `run_tests` 曾仍出现在模型可见工具中，模型把 `find` 误当测试命令调用，浪费一步。 | OMP `AgentSession.#applyActiveToolsByName()` 只把 active tool 集交给 Agent；`agent.ts:74-89` 还会在 active tools 中校验 forced `toolChoice`。 | `_tools_for_model()` 与 Queue 的 available tool names 均过滤 config/session deny；Registry deny 保留为最终执行边界。 | 已修复并真实复测：session `20260711T014124870469Z` 仅三次指定 `read_file`，20.8 秒、0 tool error、无 shell/run_tests。 |
 | PT-054 | 百炼返回 `todo_text`、`lsp_symbols.pattern`、`__invalid_tool_call`、错误前端路径等 provider 方言/规划错误。 | OMP 以 schema、active tools 和 `coerceToolResult()` 收敛无效工具结果，但不把未知 payload 静默解释成任意副作用。 | 保持严格 schema；只对已验证且语义无歧义的 scalar alias 兼容。`todo_text` 的批量语义不明确，暂不接收。 | 开放，归为 provider compatibility。 |
-| PT-055 | 跨项目只读设计在已读取 requirement+backend+frontend 后仍继续 68 次工具调用，目录枚举和大搜索过多。 | OMP 对软工具要求/病态探索设置显式小上限，并用 ToolChoiceQueue 在满足或失败后收束；主循环不靠总步数截断。 | 下一项 T-131：为“跨 root 需求设计”定义 evidence coverage 后的有限补证预算和 final handoff，不增加新的 `agent.py` inline guard。 | 待实施。 |
-| PT-056 | 最终回答把未证实类名/字段名写进分阶段方案，虽标 blocked，仍可能被误当实现定位。 | OMP 的 project context/tool result 只能提供证据，不能把生成候选升级为源码事实。 | T-131 同时要求设计输出把“已证实文件”“建议新增候选”“缺失输入”分栏，候选不得伪装为现有路径。 | 待实施。 |
+| PT-055 | 跨项目只读设计在已读取 requirement+backend+frontend 后仍继续 68 次工具调用，目录枚举和大搜索过多。 | OMP 对软工具要求/病态探索设置显式小上限，并用 ToolChoiceQueue 在满足或失败后收束；主循环不靠总步数截断。 | T-131 把“不得修改/写入”归为全局只读，沿用跨 root evidence coverage 的有限补证预算，并为无工具 final resample 增加 OMP 同类的 8 次上限、deadline reserve 与本地摘要优先。 | 已完成并真实复测：`20260711T115451962229Z` 仅 3 次精确 read、0 error、22.3 秒完成。 |
+| PT-056 | 最终回答把未证实类名/字段名写进分阶段方案，虽标 blocked，仍可能被误当实现定位。 | OMP 的 project context/tool result 只能提供证据，不能把生成候选升级为源码事实。 | T-131 固定“已证实事实 / 建议新增候选 / 缺失 owner 证据”三段；绝对路径不再作为源码术语，数值核验仅在用户明确索要状态码/字段数值时才启动。 | 已完成并真实复测：候选均明确标为非现有源码，最终无额外工具调用。 |
 
 ## 进入业务实现前的最小前置条件
 
 1. 确认订单“拓展服务费”和“制单状态”所在服务/表/DTO，以及该服务目录的授权路径。
 2. 提供或定位结算单主表/明细表的 DDL、模板管理接口/模板编号和下载中心契约。
 3. 以这些真实 owner roots 重跑只读设计；结论稳定后，才在同一 session `/move` 到被确认的 primary，进行一个明确目标的小改验证。
+
+---
+
+# T-131 跨 root 只读设计收束与最终答复韧性（2026-07-11）
+
+## 问题与根因
+
+首轮 T-130 的任务含“不得修改文件”，但 `TaskContract` 未把这类全局禁令识别为 read-only；它因此绕过了既有 cross-root design evidence coverage。修复分类后，第一次复测 `20260711T014453755095Z` 已正确读取 requirement/backend/frontend 并在 7 次工具调用后收束，却被多个最终答复 hygiene resample 与 LLM compaction 占用剩余时间，最终请求超时。
+
+## OMP 对照与实现
+
+OMP 的 `packages/agent/src/agent-loop.ts` 不用总步数结束主循环，但对无工具的非终止 continuation 使用 `MAX_PAUSED_TURN_CONTINUATIONS = 8`，并在 deadline 前停止继续。LCA 采用同一原则而不复制 OMP 的整套 UI/runtime：
+
+1. `不得修改`、`禁止修改`、`不得写入`、`禁止写入` 归为全局只读指令。
+2. `RunContext` 记录 forced-final continuation；连续无工具的最终答复重写最多 8 次，任一工具调用后重置。
+3. 进入 deadline reserve 后不再追加可选 final hygiene 重写；forced-final compaction 强制使用本地摘要，避免在最终答复前再发一次 summary LLM 请求。
+4. 若 forced-final 请求仍超时，返回本 run 最近一份无工具草稿，并明确标注该次最终重写超时。
+5. absolute path 的 `path`/`line` 不再被 source-evidence false-negative gate 当成源码标识符；数值/状态核验只在原始用户请求明确要求时运行。
+
+## 真实复测
+
+| session | 结果 | 关键指标 | 结论 |
+|---|---|---|---|
+| `20260711T115216464654Z` | 初次复测 | 3 reads，0 error，5 LLM requests，4 次本地 compaction；仍有 `path:line` 与日期/状态文本引发的 3 次无工具重写 | 收束与 deadline 问题已消失，但发现两个过度 hygiene gate。 |
+| `20260711T115451962229Z` | 最终复测 | 22,314 ms；4 LLM requests；3 `read_file`；0 error/useless/synthetic；1 次本地 compaction；无 steering hit | 通过。精确读取 requirement、Java、Vue 后直接输出三段证据化设计，无 shell/test/write/memory 副作用。 |
+
+## 仍然不进入业务写入
+
+这次只证明 LCA 可以稳定收束跨项目只读设计，**不证明业务 owner 已定位**。生成的候选和缺失项仍需用真正的订单字段/制单状态 owner、结算单 DDL、模板管理与下载中心契约进一步确认；在此之前不对 `zqylpayment` 或 `mpspay` 执行 patch。

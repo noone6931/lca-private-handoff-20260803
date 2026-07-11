@@ -69,6 +69,14 @@ class RequirementContractTests(unittest.TestCase):
         self.assertTrue(any("rounding" in item for item in contract.verification_requirements))
         self.assertTrue(any("Settlement requirements" in item for item in contract.risk_notes))
 
+    def test_global_forbid_edit_keeps_cross_root_design_read_only(self) -> None:
+        contract = generate_requirement_contract(
+            "这是一次真实只读需求分析，必须读取需求和前后端代码，输出分阶段实现方案；不得修改文件、"
+            "运行测试或写 memory。"
+        )
+
+        self.assertEqual(contract.task_kind, "read-only")
+
     def test_very_short_plain_question_contract_is_unclear(self) -> None:
         contract = generate_requirement_contract("能吗？")
 

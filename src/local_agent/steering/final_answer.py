@@ -173,6 +173,8 @@ SOURCE_FALSE_NEGATIVE_STOPWORDS = {
     "guard",
     "mini",
     "msp",
+    "line",
+    "path",
     "pay",
     "source",
     "test",
@@ -747,7 +749,15 @@ def source_false_negative_issues(
 
 
 def request_source_terms(request: str) -> list[str]:
-    raw_terms = re.findall(r"[A-Za-z_][A-Za-z0-9_]{2,}", request or "")
+    # Absolute paths are evidence locations, not source identifiers. Keeping
+    # their segments (for example Users/chengming/src) lets a later false-
+    # negative check "find" the path header injected by read_file itself.
+    pathless_request = re.sub(
+        r"(?<![A-Za-z0-9_])(?:~|/)[^\s`\"'，。；;、()（）]*",
+        " ",
+        request or "",
+    )
+    raw_terms = re.findall(r"[A-Za-z_][A-Za-z0-9_]{2,}", pathless_request)
     seen: set[str] = set()
     terms: list[str] = []
     for term in raw_terms:
@@ -794,13 +804,10 @@ def request_needs_source_grounded_numeric_facts(request: str | None, content: st
     lowered_request = (request or "").lower()
     if not any(char.isdigit() for char in content):
         return False
-    if not (_contains_numeric_fact_marker(lowered_request) or _contains_numeric_fact_marker(content.lower())):
-        return False
-    if any(keyword.lower() in lowered_request for keyword in EVIDENCE_REQUEST_KEYWORDS):
-        return True
-    if any(keyword.lower() in lowered_request for keyword in IMPLEMENTATION_EVIDENCE_REQUEST_KEYWORDS):
-        return True
-    return _contains_numeric_fact_marker(content.lower())
+    # A status/date/line number in a generated answer is not a request for a
+    # source-level numeric audit. Only activate this strict gate when the user
+    # explicitly asks about codes, states, fields, or interfaces.
+    return _contains_numeric_fact_marker(lowered_request)
 
 
 def source_numeric_issues(content: str, evidence: list[SourceEvidence]) -> list[dict[str, Any]]:
@@ -916,7 +923,7 @@ def _contains_numeric_fact_marker(text: str) -> bool:
 
 def _number_tokens(content: str) -> set[str]:
     without_path_lines = re.sub(
-        r"(?i)\b[\w./\\-]+\.(?:java|vue|ts|tsx|js|jsx|py|xml|md|yml|yaml|properties):\d+\b",
+        r"(?i)[^\s`]+\.(?:java|vue|ts|tsx|js|jsx|py|xml|md|yml|yaml|properties):\d+(?:-\d+)?",
         "",
         content,
     )

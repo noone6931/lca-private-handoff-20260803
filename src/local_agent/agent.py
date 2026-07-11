@@ -28,6 +28,7 @@ from .compaction import truncate_recent_tool_outputs as _truncate_recent_tool_ou
 from .compaction import valid_recent_messages as _valid_recent_messages
 from .config import AgentConfig
 from .config import normalize_approval_mode
+from .design_evidence import FINAL_RESPONSE_RESERVE_SECONDS
 from .design_evidence import cross_root_design_evidence_roots
 from .evidence import EvidenceRecord
 from .llm import LlmError
@@ -403,11 +404,22 @@ class AgentRuntime:
             )
             force_final_answer = self._run.force_final_answer_without_tools
             self._run.force_final_answer_without_tools = False
-            response = self._client.chat(
-                messages_for_model,
-                tools_for_model,
-                timeout=self._remaining_timeout(deadline),
-            )
+            try:
+                response = self._client.chat(
+                    messages_for_model,
+                    tools_for_model,
+                    timeout=self._remaining_timeout(deadline),
+                )
+            except LlmError as exc:
+                fallback = self._forced_final_timeout_fallback(
+                    force_final_answer,
+                    exc,
+                    deadline,
+                    run_start_index,
+                )
+                if fallback is not None:
+                    return fallback
+                raise
             if force_final_answer:
                 self._session.append("runtime_steering", {"kind": "forced_final_answer", "step": step})
             message = _provider_safe_assistant_message({**response.message, "role": "assistant"})
@@ -433,9 +445,9 @@ class AgentRuntime:
                 content = message.get("content") or ""
                 steering = self._decide_final_answer_steering(content, run_start_index)
                 if steering is not None:
-                    self._apply_final_answer_steering(steering)
-                    step += 1
-                    continue
+                    if self._apply_final_answer_steering(steering):
+                        step += 1
+                        continue
                 return self._finish_run(content, deadline, run_start_index)
 
             for index, tool_call in enumerate(tool_calls):
@@ -464,6 +476,7 @@ class AgentRuntime:
                     is_error=result.is_error,
                     useless=result.useless,
                 )
+                self._run.reset_forced_final_answer_continuations()
                 self._record_tool_choice_result(name, arguments, result)
                 self._record_successful_patch_preview(name, arguments, result)
                 self._record_read_file_evidence(name, arguments, result)
@@ -617,7 +630,21 @@ class AgentRuntime:
             )
             if coverage.message is not None:
                 self._messages.append({"role": "user", "content": coverage.message})
-                self._run.force_final_answer_without_tools = coverage.force_final_answer_without_tools
+                if coverage.force_final_answer_without_tools:
+                    if self._run.queue_forced_final_answer():
+                        self._run.force_final_answer_without_tools = True
+                    else:
+                        self._session.append(
+                            "runtime_steering",
+                            {
+                                "kind": "forced_final_answer_skipped",
+                                "source": coverage.kind,
+                                "reason": "continuation_limit",
+                            },
+                        )
+                        self._run.force_final_answer_without_tools = False
+                else:
+                    self._run.force_final_answer_without_tools = False
                 self._run.temporary_tool_allowlist = None
                 return None
         if self._run.force_final_answer_without_tools:
@@ -944,7 +971,12 @@ class AgentRuntime:
             recent = _truncate_recent_tool_outputs(_valid_recent_messages(non_system[-recent_count:]))
             dropped_count = len(non_system) - recent_count
             dropped = non_system[: max(dropped_count, 0)]
-            compaction_summary = self._build_compaction_summary(dropped, current_user_request, deadline)
+            compaction_summary = self._build_compaction_summary(
+                dropped,
+                current_user_request,
+                deadline,
+                prefer_local=self._run.force_final_answer_without_tools,
+            )
             compacted = [
                 _system_message_with_compaction_summary(system_messages, compaction_summary),
                 *recent,
@@ -1017,9 +1049,11 @@ class AgentRuntime:
         dropped: list[dict[str, Any]],
         current_user_request: str | None,
         deadline: float | None,
+        *,
+        prefer_local: bool = False,
     ) -> str:
         todo_summary = self._open_todo_summary()
-        if self._config.summary_mode in {"auto", "llm"}:
+        if not prefer_local and self._config.summary_mode in {"auto", "llm"}:
             llm_summary = self._llm_compaction_summary(dropped, current_user_request, todo_summary, deadline)
             if llm_summary:
                 return llm_summary
@@ -1152,6 +1186,28 @@ class AgentRuntime:
             return float(self._config.request_timeout)
         remaining = deadline - time.monotonic()
         return min(float(self._config.request_timeout), max(1.0, remaining))
+
+    def _forced_final_timeout_fallback(
+        self,
+        forced_final_answer: bool,
+        error: LlmError,
+        deadline: float | None,
+        run_start_index: int,
+    ) -> str | None:
+        if not forced_final_answer:
+            return None
+        draft = _most_recent_terminal_assistant_content(self._messages[run_start_index:])
+        if not draft:
+            return None
+        self._session.append(
+            "runtime_steering",
+            {"kind": "forced_final_timeout_fallback", "error": str(error)},
+        )
+        content = (
+            f"{draft}\n\n"
+            "注：最终的格式/证据校验重写请求超时，已返回上一版基于已读取证据的答复；未继续调用工具。"
+        )
+        return self._finish_run(content, deadline, run_start_index, reason="forced_final_timeout_fallback")
 
     def _execute_tool_with_repeat_guard(
         self,
@@ -1472,7 +1528,29 @@ class AgentRuntime:
             steer_counts=self._final_answer_steer_counts(),
         )
 
-    def _apply_final_answer_steering(self, decision: SteeringDecision) -> None:
+    def _apply_final_answer_steering(self, decision: SteeringDecision) -> bool:
+        if decision.force_final_answer_without_tools:
+            skip_reason = self._final_answer_rewrite_skip_reason()
+            if skip_reason is not None:
+                self._session.append(
+                    "runtime_steering",
+                    {
+                        "kind": "final_answer_steering_skipped",
+                        "skipped_kind": decision.kind,
+                        "reason": skip_reason,
+                    },
+                )
+                return False
+            if not self._run.queue_forced_final_answer():
+                self._session.append(
+                    "runtime_steering",
+                    {
+                        "kind": "final_answer_steering_skipped",
+                        "skipped_kind": decision.kind,
+                        "reason": "continuation_limit",
+                    },
+                )
+                return False
         steer_count = self._increment_final_answer_steer_count(decision.kind)
         self._messages.append({"role": "user", "content": decision.message})
         payload = {
@@ -1483,6 +1561,15 @@ class AgentRuntime:
         self._session.append("runtime_steering", payload)
         self._run.force_final_answer_without_tools = decision.force_final_answer_without_tools
         self._run.temporary_tool_allowlist = decision.temporary_tool_allowlist
+        return True
+
+    def _final_answer_rewrite_skip_reason(self) -> str | None:
+        deadline = self._run.deadline_monotonic
+        if deadline is not None and deadline - time.monotonic() <= FINAL_RESPONSE_RESERVE_SECONDS:
+            return "deadline_reserve"
+        if not self._run.can_queue_forced_final_answer():
+            return "continuation_limit"
+        return None
 
     def _final_answer_steer_counts(self) -> dict[str, int]:
         return {
@@ -2113,6 +2200,16 @@ def _latest_user_content(messages: list[dict[str, Any]]) -> str | None:
         content = message.get("content")
         if isinstance(content, str) and content.strip():
             return _strip_workflow_nudge(content)
+    return None
+
+
+def _most_recent_terminal_assistant_content(messages: list[dict[str, Any]]) -> str | None:
+    for message in reversed(messages):
+        if message.get("role") != "assistant" or message.get("tool_calls"):
+            continue
+        content = message.get("content")
+        if isinstance(content, str) and content.strip():
+            return content
     return None
 
 

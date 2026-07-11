@@ -14,6 +14,7 @@ from local_agent.compaction import resolve_compaction_threshold_chars
 from local_agent.compaction import resolve_compaction_threshold_tokens
 from local_agent.config import AgentConfig
 from local_agent.design_evidence import DesignEvidenceCoverageSteerer
+from local_agent.llm import LlmError
 from local_agent.protocol.events import ListEventSink
 from local_agent.requirement_evidence import RequirementEvidence
 from local_agent.steering.final_answer import SourceEvidence
@@ -21,7 +22,9 @@ from local_agent.steering.final_answer import DesignEvidenceSteerer
 from local_agent.steering.final_answer import FinalAnswerContext
 from local_agent.steering.final_answer import RequirementEvidenceSteerer
 from local_agent.steering.final_answer import SourceEvidenceFalseNegativeSteerer
+from local_agent.steering.final_answer import SteeringDecision
 from local_agent.steering.final_answer import request_needs_source_grounded_numeric_facts
+from local_agent.steering.final_answer import source_false_negative_issues
 from local_agent.steering.final_answer import source_numeric_issues
 from local_agent.task_contract import generate_requirement_contract
 from local_agent.tool_choice_queue import ToolResultSummary
@@ -1905,6 +1908,87 @@ class AgentRuntimeTests(unittest.TestCase):
             {"source_evidence_false_negative": 1},
         )
 
+    def test_source_false_negative_gate_ignores_absolute_path_segments(self) -> None:
+        evidence = [
+            SourceEvidence(
+                "/Users/chengming/mynote/specs/SettlementPlan.java",
+                "[/Users/chengming/mynote/specs/SettlementPlan.java#abc123]\npublic class SettlementPlan {}",
+            )
+        ]
+
+        issues = source_false_negative_issues(
+            "请读取 /Users/chengming/mynote/specs/SettlementPlan.java 后确认实现，每条附真实 path:line。",
+            "未找到 owner 代码证据。",
+            evidence,
+        )
+
+        self.assertEqual(issues, [])
+
+    def test_source_numeric_gate_requires_explicit_numeric_question(self) -> None:
+        active = request_needs_source_grounded_numeric_facts(
+            "请只读分析需求和前后端方案，每条附 path:line。",
+            "需求包含制单状态，当前证据位于 docs/需求.md:95。",
+        )
+
+        self.assertFalse(active)
+
+    def test_final_answer_rewrite_is_skipped_inside_deadline_reserve(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=Path(tmp).resolve(),
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+            )
+            runtime = AgentRuntime(config, show_tool_logs=False)
+            runtime._run.deadline_monotonic = time.monotonic() + 1
+
+            applied = runtime._apply_final_answer_steering(
+                SteeringDecision(kind="final_structure", message="rewrite", payload={})
+            )
+            records = [json.loads(line) for line in runtime._session.path.read_text(encoding="utf-8").splitlines()]
+
+        self.assertFalse(applied)
+        self.assertTrue(
+            any(
+                record.get("event") == "runtime_steering"
+                and record.get("payload", {}).get("kind") == "final_answer_steering_skipped"
+                and record.get("payload", {}).get("reason") == "deadline_reserve"
+                for record in records
+            )
+        )
+
+    def test_forced_final_timeout_returns_latest_terminal_draft(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=Path(tmp).resolve(),
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+            )
+            runtime = AgentRuntime(config, show_tool_logs=False)
+            runtime._messages.append({"role": "assistant", "content": "上一版证据化答复"})
+
+            result = runtime._forced_final_timeout_fallback(
+                True,
+                LlmError("request timed out"),
+                None,
+                0,
+            )
+
+        self.assertIsNotNone(result)
+        self.assertIn("上一版证据化答复", result or "")
+        self.assertIn("重写请求超时", result or "")
+        self.assertEqual(runtime._last_run_summary["termination_reason"], "forced_final_timeout_fallback")
+
     def test_source_evidence_false_negative_gate_does_not_preempt_implementation_repair(self) -> None:
         contract = generate_requirement_contract("请实现用户注册接口邮箱唯一性校验，并补充单元测试。")
         context = FinalAnswerContext(
@@ -3467,6 +3551,31 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertEqual(result, "done")
         self.assertGreaterEqual(len(_SummaryThenFinalClient.calls), 2)
         self.assertEqual(_SummaryThenFinalClient.calls[0]["tools"], [])
+
+    def test_forced_final_compaction_uses_local_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=Path(tmp).resolve(),
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+                summary_mode="llm",
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _FailingClient):
+                runtime = AgentRuntime(config, show_tool_logs=False)
+                runtime._run.force_final_answer_without_tools = True
+                summary = runtime._build_compaction_summary(
+                    [{"role": "user", "content": "earlier request"}],
+                    "current request",
+                    None,
+                    prefer_local=True,
+                )
+
+        self.assertIn("compacted locally", summary)
 
     def test_memory_consolidation_auto_writes_extracted_markdown_memory(self) -> None:
         _MemoryConsolidationClient.calls = []

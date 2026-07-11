@@ -14,6 +14,9 @@ from .tool_choice_queue import ToolChoiceQueue
 from .tool_choice_queue import ToolResultSummary
 
 
+MAX_FORCED_FINAL_ANSWER_CONTINUATIONS = 8
+
+
 @dataclass
 class RunContext:
     """All mutable state whose authority ends with the current user task."""
@@ -26,6 +29,7 @@ class RunContext:
     current_user_request: str | None = None
     read_file_drift_guard_enabled: bool = False
     force_final_answer_without_tools: bool = False
+    forced_final_answer_continuations: int = 0
     temporary_tool_allowlist: set[str] | None = None
     tool_choice_allowed_tool_names: set[str] | None = None
     tool_choice_read_file_paths: set[str] | None = None
@@ -131,6 +135,7 @@ class RunContext:
         self.current_user_request = prompt
         self.read_file_drift_guard_enabled = False
         self.force_final_answer_without_tools = False
+        self.forced_final_answer_continuations = 0
         self.temporary_tool_allowlist = None
         self.tool_choice_allowed_tool_names = None
         self.tool_choice_read_file_paths = None
@@ -165,3 +170,17 @@ class RunContext:
         if name != "read_file" or self.tool_choice_read_file_remaining is None:
             return
         self.tool_choice_read_file_remaining = max(0, self.tool_choice_read_file_remaining - 1)
+
+    def can_queue_forced_final_answer(self) -> bool:
+        return self.forced_final_answer_continuations < MAX_FORCED_FINAL_ANSWER_CONTINUATIONS
+
+    def queue_forced_final_answer(self) -> bool:
+        if not self.can_queue_forced_final_answer():
+            return False
+        self.forced_final_answer_continuations += 1
+        return True
+
+    def reset_forced_final_answer_continuations(self) -> None:
+        # Mirrors OMP's continuation accounting: a real tool turn resets the
+        # no-tool resample budget because the agent made observable progress.
+        self.forced_final_answer_continuations = 0
