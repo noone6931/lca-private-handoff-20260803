@@ -15,6 +15,8 @@ MAX_READ_FILE_CALLS_PER_FILE_IN_RECENT_WINDOW = 8
 READ_FILE_PATH_WINDOW = 14
 MAX_SEMANTIC_EXPLORATIONS_PER_KEY_IN_RECENT_WINDOW = 4
 SEMANTIC_EXPLORATION_WINDOW = 20
+MAX_UNKNOWN_TOOL_CALLS_PER_NAME_IN_RECENT_WINDOW = 2
+UNKNOWN_TOOL_WINDOW = 12
 
 
 @dataclass(frozen=True)
@@ -33,12 +35,14 @@ class SessionGuardState:
         self._recent_useless_lsp_symbol_query_keys: list[str] = []
         self._recent_read_file_path_keys: list[str] = []
         self._recent_semantic_exploration_keys: list[str] = []
+        self._recent_unknown_tool_name_keys: list[str] = []
         self._guard_hits = {
             "duplicate_tool": 0,
             "useless_search_pattern": 0,
             "useless_lsp_symbol": 0,
             "repeated_read_file": 0,
             "semantic_exploration": 0,
+            "unknown_tool": 0,
         }
 
     def before_tool(
@@ -49,6 +53,7 @@ class SessionGuardState:
         search_pattern_key: str | None,
         lsp_symbol_query_key: str | None,
         semantic_exploration_key: str | None,
+        unknown_tool_name: str | None = None,
     ) -> SessionGuardDecision | None:
         if read_file_key is not None:
             prior_count = self._recent_read_file_path_keys.count(read_file_key)
@@ -77,6 +82,10 @@ class SessionGuardState:
             self._remember("_recent_semantic_exploration_keys", semantic_exploration_key, SEMANTIC_EXPLORATION_WINDOW)
             if prior_count >= MAX_SEMANTIC_EXPLORATIONS_PER_KEY_IN_RECENT_WINDOW:
                 return self._hit("semantic_exploration", semantic_exploration_key, prior_count)
+        if unknown_tool_name is not None:
+            prior_count = self._recent_unknown_tool_name_keys.count(unknown_tool_name)
+            if prior_count >= MAX_UNKNOWN_TOOL_CALLS_PER_NAME_IN_RECENT_WINDOW:
+                return self._hit("unknown_tool", unknown_tool_name, prior_count)
         return None
 
     def record_result(
@@ -84,6 +93,7 @@ class SessionGuardState:
         *,
         search_pattern_key: str | None,
         lsp_symbol_query_key: str | None,
+        unknown_tool_name: str | None = None,
         result: ToolResult,
     ) -> None:
         if search_pattern_key is not None and result.useless and not result.is_error:
@@ -93,8 +103,8 @@ class SessionGuardState:
                 USELESS_SEARCH_PATTERN_WINDOW,
             )
         if lsp_symbol_query_key is None or result.is_error:
-            return
-        if result.useless:
+            pass
+        elif result.useless:
             self._remember(
                 "_recent_useless_lsp_symbol_query_keys",
                 lsp_symbol_query_key,
@@ -102,6 +112,8 @@ class SessionGuardState:
             )
         else:
             self._recent_useless_lsp_symbol_query_keys = []
+        if unknown_tool_name is not None and result.metadata.get("unknown_tool"):
+            self._remember("_recent_unknown_tool_name_keys", unknown_tool_name, UNKNOWN_TOOL_WINDOW)
 
     def hit_count(self, kind: str) -> int:
         return self._guard_hits.get(kind, 0)

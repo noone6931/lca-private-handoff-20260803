@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from dataclasses import replace
 from pathlib import Path
 import time
-from typing import Any
+from typing import Any, Mapping
 
 from .compaction import SUMMARY_INPUT_CHAR_LIMIT
 from .compaction import SUMMARY_OUTPUT_CHAR_LIMIT
@@ -83,6 +83,7 @@ from .steering.final_answer import SteeringDecision
 from .steering.tool_loop import ToolLoopSignals
 from .steering.tool_loop import ToolLoopSteeringDecision
 from .steering.tool_loop import ToolLoopSteeringRegistry
+from .steering.tool_loop import is_filename_search_misuse
 from .steering.termination import synthetic_tool_stop_message
 from .steering.termination import termination_message
 from .task_contract import generate_requirement_contract
@@ -483,6 +484,10 @@ class AgentRuntime:
                     result.content,
                     is_error=result.is_error,
                     useless=result.useless,
+                    metadata={
+                        **dict(result.metadata),
+                        "filename_search_misuse": is_filename_search_misuse(name, arguments),
+                    },
                 )
                 self._run.reset_forced_final_answer_continuations()
                 self._record_tool_choice_result(name, arguments, result)
@@ -604,9 +609,26 @@ class AgentRuntime:
             tool_results=self._run.tool_choice_results,
             available_tool_names=self._available_registry_tool_names(),
             design_evidence_roots=self._run.design_evidence_coverage.roots,
+            workspace_roots=tuple(str(root) for root in self._workspace_context.all_roots),
         )
         self._run.tool_choice_allowed_tool_names = set(decision.allowed_tool_names)
         self._run.update_tool_choice_read_scope(decision.scoped_read_paths, decision.scoped_read_budget)
+        if decision.force_final_answer_without_tools:
+            content = _tool_choice_steering_message(decision, self._run.current_user_request)
+            self._messages.append({"role": "user", "content": content})
+            self._session.append(
+                "runtime_steering",
+                {
+                    "kind": "tool_choice_queue",
+                    "rule_id": decision.rule_id,
+                    "missing_requirements": list(decision.missing_requirements),
+                    "allowed_tool_names": [],
+                    "reason": decision.reason,
+                    "force_final_answer_without_tools": True,
+                },
+            )
+            self._run.request_forced_final_answer(kind=decision.rule_id or "tool_choice_queue")
+            return None
         if decision.should_stop:
             self._session.append(
                 "runtime_steering",
@@ -1013,8 +1035,20 @@ class AgentRuntime:
     def _record_tool_finished_for_run(self, *, is_error: bool) -> None:
         self._run.collector.record_tool_finished(is_error=is_error)
 
-    def _record_tool_result_for_run(self, *, is_error: bool, useless: bool) -> None:
-        self._run.collector.record_tool_result(is_error=is_error, useless=useless)
+    def _record_tool_result_for_run(
+        self,
+        *,
+        name: str,
+        is_error: bool,
+        useless: bool,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> None:
+        self._run.collector.record_tool_result(
+            name=name,
+            is_error=is_error,
+            useless=useless,
+            metadata=metadata or {},
+        )
 
     def _record_synthetic_tool_result_for_run(self) -> None:
         self._run.collector.record_synthetic_tool_result()
@@ -1357,6 +1391,9 @@ class AgentRuntime:
         signature = _tool_call_signature(name, arguments)
         search_pattern_key = _search_pattern_key(name, arguments)
         lsp_symbol_query_key = _lsp_symbol_query_key(name, arguments)
+        # SessionGuardState records this name only after the registry has marked a prior
+        # result as unknown, so known tools never consume the unknown-tool budget.
+        unknown_tool_name = name
         semantic_exploration_key = _semantic_exploration_key(
             name,
             arguments,
@@ -1369,6 +1406,7 @@ class AgentRuntime:
             search_pattern_key=search_pattern_key,
             lsp_symbol_query_key=lsp_symbol_query_key,
             semantic_exploration_key=semantic_exploration_key,
+            unknown_tool_name=unknown_tool_name,
         )
         if decision is not None:
             if decision.kind == "repeated_read_file":
@@ -1379,11 +1417,14 @@ class AgentRuntime:
                 return self._useless_search_pattern_result(decision.subject, decision.prior_count)
             if decision.kind == "useless_lsp_symbol":
                 return self._useless_lsp_symbol_result(decision.subject, decision.prior_count)
+            if decision.kind == "unknown_tool":
+                return self._unknown_tool_result(decision.subject, decision.prior_count)
             return self._semantic_exploration_result(decision.subject, decision.prior_count)
         result = self._registry.execute(name, arguments, tool_context)
         self._session_guards.record_result(
             search_pattern_key=search_pattern_key,
             lsp_symbol_query_key=lsp_symbol_query_key,
+            unknown_tool_name=unknown_tool_name,
             result=result,
         )
         if read_file_range_key is not None and not result.is_error:
@@ -1458,6 +1499,16 @@ class AgentRuntime:
                 "answer the user's original question and mark any uncertainty explicitly."
             ),
             is_error=True,
+        )
+
+    def _unknown_tool_result(self, name: str, prior_count: int) -> ToolResult:
+        return ToolResult(
+            (
+                f"Tool call skipped: unknown tool '{name}' has already been rejected {prior_count} times recently. "
+                "Use a tool name from the current exposed tool list; do not keep retrying the same unknown name."
+            ),
+            is_error=True,
+            metadata={"unknown_tool": True, "requested_tool": name, "guarded": True},
         )
 
     def _apply_tool_loop_steering(self, decision: ToolLoopSteeringDecision) -> None:
@@ -1951,8 +2002,14 @@ class AgentRuntime:
         *,
         is_error: bool,
         useless: bool = False,
+        metadata: Mapping[str, Any] | None = None,
     ) -> None:
-        self._record_tool_result_for_run(is_error=is_error, useless=useless)
+        self._record_tool_result_for_run(
+            name=name,
+            is_error=is_error,
+            useless=useless,
+            metadata=metadata,
+        )
         self._session.append(
             "tool_result",
             {
@@ -2384,6 +2441,18 @@ def _format_last_run_status(summary: dict[str, Any]) -> list[str]:
     if isinstance(tool_counts, dict) and tool_counts:
         rendered_tools = ", ".join(f"{name}={count}" for name, count in sorted(tool_counts.items()))
         lines.append(f"  - tools: {rendered_tools}")
+    discovery_calls = summary.get("file_discovery_calls", 0)
+    unknown_tool_calls = summary.get("unknown_tool_calls", 0)
+    if discovery_calls or unknown_tool_calls:
+        lines.append(
+            "  - discovery: "
+            f"glob_calls={discovery_calls}, "
+            f"incomplete={summary.get('file_discovery_incomplete_results', 0)}, "
+            f"no_match={summary.get('file_discovery_no_match_results', 0)}, "
+            f"unknown_tools={unknown_tool_calls}, "
+            f"suggested={summary.get('unknown_tool_suggestions', 0)}, "
+            f"filename_search_misuse={summary.get('filename_search_misuse_calls', 0)}"
+        )
     guard_hits = summary.get("guard_hits")
     if isinstance(guard_hits, dict) and guard_hits:
         rendered_guards = ", ".join(f"{name}={count}" for name, count in sorted(guard_hits.items()))
@@ -2709,6 +2778,16 @@ def _tool_choice_steering_message(decision: ToolChoiceDecision, current_user_req
     preferred = ", ".join(decision.preferred_tool_names) or "(none)"
     missing = ", ".join(decision.missing_requirements) or "(none)"
     request = _one_line(current_user_request or "", max_chars=800)
+    if decision.force_final_answer_without_tools:
+        return (
+            "[Runtime tool choice queue]\n"
+            "The bounded exploration budget is exhausted. Your next response must be the final answer without tool calls. "
+            "Use only collected evidence, include searched scope and incomplete/truncated limits, and do not infer absence "
+            "from omitted results.\n"
+            f"- rule: {decision.rule_id or 'unknown'}\n"
+            f"- reason: {decision.reason}\n"
+            f"- original request: {request}"
+        )
     return (
         "[Runtime tool choice queue]\n"
         "A required workflow gate is not satisfied yet. Use the allowed tool set for the next step; "

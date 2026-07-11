@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import difflib
 import json
 import select
 import sys
@@ -87,7 +88,17 @@ class ToolRegistry:
     def execute(self, name: str, raw_arguments: str | dict[str, Any], context: ToolContext) -> ToolResult:
         tool = self._tools.get(name)
         if tool is None:
-            return ToolResult(f"Unknown tool: {name}", is_error=True)
+            suggested = tuple(difflib.get_close_matches(name, self._exposed_tool_names(context), n=3, cutoff=0.55))
+            hint = f" Available related tools: {', '.join(suggested)}." if suggested else ""
+            return ToolResult(
+                f"Unknown tool: {name}.{hint}",
+                is_error=True,
+                metadata={
+                    "unknown_tool": True,
+                    "requested_tool": name,
+                    "suggested_tools": list(suggested),
+                },
+            )
         if context.runtime_tool_allowlist is not None and name not in context.runtime_tool_allowlist:
             allowed = ", ".join(sorted(context.runtime_tool_allowlist)) or "(no tools)"
             return ToolResult(
@@ -133,6 +144,22 @@ class ToolRegistry:
             return result
         except Exception as exc:  # noqa: BLE001 - tool errors must be returned to the model.
             return ToolResult(f"{type(exc).__name__}: {exc}", is_error=True)
+
+    def _exposed_tool_names(self, context: ToolContext) -> list[str]:
+        """Return only tools this runtime could expose to the current model turn."""
+
+        names = set(self._tools)
+        if context.runtime_tool_allowlist is not None:
+            names.intersection_update(context.runtime_tool_allowlist)
+        names.difference_update(
+            name for name, policy in (context.tool_approval or {}).items() if policy == "deny"
+        )
+        names.difference_update(
+            name
+            for name, policy in (context.session_tool_approval or {}).items()
+            if policy == "reject_always"
+        )
+        return sorted(names)
 
 
 def _runtime_read_file_scope_denial_reason(

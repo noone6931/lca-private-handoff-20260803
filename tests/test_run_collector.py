@@ -18,7 +18,7 @@ class RunCollectorTests(unittest.TestCase):
         )
         collector.record_llm_request()
         collector.record_tool_started("read_file")
-        collector.record_tool_result(is_error=False, useless=True)
+        collector.record_tool_result(name="read_file", is_error=False, useless=True, metadata={})
         collector.mark_llm_context_summary()
         collector.record_context_compaction()
 
@@ -40,6 +40,37 @@ class RunCollectorTests(unittest.TestCase):
             summary["steering_counts"],
             {"duplicate_tool_final_answer": 1, "completion_audit": 1},
         )
+
+    def test_collects_file_discovery_and_unknown_tool_metrics(self) -> None:
+        collector = RunCollector()
+        collector.start("run-1", "inventory", 1.0, guard_start={}, steer_start={})
+        collector.record_tool_started("glob_files")
+        collector.record_tool_result(
+            name="glob_files",
+            is_error=False,
+            useless=False,
+            metadata={"complete": False, "negative_evidence_type": "path_no_match"},
+        )
+        collector.record_tool_started("run_shell")
+        collector.record_tool_result(
+            name="run_shell",
+            is_error=True,
+            useless=False,
+            metadata={
+                "unknown_tool": True,
+                "suggested_tools": ["shell"],
+                "filename_search_misuse": True,
+            },
+        )
+
+        summary = collector.finish("final", guard_values={}, steering_values={})
+
+        self.assertEqual(summary["file_discovery_calls"], 1)
+        self.assertEqual(summary["file_discovery_incomplete_results"], 1)
+        self.assertEqual(summary["file_discovery_no_match_results"], 1)
+        self.assertEqual(summary["unknown_tool_calls"], 1)
+        self.assertEqual(summary["unknown_tool_suggestions"], 1)
+        self.assertEqual(summary["filename_search_misuse_calls"], 1)
 
     def test_start_replaces_prior_run_counters_and_pending_summary_mode(self) -> None:
         collector = RunCollector()

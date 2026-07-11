@@ -4,6 +4,7 @@ import unittest
 
 from local_agent.steering.tool_loop import ToolLoopSignals
 from local_agent.steering.tool_loop import ToolLoopSteeringRegistry
+from local_agent.steering.tool_loop import is_filename_search_misuse
 
 
 def _signals(**overrides: object) -> ToolLoopSignals:
@@ -27,6 +28,13 @@ def _signals(**overrides: object) -> ToolLoopSignals:
 
 
 class ToolLoopSteeringRegistryTests(unittest.TestCase):
+    def test_classifies_filename_search_misuse_for_telemetry_without_blocking_search(self) -> None:
+        self.assertTrue(is_filename_search_misuse("search_code", {"pattern": r"\.java$"}))
+        self.assertTrue(is_filename_search_misuse("search_code", {"pattern": "src/main/java"}))
+        self.assertTrue(is_filename_search_misuse("search_code", {"pattern": "**/*.vue"}))
+        self.assertFalse(is_filename_search_misuse("search_code", {"pattern": "settlementStatus"}))
+        self.assertFalse(is_filename_search_misuse("glob_files", {"paths": ["**/*.java"]}))
+
     def test_uses_explicit_priority_when_multiple_guards_fire(self) -> None:
         registry = ToolLoopSteeringRegistry()
 

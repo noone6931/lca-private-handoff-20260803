@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
+import re
 
 
 READ_ONLY_EVIDENCE_TOOLS = frozenset(
@@ -13,6 +15,21 @@ READ_ONLY_EVIDENCE_TOOLS = frozenset(
         "lsp_workspace_symbols",
         "read_file",
         "search_code",
+    }
+)
+
+_FILENAME_PATTERN_SUFFIX = re.compile(
+    r"\\\.(?:java|kt|kts|py|js|jsx|ts|tsx|vue|go|rs|rb|php|cs|cpp|c|h|xml|yml|yaml|json|md)\$?$",
+    re.IGNORECASE,
+)
+_SOURCE_TREE_PATHS = frozenset(
+    {
+        "src",
+        "src/main",
+        "src/main/java",
+        "src/main/resources",
+        "src/test",
+        "src/test/java",
     }
 )
 
@@ -100,6 +117,34 @@ class ToolLoopSteeringRegistry:
             if _guard_hits(spec.signal, signals) >= spec.max_guard_hits:
                 return spec.reason
         return None
+
+
+def is_filename_search_misuse(name: str, arguments: str | dict[str, object]) -> bool:
+    """Classify observable filename/path discovery mistakes for telemetry only.
+
+    This intentionally does not block a call: a repository may legitimately contain a
+    path-like literal. The structured `glob_files` boundary and ToolChoiceQueue decide
+    what is allowed; telemetry lets pressure tests show whether the model still picks
+    content search for filename, extension, or source-tree discovery.
+    """
+
+    if name != "search_code":
+        return False
+    parsed: object = arguments
+    if isinstance(arguments, str):
+        try:
+            parsed = json.loads(arguments or "{}")
+        except json.JSONDecodeError:
+            return False
+    if not isinstance(parsed, dict):
+        return False
+    pattern = parsed.get("pattern")
+    if not isinstance(pattern, str):
+        return False
+    normalized = pattern.strip().replace("\\", "/").casefold()
+    if normalized in _SOURCE_TREE_PATHS:
+        return True
+    return "/" in normalized or bool(_FILENAME_PATTERN_SUFFIX.search(normalized))
 
 
 def _signal_is_active(signal: str, signals: ToolLoopSignals) -> bool:

@@ -56,6 +56,9 @@ LSP_EVIDENCE_TOOL_NAMES = frozenset(
 CODE_EVIDENCE_TOOL_NAMES = frozenset({"read_file", "search_code", *LSP_EVIDENCE_TOOL_NAMES})
 CODE_EVIDENCE_ALLOWED_TOOL_NAMES = frozenset({"glob_files", "list_files", *CODE_EVIDENCE_TOOL_NAMES})
 REQUIREMENT_DOC_TOOL_NAMES = frozenset({"ask_user", "list_files", "read_file", "search_code"})
+WORKSPACE_INVENTORY_TOOL_NAMES = frozenset({"glob_files", "list_files", "read_file"})
+MAX_WORKSPACE_INVENTORY_DISCOVERY_CALLS_PER_ROOT = 2
+MAX_WORKSPACE_INVENTORY_DISCOVERY_CALLS = 8
 PLANNER_EXPLORE_TOOL_NAMES = frozenset(
     {
         "ask_user",
@@ -221,6 +224,25 @@ DOC_READ_MARKERS = frozenset(
         "需求",
     }
 )
+WORKSPACE_INVENTORY_MARKERS = frozenset(
+    {
+        "workspace inventory",
+        "repository inventory",
+        "repo inventory",
+        "repository layout",
+        "project layout",
+        "目录主要是在干什么",
+        "目录主要做什么",
+        "当前目录主要",
+        "当前项目主要",
+        "项目结构",
+        "代码结构",
+        "有哪些代码",
+        "代码都有哪些",
+        "有哪些项目",
+        "当前有哪些项目",
+    }
+)
 CANNOT_TEST_MARKERS = frozenset(
     {
         "cannot run tests",
@@ -259,6 +281,7 @@ class ToolChoiceDecision:
     scoped_read_paths: tuple[str, ...] = ()
     scoped_read_budget: int | None = None
     stop_message: str | None = None
+    force_final_answer_without_tools: bool = False
 
     @property
     def needs_steering(self) -> bool:
@@ -283,6 +306,7 @@ class RequiredToolGate:
         tool_results: Iterable[ToolResultSummary | Mapping[str, Any] | str] | None = None,
         available_tool_names: Iterable[str] | None = None,
         design_evidence_roots: Iterable[str] | None = None,
+        workspace_roots: Iterable[str] | None = None,
     ) -> ToolChoiceDecision:
         return evaluate_tool_choice_state(
             task_kind=task_kind,
@@ -291,6 +315,7 @@ class RequiredToolGate:
             tool_results=tool_results,
             available_tool_names=available_tool_names,
             design_evidence_roots=design_evidence_roots,
+            workspace_roots=workspace_roots,
         )
 
 
@@ -306,12 +331,23 @@ def evaluate_tool_choice_state(
     tool_results: Iterable[ToolResultSummary | Mapping[str, Any] | str] | None = None,
     available_tool_names: Iterable[str] | None = None,
     design_evidence_roots: Iterable[str] | None = None,
+    workspace_roots: Iterable[str] | None = None,
 ) -> ToolChoiceDecision:
     results = tuple(_normalize_tool_result(result) for result in (tool_results or ()))
     seen_tool_names = _tool_name_set(tool_names, results)
     all_tools = _available_tool_names(available_tool_names)
     read_only = _is_read_only_task(task_kind, prompt)
     allowed_tools = all_tools - READ_ONLY_FORBIDDEN_TOOL_NAMES if read_only else all_tools
+
+    inventory_decision = _workspace_inventory_decision(
+        task_kind=task_kind,
+        prompt=prompt,
+        results=results,
+        allowed_tools=allowed_tools,
+        workspace_roots=workspace_roots,
+    )
+    if inventory_decision is not None:
+        return inventory_decision
 
     if _requires_requirement_doc_read(task_kind, prompt) and not _has_requirement_doc_read(prompt, results):
         return ToolChoiceDecision(
@@ -492,6 +528,82 @@ def _available_tool_names(available_tool_names: Iterable[str] | None) -> frozens
     return frozenset(str(name) for name in available_tool_names if str(name).strip())
 
 
+def _workspace_inventory_decision(
+    *,
+    task_kind: str,
+    prompt: str,
+    results: tuple[ToolResultSummary, ...],
+    allowed_tools: frozenset[str],
+    workspace_roots: Iterable[str] | None,
+) -> ToolChoiceDecision | None:
+    if _is_implementation_task(task_kind, prompt) or not _is_workspace_inventory_request(task_kind, prompt):
+        return None
+    discovery_results = [result for result in results if result.name in {"glob_files", "list_files"}]
+    successful_globs = [
+        result
+        for result in results
+        if result.name == "glob_files" and _successful_tool_result(result)
+    ]
+    roots = tuple(sorted({str(root) for root in (workspace_roots or ()) if str(root).strip()}))
+    root_count = len(roots)
+    budget = min(
+        MAX_WORKSPACE_INVENTORY_DISCOVERY_CALLS,
+        max(4, max(root_count, 1) * MAX_WORKSPACE_INVENTORY_DISCOVERY_CALLS_PER_ROOT),
+    )
+    if len(discovery_results) >= budget:
+        return ToolChoiceDecision(
+            steering_required=True,
+            allowed_tool_names=frozenset(),
+            reason=(
+                "workspace_inventory discovery budget reached: stop broad directory discovery and summarize the "
+                "structured scope, matches, and any incomplete results already collected."
+            ),
+            rule_id="workspace_inventory_budget",
+            missing_requirements=(),
+            force_final_answer_without_tools=True,
+        )
+    if not successful_globs:
+        return ToolChoiceDecision(
+            steering_required=True,
+            allowed_tool_names=_allowed_subset(WORKSPACE_INVENTORY_TOOL_NAMES, allowed_tools),
+            reason=(
+                "workspace_inventory discovery missing: filename/path inventory must use glob_files before "
+                "drawing repository, language, source-tree, or build-layout conclusions."
+            ),
+            rule_id="workspace_inventory_discovery",
+            missing_requirements=("path_discovery_evidence",),
+            preferred_tool_names=("glob_files",),
+        )
+    covered_roots = _inventory_covered_roots(successful_globs)
+    missing_roots = tuple(root for root in roots if root not in covered_roots)
+    scoped_read_paths = _inventory_read_paths(successful_globs)
+    if missing_roots:
+        return ToolChoiceDecision(
+            steering_required=True,
+            allowed_tool_names=_allowed_subset(WORKSPACE_INVENTORY_TOOL_NAMES, allowed_tools),
+            reason=(
+                "workspace_inventory root coverage missing: run a bounded glob_files discovery for each uncovered "
+                f"workspace root before finalizing. Uncovered roots: {', '.join(missing_roots)}."
+            ),
+            rule_id="workspace_inventory_root_coverage",
+            missing_requirements=tuple(f"path_discovery:{root}" for root in missing_roots),
+            preferred_tool_names=("glob_files",),
+            scoped_read_paths=scoped_read_paths,
+            scoped_read_budget=len(scoped_read_paths) or None,
+        )
+    return ToolChoiceDecision(
+        steering_required=False,
+        allowed_tool_names=_allowed_subset(WORKSPACE_INVENTORY_TOOL_NAMES, allowed_tools),
+        reason=(
+            "workspace_inventory bounded discovery active: keep file discovery limited to glob_files/list_files/read_file "
+            "until the user-facing inventory is ready to summarize."
+        ),
+        preferred_tool_names=("glob_files",),
+        scoped_read_paths=scoped_read_paths,
+        scoped_read_budget=len(scoped_read_paths) or None,
+    )
+
+
 def _allowed_subset(candidates: Iterable[str], allowed_tools: frozenset[str]) -> frozenset[str]:
     return frozenset(name for name in candidates if name in allowed_tools)
 
@@ -550,6 +662,43 @@ def _is_read_only_task(task_kind: str, prompt: str) -> bool:
         return False
     text = _lower_text(prompt)
     return any(keyword in text for keyword in READ_ONLY_KEYWORDS)
+
+
+def _is_workspace_inventory_request(task_kind: str, prompt: str) -> bool:
+    if _is_implementation_task(task_kind, prompt):
+        return False
+    return any(marker in _lower_text(prompt) for marker in WORKSPACE_INVENTORY_MARKERS)
+
+
+def _inventory_covered_roots(results: Iterable[ToolResultSummary]) -> set[str]:
+    covered: set[str] = set()
+    for result in results:
+        searched_roots = result.metadata.get("searched_roots")
+        if not isinstance(searched_roots, (list, tuple)):
+            continue
+        covered.update(str(root) for root in searched_roots if str(root).strip())
+    return covered
+
+
+def _inventory_read_paths(results: Iterable[ToolResultSummary]) -> tuple[str, ...]:
+    paths: list[str] = []
+    for result in results:
+        files = result.metadata.get("files")
+        if not isinstance(files, (list, tuple)):
+            continue
+        for raw_path in files:
+            path = str(raw_path)
+            if not _is_inventory_read_candidate(path) or path in paths:
+                continue
+            paths.append(path)
+            if len(paths) >= 4:
+                return tuple(paths)
+    return tuple(paths)
+
+
+def _is_inventory_read_candidate(path: str) -> bool:
+    name = path.replace("\\", "/").rsplit("/", 1)[-1].lower()
+    return name in {"pom.xml", "package.json", "pyproject.toml", "build.gradle", "build.gradle.kts", "readme.md"}
 
 
 def _is_implementation_task(task_kind: str, prompt: str) -> bool:
@@ -735,6 +884,9 @@ __all__ = [
     "POST_DIFF_REMEDIATION_TOOL_NAMES",
     "READ_ONLY_FORBIDDEN_TOOL_NAMES",
     "REQUIREMENT_DOC_TOOL_NAMES",
+    "WORKSPACE_INVENTORY_TOOL_NAMES",
+    "MAX_WORKSPACE_INVENTORY_DISCOVERY_CALLS_PER_ROOT",
+    "MAX_WORKSPACE_INVENTORY_DISCOVERY_CALLS",
     "RequiredToolGate",
     "ToolChoiceDecision",
     "ToolChoiceQueue",

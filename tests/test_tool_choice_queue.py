@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 
 from local_agent.tool_choice_queue import READ_ONLY_FORBIDDEN_TOOL_NAMES
+from local_agent.tool_choice_queue import WORKSPACE_INVENTORY_TOOL_NAMES
 from local_agent.tool_choice_queue import CANDIDATE_DELIVERY_TOOL_NAMES
 from local_agent.tool_choice_queue import CANDIDATE_DIFF_TOOL_NAMES
 from local_agent.tool_choice_queue import CANDIDATE_REMEDIATION_TOOL_NAMES
@@ -17,6 +18,101 @@ from local_agent.tool_choice_queue import evaluate_tool_choice_state
 
 
 class ToolChoiceQueueTests(unittest.TestCase):
+    def test_workspace_inventory_requires_path_discovery_before_answering(self) -> None:
+        decision = evaluate_tool_choice_state(
+            task_kind="read_only",
+            prompt="只读说明当前目录主要是在干什么，代码都有哪些。",
+            workspace_roots=("/workspace/agent", "/workspace/project"),
+        )
+
+        self.assertTrue(decision.steering_required)
+        self.assertEqual(decision.rule_id, "workspace_inventory_discovery")
+        self.assertEqual(decision.allowed_tool_names, WORKSPACE_INVENTORY_TOOL_NAMES)
+        self.assertEqual(decision.preferred_tool_names, ("glob_files",))
+
+    def test_workspace_inventory_stays_within_discovery_tools_after_glob(self) -> None:
+        decision = evaluate_tool_choice_state(
+            task_kind="read_only",
+            prompt="只读说明当前目录主要是在干什么，代码都有哪些。",
+            workspace_roots=("/workspace/agent", "/workspace/project"),
+            tool_results=[
+                ToolResultSummary(
+                    "glob_files",
+                    "{...}",
+                    metadata={
+                        "complete": True,
+                        "negative_evidence_type": "path_match",
+                        "searched_roots": ["/workspace/agent", "/workspace/project"],
+                        "files": ["README.md", "/workspace/project/pom.xml"],
+                    },
+                )
+            ],
+        )
+
+        self.assertFalse(decision.steering_required)
+        self.assertEqual(decision.allowed_tool_names, WORKSPACE_INVENTORY_TOOL_NAMES)
+        self.assertNotIn("search_code", decision.allowed_tool_names)
+        self.assertNotIn("shell", decision.allowed_tool_names)
+
+    def test_workspace_inventory_requires_each_workspace_root_to_have_glob_evidence(self) -> None:
+        decision = evaluate_tool_choice_state(
+            task_kind="read_only",
+            prompt="只读说明当前目录主要是在干什么，代码都有哪些。",
+            workspace_roots=("/workspace/agent", "/workspace/project"),
+            tool_results=[
+                ToolResultSummary(
+                    "glob_files",
+                    "{...}",
+                    metadata={"complete": True, "searched_roots": ["/workspace/project"]},
+                )
+            ],
+        )
+
+        self.assertTrue(decision.steering_required)
+        self.assertEqual(decision.rule_id, "workspace_inventory_root_coverage")
+        self.assertEqual(decision.missing_requirements, ("path_discovery:/workspace/agent",))
+        self.assertEqual(decision.preferred_tool_names, ("glob_files",))
+
+    def test_inventory_markers_do_not_override_code_implementation_flow(self) -> None:
+        decision = evaluate_tool_choice_state(
+            task_kind="code-implementation",
+            prompt="请在当前代码中实现用户注册接口，并补充测试。",
+            workspace_roots=("/workspace/agent",),
+        )
+
+        self.assertNotIn("workspace_inventory", decision.rule_id or "")
+        self.assertIn("read_file", decision.allowed_tool_names)
+        self.assertNotEqual(decision.allowed_tool_names, WORKSPACE_INVENTORY_TOOL_NAMES)
+
+    def test_workspace_inventory_forces_final_after_root_scaled_discovery_budget(self) -> None:
+        results = [
+            ToolResultSummary("glob_files", "{...}", metadata={"complete": True})
+        ] + [ToolResultSummary("list_files", "files") for _ in range(3)]
+        decision = evaluate_tool_choice_state(
+            task_kind="read_only",
+            prompt="只读说明当前目录主要是在干什么，代码都有哪些。",
+            workspace_roots=("/workspace/agent", "/workspace/project"),
+            tool_results=results,
+        )
+
+        self.assertTrue(decision.force_final_answer_without_tools)
+        self.assertEqual(decision.rule_id, "workspace_inventory_budget")
+        self.assertEqual(decision.allowed_tool_names, frozenset())
+
+    def test_workspace_inventory_failed_discovery_attempts_also_exhaust_budget(self) -> None:
+        decision = evaluate_tool_choice_state(
+            task_kind="read_only",
+            prompt="只读说明当前目录主要是在干什么，代码都有哪些。",
+            workspace_roots=("/workspace/agent",),
+            tool_results=[
+                ToolResultSummary("glob_files", "Path escapes workspace", is_error=True)
+                for _ in range(4)
+            ],
+        )
+
+        self.assertTrue(decision.force_final_answer_without_tools)
+        self.assertEqual(decision.rule_id, "workspace_inventory_budget")
+
     def test_read_only_evidence_question_requires_code_evidence_tool(self) -> None:
         decision = evaluate_tool_choice_state(
             task_kind="read_only",

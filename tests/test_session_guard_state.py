@@ -66,6 +66,43 @@ class SessionGuardStateTests(unittest.TestCase):
         )
         self.assertIsNone(allowed)
 
+    def test_repeated_unknown_tool_is_blocked_after_prior_actionable_errors(self) -> None:
+        state = SessionGuardState()
+        for _ in range(2):
+            self.assertIsNone(
+                state.before_tool(
+                    read_file_key=None,
+                    signature="run_shell:{}",
+                    search_pattern_key=None,
+                    lsp_symbol_query_key=None,
+                    semantic_exploration_key=None,
+                    unknown_tool_name="run_shell",
+                )
+            )
+            state.record_result(
+                search_pattern_key=None,
+                lsp_symbol_query_key=None,
+                unknown_tool_name="run_shell",
+                result=ToolResult(
+                    "Unknown tool: run_shell. Available related tools: shell.",
+                    is_error=True,
+                    metadata={"unknown_tool": True, "suggested_tools": ["shell"]},
+                ),
+            )
+
+        decision = state.before_tool(
+            read_file_key=None,
+            signature="run_shell:{}",
+            search_pattern_key=None,
+            lsp_symbol_query_key=None,
+            semantic_exploration_key=None,
+            unknown_tool_name="run_shell",
+        )
+
+        self.assertIsNotNone(decision)
+        self.assertEqual(decision.kind, "unknown_tool")
+        self.assertEqual(decision.prior_count, 2)
+
 
 if __name__ == "__main__":
     unittest.main()

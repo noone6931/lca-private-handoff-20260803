@@ -13,6 +13,7 @@ from local_agent.lsp.client import StdioLspClient
 from local_agent.lsp.client import close_all_clients
 from local_agent.lsp.config import LspServerConfig
 from local_agent.patch.anchored import hash_text
+from local_agent.tools import create_default_registry
 from local_agent.tools.base import Tool, ToolContext, ToolRegistry, ToolResult
 from local_agent.tools.files import file_tools, patch_file, read_file, rollback_patch, write_file
 from local_agent.tools.git import capture_git_baseline, git_diff, git_status
@@ -539,6 +540,53 @@ class ToolTests(unittest.TestCase):
         self.assertEqual(payload["files"], ["src/App.java"])
         self.assertIn("path scope applied to relative paths", payload["compatibility_normalized"])
         self.assertEqual(result.metadata["compatibility_normalized"], ["path scope applied to relative paths"])
+
+    def test_unknown_tool_suggests_only_currently_exposed_tools(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            registry = ToolRegistry(search_tools())
+            result = registry.execute(
+                "glob_file",
+                {},
+                ToolContext(
+                    workspace=workspace,
+                    approval_mode="yolo",
+                    runtime_tool_allowlist=frozenset({"glob_files", "read_file"}),
+                ),
+            )
+
+        self.assertTrue(result.is_error)
+        self.assertIn("Unknown tool: glob_file", result.content)
+        self.assertIn("glob_files", result.content)
+        self.assertNotIn("search_code", result.content)
+        self.assertEqual(result.metadata["suggested_tools"], ["glob_files"])
+
+    def test_unknown_tool_does_not_suggest_denied_or_hidden_tools(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            registry = create_default_registry()
+            context = ToolContext(
+                workspace=workspace,
+                approval_mode="yolo",
+                runtime_tool_allowlist=frozenset({"read_file", "shell", "run_tests"}),
+                tool_approval={"shell": "deny"},
+                session_tool_approval={"run_tests": "reject_always"},
+            )
+            result = registry.execute("read_fil", {}, context)
+            hidden_result = registry.execute(
+                "run_shell",
+                {},
+                ToolContext(
+                    workspace=workspace,
+                    approval_mode="yolo",
+                    runtime_tool_allowlist=frozenset(),
+                ),
+            )
+
+        self.assertEqual(result.metadata["suggested_tools"], ["read_file"])
+        self.assertNotIn("shell", result.content)
+        self.assertNotIn("run_tests", result.content)
+        self.assertEqual(hidden_result.metadata["suggested_tools"], [])
 
     def test_glob_files_finds_exact_directory_and_multiple_patterns(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

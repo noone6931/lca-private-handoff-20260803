@@ -1110,6 +1110,37 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertNotIn("run_tests", first_tools)
         self.assertNotIn("shell", first_tools)
 
+    def test_tool_choice_queue_can_force_final_after_inventory_budget(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=Path(tmp).resolve(),
+                max_steps=1,
+                budget_seconds=None,
+                approval_mode="yolo",
+            )
+            runtime = AgentRuntime(config, show_tool_logs=False)
+            prompt = "只读说明当前目录主要是在干什么，代码都有哪些。"
+            runtime._run.requirement_contract = generate_requirement_contract(prompt)
+            runtime._run.current_user_request = prompt
+            decision = ToolChoiceDecision(
+                steering_required=True,
+                allowed_tool_names=frozenset(),
+                reason="workspace inventory discovery budget reached",
+                rule_id="workspace_inventory_budget",
+                force_final_answer_without_tools=True,
+            )
+            with patch.object(runtime._run.tool_choice_queue, "evaluate", return_value=decision):
+                result = runtime._apply_tool_choice_queue_if_needed()
+
+        self.assertIsNone(result)
+        self.assertTrue(runtime._run.force_final_answer_without_tools)
+        self.assertEqual(runtime._tools_for_model(), [])
+        self.assertIn("bounded exploration budget", runtime._messages[-1]["content"])
+
     def test_denied_tools_are_hidden_from_model_and_tool_choice_availability(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             config = AgentConfig(

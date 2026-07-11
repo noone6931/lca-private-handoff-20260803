@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import time
-from typing import Any
+from typing import Any, Mapping
 
 
 @dataclass
@@ -18,6 +18,12 @@ class RunStats:
     compactions: int = 0
     llm_context_summaries: int = 0
     local_context_summaries: int = 0
+    file_discovery_calls: int = 0
+    file_discovery_incomplete_results: int = 0
+    file_discovery_no_match_results: int = 0
+    unknown_tool_calls: int = 0
+    unknown_tool_suggestions: int = 0
+    filename_search_misuse_calls: int = 0
     tool_counts: dict[str, int] = field(default_factory=dict)
     guard_start: dict[str, int] = field(default_factory=dict)
     steer_start: dict[str, int] = field(default_factory=dict)
@@ -72,14 +78,37 @@ class RunCollector:
             return
         self._stats.tool_calls += 1
         self._stats.tool_counts[name] = self._stats.tool_counts.get(name, 0) + 1
+        if name == "glob_files":
+            self._stats.file_discovery_calls += 1
 
     def record_tool_finished(self, *, is_error: bool) -> None:
         if self._stats is not None and is_error:
             self._stats.tool_errors += 1
 
-    def record_tool_result(self, *, is_error: bool, useless: bool) -> None:
-        if self._stats is not None and useless and not is_error:
+    def record_tool_result(
+        self,
+        *,
+        name: str,
+        is_error: bool,
+        useless: bool,
+        metadata: Mapping[str, Any],
+    ) -> None:
+        if self._stats is None:
+            return
+        if useless and not is_error:
             self._stats.useless_tool_results += 1
+        if name == "glob_files":
+            if metadata.get("complete") is False:
+                self._stats.file_discovery_incomplete_results += 1
+            if metadata.get("negative_evidence_type") in {"path_no_match", "exact_path_missing"}:
+                self._stats.file_discovery_no_match_results += 1
+        if metadata.get("unknown_tool"):
+            self._stats.unknown_tool_calls += 1
+            suggestions = metadata.get("suggested_tools")
+            if isinstance(suggestions, (list, tuple)) and suggestions:
+                self._stats.unknown_tool_suggestions += 1
+        if metadata.get("filename_search_misuse"):
+            self._stats.filename_search_misuse_calls += 1
 
     def record_synthetic_tool_result(self) -> None:
         if self._stats is None:
@@ -118,6 +147,12 @@ class RunCollector:
             "compactions": stats.compactions,
             "llm_context_summaries": stats.llm_context_summaries,
             "local_context_summaries": stats.local_context_summaries,
+            "file_discovery_calls": stats.file_discovery_calls,
+            "file_discovery_incomplete_results": stats.file_discovery_incomplete_results,
+            "file_discovery_no_match_results": stats.file_discovery_no_match_results,
+            "unknown_tool_calls": stats.unknown_tool_calls,
+            "unknown_tool_suggestions": stats.unknown_tool_suggestions,
+            "filename_search_misuse_calls": stats.filename_search_misuse_calls,
             "tool_counts": dict(sorted(stats.tool_counts.items())),
             "guard_hits": {key: value for key, value in guard_hits.items() if value},
             "steering_counts": {key: value for key, value in steering_counts.items() if value},
