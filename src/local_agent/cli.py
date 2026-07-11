@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import shlex
 import sys
 from typing import TextIO
 
@@ -9,27 +8,14 @@ from .agent import AgentRuntime
 from .config import ConfigError, load_config
 from .frontends.terminal import TerminalEventSink
 from .frontends.terminal import run_terminal_chat
+from .frontends.terminal.command_registry import TerminalCommandDispatch
+from .frontends.terminal.command_registry import TerminalCommandRegistry
 from .llm import LlmError
 from .session.jsonl_store import SessionError
 from .terminal_io import silenced_terminal_input
 
 
-REPL_HELP = """Commands:
-/help                         Show this help.
-/status                       Show session, workspace, provider, budget, and approval summary.
-/tools                        List available tool names.
-/workspace list               Show primary, configured, and session workspace roots.
-/workspace add PATH           Add a session-only directory for file/search/LSP/patch tools.
-/workspace remove PATH        Remove a session-added directory.
-/workspace reset              Remove every session-added directory.
-/add-dir PATH                 Alias for /workspace add PATH.
-/move PATH                    Move the session primary workspace and reload project context.
-/approval                     Show approval settings.
-/approval mode always-ask|write|yolo
-/approval allow|prompt|deny TOOL
-/approval reset TOOL
-/exit or /quit                Exit terminal chat.
-"""
+_TERMINAL_COMMANDS = TerminalCommandRegistry()
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -175,7 +161,6 @@ def main(argv: list[str] | None = None) -> int:
         if chat_requested or not args.prompt:
             return run_terminal_chat(
                 runtime,
-                command_handler=_handle_repl_command,
                 history_path=(config.state_dir or config.workspace / ".local-agent") / "terminal_history",
             )
         if args.prompt:
@@ -202,7 +187,9 @@ def _repl(runtime: AgentRuntime) -> int:
         if not prompt:
             continue
         if prompt.startswith("/"):
-            _handle_repl_command(runtime, prompt)
+            dispatched = _handle_repl_command(runtime, prompt)
+            if dispatched.exit_requested:
+                return 0
             continue
         with silenced_terminal_input():
             print(runtime.run(prompt))
@@ -212,94 +199,12 @@ def _is_chat_prompt(prompt: list[str]) -> bool:
     return len(prompt) == 1 and prompt[0] == "chat"
 
 
-def _handle_repl_command(runtime: AgentRuntime, command: str, stream: TextIO | None = None) -> None:
-    output = stream or sys.stdout
-    try:
-        parts = shlex.split(command)
-    except ValueError as exc:
-        print(f"error: {exc}", file=output)
-        return
-    if not parts:
-        return
-    if parts[0] in {"/help", "/?"}:
-        print(REPL_HELP.rstrip(), file=output)
-        return
-    if parts[0] == "/status":
-        print(runtime.status_summary(), file=output)
-        return
-    if parts[0] == "/tools":
-        print(runtime.tool_summary(), file=output)
-        return
-    if parts[0] == "/add-dir":
-        try:
-            if len(parts) != 2:
-                raise ValueError("Usage: /add-dir PATH")
-            runtime.add_workspace_root(parts[1])
-            print(runtime.workspace_summary(), file=output)
-            return
-        except (ConfigError, RuntimeError, ValueError) as exc:
-            print(f"error: {exc}", file=output)
-            return
-    if parts[0] == "/workspace":
-        try:
-            if len(parts) == 2 and parts[1] == "list":
-                print(runtime.workspace_summary(), file=output)
-                return
-            if len(parts) == 3 and parts[1] == "add":
-                runtime.add_workspace_root(parts[2])
-                print(runtime.workspace_summary(), file=output)
-                return
-            if len(parts) == 3 and parts[1] == "remove":
-                runtime.remove_workspace_root(parts[2])
-                print(runtime.workspace_summary(), file=output)
-                return
-            if len(parts) == 2 and parts[1] == "reset":
-                runtime.reset_workspace_roots()
-                print(runtime.workspace_summary(), file=output)
-                return
-        except (ConfigError, RuntimeError, ValueError) as exc:
-            print(f"error: {exc}", file=output)
-            return
-        print("Usage: /workspace list|add PATH|remove PATH|reset", file=output)
-        return
-    if parts[0] == "/move":
-        try:
-            if len(parts) != 2:
-                raise ValueError("Usage: /move PATH")
-            runtime.move_workspace(parts[1])
-            print(runtime.workspace_summary(), file=output)
-            return
-        except (ConfigError, RuntimeError, ValueError) as exc:
-            print(f"error: {exc}", file=output)
-            return
-    if parts[0] != "/approval":
-        print(f"Unknown command: {parts[0]}", file=output)
-        print("Type /help for commands.", file=output)
-        return
-    try:
-        if len(parts) == 1:
-            print(runtime.approval_summary(), file=output)
-            return
-        if len(parts) == 3 and parts[1] == "mode":
-            runtime.set_session_approval_mode(parts[2])
-            print(runtime.approval_summary(), file=output)
-            return
-        if len(parts) == 3 and parts[1] in {"allow", "prompt", "deny"}:
-            runtime.set_session_tool_policy(parts[2], parts[1])
-            print(runtime.approval_summary(), file=output)
-            return
-        if len(parts) == 3 and parts[1] == "reset":
-            runtime.reset_session_tool_policy(parts[2])
-            print(runtime.approval_summary(), file=output)
-            return
-    except (ConfigError, RuntimeError, ValueError) as exc:
-        print(f"error: {exc}", file=output)
-        return
-    print(
-        "Usage: /approval | /approval mode always-ask|write|yolo | "
-        "/approval allow|prompt|deny TOOL | /approval reset TOOL",
-        file=output,
-    )
+def _handle_repl_command(
+    runtime: AgentRuntime,
+    command: str,
+    stream: TextIO | None = None,
+) -> TerminalCommandDispatch:
+    return _TERMINAL_COMMANDS.dispatch(runtime, command, stream or sys.stdout)
 
 
 if __name__ == "__main__":

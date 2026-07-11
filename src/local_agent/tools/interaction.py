@@ -5,6 +5,7 @@ import sys
 import time
 from typing import Any
 
+from ..protocol.interactions import InteractionRequest
 from ..terminal_io import terminal_input_prompt
 from .base import Tool, ToolContext, ToolResult
 
@@ -35,6 +36,8 @@ def ask_user(args: dict[str, Any], context: ToolContext) -> ToolResult:
     if not question:
         return ToolResult("Question must not be empty.", is_error=True)
     default_answer = _default_answer(args)
+    if context.interaction_handler is not None:
+        return _ask_user_with_handler(question, args, context, default_answer)
     if not sys.stdin.isatty():
         if default_answer is not None:
             return ToolResult(default_answer)
@@ -58,6 +61,49 @@ def ask_user(args: dict[str, Any], context: ToolContext) -> ToolResult:
         if default_answer is not None:
             return ToolResult(default_answer)
         return ToolResult(f"No answer received within {timeout} seconds.", is_error=True)
+    if not answer:
+        if default_answer is not None:
+            return ToolResult(default_answer)
+        return ToolResult("User gave an empty answer.", is_error=True)
+    return ToolResult(answer)
+
+
+def _ask_user_with_handler(
+    question: str,
+    args: dict[str, Any],
+    context: ToolContext,
+    default_answer: str | None,
+) -> ToolResult:
+    _emit_interaction_event(context, "InteractionRequested", {"kind": "ask", "question": question})
+    result = context.interaction_handler.request_interaction(
+        InteractionRequest(
+            kind="ask",
+            prompt=question,
+            timeout_seconds=_effective_timeout(args, context),
+        )
+    )
+    if result.status == "cancelled":
+        _emit_interaction_event(context, "InteractionCancelled", {"kind": "ask", "question": question})
+        return ToolResult("User cancelled the clarification question.", is_error=True)
+    if result.status in {"timed_out", "eof"}:
+        if default_answer is not None:
+            _emit_interaction_event(
+                context,
+                "InteractionResolved",
+                {"kind": "ask", "question": question, "default_answer": True},
+            )
+            return ToolResult(default_answer)
+        _emit_interaction_event(
+            context,
+            "InteractionCancelled",
+            {"kind": "ask", "question": question, "reason": result.status},
+        )
+        if result.status == "eof":
+            return ToolResult("Cannot ask the user because stdin closed before an answer.", is_error=True)
+        timeout = _effective_timeout(args, context)
+        return ToolResult(f"No answer received within {timeout} seconds.", is_error=True)
+    answer = (result.value or "").strip()
+    _emit_interaction_event(context, "InteractionResolved", {"kind": "ask", "question": question})
     if not answer:
         if default_answer is not None:
             return ToolResult(default_answer)
@@ -96,3 +142,8 @@ def _read_timed_answer(prompt: str, timeout: int) -> str | None:
     if not ready:
         return None
     return sys.stdin.readline().strip()
+
+
+def _emit_interaction_event(context: ToolContext, event_type: str, payload: dict[str, Any]) -> None:
+    if context.event_callback is not None:
+        context.event_callback(event_type, payload)

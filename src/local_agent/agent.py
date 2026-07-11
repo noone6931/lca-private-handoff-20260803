@@ -56,6 +56,7 @@ from .protocol.events import EventEmitter
 from .protocol.events import EventSink
 from .protocol.events import NullEventSink
 from .protocol.events import StderrEventSink
+from .protocol.interactions import InteractionHandler
 from .session.jsonl_store import JsonlSessionStore
 from .session_guard_state import SessionGuardState
 from .state import default_config_root
@@ -232,6 +233,7 @@ class AgentRuntime:
         session_id: str | None = None,
         continue_session: bool = False,
         event_sink: EventSink | None = None,
+        interaction_handler: InteractionHandler | None = None,
     ):
         self._config = config
         self._workspace_context = WorkspaceContext(config.workspace, config.allowed_dirs)
@@ -286,6 +288,7 @@ class AgentRuntime:
             tool_approval=config.tool_approval,
             session_tool_approval=self._session_tool_approval,
             event_callback=self._emit_event,
+            interaction_handler=interaction_handler,
         )
         self._events.emit(
             "SessionStarted",
@@ -315,6 +318,13 @@ class AgentRuntime:
             return self._run_prompt(prompt)
         finally:
             self._is_running = False
+
+    def set_interaction_handler(self, handler: InteractionHandler | None) -> None:
+        """Attach a frontend-owned interaction channel while the Runtime is idle."""
+
+        if self._is_running:
+            raise RuntimeError("Cannot replace the interaction handler while the current run is active.")
+        self._tool_context = replace(self._tool_context, interaction_handler=handler)
 
     def _run_prompt(self, prompt: str) -> str:
         run_id = self._events.start_run()

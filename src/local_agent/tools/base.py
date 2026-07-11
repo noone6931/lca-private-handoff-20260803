@@ -9,6 +9,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
+from ..protocol.interactions import InteractionHandler
+from ..protocol.interactions import InteractionRequest
 from ..terminal_io import terminal_input_prompt
 from .argument_normalization import normalize_compatibility_arguments
 
@@ -37,6 +39,7 @@ class ToolContext:
     patch_relevance_checker: Callable[[str, Path], str | None] | None = None
     patch_preview_checker: Callable[[dict[str, Any], Path], str | None] | None = None
     event_callback: Callable[[str, dict[str, Any]], None] | None = None
+    interaction_handler: InteractionHandler | None = None
     runtime_tool_allowlist: frozenset[str] | None = None
     runtime_read_file_paths: frozenset[str] | None = None
     runtime_read_file_remaining: int | None = None
@@ -222,6 +225,8 @@ def _interactive_approval_denial_reason(
     *,
     allow_session_cache: bool = True,
 ) -> str | None:
+    if context.interaction_handler is not None:
+        return _interactive_approval_with_handler(tool, context, allow_session_cache=allow_session_cache)
     if not sys.stdin.isatty():
         _emit_context_event(
             context,
@@ -273,6 +278,71 @@ def _interactive_approval_denial_reason(
     return f"User denied tool execution: {tool.name}"
 
 
+def _interactive_approval_with_handler(
+    tool: Tool,
+    context: ToolContext,
+    *,
+    allow_session_cache: bool,
+) -> str | None:
+    prompt = _approval_prompt(tool, allow_session_cache=allow_session_cache)
+    _emit_context_event(
+        context,
+        "ApprovalRequested",
+        {
+            "tool": tool.name,
+            "tier": tool.tier,
+            "allow_session_cache": allow_session_cache,
+        },
+    )
+    _emit_context_event(
+        context,
+        "InteractionRequested",
+        {"kind": "approval", "tool": tool.name, "tier": tool.tier},
+    )
+    result = context.interaction_handler.request_interaction(
+        InteractionRequest(
+            kind="approval",
+            prompt=prompt,
+            timeout_seconds=_interaction_timeout_seconds(context),
+        )
+    )
+    if result.status == "cancelled":
+        _emit_context_event(context, "InteractionCancelled", {"kind": "approval", "tool": tool.name})
+        _emit_approval_result(tool, context, "cancelled", allowed=False)
+        return f"Tool '{tool.name}' approval cancelled by user."
+    if result.status != "answered":
+        _emit_context_event(
+            context,
+            "InteractionCancelled",
+            {"kind": "approval", "tool": tool.name, "reason": result.status},
+        )
+        _emit_approval_result(tool, context, "cancelled", allowed=False)
+        if result.status == "eof":
+            return f"Tool '{tool.name}' requires approval, but stdin closed before a decision."
+        return f"Tool '{tool.name}' approval cancelled because budget_seconds is exhausted."
+    answer = (result.value or "").strip().lower()
+    _emit_context_event(
+        context,
+        "InteractionResolved",
+        {"kind": "approval", "tool": tool.name, "answer": answer},
+    )
+    if answer in {"y", "yes"}:
+        _emit_approval_result(tool, context, "allow_once", allowed=True)
+        return None
+    if allow_session_cache and answer in {"s", "session", "always"}:
+        if context.session_tool_approval is not None:
+            context.session_tool_approval[tool.name] = "allow_always"
+        _emit_approval_result(tool, context, "allow_session", allowed=True)
+        return None
+    if allow_session_cache and answer in {"d", "deny", "reject_always"}:
+        if context.session_tool_approval is not None:
+            context.session_tool_approval[tool.name] = "reject_always"
+        _emit_approval_result(tool, context, "reject_session", allowed=False)
+        return f"User denied tool execution for this session: {tool.name}"
+    _emit_approval_result(tool, context, "reject_once", allowed=False)
+    return f"User denied tool execution: {tool.name}"
+
+
 def _approval_prompt(tool: Tool, *, allow_session_cache: bool) -> str:
     if allow_session_cache:
         return (
@@ -300,6 +370,13 @@ def _read_approval_answer(prompt: str, context: ToolContext) -> str | None:
         if line == "":
             raise EOFError
         return line.strip().lower()
+
+
+def _interaction_timeout_seconds(context: ToolContext) -> float | None:
+    if context.deadline_monotonic is None:
+        return None
+    remaining = context.deadline_monotonic - time.monotonic()
+    return max(0.0, remaining)
 
 
 def _emit_approval_result(tool: Tool, context: ToolContext, decision: str, *, allowed: bool) -> None:
