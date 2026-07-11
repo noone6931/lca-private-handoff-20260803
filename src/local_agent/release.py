@@ -16,6 +16,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import shlex
 import stat
@@ -28,6 +29,16 @@ from typing import Callable
 
 MANAGED_MARKER = "# local-coding-agent-managed"
 CHANNEL_NAME = "local-coding-agent"
+_RELEASE_GATE_ENV_CLEAR_PREFIXES = ("AGENT_",)
+_RELEASE_GATE_ENV_CLEAR_NAMES = {
+    "AI_API_BASE_URL",
+    "AI_API_KEY",
+    "AI_MODEL",
+    "DASHSCOPE_API_KEY",
+    "BAILIAN_API_KEY",
+}
+_SECRET_ENV_MARKERS = ("KEY", "TOKEN", "SECRET", "PASSWORD")
+_SK_LIKE_SECRET_RE = re.compile(r"sk-[A-Za-z0-9][A-Za-z0-9._-]{8,}")
 
 
 class ReleaseError(RuntimeError):
@@ -194,20 +205,25 @@ def run_release_gate(source_root: Path, python_executable: str) -> tuple[GateRec
             )
         )
 
-    environment = os.environ.copy()
-    existing = environment.get("PYTHONPATH")
-    environment["PYTHONPATH"] = str(source_root / "src") + (os.pathsep + existing if existing else "")
     records: list[GateRecord] = []
-    for command in commands:
-        started = time.monotonic()
-        completed = subprocess.run(command, cwd=source_root, env=environment, text=True, capture_output=True)
-        elapsed = time.monotonic() - started
-        if completed.returncode != 0:
-            output = (completed.stdout + completed.stderr).strip()
-            raise ReleaseError(
-                f"Release gate failed: {' '.join(command)}\n{output[-4000:]}"
-            )
-        records.append(GateRecord(command=command, elapsed_seconds=round(elapsed, 3)))
+    process_environment = os.environ.copy()
+    with tempfile.TemporaryDirectory(prefix="lca-release-gate-env-") as gate_dir:
+        gate_root = Path(gate_dir)
+        config_dir = gate_root / "config"
+        home_dir = gate_root / "home"
+        bootstrap_dir = gate_root / "bootstrap"
+        config_dir.mkdir()
+        home_dir.mkdir()
+        bootstrap_dir.mkdir()
+        _write_release_gate_sitecustomize(bootstrap_dir, home_dir)
+        environment = _release_gate_environment(source_root, config_dir, bootstrap_dir, home_dir, process_environment)
+        for command in commands:
+            started = time.monotonic()
+            completed = subprocess.run(command, cwd=source_root, env=environment, text=True, capture_output=True)
+            elapsed = time.monotonic() - started
+            if completed.returncode != 0:
+                raise ReleaseError(_release_gate_failure_message(command, completed, environment, process_environment))
+            records.append(GateRecord(command=command, elapsed_seconds=round(elapsed, 3)))
     return tuple(records)
 
 
@@ -246,6 +262,71 @@ def _source_revision(source_root: Path) -> str:
         ("git", "rev-parse", "HEAD"), cwd=source_root, text=True, capture_output=True, check=False
     )
     return completed.stdout.strip() if completed.returncode == 0 else "unknown-git"
+
+
+def _release_gate_environment(
+    source_root: Path,
+    config_dir: Path,
+    bootstrap_dir: Path,
+    home_dir: Path,
+    base_environment: dict[str, str],
+) -> dict[str, str]:
+    environment = dict(base_environment)
+    for name in tuple(environment):
+        if name in _RELEASE_GATE_ENV_CLEAR_NAMES or any(name.startswith(prefix) for prefix in _RELEASE_GATE_ENV_CLEAR_PREFIXES):
+            environment.pop(name, None)
+    existing = environment.get("PYTHONPATH")
+    pythonpath_parts = [str(bootstrap_dir), str(source_root / "src")]
+    if existing:
+        pythonpath_parts.append(existing)
+    environment["PYTHONPATH"] = os.pathsep.join(pythonpath_parts)
+    environment["AGENT_CONFIG_DIR"] = str(config_dir)
+    environment["HOME"] = str(home_dir)
+    environment["XDG_CONFIG_HOME"] = str(home_dir / ".config")
+    return environment
+
+
+def _write_release_gate_sitecustomize(bootstrap_dir: Path, home_dir: Path) -> None:
+    (bootstrap_dir / "sitecustomize.py").write_text(
+        "from __future__ import annotations\n"
+        "import os\n"
+        "from pathlib import Path\n"
+        "_ISOLATED_HOME = Path("
+        + repr(str(home_dir))
+        + ").resolve()\n"
+        "Path.home = classmethod(lambda cls: _ISOLATED_HOME)\n"
+        "os.environ.setdefault('HOME', str(_ISOLATED_HOME))\n",
+        encoding="utf-8",
+    )
+
+
+def _release_gate_failure_message(
+    command: tuple[str, ...],
+    completed: subprocess.CompletedProcess[str],
+    environment: dict[str, str],
+    original_environment: dict[str, str],
+) -> str:
+    output = (completed.stdout + completed.stderr).strip()
+    redacted = _redact_secret_text(output, environment, original_environment)
+    return f"Release gate failed: {' '.join(command)}\n{redacted[-4000:]}"
+
+
+def _redact_secret_text(text: str, *environments: dict[str, str]) -> str:
+    redacted = text
+    for secret in _secret_values(*environments):
+        redacted = redacted.replace(secret, "[redacted]")
+    return _SK_LIKE_SECRET_RE.sub("[redacted]", redacted)
+
+
+def _secret_values(*environments: dict[str, str]) -> tuple[str, ...]:
+    values: set[str] = set()
+    for environment in environments:
+        for name, value in environment.items():
+            if not value:
+                continue
+            if name in _RELEASE_GATE_ENV_CLEAR_NAMES or any(marker in name.upper() for marker in _SECRET_ENV_MARKERS):
+                values.add(value)
+    return tuple(sorted(values, key=len, reverse=True))
 
 
 def _release_id(revision: str, digest: str) -> str:

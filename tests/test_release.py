@@ -16,6 +16,7 @@ from local_agent.release import ReleaseError
 from local_agent.release import install_channel
 from local_agent.release import publish_stable_snapshot
 from local_agent.release import rollback_stable_snapshot
+from local_agent.release import run_release_gate
 from local_agent.release import stable_status
 
 
@@ -148,6 +149,76 @@ class ReleaseChannelTests(unittest.TestCase):
                 channel_root = default_channel_root()
 
         self.assertEqual(channel_root, state_home / "local-coding-agent" / "channels")
+
+    def test_release_gate_ignores_user_config_and_provider_environment(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            source = root / "source"
+            _write_config_loading_mini_agent(source)
+            test_dir = source / "tests"
+            test_dir.mkdir(parents=True, exist_ok=True)
+            (test_dir / "test_release_gate_env.py").write_text(
+                "from __future__ import annotations\n"
+                "import os\n"
+                "from pathlib import Path\n"
+                "import unittest\n"
+                "from unittest.mock import patch\n"
+                "from local_agent.config import load_config\n"
+                "class ReleaseGateEnvTests(unittest.TestCase):\n"
+                "    def test_release_gate_uses_isolated_config(self) -> None:\n"
+                "        with patch.dict(os.environ, {'DASHSCOPE_API_KEY': 'token'}, clear=True):\n"
+                "            config = load_config(config_path=None, cwd=os.getcwd(), provider='bailian', api_base_url=None, api_key=None, model=None, max_steps=None, budget_seconds=None, approval_mode=None)\n"
+                "        self.assertEqual(config.api_key, 'token')\n"
+                "        self.assertEqual(config.model, 'qwen-plus')\n"
+                "        self.assertEqual(os.environ.get('AI_MODEL'), None)\n"
+                "        self.assertEqual(os.environ.get('DASHSCOPE_API_KEY'), None)\n"
+                "        self.assertEqual(Path.home().name, 'home')\n"
+                "if __name__ == '__main__':\n"
+                "    unittest.main()\n",
+                encoding="utf-8",
+            )
+            user_config = root / "user-config"
+            user_config.mkdir()
+            (user_config / ".env").write_text(
+                "DASHSCOPE_API_KEY=user-secret-token\nAI_MODEL=user-model\n",
+                encoding="utf-8",
+            )
+            env = {
+                "PATH": os.environ.get("PATH", ""),
+                "AGENT_CONFIG_DIR": str(user_config),
+                "DASHSCOPE_API_KEY": "env-secret-token",
+                "AI_MODEL": "env-model",
+            }
+            with patch.dict("os.environ", env, clear=True):
+                records = run_release_gate(source, sys.executable)
+
+        self.assertEqual(len(records), 2)
+
+    def test_release_gate_redacts_secret_output(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            source = root / "source"
+            _write_mini_agent(source, "unused")
+            environment = {
+                "PATH": os.environ.get("PATH", ""),
+                "AI_API_KEY": "super-secret-token",
+                "DASHSCOPE_API_KEY": "sk-live-abcdefghijklmnopqrstuvwxyz",
+            }
+            failure = subprocess.CompletedProcess(
+                args=(sys.executable, "-m", "unittest"),
+                returncode=1,
+                stdout="expected super-secret-token\nsk-live-abcdefghijklmnopqrstuvwxyz\n",
+                stderr="AssertionError: super-secret-token != expected\n",
+            )
+            with patch.dict("os.environ", environment, clear=True):
+                with patch("local_agent.release.subprocess.run", return_value=failure):
+                    with self.assertRaises(ReleaseError) as raised:
+                        run_release_gate(source, sys.executable)
+
+        message = str(raised.exception)
+        self.assertIn("[redacted]", message)
+        self.assertNotIn("super-secret-token", message)
+        self.assertNotIn("sk-live-abcdefghijklmnopqrstuvwxyz", message)
 
 
 def _write_mini_agent(root: Path, value: str) -> None:
