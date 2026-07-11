@@ -103,6 +103,55 @@ class SessionGuardStateTests(unittest.TestCase):
         self.assertEqual(decision.kind, "unknown_tool")
         self.assertEqual(decision.prior_count, 2)
 
+    def test_completed_glob_is_not_repeated_but_incomplete_glob_can_retry(self) -> None:
+        state = SessionGuardState()
+        signature = 'glob_files:{"paths":["/workspace/**/pom.xml"]}'
+
+        self.assertIsNone(
+            state.before_tool(
+                read_file_key=None,
+                signature=signature,
+                search_pattern_key=None,
+                lsp_symbol_query_key=None,
+                semantic_exploration_key=None,
+                complete_glob_signature=signature,
+            )
+        )
+        state.record_result(
+            search_pattern_key=None,
+            lsp_symbol_query_key=None,
+            complete_glob_signature=signature,
+            result=ToolResult("complete", metadata={"complete": True, "truncated": False}),
+        )
+        blocked = state.before_tool(
+            read_file_key=None,
+            signature=signature,
+            search_pattern_key=None,
+            lsp_symbol_query_key=None,
+            semantic_exploration_key=None,
+            complete_glob_signature=signature,
+        )
+        self.assertIsNotNone(blocked)
+        self.assertEqual(blocked.kind, "repeated_complete_glob")
+
+        retry_signature = 'glob_files:{"paths":["/workspace/**/*.java"]}'
+        state.record_result(
+            search_pattern_key=None,
+            lsp_symbol_query_key=None,
+            complete_glob_signature=retry_signature,
+            result=ToolResult("partial", metadata={"complete": False, "truncated": True}),
+        )
+        self.assertIsNone(
+            state.before_tool(
+                read_file_key=None,
+                signature=retry_signature,
+                search_pattern_key=None,
+                lsp_symbol_query_key=None,
+                semantic_exploration_key=None,
+                complete_glob_signature=retry_signature,
+            )
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

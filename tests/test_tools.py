@@ -561,6 +561,21 @@ class ToolTests(unittest.TestCase):
             ["pattern -> paths[0]", "path scope applied to relative paths", "limit string -> integer"],
         )
 
+    def test_registry_drops_blank_glob_siblings_but_rejects_an_empty_scope(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            (workspace / "pom.xml").write_text("<project />\n", encoding="utf-8")
+            registry = ToolRegistry(search_tools())
+            context = ToolContext(workspace=workspace, approval_mode="yolo")
+
+            usable = registry.execute("glob_files", {"paths": ["", "pom.xml", "  "]}, context)
+            empty = registry.execute("glob_files", {"paths": ["", "  "]}, context)
+
+        self.assertFalse(usable.is_error)
+        self.assertIn("removed empty paths entries", usable.metadata["compatibility_normalized"])
+        self.assertTrue(empty.is_error)
+        self.assertIn("non-empty authorized path or pattern", empty.content)
+
     def test_registry_normalizes_search_code_camel_case_string_result_limit(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp).resolve()

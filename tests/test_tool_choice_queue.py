@@ -29,6 +29,10 @@ class ToolChoiceQueueTests(unittest.TestCase):
         self.assertEqual(decision.rule_id, "workspace_inventory_discovery")
         self.assertEqual(decision.allowed_tool_names, WORKSPACE_INVENTORY_TOOL_NAMES)
         self.assertEqual(decision.preferred_tool_names, ("glob_files",))
+        self.assertEqual(len(decision.tool_call_hints), 1)
+        self.assertIn('"/workspace/agent/**/pom.xml"', decision.tool_call_hints[0])
+        self.assertIn('"/workspace/project/**/pom.xml"', decision.tool_call_hints[0])
+        self.assertNotIn('""', decision.tool_call_hints[0])
 
     def test_workspace_inventory_stays_within_discovery_tools_after_glob(self) -> None:
         decision = evaluate_tool_choice_state(
@@ -72,6 +76,8 @@ class ToolChoiceQueueTests(unittest.TestCase):
         self.assertEqual(decision.rule_id, "workspace_inventory_root_coverage")
         self.assertEqual(decision.missing_requirements, ("path_discovery:/workspace/agent",))
         self.assertEqual(decision.preferred_tool_names, ("glob_files",))
+        self.assertIn('"/workspace/agent/**/pom.xml"', decision.tool_call_hints[0])
+        self.assertNotIn('"/workspace/project/**/pom.xml"', decision.tool_call_hints[0])
 
     def test_inventory_markers_do_not_override_code_implementation_flow(self) -> None:
         decision = evaluate_tool_choice_state(

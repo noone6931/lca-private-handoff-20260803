@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
@@ -278,6 +279,7 @@ class ToolChoiceDecision:
     rule_id: str | None = None
     missing_requirements: tuple[str, ...] = ()
     preferred_tool_names: tuple[str, ...] = ()
+    tool_call_hints: tuple[str, ...] = ()
     scoped_read_paths: tuple[str, ...] = ()
     scoped_read_budget: int | None = None
     stop_message: str | None = None
@@ -573,6 +575,7 @@ def _workspace_inventory_decision(
             rule_id="workspace_inventory_discovery",
             missing_requirements=("path_discovery_evidence",),
             preferred_tool_names=("glob_files",),
+            tool_call_hints=(_inventory_glob_call_hint(roots),),
         )
     covered_roots = _inventory_covered_roots(successful_globs)
     missing_roots = tuple(root for root in roots if root not in covered_roots)
@@ -588,6 +591,7 @@ def _workspace_inventory_decision(
             rule_id="workspace_inventory_root_coverage",
             missing_requirements=tuple(f"path_discovery:{root}" for root in missing_roots),
             preferred_tool_names=("glob_files",),
+            tool_call_hints=(_inventory_glob_call_hint(missing_roots),),
             scoped_read_paths=scoped_read_paths,
             scoped_read_budget=len(scoped_read_paths) or None,
         )
@@ -599,6 +603,10 @@ def _workspace_inventory_decision(
             "until the user-facing inventory is ready to summarize."
         ),
         preferred_tool_names=("glob_files",),
+        tool_call_hints=(
+            "Do not repeat a completed identical glob_files call. Use an uncovered root or a narrower pattern if more "
+            "evidence is needed."
+        ),
         scoped_read_paths=scoped_read_paths,
         scoped_read_budget=len(scoped_read_paths) or None,
     )
@@ -678,6 +686,42 @@ def _inventory_covered_roots(results: Iterable[ToolResultSummary]) -> set[str]:
             continue
         covered.update(str(root) for root in searched_roots if str(root).strip())
     return covered
+
+
+def _inventory_glob_call_hint(roots: Iterable[str]) -> str:
+    """Render a bounded, executable discovery shape for every uncovered root.
+
+    A directory-wide ``**/*`` scan is both expensive and likely truncated on a
+    multi-project checkout.  Project manifests and a small source-language sample
+    give the model enough evidence to identify candidate code projects without
+    widening shell or Git permissions.
+    """
+
+    patterns: list[str] = []
+    markers = (
+        "pom.xml",
+        "build.gradle",
+        "build.gradle.kts",
+        "package.json",
+        "pyproject.toml",
+        "go.mod",
+        "Cargo.toml",
+        "src/main/java/**/*.java",
+        "src/**/*.py",
+        "src/**/*.js",
+        "src/**/*.ts",
+        "src/**/*.vue",
+    )
+    for root in roots:
+        cleaned = str(root).rstrip("/")
+        if not cleaned:
+            continue
+        patterns.extend(f"{cleaned}/**/{marker}" for marker in markers)
+    arguments = {"paths": patterns, "limit": 200, "hidden": False, "gitignore": True}
+    return (
+        "Use this bounded multi-root discovery call exactly (do not send an empty paths entry): "
+        f"glob_files({json.dumps(arguments, ensure_ascii=False)})"
+    )
 
 
 def _inventory_read_paths(results: Iterable[ToolResultSummary]) -> tuple[str, ...]:

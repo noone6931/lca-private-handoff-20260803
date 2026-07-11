@@ -36,6 +36,7 @@ class SessionGuardState:
         self._recent_read_file_path_keys: list[str] = []
         self._recent_semantic_exploration_keys: list[str] = []
         self._recent_unknown_tool_name_keys: list[str] = []
+        self._recent_complete_glob_signatures: list[str] = []
         self._guard_hits = {
             "duplicate_tool": 0,
             "useless_search_pattern": 0,
@@ -43,6 +44,7 @@ class SessionGuardState:
             "repeated_read_file": 0,
             "semantic_exploration": 0,
             "unknown_tool": 0,
+            "repeated_complete_glob": 0,
         }
 
     def before_tool(
@@ -54,7 +56,10 @@ class SessionGuardState:
         lsp_symbol_query_key: str | None,
         semantic_exploration_key: str | None,
         unknown_tool_name: str | None = None,
+        complete_glob_signature: str | None = None,
     ) -> SessionGuardDecision | None:
+        if complete_glob_signature is not None and complete_glob_signature in self._recent_complete_glob_signatures:
+            return self._hit("repeated_complete_glob", complete_glob_signature, 1)
         if read_file_key is not None:
             prior_count = self._recent_read_file_path_keys.count(read_file_key)
             self._remember("_recent_read_file_path_keys", read_file_key, READ_FILE_PATH_WINDOW)
@@ -94,6 +99,7 @@ class SessionGuardState:
         search_pattern_key: str | None,
         lsp_symbol_query_key: str | None,
         unknown_tool_name: str | None = None,
+        complete_glob_signature: str | None = None,
         result: ToolResult,
     ) -> None:
         if search_pattern_key is not None and result.useless and not result.is_error:
@@ -114,6 +120,13 @@ class SessionGuardState:
             self._recent_useless_lsp_symbol_query_keys = []
         if unknown_tool_name is not None and result.metadata.get("unknown_tool"):
             self._remember("_recent_unknown_tool_name_keys", unknown_tool_name, UNKNOWN_TOOL_WINDOW)
+        if (
+            complete_glob_signature is not None
+            and not result.is_error
+            and bool(result.metadata.get("complete"))
+            and not bool(result.metadata.get("truncated"))
+        ):
+            self._remember("_recent_complete_glob_signatures", complete_glob_signature, REPEAT_TOOL_CALL_WINDOW)
 
     def hit_count(self, kind: str) -> int:
         return self._guard_hits.get(kind, 0)

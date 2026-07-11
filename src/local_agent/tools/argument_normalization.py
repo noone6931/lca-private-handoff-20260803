@@ -28,6 +28,7 @@ def normalize_compatibility_arguments(name: str, arguments: dict[str, Any]) -> t
     elif name == "glob_files":
         _normalize_glob_pattern(normalized, notes)
         _normalize_glob_path_scope(normalized, notes)
+        _normalize_glob_paths(normalized, notes)
         _normalize_bounded_integer(normalized, "limit", notes)
     elif name == "search_code":
         _rename_alias(normalized, "maxResults", "max_results", notes)
@@ -133,3 +134,19 @@ def _normalize_glob_path_scope(arguments: dict[str, Any], notes: list[str]) -> N
             scoped_paths.append(f"{raw_scope.rstrip('/')}/{path}")
     arguments["paths"] = scoped_paths
     notes.append("path scope applied to relative paths")
+
+
+def _normalize_glob_paths(arguments: dict[str, Any], notes: list[str]) -> None:
+    """Drop accidental blank siblings, but never guess a missing discovery scope."""
+
+    paths = arguments.get("paths")
+    if not isinstance(paths, list) or not all(isinstance(path, str) for path in paths):
+        return
+    non_empty = [path.strip() for path in paths if path.strip()]
+    if not non_empty:
+        raise ValueError(
+            "glob_files paths must contain a non-empty authorized path or pattern; use the workspace roots from runtime context."
+        )
+    if len(non_empty) != len(paths):
+        arguments["paths"] = non_empty
+        notes.append("removed empty paths entries")

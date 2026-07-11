@@ -1417,6 +1417,7 @@ class AgentRuntime:
             lsp_symbol_query_key=lsp_symbol_query_key,
             semantic_exploration_key=semantic_exploration_key,
             unknown_tool_name=unknown_tool_name,
+            complete_glob_signature=signature if name == "glob_files" else None,
         )
         if decision is not None:
             if decision.kind == "repeated_read_file":
@@ -1429,12 +1430,15 @@ class AgentRuntime:
                 return self._useless_lsp_symbol_result(decision.subject, decision.prior_count)
             if decision.kind == "unknown_tool":
                 return self._unknown_tool_result(decision.subject, decision.prior_count)
+            if decision.kind == "repeated_complete_glob":
+                return self._repeated_complete_glob_result()
             return self._semantic_exploration_result(decision.subject, decision.prior_count)
         result = self._registry.execute(name, arguments, tool_context)
         self._session_guards.record_result(
             search_pattern_key=search_pattern_key,
             lsp_symbol_query_key=lsp_symbol_query_key,
             unknown_tool_name=unknown_tool_name,
+            complete_glob_signature=signature if name == "glob_files" else None,
             result=result,
         )
         if read_file_range_key is not None and not result.is_error:
@@ -1477,6 +1481,16 @@ class AgentRuntime:
                 "or call a different tool/arguments only if new evidence is truly necessary."
             ),
             is_error=True,
+        )
+
+    def _repeated_complete_glob_result(self) -> ToolResult:
+        return ToolResult(
+            (
+                "Tool call skipped: identical glob_files arguments already returned a complete result in this session. "
+                "Use the collected scope, or query a different uncovered workspace root or narrower pattern instead."
+            ),
+            is_error=True,
+            metadata={"repeated_complete_glob": True, "guarded": True},
         )
 
     def _useless_search_pattern_result(self, pattern_key: str, prior_count: int) -> ToolResult:
@@ -2787,6 +2801,7 @@ def _tool_choice_steering_message(decision: ToolChoiceDecision, current_user_req
     allowed = ", ".join(sorted(decision.allowed_tool_names)) or "(no tools currently allowed)"
     preferred = ", ".join(decision.preferred_tool_names) or "(none)"
     missing = ", ".join(decision.missing_requirements) or "(none)"
+    hints = "\n".join(f"- call hint: {hint}" for hint in decision.tool_call_hints)
     request = _one_line(current_user_request or "", max_chars=800)
     if decision.force_final_answer_without_tools:
         return (
@@ -2807,6 +2822,7 @@ def _tool_choice_steering_message(decision: ToolChoiceDecision, current_user_req
         f"- preferred next tools: {preferred}\n"
         f"- allowed tools now: {allowed}\n"
         f"- reason: {decision.reason}\n"
+        f"{hints + chr(10) if hints else ''}"
         f"- original request: {request}"
     )
 
