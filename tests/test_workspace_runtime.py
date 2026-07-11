@@ -215,6 +215,46 @@ class WorkspaceRuntimeTests(unittest.TestCase):
             self.assertTrue(any(event.type == "WorkspaceMoved" for event in sink.events))
             close_clients.assert_called_once()
 
+    def test_path_scoped_rules_reload_after_add_and_move(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            backend = root / "backend"
+            frontend = root / "frontend"
+            external = root / "external"
+            state_root = root / "state-root"
+            for workspace, body in (
+                (backend, "BACKEND_PATH_RULE"),
+                (frontend, "FRONTEND_PATH_RULE"),
+                (external, "EXTERNAL_PATH_RULE"),
+            ):
+                (workspace / "src").mkdir(parents=True)
+                rule_dir = workspace / ".local-agent" / "rules"
+                rule_dir.mkdir(parents=True)
+                (rule_dir / "java.md").write_text(
+                    "---\npaths:\n  - src/**/*.java\npriority: 0\n---\n" + body + "\n",
+                    encoding="utf-8",
+                )
+            runtime = AgentRuntime(
+                _config(backend, state_dir=workspace_state_dir(state_root, backend), state_root=state_root),
+                show_tool_logs=False,
+            )
+
+            runtime._run.current_user_request = f"inspect {backend / 'src' / 'App.java'}"
+            backend_context = _system_content(runtime)
+            runtime.add_workspace_root(str(external))
+            runtime._run.current_user_request = f"inspect {external / 'src' / 'App.java'}"
+            external_context = _system_content(runtime)
+            runtime.move_workspace(str(frontend))
+            runtime._run.current_user_request = f"inspect {frontend / 'src' / 'App.java'}"
+            frontend_context = _system_content(runtime)
+
+        self.assertIn("BACKEND_PATH_RULE", backend_context)
+        self.assertIn("EXTERNAL_PATH_RULE", external_context)
+        self.assertNotIn("BACKEND_PATH_RULE", external_context)
+        self.assertIn("FRONTEND_PATH_RULE", frontend_context)
+        self.assertNotIn("BACKEND_PATH_RULE", frontend_context)
+        self.assertNotIn("EXTERNAL_PATH_RULE", frontend_context)
+
     def test_move_is_rejected_while_runtime_is_active(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp).resolve()

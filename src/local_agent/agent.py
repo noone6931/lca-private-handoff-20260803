@@ -40,6 +40,10 @@ from .patch.anchored import resolve_workspace_path
 from .planner import render_planner_explore_context
 from .patch_reviewer import review_input_summary
 from .patch_reviewer import review_input_metadata
+from .path_rules import candidate_paths_for_path_rules
+from .path_rules import discover_path_scoped_rules
+from .path_rules import matching_path_rule_context
+from .path_rules import render_path_rule_metadata
 from .requirement_evidence import render_pinned_requirement_evidence
 from .run_context import RunContext
 from .soft_tool_requirement import advance_soft_tool_requirement
@@ -118,6 +122,7 @@ Default working style:
 - Do not claim a command, test, or diff passed unless you actually ran the relevant tool.
 - Memory is advisory. Current user instructions and direct repository evidence override memory. Do not write memory or use learn unless the user asks you to remember something or a durable convention is clearly established.
 - User/project AGENTS.md context and RULES.md sticky rules are advisory operating guidance. Current user instructions and direct repository evidence still take precedence when they conflict.
+- Path-scoped rules are advisory project guidance. Their metadata may be visible for every request, but their bodies apply only after a relevant path is mentioned or inspected. They never grant tool permissions.
 - Keep final answers concise and include changed files, verification, and any remaining risk.
 """
 
@@ -273,6 +278,7 @@ class AgentRuntime:
         )
         self._user_config_dir = default_config_root()
         missing_roots = self._restore_session_workspace_roots()
+        self._path_rule_index = discover_path_scoped_rules(self._workspace_context.all_roots)
         system_prompt = self._build_system_prompt()
         self._messages: list[dict[str, Any]] = [
             {"role": "system", "content": system_prompt},
@@ -824,6 +830,7 @@ class AgentRuntime:
         # A read failure must not leave the session split across two state dirs.
         try:
             next_system_prompt = self._build_system_prompt_for(next_context, next_state_dir)
+            next_path_rule_index = discover_path_scoped_rules(next_context.all_roots)
             previous_session_bytes = self._session.path.read_bytes()
         except OSError as exc:
             raise WorkspaceMigrationError(f"Cannot prepare workspace move: {exc}") from exc
@@ -836,6 +843,7 @@ class AgentRuntime:
         previous_session_guards = self._session_guards
         previous_summary_cache = self._summary_cache
         previous_last_run_summary = self._last_run_summary
+        previous_path_rule_index = self._path_rule_index
         previous_session_location = (
             self._session.state_dir,
             self._session.session_dir,
@@ -874,6 +882,7 @@ class AgentRuntime:
             self._session_guards = SessionGuardState()
             self._summary_cache = {}
             self._last_run_summary = None
+            self._path_rule_index = next_path_rule_index
             close_all_clients()
             self._session.append("workspace_moved", payload)
         except Exception as exc:  # noqa: BLE001 - every post-migration commit must compensate.
@@ -885,6 +894,7 @@ class AgentRuntime:
             self._session_guards = previous_session_guards
             self._summary_cache = previous_summary_cache
             self._last_run_summary = previous_last_run_summary
+            self._path_rule_index = previous_path_rule_index
             rollback_error: Exception | None = None
             try:
                 rollback_session_artifacts(moves)
@@ -935,7 +945,11 @@ class AgentRuntime:
         )
         self._session_guards = SessionGuardState()
         self._summary_cache = {}
+        self._refresh_path_rules()
         self._emit_post_commit_event("WorkspaceRootsChanged", payload)
+
+    def _refresh_path_rules(self) -> None:
+        self._path_rule_index = discover_path_scoped_rules(self._workspace_context.all_roots)
 
     def _emit_post_commit_event(self, event_type: str, payload: dict[str, object]) -> None:
         """Notify an external sink without turning a committed workspace change into a rollback."""
@@ -1165,6 +1179,13 @@ class AgentRuntime:
             prompt=self._run.current_user_request,
             tool_results=list(self._run.tool_choice_results),
         )
+        path_rule_candidates = candidate_paths_for_path_rules(
+            self._run.current_user_request or "",
+            (result.path for result in self._run.tool_choice_results if result.path),
+            primary_workspace=self._workspace_context.primary,
+        )
+        path_rule_metadata = render_path_rule_metadata(self._path_rule_index)
+        matched_path_rules = matching_path_rule_context(self._path_rule_index, path_rule_candidates)
         return _provider_safe_messages(
             _messages_with_runtime_context(
                 messages,
@@ -1177,6 +1198,8 @@ class AgentRuntime:
                 self._run.current_user_request,
                 self._run.requirement_contract_context,
                 render_pinned_requirement_evidence(self._run.evidence.pinned_requirement_evidence),
+                path_rule_metadata,
+                matched_path_rules,
             )
         )
 
@@ -2230,6 +2253,8 @@ def _messages_with_runtime_context(
     current_user_request: str | None = None,
     requirement_contract_context: str = "",
     pinned_requirement_evidence: str = "",
+    path_rule_metadata: str = "",
+    matched_path_rules: str = "",
 ) -> list[dict[str, Any]]:
     updated = list(messages)
     workspace_roots = workspace_roots_context(workspace, allowed_dirs)
@@ -2246,6 +2271,10 @@ def _messages_with_runtime_context(
         updated = _messages_with_planner_explore_context(updated, planner_explore_context)
     if evidence_ledger:
         updated = _messages_with_evidence_ledger(updated, evidence_ledger)
+    if path_rule_metadata:
+        updated = _messages_with_path_rule_context(updated, path_rule_metadata, "[Path-scoped rules]")
+    if matched_path_rules:
+        updated = _messages_with_path_rule_context(updated, matched_path_rules, "[Matched path-scoped rules]")
     sticky_rules = load_sticky_rules(workspace, user_config_dir, max_chars=STICKY_RULES_CHAR_LIMIT)
     if sticky_rules:
         updated = _messages_with_sticky_rules(updated, sticky_rules)
@@ -2402,6 +2431,19 @@ def _messages_with_sticky_rules(messages: list[dict[str, Any]], sticky_rules: st
     system_messages = [message for message in messages if message.get("role") == "system"]
     non_system = [message for message in messages if message.get("role") != "system"]
     return [_system_message_with_appended_context(system_messages, block), *non_system]
+
+
+def _messages_with_path_rule_context(
+    messages: list[dict[str, Any]],
+    context: str,
+    marker: str,
+) -> list[dict[str, Any]]:
+    system_messages = [message for message in messages if message.get("role") == "system"]
+    non_system = [message for message in messages if message.get("role") != "system"]
+    base = dict(system_messages[0]) if system_messages else {"role": "system", "content": SYSTEM_PROMPT}
+    base["content"] = _remove_marked_context_blocks(str(base.get("content") or ""), marker)
+    base = _system_message_with_appended_context([base], context)
+    return [base, *non_system]
 
 
 def _system_message_with_appended_context(
