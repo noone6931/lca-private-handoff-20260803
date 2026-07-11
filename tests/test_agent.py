@@ -1105,6 +1105,31 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertNotIn("run_tests", first_tools)
         self.assertNotIn("shell", first_tools)
 
+    def test_denied_tools_are_hidden_from_model_and_tool_choice_availability(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=Path(tmp).resolve(),
+                max_steps=1,
+                budget_seconds=None,
+                approval_mode="yolo",
+                tool_approval={"shell": "deny", "run_tests": "deny"},
+            )
+            runtime = AgentRuntime(config, show_tool_logs=False)
+            runtime.set_session_tool_policy("git_status", "deny")
+
+            model_tools = _tool_names_from_schema_call(runtime._tools_for_model())
+            available_tools = set(runtime._available_registry_tool_names())
+
+        for name in {"shell", "run_tests", "git_status"}:
+            self.assertNotIn(name, model_tools)
+            self.assertNotIn(name, available_tools)
+        self.assertIn("read_file", model_tools)
+        self.assertIn("read_file", available_tools)
+
     def test_tool_choice_queue_restricts_implementation_to_explore_tools_before_evidence(self) -> None:
         _ToolSchemaRecordingClient.calls = []
         with tempfile.TemporaryDirectory() as tmp:

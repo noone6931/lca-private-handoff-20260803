@@ -531,13 +531,32 @@ class AgentRuntime:
         allowed_names = self._effective_runtime_tool_allowlist()
         if allowed_names == set():
             return []
+        denied_names = self._denied_model_tool_names()
         if allowed_names is None:
-            return self._registry.schemas()
+            return [
+                schema
+                for schema in self._registry.schemas()
+                if schema.get("function", {}).get("name") not in denied_names
+            ]
         return [
             schema
             for schema in self._registry.schemas()
             if schema.get("function", {}).get("name") in allowed_names
+            and schema.get("function", {}).get("name") not in denied_names
         ]
+
+    def _denied_model_tool_names(self) -> set[str]:
+        denied = {
+            name
+            for name, policy in (self._tool_context.tool_approval or {}).items()
+            if policy == "deny"
+        }
+        denied.update(
+            name
+            for name, policy in self._session_tool_approval.items()
+            if policy == "reject_always"
+        )
+        return denied
 
     def _effective_runtime_tool_allowlist(self) -> set[str] | None:
         if self._run.force_final_answer_without_tools:
@@ -628,12 +647,13 @@ class AgentRuntime:
         return None
 
     def _available_registry_tool_names(self) -> tuple[str, ...]:
+        denied_names = self._denied_model_tool_names()
         if hasattr(self._registry, "tool_names"):
-            return tuple(self._registry.tool_names())
+            return tuple(name for name in self._registry.tool_names() if name not in denied_names)
         names: list[str] = []
         for schema in self._registry.schemas():
             name = schema.get("function", {}).get("name")
-            if isinstance(name, str) and name:
+            if isinstance(name, str) and name and name not in denied_names:
                 names.append(name)
         return tuple(names)
 

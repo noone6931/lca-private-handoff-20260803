@@ -162,3 +162,40 @@ backend primary
 ```
 
 之后当前 session 的 Git、shell、startup rules、project memory/skills 和默认 LSP root 都以新项目为准；旧项目会显示为 session root。下次继续该会话时，应使用新 primary 的 `--cwd` 和原 session id。
+
+---
+
+# T-130 真实跨项目需求只读压测（2026-07-11）
+
+## 范围与结论
+
+目标是在真实需求、后端 `zqylpaymentmaster9d423763` 和前端 `mpspaymasterce6ca65` 三个明确 roots 上，验证 LCA 是否能在不写入业务项目的前提下收束出可实施的影响范围。
+
+结论：**只读证据链部分通过，尚不允许进入业务写入。** LCA 成功读取需求、后端平台费用/预制单邻近代码和前端预制单/接口模块；但没有取得订单“拓展服务费”字段、制单状态、结算单表、模板配置和真正数据归属的源码/DDL 证据。最终回答中的 `SettlementBillApplication`、`MonthlySettlementJob`、`SettlementList.vue` 只是实现候选，不能被当成既有代码事实或直接开始创建。
+
+## 真实压测证据
+
+| 项 | 事实 |
+|---|---|
+| session | `20260711T013052126987Z` |
+| roots | primary=`zqylpaymentmaster9d423763`；allowed requirement Markdown；allowed frontend=`mpspaymasterce6ca65` |
+| 需求证据 | 成功读取 `需求文档-拓展服务费结算V1.3.md`：待制单筛选、JS 编号、制单/回退事务、Word 变量、导出规则均有明确描述 |
+| 后端邻近证据 | 成功读取 `PrepareOrderApplication.java`、`PrepareOrderBO.java`、`PlatformOrderInfoEntity.java`、`HistoryPlatformOrderBO.java`；搜索定位 `PlatformOrderController.java` 和“平台费用-预制单管理-待制单”下载模块 |
+| 前端邻近证据 | 成功读取 `src/views/preOrderManagement/list.vue`、`src/store/modules/platformPayment.js`、`src/assets/interface/pay/platformPayment.js`、路由模块；当前已有预制单管理和缴费单管理入口 |
+| run summary | 323,168 ms；70 次 LLM 请求；68 次工具调用；9 次 tool error；11 次 useless result；66 次 compaction |
+| 安全副作用 | 配置 deny 的 shell/run_tests/write/memory 未产生业务写入；没有 `apply_patch` 或 Git diff |
+
+## 问题、OMP 对照与措施
+
+| ID | 压测事实 | OMP 源码事实 | LCA 措施 | 状态 |
+|---|---|---|---|---|
+| PT-053 | `tool_approval=deny` 的 `run_tests` 仍出现在模型可见工具中，模型把 `find` 误当测试命令调用，浪费一步。 | OMP `AgentSession.#applyActiveToolsByName()` 只把 active tool 集交给 Agent；`agent.ts:74-89` 还会在 active tools 中校验 forced `toolChoice`。 | `_tools_for_model()` 与 Queue 的 available tool names 均过滤 config/session deny；Registry deny 保留为最终执行边界。 | 已修复，待真实复测。 |
+| PT-054 | 百炼返回 `todo_text`、`lsp_symbols.pattern`、`__invalid_tool_call`、错误前端路径等 provider 方言/规划错误。 | OMP 以 schema、active tools 和 `coerceToolResult()` 收敛无效工具结果，但不把未知 payload 静默解释成任意副作用。 | 保持严格 schema；只对已验证且语义无歧义的 scalar alias 兼容。`todo_text` 的批量语义不明确，暂不接收。 | 开放，归为 provider compatibility。 |
+| PT-055 | 跨项目只读设计在已读取 requirement+backend+frontend 后仍继续 68 次工具调用，目录枚举和大搜索过多。 | OMP 对软工具要求/病态探索设置显式小上限，并用 ToolChoiceQueue 在满足或失败后收束；主循环不靠总步数截断。 | 下一项 T-131：为“跨 root 需求设计”定义 evidence coverage 后的有限补证预算和 final handoff，不增加新的 `agent.py` inline guard。 | 待实施。 |
+| PT-056 | 最终回答把未证实类名/字段名写进分阶段方案，虽标 blocked，仍可能被误当实现定位。 | OMP 的 project context/tool result 只能提供证据，不能把生成候选升级为源码事实。 | T-131 同时要求设计输出把“已证实文件”“建议新增候选”“缺失输入”分栏，候选不得伪装为现有路径。 | 待实施。 |
+
+## 进入业务实现前的最小前置条件
+
+1. 确认订单“拓展服务费”和“制单状态”所在服务/表/DTO，以及该服务目录的授权路径。
+2. 提供或定位结算单主表/明细表的 DDL、模板管理接口/模板编号和下载中心契约。
+3. 以这些真实 owner roots 重跑只读设计；结论稳定后，才在同一 session `/move` 到被确认的 primary，进行一个明确目标的小改验证。
