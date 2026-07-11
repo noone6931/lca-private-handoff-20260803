@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 
 from local_agent.run_context import EvidenceRecord
+from local_agent.run_context import FINAL_ANSWER_STEERING_PRESENTATION
 from local_agent.run_context import MAX_FORCED_FINAL_ANSWER_CONTINUATIONS
 from local_agent.run_context import RunContext
 from local_agent.task_contract import generate_requirement_contract
@@ -72,6 +73,23 @@ class RunContextTests(unittest.TestCase):
         context.reset_forced_final_answer_continuations()
         self.assertTrue(context.can_queue_forced_final_answer())
         self.assertEqual(context.forced_final_answer_continuations, 0)
+
+    def test_forced_final_request_tracks_fallback_safety_and_resets_after_tool_progress(self) -> None:
+        context = RunContext()
+
+        self.assertTrue(
+            context.queue_forced_final_answer(
+                kind="final_structure",
+                severity=FINAL_ANSWER_STEERING_PRESENTATION,
+            )
+        )
+        self.assertEqual(context.forced_final_answer_kind, "final_structure")
+        self.assertTrue(context.allows_forced_final_draft_fallback())
+
+        context.reset_forced_final_answer_continuations()
+
+        self.assertFalse(context.allows_forced_final_draft_fallback())
+        self.assertEqual(context.forced_final_answer_kind, "runtime_forced_final")
 
 
 def _duplicate_tool_signals():

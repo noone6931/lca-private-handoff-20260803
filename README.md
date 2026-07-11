@@ -101,6 +101,8 @@ export AGENT_ALLOWED_DIRS="/path/to/requirements:/path/to/other-read-write-root"
 python3 -m pip install -e ".[terminal]"
 ```
 
+在 chat 中输入 `/` 或命令前缀（例如 `/wor`）会显示带说明的补全候选，按 `Tab` 完成；`/workspace` 和 `/approval` 会继续补全各自合法的子命令。普通自然语言和多行编辑不受影响。
+
 如果没有安装这些可选依赖，`./agent` 仍会降级为普通终端输入输出，不影响一次性任务。
 
 任务运行期间，LCA 会临时静默终端输入回显，避免你误敲的内容混入工具日志；遇到 approval 或 ask_user 时会恢复输入并清理运行期间的误敲缓冲。需要边看边连续提问时，优先使用 `./agent --chat`。

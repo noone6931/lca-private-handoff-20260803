@@ -5,7 +5,7 @@ import unittest
 from contextlib import contextmanager
 from unittest.mock import patch
 
-from local_agent.frontends.terminal.app import run_terminal_chat
+from local_agent.frontends.terminal.app import run_terminal_chat, slash_command_completions
 from local_agent.frontends.terminal.renderer import TerminalEventSink
 from local_agent.protocol.events import AgentEvent
 
@@ -20,6 +20,41 @@ class _FakeRuntime:
 
 
 class TerminalFrontendTests(unittest.TestCase):
+    def test_slash_command_completions_offer_root_commands_with_descriptions(self) -> None:
+        root_completions = slash_command_completions("/")
+        completions = slash_command_completions("/wor")
+
+        self.assertIn("/help", [completion.text for completion in root_completions])
+        self.assertIn("/approval", [completion.text for completion in root_completions])
+        self.assertTrue(all(completion.description for completion in root_completions))
+        self.assertEqual(len(completions), 1)
+        self.assertEqual(completions[0].text, "/workspace")
+        self.assertEqual(completions[0].start_position, -4)
+        self.assertIn("workspace", completions[0].description)
+
+    def test_slash_command_completions_offer_workspace_subcommands(self) -> None:
+        completions = slash_command_completions("/workspace r")
+
+        self.assertEqual([completion.text for completion in completions], ["remove", "reset"])
+        self.assertTrue(all(completion.description for completion in completions))
+        self.assertTrue(all(completion.start_position == -1 for completion in completions))
+
+    def test_slash_command_completions_offer_approval_subcommands_and_modes(self) -> None:
+        subcommands = slash_command_completions("/approval ")
+        modes = slash_command_completions("/approval mode w")
+
+        self.assertEqual(
+            [completion.text for completion in subcommands],
+            ["mode", "allow", "prompt", "deny", "reset"],
+        )
+        self.assertEqual([completion.text for completion in modes], ["write"])
+        self.assertIn("Allow read", modes[0].description)
+
+    def test_slash_command_completions_do_not_touch_natural_language_or_multiline_input(self) -> None:
+        self.assertEqual(slash_command_completions("please /workspace"), ())
+        self.assertEqual(slash_command_completions("/workspace\nlist"), ())
+        self.assertEqual(slash_command_completions("/workspace add /tmp"), ())
+
     def test_terminal_chat_runs_prompts_and_routes_commands(self) -> None:
         runtime = _FakeRuntime()
         commands = []

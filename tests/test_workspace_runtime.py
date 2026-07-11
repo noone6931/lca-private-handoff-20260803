@@ -10,6 +10,7 @@ from local_agent.config import AgentConfig
 from local_agent.design_evidence import cross_root_design_evidence_roots
 from local_agent.protocol.events import ListEventSink
 from local_agent.state import workspace_state_dir
+from local_agent.workspace_migration import WorkspaceMigrationError
 
 
 class WorkspaceRuntimeTests(unittest.TestCase):
@@ -172,6 +173,78 @@ class WorkspaceRuntimeTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "idle"):
                 runtime.move_workspace(str(frontend))
 
+    def test_move_relocate_failure_restores_runtime_and_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime, backend, frontend, backend_state, frontend_state, sink = _move_runtime(Path(tmp))
+            session_id = runtime._session.session_id
+            original_session = (backend_state / "sessions" / f"{session_id}.jsonl").read_bytes()
+
+            with patch.object(runtime._session, "relocate", side_effect=RuntimeError("simulated relocate failure")):
+                with self.assertRaisesRegex(WorkspaceMigrationError, "simulated relocate failure"):
+                    runtime.move_workspace(str(frontend))
+
+            _assert_move_rolled_back(
+                self,
+                runtime,
+                backend,
+                frontend,
+                backend_state,
+                frontend_state,
+                session_id,
+                original_session,
+                sink,
+            )
+
+    def test_move_session_append_failure_restores_runtime_and_session_bytes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime, backend, frontend, backend_state, frontend_state, sink = _move_runtime(Path(tmp))
+            session_id = runtime._session.session_id
+            original_session = (backend_state / "sessions" / f"{session_id}.jsonl").read_bytes()
+            original_append = runtime._session.append
+
+            def fail_after_writing_move(event: str, payload: dict[str, object]) -> None:
+                original_append(event, payload)
+                if event == "workspace_moved":
+                    raise OSError("simulated session append failure")
+
+            with patch.object(runtime._session, "append", side_effect=fail_after_writing_move):
+                with self.assertRaisesRegex(WorkspaceMigrationError, "simulated session append failure"):
+                    runtime.move_workspace(str(frontend))
+
+            _assert_move_rolled_back(
+                self,
+                runtime,
+                backend,
+                frontend,
+                backend_state,
+                frontend_state,
+                session_id,
+                original_session,
+                sink,
+            )
+
+    def test_move_context_preflight_failure_does_not_migrate_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime, backend, frontend, backend_state, frontend_state, sink = _move_runtime(Path(tmp))
+            session_id = runtime._session.session_id
+            original_session = (backend_state / "sessions" / f"{session_id}.jsonl").read_bytes()
+
+            with patch.object(runtime, "_build_system_prompt_for", side_effect=OSError("simulated context reload failure")):
+                with self.assertRaisesRegex(WorkspaceMigrationError, "simulated context reload failure"):
+                    runtime.move_workspace(str(frontend))
+
+            _assert_move_rolled_back(
+                self,
+                runtime,
+                backend,
+                frontend,
+                backend_state,
+                frontend_state,
+                session_id,
+                original_session,
+                sink,
+            )
+
 
 def _config(
     workspace: Path,
@@ -191,6 +264,55 @@ def _config(
         budget_seconds=None,
         approval_mode="yolo",
     )
+
+
+def _move_runtime(
+    root: Path,
+) -> tuple[AgentRuntime, Path, Path, Path, Path, ListEventSink]:
+    root = root.resolve()
+    backend = root / "backend"
+    frontend = root / "frontend"
+    state_root = root / "state-root"
+    backend.mkdir()
+    frontend.mkdir()
+    backend_state = workspace_state_dir(state_root, backend)
+    frontend_state = workspace_state_dir(state_root, frontend)
+    sink = ListEventSink()
+    runtime = AgentRuntime(
+        _config(backend, state_dir=backend_state, state_root=state_root),
+        show_tool_logs=False,
+        event_sink=sink,
+    )
+    session_id = runtime._session.session_id
+    for category, suffix in (("todos", ".json"), ("patches", ".jsonl")):
+        path = backend_state / category / f"{session_id}{suffix}"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"{category}\n", encoding="utf-8")
+    return runtime, backend, frontend, backend_state, frontend_state, sink
+
+
+def _assert_move_rolled_back(
+    test: unittest.TestCase,
+    runtime: AgentRuntime,
+    backend: Path,
+    frontend: Path,
+    backend_state: Path,
+    frontend_state: Path,
+    session_id: str,
+    original_session: bytes,
+    sink: ListEventSink,
+) -> None:
+    test.assertEqual(runtime._workspace_context.primary, backend)
+    test.assertEqual(runtime._state_dir, backend_state)
+    test.assertEqual(runtime._tool_context.workspace, backend)
+    test.assertEqual(runtime._tool_context.state_dir, backend_state)
+    test.assertEqual(runtime._session.state_dir, backend_state)
+    test.assertEqual(runtime._session.path, backend_state / "sessions" / f"{session_id}.jsonl")
+    test.assertEqual(runtime._session.path.read_bytes(), original_session)
+    for category, suffix in (("sessions", ".jsonl"), ("todos", ".json"), ("patches", ".jsonl")):
+        test.assertTrue((backend_state / category / f"{session_id}{suffix}").exists())
+        test.assertFalse((frontend_state / category / f"{session_id}{suffix}").exists())
+    test.assertFalse(any(event.type == "WorkspaceMoved" for event in sink.events))
 
 
 def _system_content(runtime: AgentRuntime) -> str:

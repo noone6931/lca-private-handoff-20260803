@@ -61,8 +61,11 @@ from .session_guard_state import SessionGuardState
 from .state import default_config_root
 from .state import workspace_state_dir
 from .workspace_context import WorkspaceContext
+from .workspace_migration import WorkspaceMigrationError
 from .workspace_migration import migrate_session_artifacts
+from .workspace_migration import rollback_session_artifacts
 from .steering.final_answer import FinalAnswerContext
+from .steering.final_answer import FinalAnswerSteeringSeverity
 from .steering.final_answer import FinalAnswerSteerer
 from .steering.final_answer import FinalStructureSteerer
 from .steering.final_answer import CompletionAuditSteerer
@@ -73,6 +76,7 @@ from .steering.final_answer import ReadOnlyEvidenceSteerer
 from .steering.final_answer import RequirementEvidenceSteerer
 from .steering.final_answer import SourceEvidenceFalseNegativeSteerer
 from .steering.final_answer import request_mentions_todo
+from .steering.final_answer import render_unverified_final_answer
 from .steering.final_answer import SourceGroundedNumericSteerer
 from .steering.final_answer import SteeringDecision
 from .steering.tool_loop import ToolLoopSignals
@@ -422,6 +426,7 @@ class AgentRuntime:
                 raise
             if force_final_answer:
                 self._session.append("runtime_steering", {"kind": "forced_final_answer", "step": step})
+                self._run.clear_forced_final_answer_request()
             message = _provider_safe_assistant_message({**response.message, "role": "assistant"})
             self._messages.append(message)
             self._session.append("assistant", message)
@@ -631,7 +636,7 @@ class AgentRuntime:
             if coverage.message is not None:
                 self._messages.append({"role": "user", "content": coverage.message})
                 if coverage.force_final_answer_without_tools:
-                    if self._run.queue_forced_final_answer():
+                    if self._run.queue_forced_final_answer(kind=coverage.kind):
                         self._run.force_final_answer_without_tools = True
                     else:
                         self._session.append(
@@ -778,30 +783,35 @@ class AgentRuntime:
         next_state_dir = workspace_state_dir(self._state_root, next_context.primary)
         # Loading startup sources is intentionally done before moving any artifact.
         # A read failure must not leave the session split across two state dirs.
-        next_system_prompt = self._build_system_prompt_for(next_context, next_state_dir)
-        migrate_session_artifacts(
-            source_state_dir=self._state_dir,
-            target_state_dir=next_state_dir,
-            session_id=self._session.session_id,
+        try:
+            next_system_prompt = self._build_system_prompt_for(next_context, next_state_dir)
+            previous_session_bytes = self._session.path.read_bytes()
+        except OSError as exc:
+            raise WorkspaceMigrationError(f"Cannot prepare workspace move: {exc}") from exc
+
+        previous_workspace_context = self._workspace_context
+        previous_state_dir = self._state_dir
+        previous_tool_context = self._tool_context
+        previous_messages = self._messages
+        previous_run = self._run
+        previous_session_guards = self._session_guards
+        previous_summary_cache = self._summary_cache
+        previous_last_run_summary = self._last_run_summary
+        previous_session_location = (
+            self._session.state_dir,
+            self._session.session_dir,
+            self._session.path,
         )
-        self._workspace_context = next_context
-        self._state_dir = next_state_dir
-        self._session.relocate(next_state_dir)
-        self._tool_context = replace(
+        next_tool_context = replace(
             self._tool_context,
             workspace=next_context.primary,
             state_dir=next_state_dir,
             allowed_dirs=next_context.additional_roots,
         )
-        self._messages = [
+        next_messages = [
             {"role": "system", "content": next_system_prompt},
             *(message for message in self._messages if message.get("role") != "system"),
         ]
-        self._run = RunContext()
-        self._session_guards = SessionGuardState()
-        self._summary_cache.clear()
-        self._last_run_summary = None
-        close_all_clients()
         payload = next_context.snapshot(operation="move", path=next_context.primary, changed=True)
         payload.update(
             {
@@ -809,8 +819,48 @@ class AgentRuntime:
                 "state_dir": str(next_state_dir),
             }
         )
-        self._session.append("workspace_moved", payload)
-        self._events.emit("WorkspaceMoved", payload)
+        moves = migrate_session_artifacts(
+            source_state_dir=self._state_dir,
+            target_state_dir=next_state_dir,
+            session_id=self._session.session_id,
+        )
+
+        try:
+            self._session.relocate(next_state_dir)
+            self._workspace_context = next_context
+            self._state_dir = next_state_dir
+            self._tool_context = next_tool_context
+            self._messages = next_messages
+            self._run = RunContext()
+            self._session_guards = SessionGuardState()
+            self._summary_cache = {}
+            self._last_run_summary = None
+            close_all_clients()
+            self._session.append("workspace_moved", payload)
+            self._events.emit("WorkspaceMoved", payload)
+        except Exception as exc:  # noqa: BLE001 - every post-migration commit must compensate.
+            self._workspace_context = previous_workspace_context
+            self._state_dir = previous_state_dir
+            self._tool_context = previous_tool_context
+            self._messages = previous_messages
+            self._run = previous_run
+            self._session_guards = previous_session_guards
+            self._summary_cache = previous_summary_cache
+            self._last_run_summary = previous_last_run_summary
+            rollback_error: Exception | None = None
+            try:
+                rollback_session_artifacts(moves)
+                previous_session_location[2].write_bytes(previous_session_bytes)
+            except Exception as rollback_exc:  # noqa: BLE001 - include compensation failure in the raised error.
+                rollback_error = rollback_exc
+            finally:
+                # JsonlSessionStore.relocate() only assigns these three fields. Restore
+                # them directly so a failing relocate mock cannot strand Runtime state.
+                self._session.state_dir = previous_session_location[0]
+                self._session.session_dir = previous_session_location[1]
+                self._session.path = previous_session_location[2]
+            detail = f"; rollback failed: {rollback_error}" if rollback_error is not None else ""
+            raise WorkspaceMigrationError(f"Workspace move failed and was rolled back: {exc}{detail}") from exc
         return next_context.primary
 
     def _ensure_workspace_idle(self) -> None:
@@ -1196,12 +1246,28 @@ class AgentRuntime:
     ) -> str | None:
         if not forced_final_answer:
             return None
+        kind = self._run.forced_final_answer_kind
+        if not self._run.allows_forced_final_draft_fallback():
+            self._session.append(
+                "runtime_steering",
+                {
+                    "kind": "forced_final_timeout_unverified",
+                    "steering_kind": kind,
+                    "error": str(error),
+                },
+            )
+            return self._finish_run(
+                render_unverified_final_answer(kind, "rewrite_timeout"),
+                deadline,
+                run_start_index,
+                reason="forced_final_timeout_unverified",
+            )
         draft = _most_recent_terminal_assistant_content(self._messages[run_start_index:])
         if not draft:
             return None
         self._session.append(
             "runtime_steering",
-            {"kind": "forced_final_timeout_fallback", "error": str(error)},
+            {"kind": "forced_final_timeout_fallback", "steering_kind": kind, "error": str(error)},
         )
         content = (
             f"{draft}\n\n"
@@ -1361,7 +1427,10 @@ class AgentRuntime:
             "steer_count": self._run.tool_loop_steering.count(decision.kind),
         }
         self._session.append("runtime_steering", payload)
-        self._run.force_final_answer_without_tools = decision.force_final_answer_without_tools
+        if decision.force_final_answer_without_tools:
+            self._run.request_forced_final_answer(kind=decision.kind)
+        else:
+            self._run.clear_forced_final_answer_request()
         self._run.temporary_tool_allowlist = decision.temporary_tool_allowlist
 
     def _tool_loop_stop_message(self, kind: str) -> str:
@@ -1540,8 +1609,21 @@ class AgentRuntime:
                         "reason": skip_reason,
                     },
                 )
+                if decision.severity == FinalAnswerSteeringSeverity.HARD:
+                    self._run.block_unverified_final_answer(kind=decision.kind, reason=skip_reason)
+                    self._session.append(
+                        "runtime_steering",
+                        {
+                            "kind": "final_answer_hard_gate_unresolved",
+                            "steering_kind": decision.kind,
+                            "reason": skip_reason,
+                        },
+                    )
                 return False
-            if not self._run.queue_forced_final_answer():
+            if not self._run.queue_forced_final_answer(
+                kind=decision.kind,
+                severity=decision.severity.value,
+            ):
                 self._session.append(
                     "runtime_steering",
                     {
@@ -1550,6 +1632,16 @@ class AgentRuntime:
                         "reason": "continuation_limit",
                     },
                 )
+                if decision.severity == FinalAnswerSteeringSeverity.HARD:
+                    self._run.block_unverified_final_answer(kind=decision.kind, reason="continuation_limit")
+                    self._session.append(
+                        "runtime_steering",
+                        {
+                            "kind": "final_answer_hard_gate_unresolved",
+                            "steering_kind": decision.kind,
+                            "reason": "continuation_limit",
+                        },
+                    )
                 return False
         steer_count = self._increment_final_answer_steer_count(decision.kind)
         self._messages.append({"role": "user", "content": decision.message})
@@ -1559,7 +1651,10 @@ class AgentRuntime:
             "steer_count": steer_count,
         }
         self._session.append("runtime_steering", payload)
-        self._run.force_final_answer_without_tools = decision.force_final_answer_without_tools
+        if decision.force_final_answer_without_tools:
+            self._run.force_final_answer_without_tools = True
+        else:
+            self._run.clear_forced_final_answer_request()
         self._run.temporary_tool_allowlist = decision.temporary_tool_allowlist
         return True
 
@@ -1657,6 +1752,11 @@ class AgentRuntime:
         *,
         reason: str = "final",
     ) -> str:
+        hard_gate = self._run.unresolved_final_answer_gate
+        if hard_gate is not None:
+            content = render_unverified_final_answer(hard_gate.kind, hard_gate.reason)
+            if reason == "final":
+                reason = "unverified_final_gate"
         self._session.append("final", {"content": content})
         run_messages = self._messages[run_start_index:]
         self._maybe_consolidate_session_memory(run_messages, content, deadline)

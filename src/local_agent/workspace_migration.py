@@ -47,16 +47,40 @@ def migrate_session_artifacts(*, source_state_dir: Path, target_state_dir: Path,
             os.replace(move.source, move.target)
             moved.append(move)
     except OSError as exc:
-        rollback_errors: list[str] = []
-        for completed in reversed(moved):
-            try:
-                completed.source.parent.mkdir(parents=True, exist_ok=True)
-                os.replace(completed.target, completed.source)
-            except OSError as rollback_exc:
-                rollback_errors.append(f"{completed.target}: {rollback_exc}")
-        detail = f"; rollback errors: {'; '.join(rollback_errors)}" if rollback_errors else ""
+        try:
+            rollback_session_artifacts(moved)
+            detail = ""
+        except WorkspaceMigrationError as rollback_exc:
+            detail = f"; rollback errors: {rollback_exc}"
         raise WorkspaceMigrationError(f"Workspace session migration failed: {exc}{detail}") from exc
     return moves
 
 
-__all__ = ["SessionArtifactMove", "WorkspaceMigrationError", "migrate_session_artifacts"]
+def rollback_session_artifacts(moves: tuple[SessionArtifactMove, ...] | list[SessionArtifactMove]) -> None:
+    """Move completed artifacts back to their original state directory.
+
+    This is intentionally public to let the Runtime compensate when a later
+    in-memory or session-store commit fails after the filesystem move succeeds.
+    """
+
+    rollback_errors: list[str] = []
+    for completed in reversed(moves):
+        try:
+            if not completed.target.exists():
+                raise FileNotFoundError(f"Migrated artifact is missing: {completed.target}")
+            if completed.source.exists():
+                raise FileExistsError(f"Refusing to overwrite restored artifact: {completed.source}")
+            completed.source.parent.mkdir(parents=True, exist_ok=True)
+            os.replace(completed.target, completed.source)
+        except OSError as exc:
+            rollback_errors.append(f"{completed.target}: {exc}")
+    if rollback_errors:
+        raise WorkspaceMigrationError("; ".join(rollback_errors))
+
+
+__all__ = [
+    "SessionArtifactMove",
+    "WorkspaceMigrationError",
+    "migrate_session_artifacts",
+    "rollback_session_artifacts",
+]

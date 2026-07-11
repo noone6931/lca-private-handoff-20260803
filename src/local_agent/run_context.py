@@ -15,6 +15,16 @@ from .tool_choice_queue import ToolResultSummary
 
 
 MAX_FORCED_FINAL_ANSWER_CONTINUATIONS = 8
+FINAL_ANSWER_STEERING_HARD = "hard"
+FINAL_ANSWER_STEERING_PRESENTATION = "presentation"
+
+
+@dataclass(frozen=True)
+class UnresolvedFinalAnswerGate:
+    """A correctness gate that could not be rewritten before the run stopped."""
+
+    kind: str
+    reason: str
 
 
 @dataclass
@@ -30,6 +40,9 @@ class RunContext:
     read_file_drift_guard_enabled: bool = False
     force_final_answer_without_tools: bool = False
     forced_final_answer_continuations: int = 0
+    forced_final_answer_kind: str = "runtime_forced_final"
+    forced_final_answer_severity: str = FINAL_ANSWER_STEERING_HARD
+    unresolved_final_answer_gate: UnresolvedFinalAnswerGate | None = None
     temporary_tool_allowlist: set[str] | None = None
     tool_choice_allowed_tool_names: set[str] | None = None
     tool_choice_read_file_paths: set[str] | None = None
@@ -136,6 +149,9 @@ class RunContext:
         self.read_file_drift_guard_enabled = False
         self.force_final_answer_without_tools = False
         self.forced_final_answer_continuations = 0
+        self.forced_final_answer_kind = "runtime_forced_final"
+        self.forced_final_answer_severity = FINAL_ANSWER_STEERING_HARD
+        self.unresolved_final_answer_gate = None
         self.temporary_tool_allowlist = None
         self.tool_choice_allowed_tool_names = None
         self.tool_choice_read_file_paths = None
@@ -174,13 +190,44 @@ class RunContext:
     def can_queue_forced_final_answer(self) -> bool:
         return self.forced_final_answer_continuations < MAX_FORCED_FINAL_ANSWER_CONTINUATIONS
 
-    def queue_forced_final_answer(self) -> bool:
+    def queue_forced_final_answer(
+        self,
+        *,
+        kind: str = "runtime_forced_final",
+        severity: str = FINAL_ANSWER_STEERING_HARD,
+    ) -> bool:
         if not self.can_queue_forced_final_answer():
             return False
         self.forced_final_answer_continuations += 1
+        self.forced_final_answer_kind = kind
+        self.forced_final_answer_severity = severity
         return True
+
+    def request_forced_final_answer(
+        self,
+        *,
+        kind: str,
+        severity: str = FINAL_ANSWER_STEERING_HARD,
+    ) -> None:
+        """Record why the next no-tool response is being forced."""
+
+        self.force_final_answer_without_tools = True
+        self.forced_final_answer_kind = kind
+        self.forced_final_answer_severity = severity
+
+    def clear_forced_final_answer_request(self) -> None:
+        self.force_final_answer_without_tools = False
+        self.forced_final_answer_kind = "runtime_forced_final"
+        self.forced_final_answer_severity = FINAL_ANSWER_STEERING_HARD
+
+    def allows_forced_final_draft_fallback(self) -> bool:
+        return self.forced_final_answer_severity == FINAL_ANSWER_STEERING_PRESENTATION
+
+    def block_unverified_final_answer(self, *, kind: str, reason: str) -> None:
+        self.unresolved_final_answer_gate = UnresolvedFinalAnswerGate(kind=kind, reason=reason)
 
     def reset_forced_final_answer_continuations(self) -> None:
         # Mirrors OMP's continuation accounting: a real tool turn resets the
         # no-tool resample budget because the agent made observable progress.
         self.forced_final_answer_continuations = 0
+        self.clear_forced_final_answer_request()

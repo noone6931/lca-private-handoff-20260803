@@ -17,9 +17,11 @@ from local_agent.design_evidence import DesignEvidenceCoverageSteerer
 from local_agent.llm import LlmError
 from local_agent.protocol.events import ListEventSink
 from local_agent.requirement_evidence import RequirementEvidence
+from local_agent.run_context import MAX_FORCED_FINAL_ANSWER_CONTINUATIONS
 from local_agent.steering.final_answer import SourceEvidence
 from local_agent.steering.final_answer import DesignEvidenceSteerer
 from local_agent.steering.final_answer import FinalAnswerContext
+from local_agent.steering.final_answer import FinalAnswerSteeringSeverity
 from local_agent.steering.final_answer import RequirementEvidenceSteerer
 from local_agent.steering.final_answer import SourceEvidenceFalseNegativeSteerer
 from local_agent.steering.final_answer import SteeringDecision
@@ -1948,11 +1950,17 @@ class AgentRuntimeTests(unittest.TestCase):
             runtime._run.deadline_monotonic = time.monotonic() + 1
 
             applied = runtime._apply_final_answer_steering(
-                SteeringDecision(kind="final_structure", message="rewrite", payload={})
+                SteeringDecision(
+                    kind="final_structure",
+                    message="rewrite",
+                    payload={},
+                    severity=FinalAnswerSteeringSeverity.PRESENTATION,
+                )
             )
             records = [json.loads(line) for line in runtime._session.path.read_text(encoding="utf-8").splitlines()]
 
         self.assertFalse(applied)
+        self.assertIsNone(runtime._run.unresolved_final_answer_gate)
         self.assertTrue(
             any(
                 record.get("event") == "runtime_steering"
@@ -1962,7 +1970,60 @@ class AgentRuntimeTests(unittest.TestCase):
             )
         )
 
-    def test_forced_final_timeout_returns_latest_terminal_draft(self) -> None:
+    def test_hard_final_answer_rewrite_inside_deadline_reserve_returns_unverified_result(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=Path(tmp).resolve(),
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+            )
+            runtime = AgentRuntime(config, show_tool_logs=False)
+            runtime._run.deadline_monotonic = time.monotonic() + 1
+
+            applied = runtime._apply_final_answer_steering(
+                SteeringDecision(kind="completion_audit", message="rewrite", payload={})
+            )
+            result = runtime._finish_run("错误地声称已经完成", runtime._run.deadline_monotonic, 0)
+
+        self.assertFalse(applied)
+        self.assertNotIn("错误地声称已经完成", result)
+        self.assertIn("未完成/未验证", result)
+        self.assertIn("完成验收", result)
+        self.assertEqual(runtime._last_run_summary["termination_reason"], "unverified_final_gate")
+
+    def test_hard_final_answer_rewrite_at_continuation_limit_returns_unverified_result(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=Path(tmp).resolve(),
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+            )
+            runtime = AgentRuntime(config, show_tool_logs=False)
+            for _ in range(MAX_FORCED_FINAL_ANSWER_CONTINUATIONS):
+                self.assertTrue(runtime._run.queue_forced_final_answer())
+
+            applied = runtime._apply_final_answer_steering(
+                SteeringDecision(kind="patch_reviewer", message="rewrite", payload={})
+            )
+            result = runtime._finish_run("错误地声称 patch 已审查", None, 0)
+
+        self.assertFalse(applied)
+        self.assertNotIn("错误地声称 patch 已审查", result)
+        self.assertIn("未完成/未验证", result)
+        self.assertIn("变更审查", result)
+        self.assertEqual(runtime._last_run_summary["termination_reason"], "unverified_final_gate")
+
+    def test_forced_final_timeout_returns_latest_terminal_draft_for_presentation_rewrite(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             config = AgentConfig(
                 provider="openai-compatible",
@@ -1976,6 +2037,12 @@ class AgentRuntimeTests(unittest.TestCase):
             )
             runtime = AgentRuntime(config, show_tool_logs=False)
             runtime._messages.append({"role": "assistant", "content": "上一版证据化答复"})
+            self.assertTrue(
+                runtime._run.queue_forced_final_answer(
+                    kind="final_structure",
+                    severity=FinalAnswerSteeringSeverity.PRESENTATION.value,
+                )
+            )
 
             result = runtime._forced_final_timeout_fallback(
                 True,
@@ -1988,6 +2055,40 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertIn("上一版证据化答复", result or "")
         self.assertIn("重写请求超时", result or "")
         self.assertEqual(runtime._last_run_summary["termination_reason"], "forced_final_timeout_fallback")
+
+    def test_forced_final_timeout_drops_hard_gate_draft(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=Path(tmp).resolve(),
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+            )
+            runtime = AgentRuntime(config, show_tool_logs=False)
+            runtime._messages.append({"role": "assistant", "content": "错误地声称验收已经通过"})
+            self.assertTrue(
+                runtime._apply_final_answer_steering(
+                    SteeringDecision(kind="completion_audit", message="rewrite", payload={})
+                )
+            )
+            self.assertTrue(runtime._run.force_final_answer_without_tools)
+
+            result = runtime._forced_final_timeout_fallback(
+                True,
+                LlmError("request timed out"),
+                None,
+                0,
+            )
+
+        self.assertIsNotNone(result)
+        self.assertNotIn("错误地声称验收已经通过", result or "")
+        self.assertIn("未完成/未验证", result or "")
+        self.assertIn("完成验收", result or "")
+        self.assertEqual(runtime._last_run_summary["termination_reason"], "forced_final_timeout_unverified")
 
     def test_source_evidence_false_negative_gate_does_not_preempt_implementation_repair(self) -> None:
         contract = generate_requirement_contract("请实现用户注册接口邮箱唯一性校验，并补充单元测试。")
@@ -2034,6 +2135,7 @@ class AgentRuntimeTests(unittest.TestCase):
 
         self.assertIsNotNone(decision)
         self.assertEqual(decision.kind, "requirement_evidence")
+        self.assertEqual(decision.severity, FinalAnswerSteeringSeverity.HARD)
         self.assertIn("docs/需求文档-拓展服务费结算V1.3.md", decision.message)
 
     def test_requirement_evidence_gate_accepts_real_requirement_path_and_line_citation(self) -> None:

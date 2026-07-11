@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from dataclasses import field
+from enum import Enum
 from typing import Any, Protocol
 
 from ..completion_audit import audit_completion
@@ -219,6 +220,13 @@ TODO_REQUEST_KEYWORDS = {
 }
 
 
+class FinalAnswerSteeringSeverity(str, Enum):
+    """Whether a failed final rewrite may safely reuse the previous draft."""
+
+    PRESENTATION = "presentation"
+    HARD = "hard"
+
+
 @dataclass(frozen=True)
 class SourceEvidence:
     path: str
@@ -250,6 +258,7 @@ class SteeringDecision:
     payload: dict[str, Any]
     force_final_answer_without_tools: bool = True
     temporary_tool_allowlist: set[str] | None = None
+    severity: FinalAnswerSteeringSeverity = FinalAnswerSteeringSeverity.HARD
 
 
 class FinalAnswerSteerer(Protocol):
@@ -428,6 +437,7 @@ class FinalStructureSteerer:
             kind=self.kind,
             message=steering,
             payload={"issues": issues},
+            severity=FinalAnswerSteeringSeverity.PRESENTATION,
         )
 
 
@@ -567,6 +577,32 @@ class PatchReviewSteerer:
             force_final_answer_without_tools=not allowed_tools,
             temporary_tool_allowlist=allowed_tools or None,
         )
+
+
+_HARD_GATE_LABELS = {
+    "requirement_evidence": "需求事实与行号证据",
+    "source_grounded_numeric": "源码数值/状态事实",
+    "source_evidence_false_negative": "源码证据一致性",
+    "patch_reviewer": "变更审查",
+    "completion_audit": "完成验收",
+    "design_evidence_final": "跨项目设计证据覆盖",
+}
+
+
+def render_unverified_final_answer(kind: str, reason: str) -> str:
+    """Return a truthful terminal response when a hard rewrite cannot run."""
+
+    label = _HARD_GATE_LABELS.get(kind, "事实/证据")
+    reason_text = {
+        "deadline_reserve": "剩余时间预算不足",
+        "continuation_limit": "最终重写次数已达到安全上限",
+        "rewrite_timeout": "最终重写请求超时",
+    }.get(reason, "最终重写未能完成")
+    return (
+        f"未完成/未验证：上一版答复未通过{label}校验，但{reason_text}。\n\n"
+        "为避免将未经验证的内容表述为已完成，本次不会复用该草稿。"
+        "请在保留当前 session 的前提下重试，或补充可验证的源码/需求证据后再继续。"
+    )
 
 
 def final_answer_request_summary(request: str | None) -> str:
