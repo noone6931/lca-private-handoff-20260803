@@ -2116,6 +2116,28 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertEqual(decision.kind, "tool_usage_evidence")
         self.assertIn("did not run", decision.message)
 
+    def test_tool_usage_evidence_gate_allows_tool_recommendations(self) -> None:
+        recommendations = (
+            "建议调用 run_tests 获取结果。",
+            "可以通过 run_tests 验证结果。",
+            "下一步请运行 run_tests 确认测试。",
+            "建议调用 lsp_symbols 获取定义。",
+            "I recommend calling run_tests to get results.",
+            "You should run run_tests before merging.",
+        )
+
+        for content in recommendations:
+            with self.subTest(content=content):
+                self.assertEqual(phantom_tool_evidence_claims(content, []), ())
+
+    def test_tool_usage_evidence_gate_keeps_unobserved_lsp_result_claim(self) -> None:
+        claims = phantom_tool_evidence_claims(
+            "根据 lsp_symbols 的结果，未提供匹配定义。",
+            [ToolResultSummary("read_file", "README contents")],
+        )
+
+        self.assertEqual(claims, ("lsp_*", "lsp_symbols"))
+
     def test_phantom_tool_evidence_is_rewritten_using_observed_results_only(self) -> None:
         _PhantomToolEvidenceClient.calls = []
         with tempfile.TemporaryDirectory() as tmp:

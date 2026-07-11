@@ -239,7 +239,6 @@ WORKSPACE_INVENTORY_MARKERS = frozenset(
         "当前项目主要",
         "项目结构",
         "项目代码",
-        "盘点",
         "代码结构",
         "有哪些代码",
         "代码都有哪些",
@@ -676,7 +675,39 @@ def _is_read_only_task(task_kind: str, prompt: str) -> bool:
 def _is_workspace_inventory_request(task_kind: str, prompt: str) -> bool:
     if _is_implementation_task(task_kind, prompt):
         return False
-    return any(marker in _lower_text(prompt) for marker in WORKSPACE_INVENTORY_MARKERS)
+    text = _lower_text(prompt)
+    return any(marker in text for marker in WORKSPACE_INVENTORY_MARKERS) or _has_structured_inventory_phrase(text)
+
+
+def _has_structured_inventory_phrase(text: str) -> bool:
+    """Recognize inventory wording without treating every ``盘点`` as discovery.
+
+    Analysis prompts such as "盘点当前代码中的安全问题" need search/LSP,
+    not a repository-wide file inventory. The standalone verb is therefore not
+    a marker; it must name a structural inventory target.
+    """
+
+    if "盘点" not in text:
+        return False
+    targets = (
+        "项目代码",
+        "项目结构",
+        "代码结构",
+        "目录结构",
+        "仓库结构",
+        "项目目录",
+        "代码目录",
+        "源码目录",
+        "代码清单",
+        "项目清单",
+        "目录清单",
+        "仓库清单",
+        "workspace root",
+        "workspace roots",
+        "工作区根",
+        "授权 root",
+    )
+    return any(target in text for target in targets)
 
 
 def _inventory_covered_roots(results: Iterable[ToolResultSummary]) -> set[str]:

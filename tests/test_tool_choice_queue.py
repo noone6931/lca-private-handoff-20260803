@@ -46,6 +46,16 @@ class ToolChoiceQueueTests(unittest.TestCase):
         self.assertEqual(decision.rule_id, "workspace_inventory_discovery")
         self.assertEqual(decision.allowed_tool_names, WORKSPACE_INVENTORY_DISCOVERY_TOOL_NAMES)
 
+    def test_workspace_inventory_does_not_treat_security_review_as_file_inventory(self) -> None:
+        decision = evaluate_tool_choice_state(
+            task_kind="read_only",
+            prompt="只读盘点当前代码中的安全问题并给出证据。",
+            workspace_roots=("/workspace/primary", "/workspace/service"),
+        )
+
+        self.assertNotIn("workspace_inventory", decision.rule_id or "")
+        self.assertIn("search_code", decision.allowed_tool_names)
+
     def test_workspace_inventory_stays_within_discovery_tools_after_glob(self) -> None:
         decision = evaluate_tool_choice_state(
             task_kind="read_only",

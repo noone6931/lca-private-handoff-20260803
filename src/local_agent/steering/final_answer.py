@@ -995,15 +995,49 @@ def phantom_tool_evidence_claims(
         if re.search(r"(?:未|没有|not)\s*(?:调用|call(?:ed)?)", segment):
             continue
         for tool in KNOWN_TOOL_EVIDENCE_NAMES - observed:
+            if _tool_reference_is_recommendation(segment, tool):
+                continue
             if re.search(rf"(?<![a-z0-9_]){re.escape(tool)}(?![a-z0-9_])", segment):
                 claimed.add(tool)
-        if "lsp" not in observed and re.search(r"(?<![a-z0-9_])lsp(?:[_*][a-z0-9_*]+)?(?![a-z0-9_])", segment):
+        if (
+            "lsp" not in observed
+            and not _tool_reference_is_recommendation(segment, "lsp")
+            and re.search(r"(?<![a-z0-9_])lsp(?:[_*][a-z0-9_*]+)?(?![a-z0-9_])", segment)
+        ):
             claimed.add("lsp_*")
     return tuple(sorted(claimed))
 
 
 def _looks_like_tool_evidence_claim(segment: str) -> bool:
     return any(marker in segment for marker in TOOL_EVIDENCE_CLAIM_MARKERS)
+
+
+def _tool_reference_is_recommendation(segment: str, tool: str) -> bool:
+    """Return whether a tool is only proposed as a future action in ``segment``.
+
+    A final answer may recommend a verification step without falsely claiming
+    that the Runtime already executed it. Keep this check local to the tool
+    reference, so a separate factual claim in another sentence is still gated.
+    """
+
+    if tool == "lsp":
+        tool_pattern = r"(?<![a-z0-9_])lsp(?:[_*][a-z0-9_*]+)?(?![a-z0-9_])"
+    else:
+        escaped_tool = re.escape(tool)
+        tool_pattern = rf"(?<![a-z0-9_]){escaped_tool}(?![a-z0-9_])"
+    chinese_recommendation = (
+        r"(?:建议|推荐|下一步|后续|请|应当|应该|可以|可通过|可使用|需要)"
+        r"(?:\s*(?:先|再|直接|使用|调用|运行|通过|借助|用))*\s*"
+    )
+    english_recommendation = (
+        r"(?:recommend(?:ed|ation)?|suggest(?:ed|ion)?|should|can|could|may|"
+        r"please|next(?:\s+step)?(?:\s+is)?)"
+        r"(?:\s+(?:to|using|use|calling|call|run))*\s+"
+    )
+    return bool(
+        re.search(chinese_recommendation + tool_pattern, segment)
+        or re.search(english_recommendation + tool_pattern, segment)
+    )
 
 
 def _observed_tool_names(tool_results: list[ToolResultSummary]) -> tuple[str, ...]:
