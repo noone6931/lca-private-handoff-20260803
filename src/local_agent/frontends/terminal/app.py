@@ -17,13 +17,15 @@ CommandHandler = Callable[[AgentRuntime, str, TextIO], None]
 
 
 def slash_command_completions(text_before_cursor: str) -> tuple[TerminalCommandCompletion, ...]:
-    """Return slash-command completions without affecting normal or multiline prompts."""
+    """Return command completions only while the user is entering a slash command."""
 
+    if not is_slash_command_input(text_before_cursor):
+        return ()
     return TerminalCommandRegistry().completions(text_before_cursor)
 
 
 def is_slash_command_input(text: str) -> bool:
-    """Slash commands submit on Enter while natural-language input stays multiline."""
+    """Return whether slash-command completion applies to the current chat input."""
 
     return text.lstrip().startswith("/")
 
@@ -87,9 +89,7 @@ def create_terminal_event_sink(*, show_tools: bool = True, stream=None) -> Termi
 
 def _build_prompt(history_path: Path | None):
     try:
-        from prompt_toolkit.application import get_app
         from prompt_toolkit.completion import Completer, Completion
-        from prompt_toolkit.filters import Condition
         from prompt_toolkit import PromptSession
         from prompt_toolkit.history import FileHistory
         from prompt_toolkit.key_binding import KeyBindings
@@ -100,9 +100,9 @@ def _build_prompt(history_path: Path | None):
 
     @bindings.add("escape", "enter")
     def _(event) -> None:
-        event.app.current_buffer.validate_and_handle()
+        event.current_buffer.insert_text("\n")
 
-    @bindings.add("enter", filter=Condition(lambda: is_slash_command_input(get_app().current_buffer.text)))
+    @bindings.add("enter")
     def _(event) -> None:
         event.app.current_buffer.validate_and_handle()
 

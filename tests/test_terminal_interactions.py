@@ -42,7 +42,7 @@ class _NestedInteractionRuntime:
 
 
 class TerminalInteractionTests(unittest.TestCase):
-    def test_slash_command_input_is_single_line_submit_while_natural_language_stays_multiline(self) -> None:
+    def test_slash_command_input_is_detected_for_completion_only(self) -> None:
         self.assertTrue(is_slash_command_input("/help"))
         self.assertTrue(is_slash_command_input("  /workspace list"))
         self.assertFalse(is_slash_command_input("请分析这个项目"))

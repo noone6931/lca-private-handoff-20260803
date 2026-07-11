@@ -101,7 +101,7 @@ export AGENT_ALLOWED_DIRS="/path/to/requirements:/path/to/other-read-write-root"
 python3 -m pip install -e ".[terminal]"
 ```
 
-在 chat 中输入 `/` 或命令前缀（例如 `/wor`）会显示带说明的补全候选，按 `Tab` 完成；`/workspace` 和 `/approval` 会继续补全各自合法的子命令。slash 命令按普通 `Enter` 立即执行；自然语言仍可多行编辑并用 `Esc` + `Enter` 提交。
+在 chat 中输入 `/` 或命令前缀（例如 `/wor`）会显示带说明的补全候选，按 `Tab` 完成；`/workspace` 和 `/approval` 会继续补全各自合法的子命令。所有输入都按普通 `Enter` 发送；需要多行内容时按 `Esc` + `Enter` 插入换行。
 
 如果没有安装这些可选依赖，`./agent` 仍会降级为普通终端输入输出，不影响一次性任务。
 
