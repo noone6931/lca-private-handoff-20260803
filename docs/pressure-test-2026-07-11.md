@@ -189,7 +189,7 @@ backend primary
 
 | ID | 压测事实 | OMP 源码事实 | LCA 措施 | 状态 |
 |---|---|---|---|---|
-| PT-053 | `tool_approval=deny` 的 `run_tests` 仍出现在模型可见工具中，模型把 `find` 误当测试命令调用，浪费一步。 | OMP `AgentSession.#applyActiveToolsByName()` 只把 active tool 集交给 Agent；`agent.ts:74-89` 还会在 active tools 中校验 forced `toolChoice`。 | `_tools_for_model()` 与 Queue 的 available tool names 均过滤 config/session deny；Registry deny 保留为最终执行边界。 | 已修复，待真实复测。 |
+| PT-053 | `tool_approval=deny` 的 `run_tests` 曾仍出现在模型可见工具中，模型把 `find` 误当测试命令调用，浪费一步。 | OMP `AgentSession.#applyActiveToolsByName()` 只把 active tool 集交给 Agent；`agent.ts:74-89` 还会在 active tools 中校验 forced `toolChoice`。 | `_tools_for_model()` 与 Queue 的 available tool names 均过滤 config/session deny；Registry deny 保留为最终执行边界。 | 已修复并真实复测：session `20260711T014124870469Z` 仅三次指定 `read_file`，20.8 秒、0 tool error、无 shell/run_tests。 |
 | PT-054 | 百炼返回 `todo_text`、`lsp_symbols.pattern`、`__invalid_tool_call`、错误前端路径等 provider 方言/规划错误。 | OMP 以 schema、active tools 和 `coerceToolResult()` 收敛无效工具结果，但不把未知 payload 静默解释成任意副作用。 | 保持严格 schema；只对已验证且语义无歧义的 scalar alias 兼容。`todo_text` 的批量语义不明确，暂不接收。 | 开放，归为 provider compatibility。 |
 | PT-055 | 跨项目只读设计在已读取 requirement+backend+frontend 后仍继续 68 次工具调用，目录枚举和大搜索过多。 | OMP 对软工具要求/病态探索设置显式小上限，并用 ToolChoiceQueue 在满足或失败后收束；主循环不靠总步数截断。 | 下一项 T-131：为“跨 root 需求设计”定义 evidence coverage 后的有限补证预算和 final handoff，不增加新的 `agent.py` inline guard。 | 待实施。 |
 | PT-056 | 最终回答把未证实类名/字段名写进分阶段方案，虽标 blocked，仍可能被误当实现定位。 | OMP 的 project context/tool result 只能提供证据，不能把生成候选升级为源码事实。 | T-131 同时要求设计输出把“已证实文件”“建议新增候选”“缺失输入”分栏，候选不得伪装为现有路径。 | 待实施。 |
