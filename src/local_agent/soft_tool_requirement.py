@@ -64,10 +64,18 @@ def initial_soft_tool_requirement(
         return SoftToolRequirement(kind="authored_skill", allowed_dirs=(), candidate_files=(skill_file,))
     if not allowed_dirs or not any(keyword in prompt.lower() for keyword in ALLOWED_DIR_REQUIREMENT_KEYWORDS):
         return None
+    if _has_direct_requirement_document(workspace):
+        # The primary workspace is already the supplied requirement package.
+        # Additional roots are code roots in this workflow, not a second
+        # mandatory document source.
+        return None
+    candidates = allowed_dir_requirement_doc_candidates(allowed_dirs)
+    if not candidates:
+        return None
     return SoftToolRequirement(
         kind="allowed_dir_requirements",
         allowed_dirs=allowed_dirs,
-        candidate_files=allowed_dir_doc_candidates(allowed_dirs),
+        candidate_files=candidates,
     )
 
 
@@ -193,6 +201,28 @@ def allowed_dir_doc_candidates(allowed_dirs: tuple[Path, ...]) -> tuple[Path, ..
         )
     candidates.sort(key=_allowed_dir_doc_sort_key)
     return tuple(candidates[:MAX_ALLOWED_DIR_DOC_CANDIDATES])
+
+
+def allowed_dir_requirement_doc_candidates(allowed_dirs: tuple[Path, ...]) -> tuple[Path, ...]:
+    """Return clearly named requirement/spec files, never generic code-root docs."""
+
+    return tuple(
+        path
+        for path in allowed_dir_doc_candidates(allowed_dirs)
+        if any(keyword in path.name.lower() for keyword in ALLOWED_DIR_DOC_NAME_KEYWORDS)
+    )
+
+
+def _has_direct_requirement_document(workspace: Path) -> bool:
+    try:
+        return any(
+            child.is_file()
+            and child.suffix.lower() in ALLOWED_DIR_DOC_SUFFIXES
+            and any(keyword in child.name.lower() for keyword in ALLOWED_DIR_DOC_NAME_KEYWORDS)
+            for child in workspace.iterdir()
+        )
+    except OSError:
+        return False
 
 
 def _iter_allowed_dir_files(root: Path):

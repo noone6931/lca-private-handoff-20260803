@@ -1941,6 +1941,54 @@ class AgentRuntimeTests(unittest.TestCase):
             {"source_evidence_false_negative": 1},
         )
 
+    def test_source_evidence_false_negative_gate_allows_scoped_missing_object_claim(self) -> None:
+        context = FinalAnswerContext(
+            request="请根据代码证据定位结算单实体 owner。",
+            content="仍缺证据：当前已读代码未发现结算单实体，不能据此否定其他目录。",
+            messages=[],
+            run_start_index=0,
+            requirement_contract=generate_requirement_contract("请根据代码证据定位结算单实体 owner。"),
+            tool_results=[],
+            read_file_evidence_paths=["src/PlatformOrderApplication.java"],
+            source_evidence=[
+                SourceEvidence(
+                    "src/PlatformOrderApplication.java",
+                    "public class PlatformOrderApplication { void createPlatformOrder() {} }",
+                )
+            ],
+            open_todos=[],
+            is_code_implementation_request=False,
+            steer_counts={},
+        )
+
+        decision = SourceEvidenceFalseNegativeSteerer(max_steers=2).decide(context)
+
+        self.assertIsNone(decision)
+
+    def test_source_numeric_gate_accepts_requirement_citations_and_same_named_file_evidence(self) -> None:
+        evidence = [
+            SourceEvidence(
+                "src/views/refundBill/list.vue",
+                "60: tabButtonList.includes('下载中心')\n62: 下载中心\n",
+            ),
+            SourceEvidence(
+                "src/views/paymentBillManager/list.vue",
+                "1: <template/>\n",
+            ),
+            SourceEvidence(
+                "requirements/需求文档-拓展服务费结算V1.3.md",
+                "95: 订单状态为 60-已放款。\n",
+            ),
+        ]
+
+        issues = source_numeric_issues(
+            "- 下载入口：src/views/refundBill/list.vue:60,62\n"
+            "- 需求条件：需求文档-拓展服务费结算V1.3.md:95，订单状态为 60。",
+            evidence,
+        )
+
+        self.assertEqual(issues, [])
+
     def test_source_false_negative_gate_ignores_absolute_path_segments(self) -> None:
         evidence = [
             SourceEvidence(

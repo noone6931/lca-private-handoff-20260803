@@ -26,7 +26,12 @@ def normalize_compatibility_arguments(name: str, arguments: dict[str, Any]) -> t
     elif name == "run_tests":
         _rename_alias(normalized, "cmd", "command", notes)
     elif name == "glob_files":
+        _normalize_glob_pattern(normalized, notes)
         _normalize_glob_path_scope(normalized, notes)
+        _normalize_bounded_integer(normalized, "limit", notes)
+    elif name == "search_code":
+        _rename_alias(normalized, "maxResults", "max_results", notes)
+        _normalize_bounded_integer(normalized, "max_results", notes)
     elif name in {"todo_add", "todo_update"}:
         _rename_alias(normalized, "key", "id", notes)
         _rename_alias(normalized, "content", "task", notes)
@@ -78,6 +83,33 @@ def _normalize_todo_status(arguments: dict[str, Any], notes: list[str]) -> None:
     if arguments.get("status") == "pending":
         arguments["status"] = "todo"
         notes.append("status pending -> todo")
+
+
+def _normalize_bounded_integer(arguments: dict[str, Any], field: str, notes: list[str]) -> None:
+    value = arguments.get(field)
+    if not isinstance(value, str) or not value.strip().isdigit():
+        return
+    arguments[field] = int(value.strip())
+    notes.append(f"{field} string -> integer")
+
+
+def _normalize_glob_pattern(arguments: dict[str, Any], notes: list[str]) -> None:
+    """Accept OMP-style ``path`` + ``pattern`` without exposing a second schema."""
+
+    pattern = arguments.pop("pattern", None)
+    if pattern is None:
+        return
+    if not isinstance(pattern, str) or not pattern.strip():
+        raise ValueError("glob_files compatibility pattern must be a non-empty string.")
+    paths = arguments.get("paths")
+    canonical_paths = [pattern]
+    if paths is None:
+        arguments["paths"] = canonical_paths
+        notes.append("pattern -> paths[0]")
+        return
+    if paths != canonical_paths:
+        raise ValueError("Conflicting compatibility arguments: pattern and paths differ.")
+    notes.append("ignored redundant pattern; using paths")
 
 
 def _normalize_glob_path_scope(arguments: dict[str, Any], notes: list[str]) -> None:

@@ -541,6 +541,54 @@ class ToolTests(unittest.TestCase):
         self.assertIn("path scope applied to relative paths", payload["compatibility_normalized"])
         self.assertEqual(result.metadata["compatibility_normalized"], ["path scope applied to relative paths"])
 
+    def test_registry_compatibly_normalizes_omp_style_glob_pattern_and_string_limit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            source = workspace / "src" / "App.java"
+            source.parent.mkdir()
+            source.write_text("class App {}\n", encoding="utf-8")
+            result = ToolRegistry(search_tools()).execute(
+                "glob_files",
+                {"path": str(workspace), "pattern": "src/**/*.java", "limit": "3"},
+                ToolContext(workspace=workspace, approval_mode="yolo"),
+            )
+
+        payload = json.loads(result.content)
+        self.assertFalse(result.is_error)
+        self.assertEqual(payload["files"], ["src/App.java"])
+        self.assertEqual(
+            result.metadata["compatibility_normalized"],
+            ["pattern -> paths[0]", "path scope applied to relative paths", "limit string -> integer"],
+        )
+
+    def test_registry_normalizes_search_code_camel_case_string_result_limit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            (workspace / "App.java").write_text("needle\nneedle\n", encoding="utf-8")
+            result = ToolRegistry(search_tools()).execute(
+                "search_code",
+                {"pattern": "needle", "maxResults": "1"},
+                ToolContext(workspace=workspace, approval_mode="yolo"),
+            )
+
+        self.assertFalse(result.is_error)
+        self.assertIn("compatibility normalized", result.content)
+        self.assertEqual(
+            result.metadata["compatibility_normalized"],
+            ["maxResults -> max_results", "max_results string -> integer"],
+        )
+
+    def test_registry_rejects_conflicting_glob_pattern_and_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            result = ToolRegistry(search_tools()).execute(
+                "glob_files",
+                {"paths": ["src/**/*.java"], "pattern": "src/**/*.py"},
+                ToolContext(workspace=Path(tmp).resolve(), approval_mode="yolo"),
+            )
+
+        self.assertTrue(result.is_error)
+        self.assertIn("pattern and paths differ", result.content)
+
     def test_unknown_tool_suggests_only_currently_exposed_tools(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp).resolve()

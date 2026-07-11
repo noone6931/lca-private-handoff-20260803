@@ -6,7 +6,24 @@ from pathlib import Path
 import time
 
 
-_DESIGN_PROMPT_MARKERS = ("design", "architecture", "方案", "设计", "架构")
+# A cross-root investigation needs the same evidence matrix whether the user
+# calls the requested output a design, an owner map, or an impact analysis.
+# Restricting this to the word "design" let real owner-discovery tasks keep
+# exploring after both code roots had already yielded source evidence.
+_CROSS_ROOT_EVIDENCE_PROMPT_MARKERS = (
+    "design",
+    "architecture",
+    "owner",
+    "impact analysis",
+    "call chain",
+    "方案",
+    "设计",
+    "架构",
+    "定位",
+    "影响范围",
+    "影响分析",
+    "调用链",
+)
 _CODE_ROOT_MARKERS = (
     "pom.xml",
     "package.json",
@@ -109,9 +126,9 @@ class DesignEvidenceCoverageSteerer:
                 "reason": stop_reason,
             },
             message=(
-                "Runtime steering: the required requirement/backend/frontend evidence matrix is complete, "
+                "Runtime steering: the required cross-root evidence matrix is complete, "
                 "and the bounded follow-up exploration allowance is exhausted. Do not call more tools. "
-                "Produce the requested design now, separate verified facts from 推断/建议, and list remaining "
+                "Produce the requested owner/impact/design result now, separate verified facts from 推断/建议, and list remaining "
                 "uncertainty instead of continuing to search."
                 f"{request_summary}"
             ),
@@ -125,9 +142,9 @@ def cross_root_design_evidence_roots(
     allowed_dirs: tuple[Path, ...],
     prompt: str,
 ) -> tuple[str, ...]:
-    """Return code roots that must each contribute a source read for a cross-root design task."""
+    """Return code roots that must each contribute a source read for a cross-root evidence task."""
     lowered = (prompt or "").lower()
-    if not any(marker in lowered for marker in _DESIGN_PROMPT_MARKERS):
+    if not any(marker in lowered for marker in _CROSS_ROOT_EVIDENCE_PROMPT_MARKERS):
         return ()
     roots: list[str] = []
     for candidate in (workspace, *allowed_dirs):

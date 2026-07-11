@@ -168,6 +168,31 @@ SOURCE_INCOMPLETE_READ_MARKERS = {
     "partial source",
     "incomplete read",
 }
+# A scoped negative such as "未找到结算单实体" is not a claim that source
+# evidence is absent. It is an allowed conclusion when paired with the
+# matching discovery evidence and is checked by NegativeExistenceSteerer.
+# This guard is reserved for the stronger failure mode: the answer says the
+# code/source evidence itself was not read or is unavailable despite relevant
+# snippets having already been read.
+SOURCE_EVIDENCE_ABSENCE_MARKERS = {
+    "未找到代码证据",
+    "未找到源码证据",
+    "没有代码证据",
+    "没有源码证据",
+    "无代码证据",
+    "无源码证据",
+    "代码证据缺失",
+    "源码证据缺失",
+    "代码不完整",
+    "源码不完整",
+    "未读取源码",
+    "未读源码",
+    "no code evidence",
+    "no source evidence",
+    "source evidence missing",
+    "source incomplete",
+    "incomplete source",
+}
 SOURCE_FALSE_NEGATIVE_STOPWORDS = {
     "agent",
     "api",
@@ -793,7 +818,7 @@ def content_reports_no_source_evidence(content: str) -> bool:
 
 def content_claims_source_missing_or_incomplete(content: str) -> bool:
     lowered = content.lower()
-    return any(marker.lower() in lowered for marker in SOURCE_NOT_FOUND_MARKERS | SOURCE_INCOMPLETE_READ_MARKERS)
+    return any(marker.lower() in lowered for marker in SOURCE_EVIDENCE_ABSENCE_MARKERS)
 
 
 def source_false_negative_issues(
@@ -898,14 +923,17 @@ def source_numeric_issues(content: str, evidence: list[SourceEvidence]) -> list[
     for claim in _numeric_claim_lines(content):
         if _is_tool_observation_numeric_claim(claim):
             continue
-        claim_numbers = _number_tokens(claim)
+        # `path:line` and `V1.3:line` are citations, not business values to
+        # prove against the cited implementation. A final answer can combine a
+        # requirement citation with an implementation path on one table row.
+        claim_numbers = _number_tokens(_strip_location_citations(claim))
         if not claim_numbers:
             continue
         matched = _matching_evidence(claim, evidence_by_key)
+        if any(all(number in _number_tokens(item.content) for number in claim_numbers) for item in matched):
+            continue
         for item in matched:
             missing = [number for number in claim_numbers if number not in _number_tokens(item.content)]
-            if not missing:
-                continue
             snippets = _source_snippets_for_claim(item.content, claim)
             issues.append(
                 {
@@ -919,32 +947,44 @@ def source_numeric_issues(content: str, evidence: list[SourceEvidence]) -> list[
     return issues
 
 
-def _evidence_by_key(evidence: list[SourceEvidence]) -> dict[str, SourceEvidence]:
-    by_key: dict[str, SourceEvidence] = {}
+def _evidence_by_key(evidence: list[SourceEvidence]) -> dict[str, list[SourceEvidence]]:
+    by_key: dict[str, list[SourceEvidence]] = {}
     for item in evidence:
-        path_parts = re.split(r"[/\\]", item.path)
+        normalized_path = item.path.replace("\\", "/").lower()
+        path_parts = normalized_path.split("/")
         filename = path_parts[-1] if path_parts else item.path
         stem = filename.rsplit(".", 1)[0]
-        for key in {filename, stem}:
+        # Index the complete path as well as the basename. A codebase commonly
+        # contains many `list.vue` files; preserving every candidate prevents a
+        # later read from overwriting the source actually cited by the answer.
+        for key in {normalized_path, filename, stem}:
             if key:
-                by_key[key.lower()] = item
+                by_key.setdefault(key.lower(), []).append(item)
     return by_key
 
 
-def _matching_evidence(claim: str, evidence_by_key: dict[str, SourceEvidence]) -> list[SourceEvidence]:
+def _matching_evidence(claim: str, evidence_by_key: dict[str, list[SourceEvidence]]) -> list[SourceEvidence]:
     lowered_claim = claim.lower()
     matched: list[SourceEvidence] = []
-    for key, item in evidence_by_key.items():
-        if key and key in lowered_claim and item not in matched:
-            matched.append(item)
+    for key, items in evidence_by_key.items():
+        if key:
+            for item in items:
+                if key in lowered_claim and item not in matched:
+                    matched.append(item)
     claim_identifiers = _claim_identifiers(claim)
-    for item in evidence_by_key.values():
+    all_evidence = [item for items in evidence_by_key.values() for item in items]
+    for item in all_evidence:
         if item in matched:
             continue
         lowered_source = item.content.lower()
         if any(identifier in lowered_source for identifier in claim_identifiers):
             matched.append(item)
     return matched
+
+
+def _strip_location_citations(claim: str) -> str:
+    without_version_citations = re.sub(r"\bV\d+(?:\.\d+)*:(?:\d+)(?:[-,]\d+)*", "", claim, flags=re.IGNORECASE)
+    return re.sub(r"(?<=[A-Za-z0-9_.])\:(?:\d+)(?:[-,]\d+)*", "", without_version_citations)
 
 
 def _numeric_claim_lines(content: str) -> list[str]:

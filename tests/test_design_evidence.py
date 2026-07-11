@@ -27,6 +27,24 @@ class DesignEvidenceTests(unittest.TestCase):
 
         self.assertEqual(roots, (str(backend.resolve()), str(frontend.resolve())))
 
+    def test_discovers_code_roots_for_cross_project_owner_location_prompt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            backend = root / "backend"
+            frontend = root / "frontend"
+            backend.mkdir()
+            frontend.mkdir()
+            (backend / "pom.xml").write_text("<project/>", encoding="utf-8")
+            (frontend / "package.json").write_text("{}", encoding="utf-8")
+
+            roots = cross_root_design_evidence_roots(
+                backend,
+                (frontend,),
+                "请只读定位服务费结算的前后端 owner、影响范围和调用链。",
+            )
+
+        self.assertEqual(roots, (str(backend.resolve()), str(frontend.resolve())))
+
     def test_reports_only_roots_without_successful_source_read(self) -> None:
         roots = ("/workspace/backend", "/workspace/frontend")
 
