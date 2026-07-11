@@ -36,6 +36,16 @@ class ToolChoiceQueueTests(unittest.TestCase):
         self.assertNotIn('""', decision.tool_call_hints[0])
         self.assertEqual(decision.required_glob_roots, ("/workspace/agent", "/workspace/project"))
 
+    def test_workspace_inventory_recognizes_chinese_inventory_wording(self) -> None:
+        decision = evaluate_tool_choice_state(
+            task_kind="read_only",
+            prompt="只读盘点当前 primary 和所有已授权 additional workspace root 中的项目代码。",
+            workspace_roots=("/workspace/primary", "/workspace/service"),
+        )
+
+        self.assertEqual(decision.rule_id, "workspace_inventory_discovery")
+        self.assertEqual(decision.allowed_tool_names, WORKSPACE_INVENTORY_DISCOVERY_TOOL_NAMES)
+
     def test_workspace_inventory_stays_within_discovery_tools_after_glob(self) -> None:
         decision = evaluate_tool_choice_state(
             task_kind="read_only",
