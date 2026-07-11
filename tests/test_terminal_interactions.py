@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 
 from local_agent.frontends.terminal.app import run_terminal_chat
+from local_agent.frontends.terminal.app import is_slash_command_input
 from local_agent.frontends.terminal.interactions import InputState
 from local_agent.frontends.terminal.interactions import TerminalInteractionController
 from local_agent.protocol.interactions import InteractionRequest
@@ -41,6 +42,12 @@ class _NestedInteractionRuntime:
 
 
 class TerminalInteractionTests(unittest.TestCase):
+    def test_slash_command_input_is_single_line_submit_while_natural_language_stays_multiline(self) -> None:
+        self.assertTrue(is_slash_command_input("/help"))
+        self.assertTrue(is_slash_command_input("  /workspace list"))
+        self.assertFalse(is_slash_command_input("请分析这个项目"))
+        self.assertFalse(is_slash_command_input("\n继续分析"))
+
     def test_ask_keeps_slash_commands_inside_focused_interaction_until_cancelled(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             runtime = _NestedInteractionRuntime(Path(tmp))
