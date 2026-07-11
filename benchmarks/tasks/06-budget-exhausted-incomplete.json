@@ -1,0 +1,19 @@
+{
+  "id": "budget-exhausted-incomplete",
+  "title": "Budget exhaustion produces explicit incomplete delivery",
+  "prompt": "分析 README.md 并总结当前项目。",
+  "workspace_files": {
+    "README.md": "# Budget Fixture\n"
+  },
+  "budget_seconds": 0,
+  "scripted_responses": [],
+  "acceptance": {
+    "changed_files": [],
+    "answer_contains": [
+      "Stopped after reaching budget_seconds=0."
+    ],
+    "termination_reason": "budget",
+    "max_tool_errors": 0
+  },
+  "residual_risk": "The budget stop is deterministic; real provider calls can still consume up to the remaining request timeout before the next checkpoint."
+}

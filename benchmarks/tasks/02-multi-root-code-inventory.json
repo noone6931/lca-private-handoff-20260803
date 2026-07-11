@@ -1,0 +1,64 @@
+{
+  "id": "multi-root-code-inventory",
+  "title": "Multi-root bounded code inventory",
+  "prompt": "只读盘点当前 primary 和所有已授权 additional workspace root 中的项目代码。不得写入或运行 shell、测试或 Git；为每个 root 说明实际覆盖范围和任何截断。",
+  "workspace_files": {
+    "requirements.md": "# Requirement Notes\nNo source code lives in this documentation root.\n"
+  },
+  "additional_roots": {
+    "service": {
+      "pom.xml": "<project><modelVersion>4.0.0</modelVersion></project>\n",
+      "src/main/java/com/example/App.java": "package com.example;\npublic final class App {}\n",
+      "src/test/java/com/example/AppTest.java": "package com.example;\nclass AppTest {}\n"
+    }
+  },
+  "scripted_responses": [
+    {
+      "tool_calls": [
+        {
+          "name": "glob_files",
+          "arguments": {
+            "paths": [
+              ".",
+              "{{root:service}}"
+            ],
+            "limit": 100
+          }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "{{root:service}}/pom.xml"
+          }
+        }
+      ]
+    },
+    {
+      "content": "已按 root 覆盖：primary 仅含 requirements.md 文档；additional service root 含 pom.xml、src/main/java/com/example/App.java 和测试源码，因此它是 Maven Java 项目。本轮结果未截断，未执行写入、shell、测试或 Git。"
+    }
+  ],
+  "acceptance": {
+    "required_tools": [
+      "glob_files",
+      "read_file"
+    ],
+    "forbidden_tools": [
+      "apply_patch",
+      "write_file",
+      "shell",
+      "run_tests",
+      "git_diff",
+      "git_status"
+    ],
+    "changed_files": [],
+    "answer_contains": [
+      "Maven Java 项目"
+    ],
+    "max_tool_errors": 0
+  },
+  "residual_risk": "Inventory remains deliberately bounded; a large additional root may be incomplete and must be labeled as such."
+}

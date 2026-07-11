@@ -1,0 +1,48 @@
+{
+  "id": "scoped-negative-source-evidence",
+  "title": "Scoped negative source evidence",
+  "prompt": "只读确认当前 primary workspace 是否存在 Java 源码。请只根据完整的文件名发现给结论，不要把 primary 的结论外推到任何 additional root。",
+  "workspace_files": {
+    "README.md": "# Documentation Only\n",
+    "docs/architecture.md": "No application source is stored here.\n"
+  },
+  "additional_roots": {
+    "java-service": {
+      "src/main/java/com/example/ExistsElsewhere.java": "package com.example;\npublic class ExistsElsewhere {}\n"
+    }
+  },
+  "scripted_responses": [
+    {
+      "tool_calls": [
+        {
+          "name": "glob_files",
+          "arguments": {
+            "paths": [
+              "**/*.java"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "content": "在当前 primary workspace 的完整 glob_files scope 中未发现 Java 文件。这个负向结论只覆盖 primary；它不判断已授权 additional root java-service 是否有源码。"
+    }
+  ],
+  "acceptance": {
+    "required_tools": [
+      "glob_files"
+    ],
+    "forbidden_tools": [
+      "apply_patch",
+      "write_file",
+      "shell",
+      "run_tests"
+    ],
+    "changed_files": [],
+    "answer_contains": [
+      "只覆盖 primary"
+    ],
+    "max_tool_errors": 0
+  },
+  "residual_risk": "A no-match conclusion depends on a complete non-truncated glob result and only supports the stated scope."
+}

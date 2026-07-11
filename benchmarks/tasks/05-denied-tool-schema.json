@@ -1,0 +1,40 @@
+{
+  "id": "denied-tool-schema",
+  "title": "Denied tool is hidden from model schema",
+  "prompt": "只读查看 README.md 并总结。不要执行 shell。",
+  "workspace_files": {
+    "README.md": "# Safe Fixture\nNo shell is needed.\n"
+  },
+  "tool_approval": {
+    "shell": "deny"
+  },
+  "scripted_responses": [
+    {
+      "tool_calls": [
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "README.md"
+          }
+        }
+      ]
+    },
+    {
+      "content": "已读取 README.md：这是一个 Safe Fixture；本轮未执行 shell。"
+    }
+  ],
+  "acceptance": {
+    "required_tools": [
+      "read_file"
+    ],
+    "forbidden_tools": [
+      "shell"
+    ],
+    "schema_excludes": [
+      "shell"
+    ],
+    "changed_files": [],
+    "max_tool_errors": 0
+  },
+  "residual_risk": "This validates schema filtering and deterministic behavior; it does not replace manual review of provider tool-call compliance."
+}

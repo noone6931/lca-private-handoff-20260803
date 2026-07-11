@@ -1,0 +1,54 @@
+{
+  "id": "single-root-readonly-discovery",
+  "title": "Single-root read-only discovery",
+  "prompt": "只读分析这个项目的主要代码和入口。不要修改文件，不要运行命令；只依据工具结果总结。",
+  "workspace_files": {
+    "README.md": "# Demo Service\nEntry point: src/app.py\n",
+    "src/app.py": "def main():\n    return 'ready'\n"
+  },
+  "scripted_responses": [
+    {
+      "tool_calls": [
+        {
+          "name": "glob_files",
+          "arguments": {
+            "paths": [
+              "**/*"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "README.md"
+          }
+        }
+      ]
+    },
+    {
+      "content": "已核实：这是一个 Demo Service，README.md 指向 src/app.py 作为入口。目录发现结果包含 README.md 和 src/app.py；本轮只读，没有修改或运行命令。"
+    }
+  ],
+  "acceptance": {
+    "required_tools": [
+      "glob_files",
+      "read_file"
+    ],
+    "forbidden_tools": [
+      "apply_patch",
+      "write_file",
+      "shell",
+      "run_tests"
+    ],
+    "changed_files": [],
+    "answer_contains": [
+      "src/app.py"
+    ],
+    "max_tool_errors": 0
+  },
+  "residual_risk": "The fixture checks a bounded read-only workflow, not provider quality on a large repository."
+}
