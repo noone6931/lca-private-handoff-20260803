@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from local_agent.release import GateRecord
+from local_agent.release import default_channel_root
 from local_agent.release import ReleaseError
 from local_agent.release import install_channel
 from local_agent.release import publish_stable_snapshot
@@ -104,6 +108,47 @@ class ReleaseChannelTests(unittest.TestCase):
                     python_executable=sys.executable,
                 )
 
+    def test_stable_launcher_reads_user_config_without_copying_checkout_env(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            source = root / "source"
+            _write_config_loading_mini_agent(source)
+            (source / ".env").write_text("DASHSCOPE_API_KEY=checkout-token\n", encoding="utf-8")
+            channel = root / "channel"
+            bin_dir = root / "bin"
+            user_config = root / "user-config"
+            user_config.mkdir()
+            (user_config / ".env").write_text("DASHSCOPE_API_KEY=user-token\n", encoding="utf-8")
+            workspace = root / "workspace"
+            workspace.mkdir()
+            install_channel(
+                source_root=source,
+                channel_root=channel,
+                bin_dir=bin_dir,
+                python_executable=sys.executable,
+            )
+            release = publish_stable_snapshot(
+                source_root=source,
+                channel_root=channel,
+                python_executable=sys.executable,
+                gate_runner=_passing_gate,
+            )
+            environment = {"PATH": os.environ.get("PATH", ""), "AGENT_CONFIG_DIR": str(user_config)}
+
+            output = _run(bin_dir / "lca", "--provider", "bailian", cwd=workspace, env=environment)
+
+        self.assertEqual(output, "user-token")
+        self.assertFalse((release.release_dir / ".env").exists())
+        self.assertFalse(any(path.name == ".env" for path in release.release_dir.rglob(".env")))
+
+    def test_default_channel_root_uses_xdg_state_channels_subdirectory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            state_home = Path(tmp).resolve()
+            with patch.dict("os.environ", {"XDG_STATE_HOME": str(state_home)}, clear=True):
+                channel_root = default_channel_root()
+
+        self.assertEqual(channel_root, state_home / "local-coding-agent" / "channels")
+
 
 def _write_mini_agent(root: Path, value: str) -> None:
     package = root / "src" / "local_agent"
@@ -120,6 +165,26 @@ def _write_mini_agent(root: Path, value: str) -> None:
     )
 
 
+def _write_config_loading_mini_agent(root: Path) -> None:
+    _write_mini_agent(root, "unused")
+    package = root / "src" / "local_agent"
+    repository = Path(__file__).resolve().parents[1]
+    shutil.copy2(repository / "src" / "local_agent" / "config.py", package / "config.py")
+    shutil.copy2(repository / "src" / "local_agent" / "state.py", package / "state.py")
+    (package / "cli.py").write_text(
+        "from __future__ import annotations\n"
+        "import os\n"
+        "from local_agent.config import load_config\n"
+        "def main() -> int:\n"
+        "    config = load_config(config_path=None, cwd=os.getcwd(), provider='bailian', api_base_url=None, api_key=None, model=None, max_steps=None, budget_seconds=None, approval_mode=None)\n"
+        "    print(config.api_key)\n"
+        "    return 0\n"
+        "if __name__ == '__main__':\n"
+        "    raise SystemExit(main())\n",
+        encoding="utf-8",
+    )
+
+
 def _passing_gate(_source: Path, _python: str) -> tuple[GateRecord, ...]:
     return (GateRecord(("fake-gate",), 0.0),)
 
@@ -128,8 +193,20 @@ def _failing_gate(_source: Path, _python: str) -> tuple[GateRecord, ...]:
     raise ReleaseError("injected gate failure")
 
 
-def _run(program: Path, *args: str) -> str:
-    completed = subprocess.run((str(program), *args), text=True, capture_output=True, check=True)
+def _run(
+    program: Path,
+    *args: str,
+    cwd: Path | None = None,
+    env: dict[str, str] | None = None,
+) -> str:
+    completed = subprocess.run(
+        (str(program), *args),
+        text=True,
+        capture_output=True,
+        check=True,
+        cwd=cwd,
+        env=env,
+    )
     return completed.stdout.strip()
 
 

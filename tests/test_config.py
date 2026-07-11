@@ -269,6 +269,46 @@ class ConfigTests(unittest.TestCase):
                         approval_mode=None,
                     )
 
+    def test_user_config_env_is_shared_by_stable_and_dev_and_precedes_workspace_env(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            workspace = root / "workspace"
+            workspace.mkdir()
+            user_config = root / "user-config"
+            user_config.mkdir()
+            (user_config / ".env").write_text("DASHSCOPE_API_KEY=user-token\n", encoding="utf-8")
+            (workspace / ".env").write_text("DASHSCOPE_API_KEY=workspace-token\n", encoding="utf-8")
+            explicit = root / "explicit.env"
+            explicit.write_text("DASHSCOPE_API_KEY=explicit-token\n", encoding="utf-8")
+            with patch.dict("os.environ", {"AGENT_CONFIG_DIR": str(user_config)}, clear=True):
+                shared = load_config(
+                    config_path=None,
+                    cwd=str(workspace),
+                    provider="bailian",
+                    api_base_url=None,
+                    api_key=None,
+                    model=None,
+                    max_steps=None,
+                    budget_seconds=None,
+                    approval_mode=None,
+                )
+            with patch.dict("os.environ", {"AGENT_CONFIG_DIR": str(user_config)}, clear=True):
+                overridden = load_config(
+                    config_path=None,
+                    env_file=str(explicit),
+                    cwd=str(workspace),
+                    provider="bailian",
+                    api_base_url=None,
+                    api_key=None,
+                    model=None,
+                    max_steps=None,
+                    budget_seconds=None,
+                    approval_mode=None,
+                )
+
+        self.assertEqual(shared.api_key, "user-token")
+        self.assertEqual(overridden.api_key, "explicit-token")
+
     def test_auto_approve_tools_can_come_from_env(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             with patch.dict(

@@ -5,6 +5,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from .state import default_config_root
 from .state import resolve_state_root
 from .state import workspace_state_dir
 
@@ -81,7 +82,10 @@ def load_config(
     if resolved_state_root.exists() and not resolved_state_root.is_dir():
         raise ConfigError(f"state_dir exists but is not a directory: {resolved_state_root}")
     resolved_state_dir = workspace_state_dir(resolved_state_root, workspace)
+    # Keep provider credentials outside both a project checkout and a stable
+    # release snapshot. setdefault preserves explicit process/CLI values.
     _load_dotenv(_resolve_env_file(env_file, workspace), required=env_file is not None)
+    _load_dotenv(default_config_root() / ".env")
     _load_dotenv(workspace / ".env")
 
     resolved_provider = _resolve_provider(provider or file_config.get("provider"))

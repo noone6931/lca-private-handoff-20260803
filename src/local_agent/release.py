@@ -52,8 +52,8 @@ class ReleaseInfo:
 
 
 def default_channel_root() -> Path:
-    state_home = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local" / "share"))
-    return state_home.expanduser() / CHANNEL_NAME
+    state_home = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local" / "state"))
+    return state_home.expanduser() / CHANNEL_NAME / "channels"
 
 
 def default_source_root() -> Path:
@@ -410,7 +410,10 @@ def _shell_quote(value: str) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="lca-release", description="Manage offline stable and development LCA channels.")
-    parser.add_argument("--channel-root", help="Channel state root; defaults to XDG_STATE_HOME/local-coding-agent.")
+    parser.add_argument(
+        "--channel-root",
+        help="Channel state root; defaults to XDG_STATE_HOME/local-coding-agent/channels.",
+    )
     parser.add_argument("--source-root", help="Development source root; defaults to this repository.")
     parser.add_argument("--python", dest="python_executable", help="Python executable recorded for both channels.")
     parser.add_argument("--bin-dir", help="Where install writes lca, lca-dev, and lca-release launchers.")
