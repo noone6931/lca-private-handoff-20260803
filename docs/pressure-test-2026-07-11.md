@@ -228,3 +228,183 @@ OMP 的 `packages/agent/src/agent-loop.ts` 不用总步数结束主循环，但�
 ## 仍然不进入业务写入
 
 这次只证明 LCA 可以稳定收束跨项目只读设计，**不证明业务 owner 已定位**。生成的候选和缺失项仍需用真正的订单字段/制单状态 owner、结算单 DDL、模板管理与下载中心契约进一步确认；在此之前不对 `zqylpayment` 或 `mpspay` 执行 patch。
+
+---
+
+# T-132 文件发现与负向证据可靠性压测（2026-07-11）
+
+## 目标
+
+用原 `/add-dir /Users/chengming/mycode/project` 失败样本复测：Agent 在 primary 仍是 LCA、`project` 仅为 authorized additional root 时，能否只靠只读工具判断 Maven/Java 代码存在，而不把内容搜索 no-match、截断目录列表或 primary Git 状态误写成 negative conclusion。
+
+## 首轮问题
+
+| session | 工具调用 / error | 观察 | 根因 | 处理 |
+|---|---:|---|---|---|
+| `20260711T124530411799Z` | 约 27 / 3 | 百炼两次对 `glob_files` 同时传 `path` 和 `paths`，被严格 schema 拒绝；随后一次 Java glob 输出约 198KB，虽然最终判断 Maven/Java 存在，但模型在目录枚举、重复读取和大结果中浪费了上下文。 | schema 只暴露 canonical `paths`，但 provider 有已观测的无歧义 scope 方言；glob 返回未设模型输出上限。 | 在 Registry 单点把安全的 `path` + `paths` scope 方言归一为 canonical `paths`，不增加第二个模型可见 schema；glob JSON 输出在 30KB 截断时显式标记 `complete=false` / `incomplete`。 |
+
+这不是对任意参数的宽松兼容：冲突 path、未授权路径和含义不明确的字段仍由 schema/path resolver 拒绝。
+
+## 复测结果
+
+| session | 工具调用 / error | 关键证据 | 结论 |
+|---|---:|---|---|
+| `20260711T125014148285Z` | 5 / 0 | 先浏览 `project`，再用 `glob_files` 找到 36 个 `pom.xml`；对 `**/*.java` 的结果被限制为 29,386 字符且明确 incomplete；随后读取两个 Maven `pom.xml`。 | 通过。最终回答确认目标包含 Maven 项目和 Java 源码，并明确 Java 清单被截断，未把未展示模块或文件说成不存在。 |
+
+完整调用序列为：`list_files`、`glob_files(**/pom.xml)`、`glob_files(**/*.java)`、两次 `read_file(pom.xml)`。没有调用 shell、Git、测试或写工具。
+
+## OMP 对照与后续
+
+OMP 的 `glob` 与 `grep` 是两类工具：前者发现路径/文件名，后者匹配文件内容。LCA 已对齐这一职责边界，并把完整性 metadata 接入 Evidence Ledger、CompletionAudit 和 FinalAnswerSteerer；通用“负向结论必须匹配证据类型”的硬门是 LCA 在现有审计框架上的增强。
+
+| ID | 状态 | 后续 |
+|---|---|---|
+| PT-057 | 已关闭 | `glob_files.path` + `paths` 的安全方言归一和 30KB incomplete cap 已通过真实百炼复测。 |
+| PT-058 | 已关闭 | 内容 no-match、截断 `list_files`、primary 非 Git 均不能再支撑“没有 Java/src/源码/additional root Git”类结论；定向单测锁定。 |
+| PT-059 | 已关闭（T-132C） | workspace inventory contract、exposed-only unknown-tool suggestion 和 RunSummary discovery/misuse 指标均已落地；真实百炼 session `20260711T131716175598Z` 已验证有界收束。 |
+
+## T-132C 真实 inventory 复测
+
+### 命令与边界
+
+在 primary 为 LCA、`/Users/chengming/mycode/project` 为 authorized additional root 的情况下，使用百炼执行只读 inventory。提示明确要求：filename/extension/directory discovery 只能用 `glob_files`；只允许对少量 README、`pom.xml` 或 manifest 执行 `read_file`；禁止 `search_code`、LSP、shell、Git、测试和写入。
+
+ToolChoiceQueue 已按每个 authorized root 最多两次、总计最多八次 discovery 建立 contract；如有 root 未覆盖或结果不完整，最终回答必须报告范围，不能作缺失结论。
+
+### 结果
+
+| session | LLM / 工具 | RunSummary | 观察 |
+|---|---:|---|---|
+| `20260711T131716175598Z` | 4 / 5（2 error） | `file_discovery_calls=4`、`file_discovery_incomplete_results=1`、`file_discovery_no_match_results=0`、`unknown_tool_calls=1`、`unknown_tool_suggestions=0`、`filename_search_misuse_calls=0` | 模型对 primary 和 additional root 都发起 `glob_files`；additional root 识别到 Maven/Java 证据。Java 输出达到 30KB cap 后明确 `incomplete`；Queue 在 discovery budget 后强制无工具最终回答。没有 shell、Git、测试或写工具。 |
+
+两次 error 均被安全收敛：一次为 provider 的 malformed tool name，另一次为其畸形 arguments 进入 `_invalid_arguments`。二者都以可审计 tool error 回传，没有污染下一轮 provider request、没有暴露 hidden/deny tool，也没有触发 unsafe alias。最终文字中对 `file_count`/`observed_match_count` 的数值叙述仍不够严谨，记录为 provider presentation quality，暂不为单次描述偏差新增 generic guard。
+
+### 结论与 OMP 对齐
+
+T-132C 关闭 PT-059：LCA 现在像 OMP 的 `glob`/`grep` 职责拆分一样，将 filename/path discovery 与内容搜索分开，并以有界队列限制 inventory 扩散。LCA 的逐 root coverage、负向证据审计和 exposed-only suggestion 是针对 multi-root 本地 Agent 的增强。
+
+additional root 不自动获得 Git/shell 权限；本次也不据 primary Git 状态判断 additional root。若要给某仓库作 Git 结论，仍需 `/move <repo>` 切换 primary。
+
+| ID | 状态 | 后续 |
+|---|---|---|
+| PT-059 | 已关闭 | workspace inventory contract、unknown-tool containment、discovery/misuse metrics 已完成并由真实百炼复测。 |
+| PT-060 | 已缓解，继续观察 | provider 可继续生成 malformed tool name/arguments；R-055 的 provider-safe sanitize 将其保持为 tool error，不为畸形 payload 扩张工具 schema。 |
+| PT-061 | 开放，低优先级 | provider final narration 可能误解 bounded discovery metadata；后续仅在重复真实样本证明泛化风险时，考虑在 result wording/summary template 层改善。 |
+
+---
+
+# T-136 真实服务费结算 owner 定位与 evidence 收束（2026-07-11）
+
+## 范围与边界
+
+使用需求目录 `需求文档-拓展服务费结算V1.3.md` 作为 primary workspace，授权后端 `zqylpaymentmaster9d423763` 与前端 `mpspaymasterce6ca65` 为 additional roots。任务只允许读取、filename/path discovery 与内容搜索；没有执行 shell、Git、测试、memory 或写入。
+
+目标是让 Agent 输出四段式 owner 定位：订单服务费/状态、结算单实体/DDL/Mapper、模板与下载中心契约、前端页面/API；未验证内容必须明确留在“合理候选”或“仍缺证据”。
+
+## 连续真实样本
+
+| session | 结果 | 发现 | 处理/结论 |
+|---|---|---|---|
+| `20260711T140113779257Z` | 未正常收束 | requirement 已在 primary，但 additional code roots 被旧 soft requirement 当作“还必须读取的外部需求目录”，导致 runtime 长时间只暴露 `list_files/read_file`，后续路径发现和搜索被错误拦截。 | 修正 soft requirement：primary 直接包含命名需求文档时，不把 code-only additional roots 变成第二份必读需求；仍保留“workspace 是代码、allowed root 是真实需求文档”的原有 gate。 |
+| `20260711T140907290753Z` | 安全失败 | 跨 root matrix 在 owner 定位任务中原本不触发；修复后 24 tools 即收束，但 final guard 把“具体对象未找到”误解为“没有源码证据”。 | 将 owner/impact/call-chain 纳入既有 cross-root evidence matrix；收紧 source-evidence false-negative，只处理“源码整体未读/不完整”声明，具体字段/表/类未找到交给 negative-evidence 审计。 |
+| `20260711T141332812456Z` | 安全失败 | 27 tools、0 error；final numeric guard 把 `V1.3:95` 等需求引用行号以及同名 `list.vue` 的不同证据混成源码数值冲突。 | 数值审计改为路径优先、同名文件多候选保留、忽略 `path:line`/`Vx.y:line` 引用数字，并仅在没有任何匹配证据支持业务数值时拒绝。 |
+| `20260711T141702815603Z` | 通过 | 134,077 ms；28 LLM requests；27 tools；0 error；最终正常生成“已验证证据 / 合理候选 / 仍缺证据 / 建议下一步”。 | 首个端到端通过样本。仍只证明 runtime 的证据化收束，不证明结算单 DDL、模板服务或下载中心的真实 owner 已由当前两仓确认。 |
+
+## OMP 对照与 LCA 采取的措施
+
+| ID | 问题 | OMP 对照 | LCA 措施 | 状态 |
+|---|---|---|---|---|
+| PT-062 | provider 使用 `glob_files(path + pattern)`、`search_code(maxResults="50")` 等已观测方言。 | OMP 由工具 schema/结果归一边界吸收 provider 表达差异，不扩张多个模型可见工具。 | 在 `ToolRegistry` 的 compatibility normalization 单点接受无歧义 scalar alias；冲突的 `paths/pattern` 仍拒绝，模型 schema 只暴露 canonical `glob_files`。 | 已关闭，定向测试覆盖。 |
+| PT-063 | primary requirement + additional code roots 被 soft requirement 误判为“必须再读 allowed-dir 需求”。 | OMP soft tool requirement 是具体 pending action 的 reminder/escalation，不应把无关 active root 永久锁成同一工作流。 | 仅当 additional root 真实包含命名 requirement/spec 文档时创建该 gate；primary 直接包含需求文档时跳过该 gate。 | 已关闭，定向测试覆盖。 |
+| PT-064 | owner/impact/call-chain 任务绕过 cross-root evidence budget，根因只是它没有出现“design”字样。 | OMP 的 ToolChoiceQueue 按当前阶段给 directive，并对偏离/完成后的 follow-up 有界处理，而非用主循环总步数结束。 | 复用现有 `DesignEvidenceCoverageSteerer`，把 owner/impact/call-chain 识别为同类 multi-root evidence task；每 root 成功 source read 后只给六次补证据，再 force final。 | 已关闭，session `20260711T141702815603Z` 验证。 |
+| PT-065 | final guards 把 scoped missing、需求引用行号和同名路径误当成“源码证据不存在/数值冲突”。 | OMP 的 tool result/context 边界应保留来源与生命周期，不能仅按文本片段推断事实。 | `SourceEvidenceFalseNegativeSteerer` 仅拦截整体源码缺失声明；numeric evidence 以完整路径优先、保留同名文件所有候选并忽略 location citation。 | 已关闭，定向回归 + 180 秒真实复测通过。 |
+| PT-066 | prompt 写“禁止 LSP”但未设置 tool policy，provider 仍调用 `lsp_workspace_symbols`。 | OMP 的实际权限来自 active tools/mode/permission，不把自然语言当安全边界。 | 记录为开放操作规则：用 `--tool-approval` 显式 deny 各 LSP 工具；不为自然语言关键词增加隐式权限解析。 | 开放，低优先级。 |
+
+## 业务结论与下一步
+
+本轮不进入业务写入。最终报告只能确认 `PlatformOrderEntity`、`PlatformOrderController`、`PlatformOrderApplication`、`platformPayment.js` 等为证据化邻近 owner/candidate；不能确认“拓展服务费”实际字段、结算单主表/明细 DDL、模板管理 API 或下载中心预约下载契约已经在这两个仓库中实现。
+
+下一步需要先获取至少一项真实来源：结算单 DDL/Mapper 所在仓库、模板管理服务接口、下载中心契约，或订单字段的确定 owner。之后在同一 session `/move` 到被确认的 primary，选择验收边界明确的小切片走 `read -> preview -> patch -> test -> diff -> reviewer`，而不是对当前候选路径直接开始写入。
+
+---
+
+# T-140 live fixture 基准复测与 runtime 加固（2026-07-11）
+
+## 边界
+
+本轮 `--live --provider bailian` 只向百炼发送了 benchmark 临时 fixture，未读取或发送企业源码、需求文档或用户项目。deterministic 基准仍完全离线。
+
+## 问题、证据与修复
+
+| 样本 | 现象 | 根因 | 措施 | 结果 |
+|---|---|---|---|---|
+| 原 live `multi-root-code-inventory` | 模型回答已识别 Java/Maven，但原验收只接受固定短语 `Maven Java 项目`，会产生假阴性。 | live provider 文案不能按 deterministic fixture 的精确字符串判定。 | live acceptance 改为 normalized regex、每 root `glob_files` coverage 和禁止全局负向外推；deterministic 仍保留精确文案。 | 语义验收可解释，不再因同义表述显示 0/2。 |
+| `20260711T160120792100Z` | 8 LLM、11 tools、3 errors；模型调用 Git，虽最终结论合理但违反只读 inventory 合约。 | 中文“盘点当前 primary/additional root 项目代码”未命中 workspace inventory intent，Queue 首次暴露了过宽工具集。 | inventory intent 增加“盘点/项目代码”；每次 `LlmRequest` 写入实际 `tool_schema_names`，方便审计 active-tool 投影。 | Git 工具不再进入后续复测的 active schema。 |
+| `20260711T160317681068` | Git 调用已消失，但 7 LLM、7 tools、2 errors；`read_file` 被错误告知 candidate patch read budget 耗尽。 | inventory 复用了仅属于自主小改的 scoped candidate read guard。 | inventory 保持 glob/list/read allowlist，但不再设置 candidate read scope/budget。 | 正确区分“有界 inventory”与“自主小改交付”。 |
+| `20260711T160446291065Z` | live multi-root 复测。 | 上述两项修复后。 | primary 和 additional root 各有结构化 `glob_files` 覆盖；工具 schema 与 Queue active allowlist 一致。 | **通过：6 LLM、7 tools、0 error、无 shell/Git/测试/写入。** |
+| `20260711T160157187152Z` | scoped negative Java evidence。 | 验证语义化 live acceptance 与范围负向结论。 | 要求完整 primary glob，不允许外推 additional root。 | **通过：10 LLM、6 tools、0 error。** 最终明确“当前 primary workspace 不存在 Java 源码”，且不否定 additional root。 |
+
+## 其他本轮防护
+
+- `ToolUsageEvidenceSteerer` 对最终回答中“根据某工具证据”“某工具无结果”等陈述核对本 run 的真实 tool results。未调用的工具不能被伪造成证据；单元回归覆盖虚构 `lsp_symbols` / `lsp_workspace_symbols` 结果时的强制改写。
+- benchmark 报告新增 session/run id、最多 8 条脱敏 tool error 摘要，以及 compaction 的 estimated token reduction、zero-gain 和连续 zero-gain 指标。`--preserve-failed-sessions` 才复制失败的 fixture JSONL，默认报告不保留内容副本。
+- `run_tests` schema/错误提示明确 `command` 必须是完整可执行命令；单独的 `tests.test_math` 返回如何写成 `python3 -m unittest tests.test_math` 的安全提示，不做任意字符串猜测。
+
+## 结论
+
+T-140 的离线 6 个 fixture 继续全部通过。live provider 不再用固定文案误判两项只读任务；multi-root inventory 的真实错误已分别修在 ToolChoiceQueue intent 和 read-scope 所属边界，不向 `agent.py` 新增关键词 guard。仍需持续观察百炼在长只读最终回答中的工具数量与 presentation quality，但这不阻塞明确目标的小改链路。
+
+---
+
+# T-141 Xiaoya black-box multi-root finalization reliability（2026-07-12）
+
+## 边界
+
+本轮仍只使用临时 fixture 和百炼 live benchmark，不读取或发送企业源码。目标是按 OMP 的 queue / turn owner 原则修掉三类黑盒问题：finalization ping-pong、provider schema violation 缺少单独可观测性，以及 primary root 文档证据误导 sibling code root。
+
+## 修复前样本
+
+| session | 现象 | 观察 |
+|---|---|---|
+| `20260711T234948946966Z` | 正常完成 | 17.7 秒，5 LLM、12 tools、0 error，正确覆盖 primary / service-a / service-b。 |
+| `20260711T235356936983Z` | 慢收敛 | 31.3 秒，12 LLM、11 tools、2 errors；`requirement_evidence`、`forced_final`、`negative_existence`、`workspace_inventory_budget` 交替触发，最终虽完成但重写过多。 |
+| `20260711T235014928853Z` | 未正常终止 | 没有 `run_summary`；停在 `llm_request step 12`，4 分钟后被手工清理。说明 terminal phase 缺少统一 owner 与外层 timeout 兜底。 |
+
+## Runtime 修复
+
+| 问题 | OMP 对齐点 | LCA 修复 |
+|---|---|---|
+| finalization ping-pong | `tool-choice-queue` / `agent-loop` 中 pending owner 与 continuation 上界明确，terminal phase 不被无界 reopen。 | 新增 `finalization.py`，由 `FinalizationCoordinator` 统一持有 forced-final terminal ownership、aggregate finalization budget 和 unresolved gate。 |
+| provider schema violation 只有普通 tool error | OMP 的 active tools 是硬边界，越界调用会被拒绝且可单独观测。 | `ToolRegistry` 对 runtime allowlist 外但名称已知的调用打上 `provider_schema_violation` metadata；`RunSummary` / benchmark 报告单列该指标。 |
+| root-local 文档被错误外推 | OMP 的 context/tool evidence 带来源与生命周期，active root 不应隐式跨仓传播结论。 | `EvidenceLedger` / `ToolChoiceResult` / final steerers 现在保留 `root` + `scope` provenance；primary 文档默认只覆盖 primary。 |
+| provider 不按 timeout 返回会卡住终端 | OMP 有 abort/deadline 贯穿 loop。 | 新增 `chat_runtime.py` 外层 timeout 封装；即使 provider client 忽略 timeout，也会以 `LlmError` 收口并写 `run_summary`。 |
+
+## 定向验证
+
+- 全量 unittest：**441/441** 通过。
+- 离线 benchmark：**6/6** 通过。
+- 关键新增回归：
+  - 多个 final steerer 交替拒绝 final 时仍有上界，最终返回明确结果；
+  - hanging provider 在 forced-final 阶段会被外层 timeout 切断并写出 `run_summary`；
+  - provider 调用 active schema 外工具时拒绝执行并单独计入 `provider_schema_violations`；
+  - additional root 的 `read_file` / `search_code` / `glob_files` 证据保留 root-local provenance。
+
+## 百炼 live 复测
+
+### run1
+
+| task | session / run | 结果 | 指标 |
+|---|---|---|---|
+| `multi-root-code-inventory` | `20260712T001400071406Z` / `4302efab477d4275b67bcc255f31034e` | 通过 | 9 LLM、6 tools、0 error、`provider_schema_violations=0`、`finalization_attempts=6`、termination=`final` |
+| `scoped-negative-source-evidence` | `20260712T001427004155Z` / `6be7fcad02f2401abf24abde31d79744` | 通过 | 10 LLM、9 tools、0 error、`provider_schema_violations=0`、`finalization_attempts=0`、termination=`final` |
+
+### run2
+
+| task | session / run | 结果 | 指标 |
+|---|---|---|---|
+| `multi-root-code-inventory` | `20260712T001444596471Z` / `cd42a5b4ba5d4980b57fe7dd350ed64d` | 通过 | 5 LLM、6 tools、0 error、`provider_schema_violations=0`、`finalization_attempts=1`、termination=`final` |
+| `scoped-negative-source-evidence` | `20260712T001457282493Z` / `569ff35df0ba414393ef6ad1f019b65f` | 通过 | 6 LLM、5 tools、0 error、`provider_schema_violations=0`、`finalization_attempts=0`、termination=`final` |
+
+## 结论
+
+T-141 关闭了这一轮最危险的 runtime 缺口：现在即便 finalization 被多个 auditor 连续打回，也有统一 owner、统一预算和外层 timeout，不会再出现没有 `run_summary` 的悬挂 session。live 两轮都证明 multi-root inventory 与 scoped negative evidence 可以稳定终止，且 root-local 文档不会再跨 root 误指挥 sibling service。

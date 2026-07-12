@@ -114,14 +114,18 @@ flowchart TD
 | Memory consolidation | `[MVP-已落地]` | `--memory-consolidation auto|llm` 在一轮结束后抽取 session 中的长期经验；默认 `--memory-scope state` 写 state dir 的 `memory/*.md`，显式 `project` 才写 `.local-agent/memory/*.md`。 | 默认 `off`；坏 JSON、空结果、预算耗尽或本轮已显式写 memory 时不写入。 |
 | Authored skills discovery | `[MVP-已落地]` | 启动时扫描 `.local-agent/skills/<name>/SKILL.md`。 | 只注入 name、description 和 source path；正文按需用 `read_file` 读取。 |
 | Frontend boundary | `[MVP-已落地]` | CLI、Terminal Frontend 和未来 Remote/Web 通过 Command/Event 协议接入 Runtime。 | Runtime 已开始产出 typed events；现有 CLI 输出由 `StderrEventSink` 渲染，Terminal Frontend 复用同一事件流。 |
-| Run summary / coverage | `[MVP-已落地]` | 每轮结束写入 `run_summary` session 事件，并产出 `RunSummary` typed event。 | 记录 termination reason、耗时、LLM 请求数、工具调用/错误/无效结果、synthetic tool result、compaction、tool counts、guard hits 和 steering counts；`/status` 可查看最近一轮摘要。 |
+| Run summary / coverage | `[MVP-已落地]` | 每轮结束写入 `run_summary` session 事件，并产出 `RunSummary` typed event。 | 记录 termination reason、耗时、LLM 请求数、工具调用/错误/无效结果、synthetic tool result、compaction、tool counts、guard hits 和 steering counts；`/status` 可查看最近一轮摘要。T-141 之后还会单列 `provider_schema_violations` 与 `finalization_attempts`，方便区分 provider 越界与 runtime 收束成本。 |
 
 ## 待加入能力矩阵
 
 | 能力 | 标签 | 建议落点 | 设计要点 | 验收标准 |
 |---|---|---|---|---|
 | Context token 预算 | `[MVP-已落地]` | Context governance。 | 已加入本地 token 估算、`context_token_budget` / `AGENT_CONTEXT_TOKEN_BUDGET` / `--context-token-budget`，字符预算保留 fallback。 | 长上下文压测中 compaction 触发更接近真实 context window；provider/model 专用 tokenizer 后置。 |
-| Path-scoped rules | `[NEXT-近期待加入]` | Context / Rules。 | 支持按路径/glob 生效的规则文件，避免全局 sticky rules 对无关目录造成噪音。 | 编辑匹配路径时规则可见；不匹配路径时不注入或只作为可读取提示。 |
+| Dynamic workspace roots | `[MVP-已落地]` | Frontend / Runtime / Context。 | T-128A 提供 session 级 `/workspace list/add/remove/reset` 与 `/add-dir`；T-128B 提供 OMP 风格 `/move`。追加 root 保持显式授权；move 迁移当前 session artifacts、重载新 primary 的 project context。 | 不重启 session 即可追加/移除 root、恢复动态 roots 或 move primary；move 后 shell/git/LSP/项目上下文一致切换，旧 primary 作为 session root 保留。 |
+| 文件发现与负向证据可靠性 | `[MVP-已落地]` | Tools / Evidence / CompletionAudit / ToolChoiceQueue。 | T-132 已按 OMP `glob` / `grep` 职责拆分落地 canonical `glob_files`；截断和扫描范围进入结构化 evidence；“没有源码/目录不存在”必须由完整 path discovery 支持。inventory 先识别自然语言“盘点”意图，再把当前 active allowlist 投影到 provider schema；inventory 不复用自主小改的 candidate-read guard。 | 按文件名/扩展名可稳定发现；内容搜索 no-match、截断列表、primary Git 失败不再被误用为 additional root 的不存在证据；双 root live fixture 已 0 error 收束。 |
+| Path-scoped rules | `[MVP-已落地]` | `path_rules.py` / Context / Rules。 | 每个 canonical root 的 `.local-agent/rules/*.md` 声明 root-relative glob、priority 和说明；metadata 每轮可见，正文仅对命中用户/工具路径加载。规则目录/文件均 strict-resolve 后验证仍位于 canonical root。 | 规则根隔离，外部/断裂 symlink 只产生诊断且绝不读取正文；add/remove/move 后重载，compaction 后仍动态注入；规则 advisory，不扩大工具权限。 |
+| Stable / Dev release channels | `[MVP-已落地]` | `release.py` / `lca_release.py`。 | `lca` 运行完整验证后 promote 的 immutable source snapshot，`lca-dev` 运行当前 checkout；provider config 由用户级 config dir 共享。 | publish 前执行离线 unittest、compileall、diff check 与 source digest；失败保持旧 stable，snapshot 不携带 `.env`；支持 status/rollback。 |
+| Offline benchmark / eval | `[MVP-已落地]` | `benchmark.py` / `benchmarks/tasks`。 | 默认 deterministic fake provider 在临时 fixture 上跑真实 Runtime；live provider 必须显式选择，live acceptance 使用 provider-neutral term/regex、root coverage 和禁止错误外推。 | JSON/Markdown 报告含 session/run、termination、LLM/tool、bounded redacted errors、guard、compaction effectiveness、验收、diff、测试证据和残余风险。 |
 | Event Protocol v1 | `[MVP-已落地]` | `src/local_agent/protocol/events.py`。 | 使用 Python `dataclass` 定义 replayable events：`event_id`、`session_id`、`run_id`、`seq`、`timestamp`、`type`、`payload`；提供 `EventEmitter`、`EventSink`、`ListEventSink`、`StderrEventSink`。 | Runtime 已产出 `SessionStarted`、`UserMessage`、`LlmRequest`、`AssistantMessage`、`ToolStarted`、`ToolOutput`、`ToolFinished/ToolFailed`、`RunSummary`、`SessionFinished`；session JSONL 写入 `event_v1`；不引入 Pydantic。 |
 | Command Protocol v1 | `[MVP-已落地]` | `src/local_agent/protocol/commands.py`。 | 定义 `SubmitPrompt`、`ApproveTool`、`RejectTool`、`SetApprovalMode`、`SetToolApproval`、`CancelRun`、`InterruptTool`、`ContinueSession` 的 dataclass command shape。 | 命令对象和 `to_dict()` 已可测试复用；完整 runtime command handler 留给 Terminal Frontend 接入时补齐。 |
 | Terminal Frontend MVP | `[MVP-已落地]` | `src/local_agent/frontends/terminal/`、`src/local_agent/terminal_io.py`。 | 第一版选型为可选 `prompt_toolkit` + `rich`；定位是 terminal-native interactive frontend，不是 fullscreen TUI；保留原生 terminal scrollback，不做 OMP 级自研 renderer。 | `./agent`、`./agent --chat`、`./agent chat` 可进入同一套事件驱动交互入口；一次性 prompt / chat run 期间会静默 TTY echo，approval / ask_user 时恢复输入。 |
@@ -252,6 +256,27 @@ Command Protocol v1 至少包含：
 - 因真实压测显示仅靠 system prompt 不足，`list_files {}` 的根目录输出、path-not-found 错误、带 allowed-dir 的空搜索结果也会提示 exact allowed dirs，让工具观察持续携带 OMP 风格运行时环境。
 - 因真实压测继续显示“看到 roots 但仍不读需求文档”，需求/文档类任务会创建 OMP 风格 soft tool requirement：满足前只暴露 `list_files` / `read_file`，并要求先 `read_file` allowed-dir 下的候选需求文档；满足后恢复完整工具集。
 
+动态 workspace roots 已完成 T-128 设计，详见 `docs/dynamic-workspace-roots-design.md`。核心边界是：
+
+- `/workspace add` 只增加 session 级 additional root，不改变 primary workspace，也不加载该目录的项目 memory/skills。
+- shell、git 和项目级上下文继续锚定 primary；写入继续受 approval policy 管控。
+- `/move` 才切换 primary，并重载 startup context、sticky rules、project memory/skills、LSP 和 state artifacts。
+- 不向模型暴露“自行扩大目录权限”的工具；root 变化只能来自用户前端命令。
+
+T-132 已完成 roots 变更后的文件发现与负向证据闭环，详见 `docs/file-discovery-and-negative-evidence-design.md`：
+
+- `glob_files` 只负责 filename/path discovery，`search_code` 只负责内容匹配，`list_files` 只负责附近目录浏览。
+- 工具结果显式携带 scope、limit、truncated 和 complete/incomplete；模型不能把截断列表或内容搜索 no-match 当作路径不存在。
+- workspace inventory 由 ToolChoiceQueue 按 canonical roots 有界覆盖；additional root 的 Git/shell 仍不自动放权，需要执行时使用 `/move`。
+- 负向存在性结论进入 Evidence Ledger、CompletionAudit 和 FinalAnswerSteerer；工具调用证据也会与本 run 实际结果核对，最终回答不能声称未调用工具的结果。实现不得继续向 `agent.py` 堆独立 guard。
+
+T-141 进一步把黑盒 multi-root finalization 的 owner 和 provenance 问题按 OMP 原则落回独立模块，而不是继续堆到主循环：
+
+- `finalization.py` 的 `FinalizationCoordinator` 是 terminal phase 的唯一 owner，统一管理 forced-final、aggregate retry budget、unresolved gate 和 terminal draft reuse 规则。
+- `chat_runtime.py` 为 provider `.chat(...)` 增加外层 timeout；即使底层 client 忽略 timeout，也会以 `LlmError` 收口并写出 `run_summary`。
+- `EvidenceLedger` / `ToolChoiceResult` / final steerers 对 path-based 证据保留 `root` + `scope` provenance；primary 的文档证据默认不跨 root 外推。
+- provider 调用 active schema 外工具仍会被拒绝执行，但现在单独记为 `provider_schema_violation`，不再和普通 tool error 混在一起。
+
 当前还有两类人工上下文文件：
 
 - 用户级：`~/.config/local-coding-agent/AGENTS.md`、`~/.config/local-coding-agent/RULES.md`，可用 `AGENT_CONFIG_DIR` 改目录。
@@ -276,7 +301,7 @@ Command Protocol v1 至少包含：
 近期设计目标：
 
 - Authored skills discovery 已落地，只曝光 name/description/source，正文按需读取。
-- Path-scoped rules 作为下一步候选。
+- Path-scoped rules 已完成 MVP：每 root 使用 `.local-agent/rules/*.md`，metadata 常驻、正文按命中路径动态加载；详见 `docs/path-scoped-rules-design.md`。
 - managed skills / autolearn 默认后置，避免自动生成内容长期污染 prompt。
 
 ### LSP / Light Fallback
@@ -363,6 +388,6 @@ rollback 只回滚当前 session 的 patch record，并要求当前文件仍匹�
 
 ## 推荐落地顺序
 
-1. 用真实需求验证 multi-root、startup context/rules、startup memory、learn、memory consolidation、authored skills、auto summary 和 LSP/light fallback 的组合体验。
-2. 做 path-scoped rules 或 token 预算，取决于真实任务里先暴露的是规则噪音还是上下文预算问题。
-3. 最后再评估 managed skills、LSP rename/code action、AST edit、reviewer/planner 和更重的 TUI/Remote UI。
+1. T-132 与 path-scoped rules 已完成；用 deterministic benchmark 和真实 provider fixture 继续量化 multi-root inventory、负向证据和小改闭环。
+2. 在正确业务 owner root 补足 DDL、模板/下载中心或调用方证据，再用同一 session `/move` 做明确目标小改。
+3. 只在真实失败样本证明需要时评估 managed skills、LSP rename/code action、AST edit、subagents 和更重的 TUI/Remote UI。

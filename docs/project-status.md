@@ -30,7 +30,7 @@
 
 ## 当前进度
 
-当前项目已完成 P8 前端协议与交互基础 MVP，P9 真实需求使用准备已覆盖项目边界、源码验证、LSP 韧性和服务费结算链路压测，并进入 P10 Intelligence Runtime 骨架。用户可以用自然语言描述任务，而不是每次手写工具顺序；Runtime 通过 RequirementContract、Planner/Explore、MiniToolChoiceQueue、CompletionAudit 和二阶段 Patch Reviewer 保持任务目标、证据、写入、测试和 diff 的闭环。T-123 至 T-127 已继续归还核心架构债：ToolLoop steering、RunCollector、RunContext、EvidenceLedger、StartupContext 与 SessionGuardState 已离开 `AgentRuntime`；主文件降至 2494 行，303 个 unittest 通过。T-127 针对 T-126 的失败样本新增自主小改候选收束：读到源码和测试证据后，Queue 会停止宽泛探索并引导 preview/write/test/diff。下一步是在隔离 worktree 复跑该真实路径，不向主文件新增 feature guard。详见 `docs/pressure-test-2026-07-10.md`。Runtime 继续产出 typed events 和 `run_summary`，CLI/session/tool 日志和 terminal frontend 共用事件流。
+当前项目已完成 P8 前端协议与交互基础 MVP，P9 真实需求使用准备已覆盖项目边界、源码验证、LSP 韧性和服务费结算链路压测，并进入 P10/P11 Intelligence Runtime 与真实跨项目任务收束。用户可以用自然语言描述任务，而不是每次手写工具顺序；Runtime 通过 RequirementContract、Planner/Explore、MiniToolChoiceQueue、CompletionAudit、二阶段 Patch Reviewer，以及新落地的 bounded finalization coordinator 保持任务目标、证据、写入、测试和 diff 的闭环。T-128~T-132 已完成动态 workspace roots、`/move`、跨 root 只读设计收束与有界文件 inventory；T-138~T-140 已补 stable/dev 隔离、规则符号链接边界和可重复 benchmark；T-141 进一步补上了 finalization terminal ownership、provider schema violation telemetry 和 multi-root evidence provenance。下一步仍是在已确认的真实 owner 边界内做明确小改；完整 async Command Bus/streaming follow-up queue 仍后置。详见 `docs/pressure-test-2026-07-11.md`。
 
 已具备的核心能力：
 
@@ -39,11 +39,11 @@
 - 支持 `bailian` provider，对接阿里云百炼 OpenAI-compatible API。
 - Agent Runtime 已支持工具调用循环。
 - 工具注册、schema 校验、审批模式已经可用。
-- 文件读取、目录浏览、代码搜索、shell、测试、git 状态、git diff、anchored patch、patch rollback、Markdown memory、learn 已经可用。
+- 文件读取、目录浏览、filename/path discovery（`glob_files`）、代码搜索、shell、测试、git 状态、git diff、anchored patch、patch rollback、Markdown memory、learn 已经可用。
 - `apply_patch` 已支持 `replace`、`insert_before`、`insert_after`，并兼容 Python 3.12。
 - 非交互审批、LLM 非 JSON 响应、session 恢复坏尾部、search_code 绝对路径泄漏等问题已经修复。
 - 已完成 Agent 自举测试：能够通过百炼模型调用工具读取、修改、测试和查看 diff。
-- 测试基线：303 个测试在正常本地环境通过。
+- 测试基线：本轮完整门禁通过数见本文件末尾的最新验证记录。
 
 当前已具备：
 
@@ -83,7 +83,7 @@
 - T-074 implementation-quality reviewer / safe new-file policy 已落地：`git_diff` 会对本轮 comment-only 代码实现 patch 追加 `[diff reviewer]`，禁止把注释/文档改动包装成行为、校验、解析或测试覆盖变化；`write_file dry_run=true` 可预览新文件 diff，真实创建会写 patch log，`rollback_patch` 可删除本 session 创建的新文件。
 - T-075 no-edit final hygiene 已落地：实现任务如果准备以“无法安全实现/当前仓库不包含目标服务/未修改文件”等 no-edit 结论结束，但尚未做 git/todo 收束，runtime 会追加 steering，并临时只暴露 `todo_read` / `todo_add` / `todo_update` / `git_status` / `git_diff`，让停止路径也可审计。
 - T-076 Event/Command Protocol v1 已落地：`src/local_agent/protocol/events.py` / `commands.py` 提供 dataclass event/command shape；`AgentRuntime` 支持注入 `EventSink`，并把关键运行事件写入 session JSONL 的 `event_v1`；现有 CLI 仍保持原样输出。
-- T-077/T-080 Terminal Frontend MVP 已落地：`./agent`、`./agent --chat`、`./agent chat` 会进入 terminal-native 交互前端；可选 `prompt_toolkit` 负责历史/多行输入，`rich` 负责结构化输出，未安装时降级为普通终端输入输出；支持 `/help`、`/status`、`/tools`、`/approval`；approval prompt 仍是同步 stdin，但会写入 `ApprovalRequested` / `ApprovalResult` 事件。
+- T-077/T-080 Terminal Frontend MVP 已落地：`./agent`、`./agent --chat`、`./agent chat` 会进入 terminal-native 交互前端；可选 `prompt_toolkit` 负责历史/多行输入与 `/`、`/workspace`、`/approval` 的 Tab 补全，`rich` 负责结构化输出，未安装时降级为普通终端输入输出；支持 `/help`、`/status`、`/tools`、`/approval`；approval prompt 仍是同步 stdin，但会写入 `ApprovalRequested` / `ApprovalResult` 事件。
 - T-078 项目边界分析 MVP 已落地：本机 `.local-agent/memory/enterprise-service-boundary.md` 保存企业服务边界，`.local-agent/skills/project-scope-analysis/SKILL.md` 保存只读分析工作流；代码层新增 analysis-only 任务识别、named skill soft requirement、自定义 memory_read 安全读取和 final structure gate，避免“范围分类”被实现任务 no-edit hygiene 带偏，并防止模型只说“ready to output”不输出表格。
 - T-081 Claude review 行动计划已落地：见 `docs/claude-review-action-plan-2026-07-09.md`；结论是接受 OMP 架构原则，但不先做 P0 大拆分，优先 run summary/coverage、真实压测和渐进模块化。
 - T-082 Run summary / coverage MVP 已落地：每轮结束写 session `run_summary` 和 typed `RunSummary` event，包含终止原因、耗时、LLM 请求数、工具调用/错误/无效结果、synthetic result、compaction、tool counts、guard hits 和 steering counts；`/status` 会显示最近一轮摘要。
@@ -204,7 +204,7 @@
 | Evidence Ledger | 已完成 MVP 版 | `src/local_agent/agent.py` 从工具结果提炼短证据记录，注入 provider-bound `[Evidence ledger]`，并写 session `evidence` 事件；测试覆盖 read_file 后账本注入。 |
 | Synthetic Tool Result | 已完成 MVP 版 | deadline 到期、用户中断、`finish_reason=length` 时会补齐剩余 tool_call 的 tool result。 |
 | Event/Command Protocol | 已完成 MVP 版 | `src/local_agent/protocol/events.py` / `commands.py` 定义 dataclass event/command；Runtime 通过 `EventSink` 产出事件，CLI 通过 `StderrEventSink` 渲染 session/tool 日志；session JSONL 写入 `event_v1`。 |
-| Terminal Frontend | 已完成 MVP 版 | `src/local_agent/frontends/terminal/` 提供 append-only terminal frontend；`./agent`、`./agent --chat`、`./agent chat` 可进入交互；支持 `/help`、`/status`、`/tools`、`/approval`；可选 `prompt_toolkit` / `rich` 增强输入和输出，缺失时降级。 |
+| Terminal Frontend | 已完成 MVP 版 | `src/local_agent/frontends/terminal/` 提供 append-only terminal frontend；`./agent`、`./agent --chat`、`./agent chat` 可进入交互；支持 `/help`、`/status`、`/tools`、`/approval`，且可选 `prompt_toolkit` 为 `/`、`/workspace`、`/approval` 提供 Tab 补全；缺失时降级。 |
 | Terminal Input Isolation | 已完成 MVP 版 | `src/local_agent/terminal_io.py` 在 agent run 期间关闭 TTY echo；approval / ask_user 通过 `terminal_input_prompt` 恢复输入并 flush 误敲缓冲。 |
 | Run summary / coverage | 已完成 MVP 版 | `src/local_agent/agent.py` 在每轮结束产出 `RunSummary` event 和 `run_summary` session 记录；`/status` 展示最近一轮摘要。 |
 | CompletionAudit | 已完成 MVP 版 | `src/local_agent/completion_audit.py` 在最终回答前按 RequirementContract 核对验收项、证据项和验证项；证据型只读缺路径/证据状态、实现任务写后缺测试/diff 会触发 `completion_audit` final steerer。 |
@@ -212,7 +212,8 @@
 | 二阶段 Patch Reviewer | 已完成 MVP 版 | `src/local_agent/patch_reviewer.py` 在成功 `git_diff` 后立即消费 write / `git_diff` / search/LSP 证据；显式要求测试却没有测试 diff、公开 API 未做写后调用方检索、低相关或 comment-only patch 均会触发 runtime steering，并只开放受控修复/验证/回滚工具；最终回答前仍保留兜底审查。 |
 | no-edit evidence gate | 已完成 | CompletionAudit 不再接受只有“blocked/unexecuted”的文字自述；必须有 search/LSP 未命中、路径缺失、relevance/approval 拒绝等工具证据，才允许实现任务在无 diff 时收尾。 |
 | ToolRegistry 参数归一 | 已完成 MVP 版 | `src/local_agent/tools/argument_normalization.py` 在 schema 校验前仅映射已观测 scalar alias；冲突值直接拒绝，随后仍执行原 schema、approval、path/hash 和 anchored patch 校验。 |
-| 测试基线 | 已完成 | 本地正常环境下 303 个测试通过。 |
+| 跨 root owner / impact evidence matrix | 已完成 MVP 版 | “设计/架构”以及“owner 定位/影响范围/调用链”的多 root 只读任务共用 requirement + 每 root source-read + 六次补证据预算；避免任务名称不是“设计”就无限探索。 |
+| 测试基线 | 已完成 | 本地正常环境下 441 个测试通过。 |
 
 ## 下一步 Todo
 
@@ -284,7 +285,7 @@
 | T-076 | Event/Command Protocol v1 | 已完成 MVP 版 | P8 | 新增 dataclass 事件和命令协议：`event_id/session_id/run_id/seq/timestamp/type/payload`；Runtime 通过 EventSink 产出事件，CLI 先作为消费者打印，session JSONL 可重放关键事件；暂不引入 Pydantic。 |
 | T-077 | Terminal Frontend MVP | 已完成 MVP 版 | P8 | 第一版是 terminal-native interactive frontend，不是 fullscreen TUI；支持 `./agent` / `--chat` / `chat` 入口；可选 `prompt_toolkit` 做多行输入、历史和快捷键，`rich` 做 assistant/tool/error/approval 输出；保留原生 scrollback，不用 Rich Live 做主渲染。 |
 | T-078 | 项目边界驱动的项目清单分析压测 | 已完成 MVP 版 | P8/P9 | 已按 OMP authored skills / memory 思路落地为本机上下文，不新增专用工具：企业服务边界放入 `.local-agent/memory/enterprise-service-boundary.md`，范围分析工作流放入 `.local-agent/skills/project-scope-analysis/SKILL.md`；runtime 新增 analysis-only 任务识别、named skill soft requirement、自定义 memory_read 安全读取和 final structure gate。下一步用用户给定真实需求跑“项目范围确认 → 源码验证 → 实现设计”。 |
-| T-080 | Terminal Frontend 命令可发现性 | 已完成 MVP 版 | P8/P9 | 已按 `docs/architecture.md` 的 terminal-native 设计补 `/help`、`/status`、`/tools` 和启动提示；不引入 fullscreen，不改变同步 runtime。 |
+| T-080 | Terminal Frontend 命令可发现性 | 已完成 MVP 版 | P8/P9 | 已按 `docs/architecture.md` 的 terminal-native 设计补 `/help`、`/status`、`/tools` 和启动提示；可选 `prompt_toolkit` 支持 `/`、`/workspace`、`/approval` 的 Tab 补全；不引入 fullscreen，不改变同步 runtime。 |
 | T-081 | Claude review 行动计划 | 已完成 | P9 | 新增 `docs/claude-review-action-plan-2026-07-09.md`，明确接受 agent.py 拆分、token budget、LSP provider、run collector 等方向，但先做日用压测和 run summary，再渐进拆模块。 |
 | T-082 | Run summary / coverage MVP | 已完成 | P9 | Runtime 已记录 `run_summary` 和 `RunSummary` event，包含终止原因、耗时、LLM 请求数、工具调用/错误/无效结果、synthetic result、compaction、tool counts、guard hits 和 steering counts；`/status` 展示最近一轮摘要。 |
 | T-083 | 真实需求范围确认到源码验证压测模板 | 已完成 | P9 | 新增 `docs/real-requirement-pressure-test-template.md`，把真实需求从范围判断推进到源码验证和小改压测的步骤、命令、验收和问题记录固化下来。 |
@@ -331,7 +332,20 @@
 | T-124 | P0b RunCollector 与跨 run evidence reset | 已完成并回归 | P10 | `run_collector.py` 现在承接 RunStats、compaction/tool 计数和 summary 计算；每个新 run 会清空 read evidence、relevance、evidence ledger、patch preview 与 read range counts，避免上一任务污染下一任务。294 个 unittest 通过；完整 `RunContext` 仍待迁移。 |
 | T-125 | P0b RunContext 状态收拢 | 已完成并回归 | P10 | `run_context.py` 统一当前 run 的 metadata、contract、queue、证据、preview、steering、ToolLoop registry 与 Collector；Runtime 保留构造依赖、会话消息/审批、summary cache、recent session guard 和上一轮 summary。`agent.py` 为 3445 行，295 个 unittest 通过。 |
 | T-126 | P0b 后真实小改压测 | 部分通过，继续观察自主选点 | P10 | 自主选点 session `20260710T154146640779Z` 仍探索过宽且无交付；精确目标复跑 `20260710T154432520729Z` 已完成 todo、两份目标读取、dry_run、真实 patch、定向 3 测试和 diff，且只改预期测试文件。P0b 未破坏受控小改闭环；后续优先改 Planner/ToolChoiceQueue/ToolLoop registry，而不加主循环 guard。 |
-| T-127 | P0c Evidence / Startup / SessionGuard 迁移与自主小改候选收束 | 已完成单元回归，待真实复跑 | P10 | 新增 `evidence.py`、`startup_context.py`、`soft_tool_requirement.py`、`session_guard_state.py`；Evidence Ledger 成为 RunContext 唯一所有者，SessionGuardState 明确跨 run 的窗口语义。自主小改在读取源码+测试证据后进入 `candidate_committed`，限制为 preview/write/test/diff；preview 失败才允许精确重读。`agent.py` 3445 -> 2494，303 个 unittest 通过。 |
+| T-127 | P0c Evidence / Startup / SessionGuard 迁移与自主小改候选收束 | 结构完成；真实压测转入 T-129 闭环 | P10 | 新增 `evidence.py`、`startup_context.py`、`soft_tool_requirement.py`、`session_guard_state.py`；Evidence Ledger 成为 RunContext 唯一所有者，SessionGuardState 明确跨 run 的窗口语义。自主小改在读取源码+测试证据后进入 `candidate_committed`；T-129 已补齐 runtime 执行边界、候选路径范围和病态重试上限。 |
+| T-128 | Dynamic Workspace Roots + OMP 风格 `/move` | 已完成并真实复测 | P10/P11 | 已落地 T-128A roots 与 T-128B `/move`：`WorkspaceContext`、REPL/Command/Event、session replay、当前 session artifacts 原子迁移、ToolContext/provider/evidence/Git/shell/LSP/startup context/memory/skills 重载。root add/remove/reset 现在先构造候选 context，JSONL 持久化失败会恢复文件且不提交内存授权；`WorkspaceMoved`/`WorkspaceRootsChanged` 为 post-commit best-effort event，sink 失败只审计而不回滚已提交状态。真实 session `20260711T005836257738Z` 覆盖 move、双 root 读取、Git primary 和重开恢复；旧 primary 会保留为 session root。详见 `docs/dynamic-workspace-roots-design.md`、`docs/pressure-test-2026-07-11.md`。 |
+| T-129 | 自主小改候选执行边界与病态循环收束 | 已完成并真实复测 | P10 | TaskContract 区分局部排除与全局只读；Registry 强制执行 runtime allowlist；candidate 只可回读已选源码/测试路径且最多 4 次；无 successful preview 的 `apply_patch` 连续失败 3 次即以可审计 `tool_choice_queue` 停止。临时 worktree session `20260710T232919852951Z` 无文件修改，完整本地测试 311 项通过。详见 `docs/pressure-test-2026-07-11.md`。 |
+| T-130 | 真实跨项目需求只读压测 | 部分通过，未进入业务写入 | P11 | 首轮 session `20260711T013052126987Z` 在拓展服务费结算需求、`zqylpayment` 后端、`mpspay` 前端上取得 requirement/邻近模块证据，但未确认订单费用/制单状态 owner、结算单 DDL、模板/下载中心契约；68 次工具调用中 9 次错误、11 次无效。deny tool schema 投影已在 session `20260711T014124870469Z` 复测为 3 次指定 read、0 error；T-131 将收束跨 root evidence coverage 后的探索预算与候选事实边界。 |
+| T-131 | 跨 root 只读设计收束与最终答复韧性 | 已完成并真实复测 | P11 | 全局“不得修改/写入”现归为只读；按 OMP 的有界 continuation 原则补齐 forced-final 8 次上限、deadline reserve、本地 summary 优先与 timeout draft fallback。最终答复已区分 presentation 与 hard gate：仅前者超时可退回草稿；需求事实、数值、Reviewer、CompletionAudit 等 hard gate 来不及重写时明确返回未完成/未验证。最终 session `20260711T115451962229Z` 22.3 秒完成 3 次精确 read、0 error/无效/steering，输出事实、候选、缺失 owner 三段；仍不允许开始业务 patch。 |
+| T-132 | 文件发现与负向证据可靠性 | 已完成并真实复测 | P11 | A/B：唯一模型可见的 `glob_files` 负责授权 multi-root 的 filename/path discovery；类型匹配的负向证据进入 EvidenceLedger、CompletionAudit、FinalAnswerSteerer。C：ToolChoiceQueue 对 inventory 要求每个 authorized root 有成功 glob 证据，仅开放 glob/list/read，按 root 两次且总计八次 discovery 后强制收束。20260711T160120792100Z 发现“盘点”措辞未进入 inventory contract，随后补意图识别；20260711T160317681068 发现 inventory 不应复用自主小改 candidate read budget，已移除耦合。最终 live session `20260711T160446291065Z` 为 6 LLM、7 tools、0 error，primary/additional root 均被结构化 glob 覆盖，无 shell/Git/测试/写入。详见 `docs/file-discovery-and-negative-evidence-design.md`。 |
+| T-133 | Terminal Command Routing / Nested Interaction | 已完成最小实现 | P11 | 真实样本证明主 prompt、ask 和 approval 共用 stdin 会让 `/help`、`/workspace list` 被误回传模型。严格参考 OMP：无 `/` 的文本仍是普通 prompt；shared `TerminalCommandRegistry` 已统一 help/completion/dispatch；`InteractionRequest/Result` 与 frontend `CHAT/ASK/APPROVAL` focus state 已隔离嵌套输入。ASK/APPROVAL 的 slash text 本地消费，`/cancel` 形成 cancelled tool result 并返回 CHAT；完整 async Command Bus/streaming queue 继续后置。详见 `docs/terminal-command-routing-and-nested-interaction-design.md`。 |
+| T-136 | 真实服务费结算 owner 定位压测与收束修复 | 已完成第一轮，业务 owner 仍部分缺证据 | P11 | 真实百炼任务先暴露 additional code roots 被错误当作必读需求目录、owner 任务未进入 cross-root evidence budget、final evidence guard 把 scoped missing/citation 行号误报为源码不一致。已在 ToolRegistry、soft requirement、evidence 模块修复，不向主循环新增 guard；最终 session `20260711T141702815603Z` 在 134,077 ms、27 tools、0 error 下完成四段式只读报告。结算单 DDL、模板管理和下载中心的真实契约仍未被当前两仓源码确认，禁止业务 patch。 |
+| T-137 | Terminal chat Enter 提交与多行换行 | 已完成并真实 TTY 复测 | P11 | `prompt_toolkit` 的多行编辑器把普通 Enter 当换行，导致 `/help` 和普通聊天文本看似没有反应。 | 所有主 CHAT 输入现在由 Enter 提交；`Esc` + `Enter` 仅用于插入换行。真实 TTY 已验证 `/help` 与普通文本的 Enter 行为。 |
+
+| T-138 | Stable / Dev release channels | 已完成并加固 | P11 | `lca` 运行已发布的 immutable source snapshot，`lca-dev` 运行当前 checkout；`lca-release publish` 先跑离线 unittest、compileall、diff check 和 source digest，再原子 promote；失败保留旧 stable。provider 凭据从用户级 `${AGENT_CONFIG_DIR:-~/.config/local-coding-agent}/.env` 加载，不复制 checkout `.env` 到 snapshot；显式 env-file 优先，workspace `.env` 最后。channel root 使用 XDG state 的独立 `channels/` 子目录。提交 `ee42e2a`、`36573f7`。 |
+| T-139 | Path-scoped rules MVP | 已完成并加固 | P11 | 每个 canonical root 的 `.local-agent/rules/*.md` 以 root-relative glob/priority 生效；metadata 每轮可见，正文只在用户/工具路径命中时加载；add/remove/move 后重建索引，规则 advisory 且不改变权限。规则目录和每个 rule strict-resolve 后必须仍在 canonical root 内；外部/断裂 symlink 仅记录诊断，绝不读取或注入正文。提交 `2a64a59`、`075503f`。 |
+| T-140 | Offline reproducible benchmark / eval harness | 已完成并真实 provider 复测 | P11 | 6 个临时 fixture 用 deterministic fake provider 跑完整 Runtime，覆盖单 root、multi-root、scope negative、小改测 diff、deny schema、budget stop；输出 JSON/Markdown，`--live` 才显式使用外部 provider。live acceptance 使用 normalized term/regex、glob root coverage 和禁止错误外推，不再把有效语义答案误判为固定文案不符；报告记录 session/run、脱敏 tool errors 和 compaction 效果。phantom tool evidence 由 FinalAnswerSteerer 纠偏，下一次 provider schema 会记录实际 active names。提交 `4069836`、`9588db9`、`03f7039`。 |
+| T-141 | Xiaoya black-box multi-root finalization reliability | 已完成并真实复测 | P11 | stable `f155a8a` 的黑盒 fixture 曾暴露 finalization ping-pong、无 `run_summary` 悬挂 session、provider 越界工具调用缺少单独遥测，以及 primary 文档证据误导 sibling root。 | 新增 `finalization.py` / `FinalizationCoordinator` 收束 terminal ownership 与 aggregate finalization budget，`chat_runtime.py` 提供 provider-agnostic 外层 timeout，`RunSummary` / benchmark 单列 `provider_schema_violations` 与 `finalization_attempts`，`EvidenceLedger` / final steerers 保留 `root` + `scope` provenance。全量 441 tests 与离线 benchmark 6/6 通过；百炼 live 两轮四个 session 均正常终止并写 `run_summary`。提交 `e0aeb75`、`d295c5b`、`8527915`。 |
 
 ## 风险清单
 
@@ -371,7 +385,7 @@
 | R-032 | 真实实现可能退化成低价值注释 patch | 已缓解并复跑 | T-073 复跑 session `20260709T021349259159Z` 中模型定位到相关 Java 文件，但因 `write_file` 被 deny，最终只给 DTO 字段补 JavaDoc；这不能算真实业务实现。 | T-074 已补 implementation-quality reviewer：本轮代码 diff 若只有注释/文档改动，`git_diff` 会提醒不能声称行为、校验、解析或测试覆盖变化。复跑 session `20260709T025706579604Z` 没有再做 comment-only patch，而是在当前仓库缺目标实现时停止说明。 |
 | R-053 | 源码证据型最终回答可能误报数字/状态码 | 已关闭 MVP 版，继续压测 | T-105 中模型读到 `PreOrderStatusEnum.MAKING(2)` / `MADE(3)`，最终却误报为 `50/60`。 | 参考 OMP runtime evidence / steering：已新增 source-grounded numeric final steerer，最终回答涉及枚举、状态码、接口、字段等数字事实且与已读源码不一致时，会强制无工具重写。 |
 | R-054 | `agent.py` steering/guard 继续膨胀 | P0c 已缓解，继续观察 | review 指出 compaction 已拆出，但 final/read-only/semantic guard 继续堆在 `agent.py`。 | T-106 已抽 FinalAnswer Steerer；T-123 已抽 ToolLoop steering/termination；T-124/T-125 已抽 RunCollector / RunContext；T-127 已抽 EvidenceLedger、StartupContext、SoftToolRequirement 与 SessionGuardState，主文件降至 2494 行。新 guard 继续只进独立 steering 或阶段模块。 |
-| R-055 | 无效 tool_call 参数会污染下一轮 provider 请求 | 已关闭 MVP 版 | T-108 首轮复测中百炼拒绝历史消息：无效工具调用的 `function.arguments` 为空或畸形 JSON，导致下一轮 HTTP 400。 | 已在 assistant message 入历史前把工具名、id、arguments 统一归一为 provider-safe JSON object 字符串；空/畸形参数写入 `_invalid_arguments`，并补回归测试。 |
+| R-055 | 无效 tool_call 参数会污染下一轮 provider 请求 | 已关闭 HTTP 400，兼容性继续观察 | T-108 首轮复测中百炼拒绝历史消息：无效工具调用的 `function.arguments` 为空或畸形 JSON，导致下一轮 HTTP 400；T-132C session `20260711T131716175598Z` 仍可观测 provider-invalid name/arguments。 | assistant message 入历史前统一归一工具名、id、arguments 为 provider-safe JSON object 字符串；空/畸形参数写入 `_invalid_arguments` 并作为可审计 tool error，而非重开 schema alias 或污染下一轮 provider 请求。 |
 | R-056 | read_file 行号会干扰源码数字事实比对 | 已关闭 MVP 版 | T-108 窄复测中，模型把枚举状态误报成 1/3/5；numeric guard 因 read_file 内容含 `1:`、`3:`、`5:` 行号而误以为这些数字有源码证据。 | source numeric guard 比对前会剥离 read_file 行号前缀，再判断状态码/枚举值是否出现在源码内容中；新增回归测试覆盖错误数字刚好等于行号的情况。 |
 | R-057 | provider 的工具参数方言导致有效任务无法进入写入/验证闭环 | 已缓解，继续观察 | T-115 真实复测已跑通源码、测试、定向测试和 diff；安全的 scalar alias 已集中归一。 | 只在 ToolRegistry 映射明确已观测的 scalar alias，原 schema、hash、approval 和 anchored patch 校验仍生效；raw diff / bulk todo 继续拒绝并由 T-116 处理。 |
 | R-058 | raw diff / bulk todo 无法安全映射到细粒度工具 | 已缓解，继续观察 | raw diff/bulk todo 仍不是安全等价输入，且会产生无效调用。 | 不做隐式多操作拆解；preview contract 阻止未经验证的写入，明确 schema error 引导到 anchored patch / 单条 todo。 |
@@ -379,6 +393,8 @@
 | R-060 | source-backed final guard 抢占未完成实现任务的修复空间 | 已关闭 MVP 版 | T-119 真实写入会话在初始 patch 失败后继续完成预览、写入、测试和 diff，未触发 final steering。 | 源码数字/证据类 final guard 仅用于 `read-only` contract；实现任务由 CompletionAudit、Patch Reviewer 和 ToolChoiceQueue 驱动受控修复。 |
 | R-061 | requirement source 被 LLM compaction 改写，真实设计范围漂移 | 已缓解，继续观察 | session `20260710T024503106586Z` 将后期规划写为本期双审/支付；T-120 复测已纠正当前期事实，但仍需验证更多需求格式。 | requirement/spec 读取结果作为独立 pinned context；普通 summary 只能辅助导航，最终需求事实要求 requirement path:line。 |
 | R-062 | 跨前后端设计未覆盖最小源码证据集就持续探索 | 已关闭 MVP，继续观察 | session `20260710T025606504484Z` 57 次工具调用中没有读取前端候选源码，最终只能给出弱复用结论。 | T-121 按 OMP ToolChoiceQueue/soft escalation 建立最小 evidence matrix；session `20260710T032336652934Z` 已读取需求、后端 Java 与前端 JS/Vue 后 final 收束。后续继续观察探索成本。 |
+| R-063 | 文件发现工具缺位导致错误负向结论 | 已关闭 MVP，持续压测 | 原样本把内容 no-match、截断目录和 primary Git 失败外推为“没有源码”；首轮 T-132A/B 又暴露百炼会传 `glob_files.path` 与超大结果。 | OMP `glob`/`grep` 分工已落地为 `glob_files`/`search_code`；结构化 complete/truncated/missing metadata 已进入 EvidenceLedger、CompletionAudit 和 FinalAnswerSteerer。T-132C 要求每个 authorized root 有 glob 覆盖、将 inventory 限为 per-root/totals budget，并记录 discovery/misuse；20260711T160446291065Z 进一步验证中文 inventory 意图、每 root schema 和无 candidate-read 耦合均能 0 error 收束。 |
+| R-069 | finalization ping-pong 或 root-local 证据漂移导致黑盒 session 不终止 | 已关闭 MVP，继续观察 provider 收敛效率 | stable `f155a8a` 的小牙 fixture 曾出现 `requirement_evidence`、`negative_existence`、`completion_audit`、`tool_usage_evidence` 和 `forced_final` 交替触发，且有样本没有 `run_summary` 挂住；primary 文档的 “No source code lives here” 也会被误导到 sibling service。 | 对齐 OMP queue/turn owner：`FinalizationCoordinator` 统一 terminal owner 与 aggregate budget，provider hanging 由外层 timeout 收口并始终写 summary；evidence 保留 `root/scope` provenance，root-local 文档默认只描述所属 root。live 两轮四个 fixture session 已全部稳定终止。 |
 | R-033 | no-edit 停止路径可能跳过收束工具 | 已关闭 MVP 版 | T-074 复跑中模型正确停止，但没有维护 todo，也没有调用 `git_diff` 输出“无改动”证据；这会降低最终报告的可审计性。 | T-075 已参考 OMP current task / tool-choice steering 思路落地：no-edit stop 前缺 git/todo 收束会被 runtime steering 纠偏，并临时限制工具到 todo/git hygiene 集合。 |
 | R-034 | 过早做 fullscreen 重 TUI 可能拖慢核心能力 | 新增，中 | 如果把第一版前端理解成 Textual/fullscreen/pane/mouse/overlay，容易提前引入 scrollback、copy/paste、resize、输入法和渲染刷新问题。 | 第一版明确命名为 Terminal Frontend：`prompt_toolkit` 只管输入，`rich` 只管结构化输出，保留原生 terminal scrollback；先做 Event/Command Protocol，后续有真实瓶颈再升级 Textual/Bubble Tea/Ratatui/自研 renderer。 |
 | R-035 | Runtime 与前端输出耦合会阻碍后续终端体验 | 已关闭 MVP 版 | 如果工具日志、审批显示和最终输出继续散落在 Runtime/CLI print 中，后续 `prompt_toolkit + rich` 前端会难以复用和 replay。 | T-076 已参考 OMP runtime/TUI 分层思路，落地 dataclass Event/Command Protocol 和 `EventSink`；Runtime 产出 typed events，CLI 只是第一消费者。 |
@@ -393,6 +409,12 @@
 | R-044 | 证据型只读问题先输出推测 | 已缓解 | “前端密码加密/后端怎么处理”问题中，模型未读关键登录/密码文件就先给“可能 HTTPS 明文 + 后端哈希”的推测。 | T-088 已完成：代码证据/源码/不推测/怎么处理类问题若无成功 `read_file` 就准备回答，会被 runtime steering 拦住并临时只开放证据工具；no-match 负向证据可明确收束。 |
 | R-045 | 语义级路径探索扩散 | 已缓解 | 用户纠正后出现多次相似目录 list_files、父子目录扩散、Path not found 和大目录读取；exact duplicate guard 太晚才命中。 | T-089 已完成：semantic exploration guard 按模块/父目录/Path-not-found pattern 计数，超过阈值后跳过 `list_files` 目录猜测，并临时只开放 search_code/read_file/LSP 证据工具。 |
 | R-046 | 终端输出被用户输入污染 | 已缓解 | 日志出现 `33333333333[tool:start]`，说明一次性 CLI 运行中键盘输入被终端 echo 到 transcript。 | T-090 已完成：一次性 CLI、REPL 和 terminal chat 在 agent run 期间关闭 TTY echo；approval / ask_user 会恢复输入并 flush 误敲缓冲。 |
+| R-064 | 主 command 与嵌套 ask/approval 输入归属混淆 | 已关闭 MVP，继续观察 async 场景 | 用户在 ask 内输入 `/help`、`/workspace list` 会被当作模型答案；漏写 `/` 的 add-dir 样本也容易让用户误以为命令已执行。 | T-133 参考 OMP InputController/Extension UI focus ownership：只有 `/` 开头的 CHAT 文本进 command registry；ASK/APPROVAL 使用 frontend-focused controller，slash text 本地消费，`/cancel` 回传 cancelled tool result。完整 streaming queue 后置。 |
+| R-065 | prompt 中声明“禁止 LSP”等工具限制不是权限边界 | 开放，使用显式 policy | T-136 的自然语言只读 prompt 写了“禁止 LSP”，但未通过 `--tool-approval` deny，百炼仍调用了 `lsp_workspace_symbols`。 | 对齐 OMP active-tool / mode 边界：真正限制必须从 active tool set/approval policy 投影；需要禁用 LSP 时显式 deny 每个 LSP 工具。暂不把自然语言关键词解析成安全策略。 |
+
+| R-066 | 日用入口直接跟随未提交开发源码 | 已关闭 MVP，继续观察发布纪律 | 已用 stable immutable snapshot 与 dev checkout 分离；发布失败不切换 stable。 |
+| R-067 | 多 root 项目规则互相污染或被误当作安全 policy | 已关闭 MVP，继续观察 prompt 成本 | path rule index 以 canonical root 隔离；规则仅 advisory，当前用户指令/源码证据优先，tool approval 才是权限边界。 |
+| R-068 | Runtime 演进没有可重复离线验收基线 | 已关闭 MVP，持续扩充任务 | deterministic benchmark 使用临时 fixture 和真实 Runtime；live provider 压测显式执行，不能替代真实业务验收。 |
 
 ## 架构决策
 
@@ -426,6 +448,9 @@
 | ADR-033 | Final-answer steering 先抽统一 Steerer 协议的一块，不再把最终回答 guard 塞进 `agent.py`。 | 对标 OMP“主循环调度，guard/observer/reviewer 分离”的原则；本轮先抽 final-answer steering，直接修 T-105 枚举误报，后续再拆 semantic/evidence/run collector。 |
 | ADR-034 | Token budget 采用本地估算 + reserve，字符预算保留兜底。 | OMP 按 token/context window 管理 compaction 并预留下一轮预算；LCA 当前不引入重 tokenizer 依赖，先用 CJK/ASCII 轻量估算触发压缩，`context_char_budget` 继续作为 fallback。 |
 | ADR-035 | P10 采用裁剪版 Intelligence Runtime，不一次性复制 OMP 大系统。 | T-108 证明需要比 prompt 更硬的目标契约、完成审计和工具调度；但 LCA 仍是单用户、单 Agent、本地 MVP。当前已落地 RequirementContract + CompletionAudit + MiniToolChoiceQueue + Planner/Explore，后续再补 reviewer。 |
+| ADR-036 | 文件发现直接对齐 OMP 工具分工，负向证据采用 LCA 增强审计。 | 已完成 T-132A/B/C：Canonical `glob_files` 负责 filename/path discovery，`search_code` 只搜内容，`list_files` 只浏览目录；结构化 truncation/complete 状态进入 Evidence Ledger。inventory 以 ToolChoiceQueue 逐 root 有界覆盖，unknown suggestions 只基于 exposed tools，additional root 不自动扩大 Git/shell，Git 操作仍通过 `/move` 切换 primary。OMP 没有被确认存在通用负向结论硬门，因此 LCA 复用 CompletionAudit/FinalAnswerSteerer 增加该约束。 |
+| ADR-037 | Terminal command 与嵌套交互采用 OMP focus/input ownership。 | T-133 已落地最小版：built-in command metadata 同时驱动 help/completion/dispatch；无 `/` 仍是普通 prompt。Runtime 通过 InteractionRequest/Result 请求交互，frontend 以 CHAT/ASK/APPROVAL 管理焦点；ASK/APPROVAL slash text 不运行主命令，`/cancel` 形成 cancelled tool result。完整 async Command Bus/streaming queue 后置。 |
+| ADR-038 | 跨 root owner/impact 分析复用既有 evidence matrix，不新建专用主循环 guard。 | 对齐 OMP ToolChoiceQueue + bounded follow-up：owner、影响范围、调用链与 design/architecture 一并识别为多 root 只读任务。覆盖 requirement 与每 root source read 后最多给六次补证据，随后要求使用已收集证据、标注不确定性并结束。 |
 | ADR-015 | 人工上下文按 AGENTS/RULES 分层。 | 参照 Claude Code 与 OMP 的上下文文件/Sticky rules 分层：`AGENTS.md` 作为启动背景，`RULES.md` 作为短规则每轮注入；二者不同于长期 memory 和 session summary。 |
 | ADR-016 | Session memory consolidation 默认关闭；开启后默认写 state memory。 | 这一步不同于只发给模型的 context compaction；默认 off 可以保护只读分析，开启后默认写用户级 state dir，只有显式 `memory_scope=project` 才写项目 `.local-agent/memory`。 |
 | ADR-003 | Excel 作为人工视图，Markdown 作为开发协作 Agent 可读事实源。 | 这套文档服务于开发 LCA 的过程；`.xlsx` 是二进制展示产物，不适合作为协作 Agent 的事实源。 |
@@ -434,15 +459,20 @@
 | ADR-006 | 长需求应写入文件，让 Agent 读取。 | 直接把大段需求塞进 prompt 会挤占上下文，不利于长任务。 |
 | ADR-007 | 封闭 VM 目标优先于联网能力。 | 第一阶段只允许访问指定 AI API，不引入公网搜索和自动下载依赖。 |
 
+| ADR-039 | Stable 与 Dev 使用显式发布通道 | 对齐 OMP 已安装 CLI 与开发 checkout 分离；LCA 以 source snapshot、source digest、全量本地 gate 和原子 current 指针实现，不下载依赖、不要求双 venv。provider secret 只来自环境、显式 env-file、用户级 config 或 workspace env，snapshot 不携带密钥。 |
+| ADR-040 | Path-scoped rules 采用 metadata 常驻、正文按命中路径加载 | 对齐 OMP project context/discovery，同时控制多 root prompt 体积；规则根隔离且 advisory，工具 policy 仍是唯一安全边界。 |
+| ADR-041 | Benchmark 默认 deterministic，live provider 显式运行 | 对齐 OMP run/coverage 可观测性；离线 fixture 防回归，live fixture 量化模型行为，二者都不等于企业需求实现通过。 |
+| ADR-042 | Finalization terminal ownership 与多 root provenance 必须进入独立模块而非继续堆到主循环。 | 对齐 OMP 的 queue/turn owner、active tool boundary 和 context provenance：terminal phase 由单一 coordinator 管理，provider 越界调用是独立遥测，root-local 证据默认不得跨 root 外推。 |
+
 ## P5 收口结论
 
 | 项目 | 结论 | 依据 |
 |---|---|---|
 | 主链路 | 通过 | 百炼真实小改复测已跑通 todo、dry_run、apply_patch、session allow、rollback、run_tests、git_diff。 |
-| 测试 | 通过 | P5 收口时 90 个 unittest、compileall、xlsx 检查、diff check 均通过；P10 当前代码已跑通 303 个 unittest。 |
+| 测试 | 通过 | P5 收口时 90 个 unittest、compileall、xlsx 检查、diff check 均通过；当前代码已跑通 441 个 unittest。 |
 | 日用入口 | 通过 | README 已补只读分析和小改任务命令模板。 |
 | 开放风险 | 可接受 | shell 仍非沙箱、prompt injection 仍需靠审批和封闭 VM；provider/model 专用 tokenizer、输出 reserve、managed skills、完整 reviewer 和完整 OMP ToolChoiceQueue 继续后置评估。 |
-| 下一阶段 | P10 Intelligence Runtime 继续收束 | T-109~T-127 已补 RequirementContract、CompletionAudit、MiniToolChoiceQueue、Planner/Explore、post-diff Patch Reviewer、no-edit evidence gate、ToolRegistry 参数归一、preview contract、pinned requirement evidence、cross-root evidence matrix、ToolLoop registry、RunContext/Collector、EvidenceLedger/StartupContext/SessionGuardState，以及自主小改候选收束。下一步是在隔离 worktree 复跑真实自主小改，观察百炼是否按 `candidate_committed → preview → write → test → diff` 收束。 |
+| 下一阶段 | P11 继续收束 | T-109~T-141 已完成 Intelligence Runtime 骨架、自主小改候选收束、dynamic workspace roots、有界 inventory、terminal nested interaction、stable/dev 隔离、benchmark 基线，以及 bounded finalization / multi-root provenance。下一步优先取得结算单 DDL、模板/下载中心或正确业务 owner 的源码证据，再验证 move 后的明确目标小改链路。 |
 
 ## 推荐工作流
 
@@ -477,6 +507,6 @@
 
 用户确认本文件后，建议按以下顺序继续：
 
-1. 选一个服务边界和验收条件明确的真实需求切片，先做 evidence-backed 设计，再进入小改、测试和 diff reviewer 闭环。
-2. 继续用 `msp-pay` / `zqylpayment` 做服务费结算复核时，验收真实 requirement path:line、前后端各至少一个代码证据、所有新增方案明确标注推断/建议。
-3. 只在新失败样本证明存在安全等价映射时扩展 ToolRegistry 参数归一；不要自动执行 raw diff 或 bulk todo。
+1. 以真实服务的明确 owner root 和结算 DDL/模板契约重跑只读设计；证据齐全后在同一 session `/move` 到确认的 primary。
+2. 选择验收边界明确的小切片，完成 read -> preview -> patch -> test -> diff -> reviewer 的真实实现验证；只在真实失败证明存在安全等价映射时扩展 ToolRegistry 参数归一。
+3. T-134 只在真实 `/move` 后 history 分区确实影响日用时实现；完整 async Command Bus/streaming follow-up queue 保持后置。
