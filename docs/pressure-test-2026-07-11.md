@@ -551,8 +551,12 @@ stable 黑盒样本显示三类同源问题：模型可以在没有 tool result 
 
 ### 验证
 
-- 全量 unittest：**538/538**；`compileall`、`git diff --check` 通过。
+- 全量 unittest：**542/542**；`compileall`、`git diff --check` 通过。
 - offline benchmark：**11/11**。新增 `bare-observed-no-match`：模型先给无工具“检查后未发现 Java”，Runtime 必须先取得 `glob_files` 完整 no-match 才能 natural final。
 - 未重复调用百炼 live；本批 deterministic 覆盖三组 stable 黑盒语义，避免为措辞质量重复刷外部 API。T-147 不发布 stable，等待独立 review。
 
 残余风险：semantic-only intent 仍是保守、有限的规则识别，不做 NLP judge；未识别的 provider-specific protocol text 继续保持原样，只有被严格 adapter grammar 识别的 envelope 才会被 terminal policy 拦截。
+
+### Review-fix（Git metadata owner）
+
+独立 review 发现第一版 Git metadata contract 仍有两个边界缺口：实现/设计/概念解释只要提到 Git repository 就可能被降为 metadata 只读任务；任意非空 `git_probe_root` 也可能被当作 primary，且 final 文本的“是/不是 Git 仓库”没有与 `git_repository` 布尔事实核对。`c682b7b` 将 metadata contract 限为直接的 current/primary workspace Git 状态问句，并以 `task_kind=read-only`、scope、direct-question 共同约束；审计只接受 `evidence_root_label=primary`，要求 final Git 结论与 structured probe 极性一致。empty/refusal semantic answer 也不能再仅凭 inspection-forbidden contract 通过。新增 unit/runtime 回归后，完整基线为 **542/542**；未重复发送 live 请求，T-147 继续等待独立 review。
