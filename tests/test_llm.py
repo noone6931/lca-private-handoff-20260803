@@ -91,6 +91,34 @@ class LlmClientTests(unittest.TestCase):
         self.assertNotIn("tools", captured_payload)
         self.assertNotIn("tool_choice", captured_payload)
 
+    def test_bailian_response_exposes_known_text_tool_envelope_as_artifact(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = AgentConfig(
+                provider="bailian",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=Path(tmp).resolve(),
+            )
+            body = json.dumps(
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": "<tool_call><function=read_file><parameter=path>hidden.py</parameter></function></tool_call>"
+                            }
+                        }
+                    ]
+                }
+            ).encode("utf-8")
+            client = OpenAICompatibleClient(config)
+            with patch("urllib.request.urlopen", return_value=_FakeResponse(body)):
+                response = client.chat([], [])
+
+        self.assertIsNotNone(response.protocol_artifact)
+        self.assertEqual(response.protocol_artifact.tool_name, "read_file")
+        self.assertNotIn("hidden.py", response.protocol_artifact.preview)
+
     def test_url_error_with_socket_timeout_is_structured_timeout(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             config = AgentConfig(

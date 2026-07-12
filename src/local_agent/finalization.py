@@ -24,6 +24,13 @@ class FinalizationRequestOutcome:
     reason: str | None = None
 
 
+@dataclass(frozen=True)
+class ForcedFinalProtocolOutcome:
+    steering_kind: str
+    artifact_kind: str
+    suppressed_tool_calls: int
+
+
 class FinalizationCoordinator:
     """Own terminal-phase final-answer rewrite state for a single run."""
 
@@ -38,6 +45,7 @@ class FinalizationCoordinator:
         self.severity = FINAL_ANSWER_STEERING_HARD
         self.unresolved_gate: UnresolvedFinalAnswerGate | None = None
         self.terminal_phase_entered = False
+        self.forced_final_protocol_violations = 0
 
     def can_queue(self) -> bool:
         return self.continuations < MAX_FORCED_FINAL_ANSWER_CONTINUATIONS
@@ -87,3 +95,18 @@ class FinalizationCoordinator:
         # the aggregate finalization budget consumed for the run.
         self.continuations = 0
         self.clear_pending_request()
+
+    def reject_forced_final_protocol_response(
+        self,
+        *,
+        artifact_kind: str,
+        suppressed_tool_calls: int = 0,
+    ) -> ForcedFinalProtocolOutcome:
+        """Close a terminal-only turn that still carried a provider tool protocol."""
+        self.forced_final_protocol_violations += 1
+        self.pending_force_final = False
+        return ForcedFinalProtocolOutcome(
+            steering_kind=self.kind,
+            artifact_kind=artifact_kind,
+            suppressed_tool_calls=max(0, suppressed_tool_calls),
+        )

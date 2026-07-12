@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from .config import AgentConfig
+from .provider_protocol import ProviderProtocolArtifact
+from .provider_protocol import classify_provider_content_artifact
 
 
 class LlmError(RuntimeError):
@@ -22,6 +24,7 @@ class LlmTimeoutError(LlmError):
 class ChatResponse:
     message: dict[str, Any]
     finish_reason: str | None = None
+    protocol_artifact: ProviderProtocolArtifact | None = None
 
 
 class OpenAICompatibleClient:
@@ -82,4 +85,5 @@ class OpenAICompatibleClient:
         return ChatResponse(
             message=message,
             finish_reason=finish_reason if isinstance(finish_reason, str) else None,
+            protocol_artifact=classify_provider_content_artifact(self._config.provider, message.get("content")),
         )

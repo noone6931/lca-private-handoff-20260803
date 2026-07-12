@@ -30,6 +30,10 @@ class RunStats:
     unknown_tool_suggestions: int = 0
     filename_search_misuse_calls: int = 0
     provider_schema_violations: int = 0
+    forced_final_protocol_violations: int = 0
+    forced_final_structured_tool_calls: int = 0
+    provider_markup_artifacts: int = 0
+    suppressed_tool_executions: int = 0
     session_evidence_hits: int = 0
     session_evidence_misses: int = 0
     session_evidence_stale: int = 0
@@ -147,6 +151,21 @@ class RunCollector:
         self._stats.synthetic_tool_results += 1
         self._stats.tool_errors += 1
 
+    def record_forced_final_protocol_violation(
+        self,
+        *,
+        artifact_kind: str,
+        suppressed_tool_calls: int,
+    ) -> None:
+        if self._stats is None:
+            return
+        self._stats.forced_final_protocol_violations += 1
+        self._stats.suppressed_tool_executions += max(0, suppressed_tool_calls)
+        if artifact_kind == "structured_tool_calls":
+            self._stats.forced_final_structured_tool_calls += 1
+        else:
+            self._stats.provider_markup_artifacts += 1
+
     def record_session_evidence(
         self,
         *,
@@ -212,6 +231,10 @@ class RunCollector:
             "unknown_tool_suggestions": stats.unknown_tool_suggestions,
             "filename_search_misuse_calls": stats.filename_search_misuse_calls,
             "provider_schema_violations": stats.provider_schema_violations,
+            "forced_final_protocol_violations": stats.forced_final_protocol_violations,
+            "forced_final_structured_tool_calls": stats.forced_final_structured_tool_calls,
+            "provider_markup_artifacts": stats.provider_markup_artifacts,
+            "suppressed_tool_executions": stats.suppressed_tool_executions,
             "session_evidence": {
                 "hits": stats.session_evidence_hits,
                 "misses": stats.session_evidence_misses,

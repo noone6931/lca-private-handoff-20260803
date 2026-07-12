@@ -17,6 +17,7 @@ from typing import Any, Iterable, Mapping
 from .agent import AgentRuntime
 from .config import AgentConfig
 from .patch.anchored import hash_text
+from .provider_protocol import classify_provider_content_artifact
 
 
 DEFAULT_TASKS_DIR = Path(__file__).resolve().parents[2] / "benchmarks" / "tasks"
@@ -152,9 +153,16 @@ class ScriptedBenchmarkClient:
                 finish_reason=str(action["finish_reason"]) if action.get("finish_reason") else None,
             )
         self._last_terminal_action = dict(action)
+        content = str(action.get("content") or "")
+        protocol_artifact = (
+            classify_provider_content_artifact("bailian", content)
+            if action.get("provider_protocol_artifact") == "bailian_xml_tool_envelope"
+            else None
+        )
         return _BenchmarkResponse(
-            {"content": str(action.get("content") or "")},
+            {"content": content},
             finish_reason=str(action["finish_reason"]) if action.get("finish_reason") else None,
+            protocol_artifact=protocol_artifact,
         )
 
 
@@ -162,6 +170,7 @@ class ScriptedBenchmarkClient:
 class _BenchmarkResponse:
     message: Mapping[str, Any]
     finish_reason: str | None = None
+    protocol_artifact: Any = None
 
 
 class SchemaRecordingClient:
