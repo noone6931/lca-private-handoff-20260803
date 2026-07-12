@@ -56,6 +56,38 @@ class CompletionAuditTests(unittest.TestCase):
         self.assertTrue(result.passed)
         self.assertEqual(result.allowed_tool_names(), ())
 
+    def test_semantic_only_task_requires_an_actual_explanation_and_marks_requested_repository_facts_unverified(self) -> None:
+        request = "只解释句子语义，不检查文件；同时告诉我当前仓库有没有 Java。"
+        contract = generate_requirement_contract(request)
+        empty = audit_completion(
+            contract,
+            request=request,
+            final_content="",
+            tool_results=[],
+            source_paths=[],
+            open_todos=[],
+        )
+        unsupported = audit_completion(
+            contract,
+            request=request,
+            final_content="这句话表示 Java 缺失；当前仓库是否有 Java 我已经确认。",
+            tool_results=[],
+            source_paths=[],
+            open_todos=[],
+        )
+        explicit = audit_completion(
+            contract,
+            request=request,
+            final_content="这句话表达 Java 缺失；未检查仓库，因此当前仓库是否有 Java 未验证。",
+            tool_results=[],
+            source_paths=[],
+            open_todos=[],
+        )
+
+        self.assertFalse(empty.passed)
+        self.assertFalse(unsupported.passed)
+        self.assertTrue(explicit.passed)
+
     def test_primary_non_repository_git_probe_is_sufficient_metadata_evidence(self) -> None:
         request = "当前 primary workspace 是不是 Git 仓库？"
         result = audit_completion(
@@ -79,6 +111,84 @@ class CompletionAuditTests(unittest.TestCase):
         )
 
         self.assertTrue(result.passed)
+
+    def test_git_metadata_probe_requires_primary_provenance_and_matching_conclusion(self) -> None:
+        request = "当前 primary workspace 是不是 Git 仓库？"
+        contract = generate_requirement_contract(request)
+        primary_false = ToolResultSummary(
+            "git_status",
+            "not a git repository",
+            is_error=True,
+            metadata={"git_repository": False, "git_probe_root": "/tmp/primary", "evidence_root_label": "primary"},
+        )
+        wrong_root = ToolResultSummary(
+            "git_status",
+            "not a git repository",
+            is_error=True,
+            metadata={"git_repository": False, "git_probe_root": "/tmp/add", "evidence_root_label": "additional"},
+        )
+        missing_label = ToolResultSummary(
+            "git_status",
+            "not a git repository",
+            is_error=True,
+            metadata={"git_repository": False, "git_probe_root": "/tmp/primary"},
+        )
+        positive = ToolResultSummary(
+            "git_status",
+            "clean",
+            metadata={"git_repository": True, "git_probe_root": "/tmp/primary", "evidence_root_label": "primary"},
+        )
+
+        self.assertFalse(
+            audit_completion(
+                contract,
+                request=request,
+                final_content="已验证：当前 primary workspace 是 Git 仓库。",
+                tool_results=[primary_false],
+                source_paths=[],
+                open_todos=[],
+            ).passed
+        )
+        self.assertFalse(
+            audit_completion(
+                contract,
+                request=request,
+                final_content="已验证：当前 primary workspace 不是 Git 仓库。",
+                tool_results=[wrong_root],
+                source_paths=[],
+                open_todos=[],
+            ).passed
+        )
+        self.assertFalse(
+            audit_completion(
+                contract,
+                request=request,
+                final_content="已验证：当前 primary workspace 不是 Git 仓库。",
+                tool_results=[missing_label],
+                source_paths=[],
+                open_todos=[],
+            ).passed
+        )
+        self.assertFalse(
+            audit_completion(
+                contract,
+                request=request,
+                final_content="已验证：当前 primary workspace 不是 Git 仓库。",
+                tool_results=[positive],
+                source_paths=[],
+                open_todos=[],
+            ).passed
+        )
+        self.assertTrue(
+            audit_completion(
+                contract,
+                request=request,
+                final_content="已验证：当前 primary workspace 是 Git 仓库。",
+                tool_results=[positive],
+                source_paths=[],
+                open_todos=[],
+            ).passed
+        )
 
     def test_generic_git_error_is_not_accepted_as_repository_metadata_evidence(self) -> None:
         request = "当前 primary workspace 是不是 Git 仓库？"

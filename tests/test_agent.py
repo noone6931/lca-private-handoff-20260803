@@ -171,6 +171,40 @@ class _PrimaryGitProbeClient:
         )()
 
 
+class _ContradictoryPrimaryGitProbeClient:
+    calls: list[dict] = []
+
+    def __init__(self, config: AgentConfig):
+        self.config = config
+
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
+        if len(type(self).calls) == 1:
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "call_git_status",
+                                "type": "function",
+                                "function": {"name": "git_status", "arguments": "{}"},
+                            }
+                        ],
+                    }
+                },
+            )()
+        if len(type(self).calls) == 2:
+            return type("Response", (), {"message": {"content": "已验证：当前 primary workspace 是 Git 仓库。"}})()
+        return type(
+            "Response",
+            (),
+            {"message": {"content": "已验证：当前 primary workspace 不是 Git 仓库；附加 root 需要先 /move 才能判断。"}},
+        )()
+
+
 class _QualifiedNegativeFinalClient:
     def __init__(self, config: AgentConfig):
         self.config = config
@@ -2702,6 +2736,30 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertEqual(len(_PrimaryGitProbeClient.calls), 2)
         self.assertEqual(runtime._last_run_summary["tool_calls"], 1)
         self.assertEqual(runtime._last_run_summary["termination_reason"], "final")
+
+    def test_primary_git_probe_contradiction_is_rewritten_before_final(self) -> None:
+        _ContradictoryPrimaryGitProbeClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=Path(tmp).resolve(),
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _ContradictoryPrimaryGitProbeClient):
+                runtime = AgentRuntime(config, show_tool_logs=False)
+                result = runtime.run("当前 primary workspace 是不是 Git 仓库？")
+
+        self.assertIn("不是 Git 仓库", result)
+        self.assertNotEqual(result, "已验证：当前 primary workspace 是 Git 仓库。")
+        self.assertEqual(len(_ContradictoryPrimaryGitProbeClient.calls), 3)
+        self.assertEqual(_ContradictoryPrimaryGitProbeClient.calls[2]["tools"], [])
+        self.assertEqual(runtime._last_run_summary["termination_reason"], "final")
+        self.assertEqual(runtime._last_run_summary["steering_counts"], {"completion_audit": 1})
 
     def test_tool_usage_evidence_gate_keeps_unobserved_lsp_result_claim(self) -> None:
         claims = phantom_tool_evidence_claims(

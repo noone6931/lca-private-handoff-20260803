@@ -115,6 +115,19 @@ class RequirementContractTests(unittest.TestCase):
         self.assertEqual(contract.workspace_metadata_subject, "git_repository")
         self.assertIn("git_status", contract.scope)
 
+    def test_git_metadata_contract_does_not_capture_implementation_design_or_explanation(self) -> None:
+        cases = (
+            ("请实现一个检查当前目录是否为 Git 仓库的函数，并补测试。", "code-implementation"),
+            ("请新增 Git repository 检测能力。", "code-implementation"),
+            ("请设计 Git repository 检测方案。", "unclear"),
+            ("解释 Git repository 的概念。", "read-only"),
+        )
+        for prompt, expected_kind in cases:
+            with self.subTest(prompt=prompt):
+                contract = generate_requirement_contract(prompt)
+                self.assertEqual(contract.task_kind, expected_kind)
+                self.assertIsNone(contract.workspace_metadata_subject)
+
 
 if __name__ == "__main__":
     unittest.main()

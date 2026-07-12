@@ -20,6 +20,7 @@ class RequirementContract:
     risk_notes: list[str]
     task_kind: TaskKind
     inspection_forbidden: bool = False
+    inspection_repository_facts_requested: bool = False
     workspace_metadata_subject: str | None = None
 
 
@@ -241,7 +242,8 @@ def generate_requirement_contract(user_prompt: str) -> RequirementContract:
     task_kind = classify_task_kind(prompt)
     objective = _derive_objective(prompt, task_kind)
     inspection_forbidden = is_inspection_forbidden(prompt)
-    metadata_subject = workspace_metadata_subject(prompt)
+    inspection_repository_facts_requested = inspection_forbidden_repository_fact_request(prompt)
+    metadata_subject = workspace_metadata_subject(prompt) if task_kind == "read-only" else None
 
     if inspection_forbidden:
         return RequirementContract(
@@ -265,6 +267,7 @@ def generate_requirement_contract(user_prompt: str) -> RequirementContract:
             ],
             task_kind="read-only",
             inspection_forbidden=True,
+            inspection_repository_facts_requested=inspection_repository_facts_requested,
             workspace_metadata_subject=None,
         )
 
@@ -425,9 +428,46 @@ def is_inspection_forbidden(user_prompt: str) -> bool:
 
 def workspace_metadata_subject(user_prompt: str) -> str | None:
     lower = _normalize_prompt(user_prompt).lower()
-    if _contains_any(lower, _GIT_METADATA_MARKERS):
+    if _is_direct_primary_git_repository_question(lower):
         return "git_repository"
     return None
+
+
+def inspection_forbidden_repository_fact_request(user_prompt: str) -> bool:
+    """Detect a repository fact requested alongside an explicit no-inspection boundary.
+
+    Quoted/example code terms are removed first so a semantic explanation of a
+    phrase such as ``"no Java source"`` is not mistaken for a repository query.
+    """
+
+    lower = _strip_quoted_text(_normalize_prompt(user_prompt).lower())
+    chinese = re.search(r"(?:仓库|当前目录|工作区|workspace).{0,24}(?:是否|有没有|有无|是不是|存在)", lower)
+    english = re.search(
+        r"(?:repository|repo|workspace|current directory).{0,32}(?:\bhas\b|\bhave\b|\bcontains\b|\bis\b)",
+        lower,
+    )
+    return bool(chinese or english)
+
+
+def _is_direct_primary_git_repository_question(lower_prompt: str) -> bool:
+    if not _contains_any(lower_prompt, _GIT_METADATA_MARKERS):
+        return False
+    scope = re.search(
+        r"(?:当前\s*(?:primary\s*)?(?:workspace|root|目录|工作区)|主工作区|"
+        r"\b(?:current|this|primary)\s+(?:workspace|root|directory)\b)",
+        lower_prompt,
+        re.IGNORECASE,
+    )
+    question = re.search(
+        r"(?:是否|是不是|是吗|有没有|\?|？|\bis\b.{0,32}\bgit\b|\bgit\b.{0,24}\?)",
+        lower_prompt,
+        re.IGNORECASE,
+    )
+    return bool(scope and question)
+
+
+def _strip_quoted_text(value: str) -> str:
+    return re.sub(r"(?:\"[^\"]*\"|'[^']*'|“[^”]*”|‘[^’]*’|`[^`]*`)", " ", value)
 
 
 def _derive_objective(prompt: str, task_kind: TaskKind) -> str:

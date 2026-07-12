@@ -436,8 +436,12 @@ def _inspection_forbidden_items(
         1,
         "Do not present repository facts as verified when inspection is forbidden.",
     )
-    items = [_passed("acceptance", direct, "semantic-only answer does not require repository inspection")]
-    if _has_evidence_status(content) or not _mentions_repository_fact_request(contract.objective):
+    items: list[CompletionAuditItem] = []
+    if _has_direct_semantic_answer(content):
+        items.append(_passed("acceptance", direct, "semantic-only answer directly addresses the requested wording"))
+    else:
+        items.append(_missing("acceptance", direct, "final answer does not provide a direct semantic explanation"))
+    if not contract.inspection_repository_facts_requested or _has_unverified_status(content):
         items.append(_passed("evidence", provenance, "repository facts are labelled or not requested"))
     else:
         items.append(
@@ -478,8 +482,27 @@ def _git_metadata_items(
                 ("git_status",),
             )
         ]
+    expected_repository = probe.metadata.get("git_repository") is True
+    actual_repository = _git_repository_conclusion(final_content)
+    if actual_repository is None:
+        return [
+            _missing(
+                "acceptance",
+                requirement,
+                "final answer does not state an unambiguous primary Git-repository conclusion",
+            )
+        ]
+    if actual_repository != expected_repository:
+        expected_text = "is a Git repository" if expected_repository else "is not a Git repository"
+        return [
+            _missing(
+                "acceptance",
+                requirement,
+                f"final Git conclusion conflicts with structured primary probe: expected {expected_text}",
+            )
+        ]
     return [
-        _passed("acceptance", requirement, "structured primary Git probe is available"),
+        _passed("acceptance", requirement, "structured primary Git probe matches the final conclusion"),
         _passed(
             "evidence",
             _requirement_at(contract.evidence_requirements, 0, "Cite the primary git_status probe."),
@@ -499,14 +522,35 @@ def _is_primary_git_probe(result: ToolResultSummary) -> bool:
     metadata = result.metadata
     if metadata.get("git_repository") not in {True, False}:
         return False
-    root_label = str(metadata.get("evidence_root_label") or "")
-    probe_root = metadata.get("git_probe_root")
-    return root_label == "primary" or bool(probe_root)
+    return str(metadata.get("evidence_root_label") or "") == "primary"
 
 
-def _mentions_repository_fact_request(text: str) -> bool:
-    lower = (text or "").lower()
-    return any(marker in lower for marker in ("仓库", "源码", "代码", "文件", "repository", "source", "code", "file"))
+def _has_direct_semantic_answer(content: str) -> bool:
+    normalized = (content or "").strip()
+    if len(normalized) < 8 or _looks_incomplete(normalized):
+        return False
+    lowered = normalized.lower()
+    return not any(marker in lowered for marker in ("拒绝回答", "无法回答", "cannot answer", "refuse to answer"))
+
+
+def _has_unverified_status(content: str) -> bool:
+    lowered = (content or "").lower()
+    return any(marker in lowered for marker in ("未验证", "无法确认", "不能确认", "unverified", "not verified", "cannot confirm"))
+
+
+def _git_repository_conclusion(content: str) -> bool | None:
+    lowered = (content or "").lower()
+    negative = bool(
+        re.search(r"(?:不是|非)\s*(?:一个\s*)?git\s*(?:仓库|repo|repository)", lowered)
+        or re.search(r"\b(?:is not|isn't|not a)\s+(?:a\s+)?git\s+(?:repo|repository)\b", lowered)
+    )
+    positive = bool(
+        re.search(r"(?<!不)(?<!非)(?:是|为)\s*(?:一个\s*)?git\s*(?:仓库|repo|repository)", lowered)
+        or re.search(r"\b(?:is|is an|is a)\s+(?:a\s+)?git\s+(?:repo|repository)\b", lowered)
+    )
+    if positive == negative:
+        return None
+    return positive
 
 
 def _implementation_items(
