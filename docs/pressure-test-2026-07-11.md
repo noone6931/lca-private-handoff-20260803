@@ -512,4 +512,25 @@ LCA 将 RequirementContract 的业务 acceptance 保留为 `unverified` 信息�
 
 ## 后续候选
 
-T-146 候选：在不放松 hard evidence/CompletionAudit 的前提下，单独评估 forced-final 对 provider 原始 tool-markup 的结构化处理，以及 provider 已有充分 discovery 后的 active-tool 收束质量。该项不在本轮提前实现，需先积累更多合成或真实安全样本。
+## T-146 Provider Final-Output Hygiene / Forced-Final Tool Boundary（2026-07-12）
+
+### 归因与 OMP 对齐
+
+T-145 live session `20260712T020107510742Z` / run `dd5a3da31f654088b5787f90db4cfce6` 的 taxonomy 已正确，但 CompletionAudit forced-final 后把百炼 provider content 中的 XML tool markup 原样显示。脱敏历史可验证的形态是完整尾部 `<tool_call><function=read_file><parameter=path>…</parameter></function></tool_call>`；没有证据证明所有 XML 或所有 provider 文本都应清洗。
+
+OMP 的 `agent-loop.ts` 在每个 logical turn 只解析一次 active tool-choice，并以 pending/in-flight turn owner 收束 continuation；其未执行 tool call 也有显式 synthetic result 路径。LCA 采用相同边界而非复制代码：forced-final 是 terminal-only turn，schema 为空；若 provider 仍违规，终态由 `FinalizationCoordinator` 收束而非回到工具循环。
+
+### 修复与验证
+
+- `provider_protocol.py` 只识别 `bailian` / `dashscope` / `aliyun` 的完整、未围栏、严格语法 XML envelope；代码围栏、引用、未知/残缺 XML 与普通阶段不改写。
+- forced-final structured `tool_calls` 或已分类 markup 均为 `forced_final_protocol_violation`：0 execution、0 原始参数回显，写脱敏 `provider_protocol_violation` session event、`ErrorEvent` 与 RunSummary 指标（structured calls、markup artifacts、suppressed executions）后 terminal closure。
+- deterministic benchmark 10 固定复现该 markup，验证 `read_file` 只在普通阶段执行一次、forced-final schema 为空、违规文本不进入最终答复。
+- 全量 unittest：**526/526**；offline benchmark：**10/10**；`compileall` 与 `git diff --check` 通过。
+
+### 一次百炼 live 合成复测
+
+| session / run | 结果 | 指标 | 结论 |
+|---|---|---|---|
+| `20260712T030231154898Z` / `06186df00300400c98f418595a891fb8` | 未复现 markup，正常 final | 21,179 ms、3 LLM、1 `read_file`、0 tool error、`finalization_attempts=1`、`forced_final_protocol_violations=0` | provider 在无工具 final turn 直接给出正常表格答案；live acceptance 不再要求必须复现违规。该次只发送临时 fixture README，未读取企业源码。 |
+
+残余风险：目前只识别已观测的百炼 XML 信封，其他 provider-specific text protocol 会保持原样并由后续安全样本决定是否扩展；normal final 不代表 provider 在其他模型/版本上不会再次违规。T-146 不发布 stable，等待独立 review。
