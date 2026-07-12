@@ -190,7 +190,7 @@ class WorkspaceRuntimeTests(unittest.TestCase):
             todo_path.write_text('[]\n', encoding="utf-8")
             patch_path.write_text('{"id":"patch-1"}\n', encoding="utf-8")
 
-            with patch("local_agent.agent.close_all_clients") as close_clients:
+            with patch("local_agent.runtime_workspace.close_all_clients") as close_clients:
                 moved = runtime.move_workspace(str(frontend))
 
             frontend_state = workspace_state_dir(state_root, frontend)

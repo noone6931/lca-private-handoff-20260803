@@ -128,7 +128,10 @@ from .tool_choice_queue import ToolResultSummary
 from .tool_choice_queue import session_evidence_reuse_directive
 from .verification_timeline import workspace_write_happened
 from .user_facts import UserFactsLayer
-from .provider_context import ProviderContextMixin
+from .provider_context import ProviderContextPhase
+from .runtime_evidence import EvidenceVerificationLifecycle
+from .runtime_memory import MemoryConsolidationLifecycle
+from .runtime_workspace import WorkspaceLifecycle
 from .runtime_prompt import _assistant_event_payload
 from .runtime_prompt import _tool_call_event_payload
 from .runtime_prompt import _event_preview
@@ -308,7 +311,7 @@ READ_FILE_DRIFT_GUARD_EDIT_KEYWORDS = {
     "实现",
     "写入",
 }
-class AgentRuntime(ProviderContextMixin):
+class AgentRuntime:
     def __init__(
         self,
         config: AgentConfig,
@@ -360,6 +363,10 @@ class AgentRuntime(ProviderContextMixin):
             recorder=self._record_event_v1,
         )
         self._user_config_dir = default_config_root()
+        self._provider_context_phase = ProviderContextPhase(self)
+        self._workspace_phase = WorkspaceLifecycle(self)
+        self._evidence_phase = EvidenceVerificationLifecycle(self)
+        self._memory_phase = MemoryConsolidationLifecycle(self)
         missing_roots = self._restore_session_workspace_roots()
         self._path_rule_index = discover_path_scoped_rules(self._workspace_context.all_roots)
         system_prompt = self._build_system_prompt()
@@ -398,6 +405,21 @@ class AgentRuntime(ProviderContextMixin):
                     "message": f"Skipped missing session workspace root: {path}",
                 },
             )
+
+    def __getattr__(self, name: str):
+        """Expose phase-owned private hooks without reviving Runtime implementations."""
+
+        for component_name in (
+            "_provider_context_phase",
+            "_workspace_phase",
+            "_evidence_phase",
+            "_memory_phase",
+        ):
+            component = self.__dict__.get(component_name)
+            method = getattr(type(component), name, None) if component is not None else None
+            if callable(method):
+                return method.__get__(component, type(component))
+        raise AttributeError(name)
 
     def run(self, prompt: str) -> str:
         if self._is_running:
@@ -925,221 +947,16 @@ class AgentRuntime(ProviderContextMixin):
         return self._workspace_context.summary()
 
     def add_workspace_root(self, raw_path: str) -> Path:
-        self._ensure_workspace_idle()
-        next_context = self._workspace_context.copy()
-        path, changed = next_context.add_session_root(raw_path)
-        self._record_workspace_roots_change(next_context, "add", path, changed)
-        return path
+        return self._workspace_phase.add_workspace_root(raw_path)
 
     def remove_workspace_root(self, raw_path: str) -> Path:
-        self._ensure_workspace_idle()
-        next_context = self._workspace_context.copy()
-        path, changed = next_context.remove_session_root(raw_path)
-        self._record_workspace_roots_change(next_context, "remove", path, changed)
-        return path
+        return self._workspace_phase.remove_workspace_root(raw_path)
 
     def reset_workspace_roots(self) -> None:
-        self._ensure_workspace_idle()
-        next_context = self._workspace_context.copy()
-        changed = next_context.reset_session_roots()
-        self._record_workspace_roots_change(next_context, "reset", None, changed)
+        self._workspace_phase.reset_workspace_roots()
 
     def move_workspace(self, raw_path: str) -> Path:
-        """Move this session's primary workspace without losing its session identity."""
-
-        self._ensure_workspace_idle()
-        next_context, changed = self._workspace_context.moved_primary(raw_path)
-        if not changed:
-            return self._workspace_context.primary
-        if self._state_root is None:
-            raise RuntimeError(
-                "Cannot move a runtime without a workspace-partitioned state root. Restart with --state-dir first."
-            )
-
-        previous_primary = self._workspace_context.primary
-        next_state_dir = workspace_state_dir(self._state_root, next_context.primary)
-        # Loading startup sources is intentionally done before moving any artifact.
-        # A read failure must not leave the session split across two state dirs.
-        try:
-            next_system_prompt = self._build_system_prompt_for(next_context, next_state_dir)
-            next_path_rule_index = discover_path_scoped_rules(next_context.all_roots)
-            previous_session_bytes = self._session.path.read_bytes()
-        except OSError as exc:
-            raise WorkspaceMigrationError(f"Cannot prepare workspace move: {exc}") from exc
-
-        previous_workspace_context = self._workspace_context
-        previous_state_dir = self._state_dir
-        previous_tool_context = self._tool_context
-        previous_messages = self._messages
-        previous_run = self._run
-        previous_session_guards = self._session_guards
-        previous_summary_cache = self._summary_cache
-        previous_last_run_summary = self._last_run_summary
-        previous_path_rule_index = self._path_rule_index
-        previous_session_location = (
-            self._session.state_dir,
-            self._session.session_dir,
-            self._session.path,
-        )
-        next_tool_context = replace(
-            self._tool_context,
-            workspace=next_context.primary,
-            state_dir=next_state_dir,
-            allowed_dirs=next_context.additional_roots,
-        )
-        next_messages = [
-            {"role": "system", "content": next_system_prompt},
-            *(message for message in self._messages if message.get("role") != "system"),
-        ]
-        payload = next_context.snapshot(operation="move", path=next_context.primary, changed=True)
-        payload.update(
-            {
-                "previous_primary": str(previous_primary),
-                "state_dir": str(next_state_dir),
-            }
-        )
-        moves = migrate_session_artifacts(
-            source_state_dir=self._state_dir,
-            target_state_dir=next_state_dir,
-            session_id=self._session.session_id,
-        )
-
-        try:
-            self._session.relocate(next_state_dir)
-            self._workspace_context = next_context
-            self._state_dir = next_state_dir
-            self._tool_context = next_tool_context
-            self._messages = next_messages
-            self._run = RunContext()
-            self._session_guards = SessionGuardState()
-            self._summary_cache = {}
-            self._last_run_summary = None
-            self._path_rule_index = next_path_rule_index
-            close_all_clients()
-            self._session.append("workspace_moved", payload)
-        except Exception as exc:  # noqa: BLE001 - every post-migration commit must compensate.
-            self._workspace_context = previous_workspace_context
-            self._state_dir = previous_state_dir
-            self._tool_context = previous_tool_context
-            self._messages = previous_messages
-            self._run = previous_run
-            self._session_guards = previous_session_guards
-            self._summary_cache = previous_summary_cache
-            self._last_run_summary = previous_last_run_summary
-            self._path_rule_index = previous_path_rule_index
-            rollback_error: Exception | None = None
-            try:
-                rollback_session_artifacts(moves)
-                previous_session_location[2].write_bytes(previous_session_bytes)
-            except Exception as rollback_exc:  # noqa: BLE001 - include compensation failure in the raised error.
-                rollback_error = rollback_exc
-            finally:
-                # JsonlSessionStore.relocate() only assigns these three fields. Restore
-                # them directly so a failing relocate mock cannot strand Runtime state.
-                self._session.state_dir = previous_session_location[0]
-                self._session.session_dir = previous_session_location[1]
-                self._session.path = previous_session_location[2]
-            detail = f"; rollback failed: {rollback_error}" if rollback_error is not None else ""
-            raise WorkspaceMigrationError(f"Workspace move failed and was rolled back: {exc}{detail}") from exc
-        self._invalidate_session_evidence_for_workspace_change("workspace_moved")
-        self._emit_post_commit_event("WorkspaceMoved", payload)
-        return next_context.primary
-
-    def _ensure_workspace_idle(self) -> None:
-        if self._is_running:
-            raise RuntimeError("Workspace roots can only be changed while the runtime is idle.")
-
-    def _record_workspace_roots_change(
-        self,
-        next_context: WorkspaceContext,
-        operation: str,
-        path: Path | None,
-        changed: bool,
-    ) -> None:
-        if not changed:
-            return
-        payload = next_context.snapshot(operation=operation, path=path, changed=True)
-        previous_session_bytes = self._session.path.read_bytes()
-        try:
-            self._session.append("workspace_roots_changed", payload)
-        except Exception as exc:  # noqa: BLE001 - append can fail after partially writing JSONL.
-            rollback_error: Exception | None = None
-            try:
-                self._session.path.write_bytes(previous_session_bytes)
-            except Exception as rollback_exc:  # noqa: BLE001 - expose failed compensation to the caller.
-                rollback_error = rollback_exc
-            detail = f"; session rollback failed: {rollback_error}" if rollback_error is not None else ""
-            raise RuntimeError(f"Workspace root change failed and was rolled back: {exc}{detail}") from exc
-
-        self._workspace_context = next_context
-        self._tool_context = replace(
-            self._tool_context,
-            allowed_dirs=next_context.additional_roots,
-        )
-        self._session_guards = SessionGuardState()
-        self._summary_cache = {}
-        self._invalidate_session_evidence_for_workspace_change("workspace_roots_changed")
-        self._refresh_path_rules()
-        self._emit_post_commit_event("WorkspaceRootsChanged", payload)
-
-    def _refresh_path_rules(self) -> None:
-        self._path_rule_index = discover_path_scoped_rules(self._workspace_context.all_roots)
-
-    def _invalidate_session_evidence_for_workspace_change(self, reason: str) -> None:
-        removed = self._session_evidence.invalidate_workspace_revision()
-        if removed:
-            self._record_session_evidence_event("invalidated", {"reason": reason, "count": removed})
-
-    def _emit_post_commit_event(self, event_type: str, payload: dict[str, object]) -> None:
-        """Notify an external sink without turning a committed workspace change into a rollback."""
-
-        try:
-            self._events.emit(event_type, payload)
-        except Exception as exc:  # noqa: BLE001 - sinks are observer-only after commit.
-            try:
-                self._session.append(
-                    "event_delivery_error",
-                    {
-                        "event_type": event_type,
-                        "error": f"{type(exc).__name__}: {exc}",
-                    },
-                )
-            except Exception:
-                pass
-
-    def _restore_session_workspace_roots(self) -> tuple[Path, ...]:
-        snapshot = self._session.load_latest_workspace_roots()
-        if snapshot is None:
-            return ()
-        primary = snapshot.get("primary")
-        if primary is not None and str(primary) != str(self._workspace_context.primary):
-            return ()
-        raw_paths = snapshot.get("session_roots")
-        if not isinstance(raw_paths, list) or not all(isinstance(path, str) for path in raw_paths):
-            return ()
-        revision = snapshot.get("revision")
-        try:
-            normalized_revision = int(revision) if revision is not None else 0
-        except (TypeError, ValueError):
-            normalized_revision = 0
-        return self._workspace_context.restore_session_roots(tuple(raw_paths), normalized_revision)
-
-    def _build_system_prompt(self) -> str:
-        return self._build_system_prompt_for(self._workspace_context, self._state_dir)
-
-    def _build_system_prompt_for(self, workspace_context: WorkspaceContext, state_dir: Path) -> str:
-        return build_system_prompt(
-            SYSTEM_PROMPT,
-            workspace_context.primary,
-            self._user_config_dir,
-            state_dir=state_dir,
-            allowed_dirs=workspace_context.additional_roots,
-            startup_context_char_limit=STARTUP_CONTEXT_CHAR_LIMIT,
-            startup_memory_char_limit=STARTUP_MEMORY_CHAR_LIMIT,
-            startup_skills_char_limit=STARTUP_SKILLS_CHAR_LIMIT,
-            max_authored_skills=MAX_AUTHORED_SKILLS,
-            max_skill_description_chars=MAX_SKILL_DESCRIPTION_CHARS,
-        )
+        return self._workspace_phase.move_workspace(raw_path)
 
     def set_session_approval_mode(self, mode: str) -> None:
         self._tool_context = replace(self._tool_context, approval_mode=normalize_approval_mode(mode))
@@ -1593,326 +1410,6 @@ class AgentRuntime(ProviderContextMixin):
             "to use the collected evidence and answer the user's original request."
         )
 
-    def _record_read_file_evidence(self, name: str, arguments: str | dict[str, Any], result: ToolResult) -> None:
-        if name == "read_file":
-            requirement = self._run.soft_tool_requirement
-            self._run.evidence.record_read_file(
-                arguments=arguments,
-                result=result,
-                workspace=self._workspace_context.primary,
-                allowed_dirs=self._workspace_context.additional_roots,
-                requirement_candidates=requirement.candidate_files if requirement is not None else (),
-            )
-
-    def _record_tool_choice_result(self, name: str, arguments: str | dict[str, Any], result: ToolResult) -> None:
-        metadata = self._tool_choice_result_metadata(name, arguments, result)
-        if is_session_evidence_reread(
-            name,
-            arguments,
-            workspace=self._workspace_context.primary,
-            allowed_dirs=self._workspace_context.additional_roots,
-            cached_paths=self._run.session_evidence_reuse.reused_paths,
-        ):
-            self._run.collector.record_session_evidence_model_reread()
-        self._run.tool_choice_tool_names.append(name)
-        self._run.tool_choice_tool_names = self._run.tool_choice_tool_names[-80:]
-        self._run.tool_choice_results.append(
-            ToolResultSummary(
-                name=name,
-                content=review_input_summary(name, result.content, max_chars=6000),
-                is_error=result.is_error,
-                useless=result.useless,
-                path=_tool_choice_result_path(arguments, result),
-                metadata={
-                    **review_input_metadata(name, result.content),
-                    **metadata,
-                },
-            )
-        )
-        self._run.tool_choice_results = self._run.tool_choice_results[-80:]
-        self._run.consume_tool_choice_read(name)
-        self._refresh_verification_plan()
-
-    def _refresh_verification_plan(self) -> None:
-        plan = self._run.verification_plan
-        if not plan.active:
-            return
-        test_plan = plan_narrow_test(self._workspace_context.primary, self._run.tool_choice_results)
-        test_plan_changed = test_plan != self._run.verification_test_plan
-        self._run.verification_test_plan = test_plan
-        if plan.observe(self._run.tool_choice_results, test_plan=test_plan) or test_plan_changed:
-            self._record_verification_plan_snapshot("update")
-
-    def _record_verification_plan_snapshot(self, event: str) -> None:
-        plan = self._run.verification_plan
-        if not plan.active:
-            return
-        payload: dict[str, Any] = {"event": event, **plan.snapshot()}
-        if self._run.verification_test_plan is not None:
-            payload["test_plan"] = self._run.verification_test_plan.snapshot()
-        self._session.append(f"verification_plan_{event}", payload)
-        self._events.emit("ContextUpdated", {"kind": f"verification_plan_{event}", **payload})
-
-    def _record_verification_patch_review(self, decision: SteeringDecision | None) -> None:
-        plan = self._run.verification_plan
-        if not plan.active:
-            return
-        review_capped = self._run.final_answer_steers.get("patch_reviewer", 0) >= MAX_PATCH_REVIEW_STEERS
-        if decision is None and review_capped:
-            changed = plan.record_patch_review(
-                passed=None,
-                reason="deterministic post-diff reviewer was skipped because its continuation cap was reached",
-                refs=["git_diff:post-write"],
-            )
-        elif decision is None:
-            changed = plan.record_patch_review(
-                passed=True,
-                reason="deterministic post-diff reviewer completed without blocking findings",
-                refs=["git_diff:post-write"],
-            )
-        else:
-            changed = plan.record_patch_review(
-                passed=False,
-                reason=decision.message,
-                refs=["git_diff:post-write", f"steerer:{decision.kind}"],
-            )
-        if changed:
-            self._record_verification_plan_snapshot("update")
-
-    def _record_tool_evidence(self, name: str, arguments: str | dict[str, Any], result: ToolResult) -> None:
-        record = self._run.evidence.record_tool(
-            name=name,
-            arguments=arguments,
-            result=result,
-            workspace=self._workspace_context.primary,
-            allowed_dirs=self._workspace_context.additional_roots,
-        )
-        if record is not None:
-            self._append_evidence_record(record)
-        self._capture_session_evidence(record)
-
-    def _invalidate_stale_source_evidence_after_write(
-        self,
-        name: str,
-        arguments: str | dict[str, Any],
-        result: ToolResult,
-    ) -> None:
-        self._run.evidence.invalidate_source_after_write(
-            name=name,
-            arguments=arguments,
-            result=result,
-            workspace=self._workspace_context.primary,
-            allowed_dirs=self._workspace_context.additional_roots,
-        )
-        if result.is_error or name not in {"apply_patch", "rollback_patch", "write_file"}:
-            return
-        if name == "apply_patch" and _tool_call_uses_dry_run(arguments):
-            return
-        raw_path = _tool_choice_result_path(arguments, result)
-        if not raw_path:
-            return
-        try:
-            changed_path = resolve_workspace_path(
-                self._workspace_context.primary,
-                raw_path,
-                self._workspace_context.additional_roots,
-            )
-        except PatchError:
-            return
-        removed = self._session_evidence.invalidate_paths((changed_path,))
-        if removed:
-            self._run.collector.record_session_evidence_invalidation(removed)
-            self._record_session_evidence_event(
-                "invalidated",
-                {"reason": "workspace_write", "paths": [str(changed_path)], "count": removed},
-            )
-
-    def _capture_session_evidence(self, record: EvidenceRecord | None) -> None:
-        if record is None or not self._run.tool_choice_results:
-            return
-        tool_result = self._run.tool_choice_results[-1]
-        source = None
-        requirement = None
-        if tool_result.name == "read_file":
-            resolved_path = record.details.get("resolved_path")
-            source = next(
-                (
-                    item
-                    for item in reversed(self._run.evidence.source_evidence)
-                    if _source_evidence_matches_path(
-                        item.path,
-                        resolved_path,
-                        self._workspace_context.primary,
-                        self._workspace_context.additional_roots,
-                    )
-                ),
-                None,
-            )
-            requirement = next(
-                (
-                    item
-                    for item in reversed(self._run.evidence.pinned_requirement_evidence)
-                    if _source_evidence_matches_path(
-                        item.path,
-                        resolved_path,
-                        self._workspace_context.primary,
-                        self._workspace_context.additional_roots,
-                    )
-                ),
-                None,
-            )
-        if self._session_evidence.capture(
-            tool_result=tool_result,
-            record=record,
-            source_evidence=source,
-            requirement_evidence=requirement,
-            workspace_revision=self._workspace_context.revision,
-            request=self._run.current_user_request or "",
-            run_id=self._run.run_id or "",
-        ):
-            self._record_session_evidence_event("captured", {"tool": tool_result.name, "path": tool_result.path})
-
-    def _hydrate_session_evidence(self, prompt: str) -> None:
-        reuse = self._session_evidence.reuse_for_request(
-            prompt=prompt,
-            workspace_revision=self._workspace_context.revision,
-            authorized_roots=self._workspace_context.all_roots,
-        )
-        self._run.session_evidence_reuse = reuse
-        self._run.collector.record_session_evidence(
-            hits=reuse.hit_count,
-            misses=reuse.miss_count,
-            stale=reuse.stale_count,
-            invalidations=reuse.invalidation_count,
-            reused_paths=[self._display_session_evidence_path(path) for path in reuse.reused_paths],
-        )
-        for entry in reuse.entries:
-            self._run.tool_choice_results.append(entry.tool_result)
-            self._run.tool_choice_tool_names.append(entry.tool_result.name)
-            if self._run.evidence.hydrate_session_cached(
-                record=entry.record,
-                source_evidence=entry.source_evidence,
-                requirement_evidence=entry.requirement_evidence,
-                canonical_paths=tuple(entry.content_tags),
-            ):
-                self._session.append(
-                    "session_evidence_reused",
-                    {
-                        "entry_id": entry.entry_id,
-                        "tool": entry.tool_result.name,
-                        "path": entry.tool_result.path,
-                        "root": entry.root,
-                        "origin_run_id": entry.origin_run_id,
-                    },
-                )
-        if reuse.hit_count or reuse.stale_count:
-            self._record_session_evidence_event(
-                "reused",
-                {
-                    "hits": reuse.hit_count,
-                    "misses": reuse.miss_count,
-                    "stale": reuse.stale_count,
-                    "reused_paths": [self._display_session_evidence_path(path) for path in reuse.reused_paths],
-                },
-            )
-
-    def _append_session_evidence_reuse_directive(self) -> None:
-        if self._run.session_evidence_directive_emitted:
-            return
-        directive = session_evidence_reuse_directive(self._run.tool_choice_results)
-        if directive is None:
-            return
-        self._run.session_evidence_directive_emitted = True
-        self._messages.append({"role": "user", "content": directive.message})
-        self._run.collector.record_session_evidence_directive()
-        self._session.append(
-            "runtime_steering",
-            {"kind": directive.kind, "paths": list(directive.paths)},
-        )
-        self._events.emit(
-            "ContextUpdated",
-            {"kind": directive.kind, "paths": list(directive.paths)},
-        )
-
-    def _record_session_evidence_event(self, event: str, payload: Mapping[str, Any]) -> None:
-        data = {"event": event, **dict(payload)}
-        self._session.append(f"session_evidence_{event}", data)
-        self._events.emit("ContextUpdated", {"kind": f"session_evidence_{event}", **data})
-
-    def _display_session_evidence_path(self, raw_path: str) -> str:
-        try:
-            resolved = Path(raw_path).resolve()
-            root = evidence_root_for_path(
-                resolved,
-                self._workspace_context.primary,
-                self._workspace_context.additional_roots,
-            )
-            label = evidence_root_label(root, self._workspace_context.primary, self._workspace_context.additional_roots)
-            return f"{label}:{resolved.relative_to(root)}"
-        except (OSError, ValueError):
-            return raw_path
-
-    def _append_evidence_record(self, record: EvidenceRecord) -> None:
-        if not self._run.evidence.append(record):
-            return
-        self._session.append(
-            "evidence",
-            {
-                "tool": record.tool,
-                "subject": record.subject,
-                "status": record.status,
-                "summary": record.summary,
-                "details": dict(record.details),
-            },
-        )
-
-    def _record_workspace_root_evidence(self) -> None:
-        record = self._run.evidence.record_workspace_root(self._workspace_context.primary)
-        if record is not None:
-            self._append_evidence_record(record)
-
-    def _patch_relevance_denial_reason(self, raw_path: str, resolved_path: Path) -> str | None:
-        display_path = display_workspace_path(self._workspace_context.primary, resolved_path, self._workspace_context.additional_roots)
-        return self._run.evidence.patch_relevance_denial_reason(
-            raw_path,
-            resolved_path,
-            workspace=self._workspace_context.primary,
-            allowed_dirs=self._workspace_context.additional_roots,
-            is_code_implementation_request=is_code_implementation_request(self._run.current_user_request),
-            request_mentions_config_or_path=request_mentions_config_or_path(self._run.current_user_request, display_path),
-        )
-
-    def _patch_preview_denial_reason(self, args: dict[str, Any], resolved_path: Path) -> str | None:
-        return self._run.evidence.patch_preview_denial_reason(
-            args,
-            resolved_path,
-            preview_required=_request_requires_patch_preview(self._run.current_user_request),
-        )
-
-    def _record_successful_patch_preview(
-        self,
-        name: str,
-        arguments: str | dict[str, Any],
-        result: ToolResult,
-    ) -> None:
-        self._run.evidence.record_successful_patch_preview(
-            name=name,
-            arguments=arguments,
-            result=result,
-            workspace=self._workspace_context.primary,
-            allowed_dirs=self._workspace_context.additional_roots,
-        )
-
-    def _read_file_evidence_summary(self) -> str:
-        return self._run.evidence.read_file_summary()
-
-    def _evidence_for_read_file_range(self, range_key: tuple[str, int, str]) -> str:
-        subject = _display_read_file_range_subject(range_key, self._workspace_context.primary, self._workspace_context.additional_roots)
-        return self._run.evidence.evidence_for_read_file_range(subject)
-
-    def _evidence_ledger_summary(self) -> str:
-        return self._run.evidence.summary()
-
     def _final_answer_request_summary(self) -> str:
         if not self._run.current_user_request:
             return ""
@@ -2146,7 +1643,7 @@ class AgentRuntime(ProviderContextMixin):
                 {"mode": self._config.memory_consolidation, "status": "skipped", "reason": reason},
             )
         else:
-            self._maybe_consolidate_session_memory(run_messages, content, deadline)
+            self._memory_phase._maybe_consolidate_session_memory(run_messages, content, deadline)
         run_summary = self._finish_run_summary(reason)
         self._events.emit(
             "SessionFinished",
@@ -2157,101 +1654,6 @@ class AgentRuntime(ProviderContextMixin):
             },
         )
         return content
-
-    def _maybe_consolidate_session_memory(
-        self,
-        run_messages: list[dict[str, Any]],
-        final_content: str,
-        deadline: float | None,
-    ) -> None:
-        mode = self._config.memory_consolidation
-        if mode == "off":
-            return
-        if self._deadline_exceeded(deadline):
-            self._session.append("memory_consolidation", {"mode": mode, "status": "skipped", "reason": "deadline"})
-            return
-        if _run_used_memory_write_tool(run_messages):
-            self._session.append(
-                "memory_consolidation",
-                {"mode": mode, "status": "skipped", "reason": "memory tool already wrote"},
-            )
-            return
-        transcript = _messages_to_memory_transcript(
-            run_messages,
-            final_content,
-            max_chars=MEMORY_CONSOLIDATION_INPUT_CHAR_LIMIT,
-        )
-        if not transcript.strip():
-            return
-        if mode == "auto" and not _should_auto_consolidate_memory(transcript, run_messages, final_content):
-            self._session.append(
-                "memory_consolidation",
-                {"mode": mode, "status": "skipped", "reason": "no durable signal"},
-            )
-            return
-        extracted = self._llm_memory_consolidation(transcript, deadline)
-        if not extracted:
-            return
-        memory_root = _memory_consolidation_root(
-            self._workspace_context.primary,
-            self._state_dir,
-            self._config.memory_scope,
-        )
-        written = _append_consolidated_memory(memory_root, self._session.session_id, extracted)
-        self._session.append(
-            "memory_consolidation",
-            {
-                "mode": mode,
-                "scope": self._config.memory_scope,
-                "memory_root": str(memory_root),
-                "status": "written" if written else "empty",
-                "written": written,
-            },
-        )
-
-    def _llm_memory_consolidation(self, transcript: str, deadline: float | None) -> dict[str, list[str]] | None:
-        if deadline is None:
-            remaining_timeout = float(self._config.request_timeout)
-        else:
-            remaining_timeout = deadline - time.monotonic()
-        timeout = min(float(self._config.request_timeout), remaining_timeout, MEMORY_CONSOLIDATION_REQUEST_TIMEOUT)
-        if timeout < 1:
-            return None
-        messages = [
-            {
-                "role": "system",
-                "content": (
-                    "Extract durable project memory for a local coding agent. "
-                    "Return only strict JSON with keys project, decisions, conventions, learned, each an array of strings. "
-                    "Include only reusable facts, accepted decisions, coding conventions, commands, debugging insights, or workflow lessons that will help future sessions. "
-                    "Do not include secrets, credentials, raw source code, one-off todos, temporary user requests, or guesses. "
-                    "If there is no durable memory, return empty arrays."
-                ),
-            },
-            {
-                "role": "user",
-                "content": (
-                    "Session transcript:\n"
-                    f"{transcript}\n\n"
-                    "Return JSON shaped exactly like:\n"
-                    '{"project":[],"decisions":[],"conventions":[],"learned":[]}'
-                )[:MEMORY_CONSOLIDATION_INPUT_CHAR_LIMIT],
-            },
-        ]
-        try:
-            response = call_chat_with_timeout(self._client, messages, [], timeout=timeout)
-        except LlmError as exc:
-            self._session.append("memory_consolidation_error", {"mode": "llm", "error": str(exc)})
-            return None
-        content = response.message.get("content")
-        if not isinstance(content, str) or not content.strip():
-            self._session.append("memory_consolidation_error", {"mode": "llm", "error": "empty response"})
-            return None
-        parsed = _parse_memory_consolidation_response(content[:MEMORY_CONSOLIDATION_OUTPUT_CHAR_LIMIT])
-        if parsed is None:
-            self._session.append("memory_consolidation_error", {"mode": "llm", "error": "invalid JSON response"})
-            return None
-        return parsed
 
     def _stop_for_budget(self, deadline: float | None, run_start_index: int) -> str:
         content = self._budget_stop_message()
