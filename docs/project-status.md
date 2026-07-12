@@ -30,7 +30,7 @@
 
 ## 当前进度
 
-当前项目已完成 P8 前端协议与交互基础 MVP，P9 真实需求使用准备已覆盖项目边界、源码验证、LSP 韧性和服务费结算链路压测，并进入 P10/P11 Intelligence Runtime 与真实跨项目任务收束。用户可以用自然语言描述任务，而不是每次手写工具顺序；Runtime 通过 RequirementContract、Planner/Explore、MiniToolChoiceQueue、CompletionAudit、二阶段 Patch Reviewer，以及新落地的 bounded finalization coordinator 保持任务目标、证据、写入、测试和 diff 的闭环。T-128~T-132 已完成动态 workspace roots、`/move`、跨 root 只读设计收束与有界文件 inventory；T-138~T-140 已补 stable/dev 隔离、规则符号链接边界和可重复 benchmark；T-141 进一步补上了 finalization terminal ownership、provider schema violation telemetry 和 multi-root evidence provenance。下一步仍是在已确认的真实 owner 边界内做明确小改；完整 async Command Bus/streaming follow-up queue 仍后置。详见 `docs/pressure-test-2026-07-11.md`。
+当前项目已完成 P8 前端协议与交互基础 MVP，P9 真实需求使用准备已覆盖项目边界、源码验证、LSP 韧性和服务费结算链路压测，并进入 P10/P11 Intelligence Runtime 与真实跨项目任务收束。用户可以用自然语言描述任务，而不是每次手写工具顺序；Runtime 通过 RequirementContract、Planner/Explore、MiniToolChoiceQueue、CompletionAudit、二阶段 Patch Reviewer，以及 bounded finalization coordinator 保持任务目标、证据、写入、测试和 diff 的闭环。T-128~T-132 已完成动态 workspace roots、`/move`、跨 root 只读设计收束与有界文件 inventory；T-138~T-140 已补 stable/dev 隔离、规则符号链接边界和可重复 benchmark；T-141/T-142 补齐 terminal ownership、普通 provider failure closure、schema violation telemetry 和 multi-root/pinned requirement provenance。下一步仍是在已确认的真实 owner 边界内做明确小改；完整 async Command Bus/streaming follow-up queue 仍后置。详见 `docs/pressure-test-2026-07-11.md`。
 
 已具备的核心能力：
 
@@ -213,7 +213,7 @@
 | no-edit evidence gate | 已完成 | CompletionAudit 不再接受只有“blocked/unexecuted”的文字自述；必须有 search/LSP 未命中、路径缺失、relevance/approval 拒绝等工具证据，才允许实现任务在无 diff 时收尾。 |
 | ToolRegistry 参数归一 | 已完成 MVP 版 | `src/local_agent/tools/argument_normalization.py` 在 schema 校验前仅映射已观测 scalar alias；冲突值直接拒绝，随后仍执行原 schema、approval、path/hash 和 anchored patch 校验。 |
 | 跨 root owner / impact evidence matrix | 已完成 MVP 版 | “设计/架构”以及“owner 定位/影响范围/调用链”的多 root 只读任务共用 requirement + 每 root source-read + 六次补证据预算；避免任务名称不是“设计”就无限探索。 |
-| 测试基线 | 已完成 | 本地正常环境下 441 个测试通过。 |
+| 测试基线 | 已完成 | 本地正常环境下 447 个测试通过。 |
 
 ## 下一步 Todo
 
@@ -346,6 +346,7 @@
 | T-139 | Path-scoped rules MVP | 已完成并加固 | P11 | 每个 canonical root 的 `.local-agent/rules/*.md` 以 root-relative glob/priority 生效；metadata 每轮可见，正文只在用户/工具路径命中时加载；add/remove/move 后重建索引，规则 advisory 且不改变权限。规则目录和每个 rule strict-resolve 后必须仍在 canonical root 内；外部/断裂 symlink 仅记录诊断，绝不读取或注入正文。提交 `2a64a59`、`075503f`。 |
 | T-140 | Offline reproducible benchmark / eval harness | 已完成并真实 provider 复测 | P11 | 6 个临时 fixture 用 deterministic fake provider 跑完整 Runtime，覆盖单 root、multi-root、scope negative、小改测 diff、deny schema、budget stop；输出 JSON/Markdown，`--live` 才显式使用外部 provider。live acceptance 使用 normalized term/regex、glob root coverage 和禁止错误外推，不再把有效语义答案误判为固定文案不符；报告记录 session/run、脱敏 tool errors 和 compaction 效果。phantom tool evidence 由 FinalAnswerSteerer 纠偏，下一次 provider schema 会记录实际 active names。提交 `4069836`、`9588db9`、`03f7039`。 |
 | T-141 | Xiaoya black-box multi-root finalization reliability | 已完成并真实复测 | P11 | stable `f155a8a` 的黑盒 fixture 曾暴露 finalization ping-pong、无 `run_summary` 悬挂 session、provider 越界工具调用缺少单独遥测，以及 primary 文档证据误导 sibling root。 | 新增 `finalization.py` / `FinalizationCoordinator` 收束 terminal ownership 与 aggregate finalization budget，`chat_runtime.py` 提供 provider-agnostic 外层 timeout，`RunSummary` / benchmark 单列 `provider_schema_violations` 与 `finalization_attempts`，`EvidenceLedger` / final steerers 保留 `root` + `scope` provenance。全量 441 tests 与离线 benchmark 6/6 通过；百炼 live 两轮四个 session 均正常终止并写 `run_summary`。提交 `e0aeb75`、`d295c5b`、`8527915`。 |
+| T-142 | Provider terminal closure / pinned requirement provenance | 已完成 | P11 | T-141 只覆盖 forced-final hanging；普通首轮 LLM failure 缺失 final/run summary，pinned requirement 未带 root/scope。 | 普通和 forced-final 主请求的 timeout/error 均会以 `llm_timeout` / `provider_error` terminal closure 收束；RequirementEvidence、search、LSP evidence 都带 canonical root/scope。全量 447 tests、offline benchmark 6/6 通过。提交 `509554e` 与后续 review fix。 |
 
 ## 风险清单
 
@@ -394,7 +395,7 @@
 | R-061 | requirement source 被 LLM compaction 改写，真实设计范围漂移 | 已缓解，继续观察 | session `20260710T024503106586Z` 将后期规划写为本期双审/支付；T-120 复测已纠正当前期事实，但仍需验证更多需求格式。 | requirement/spec 读取结果作为独立 pinned context；普通 summary 只能辅助导航，最终需求事实要求 requirement path:line。 |
 | R-062 | 跨前后端设计未覆盖最小源码证据集就持续探索 | 已关闭 MVP，继续观察 | session `20260710T025606504484Z` 57 次工具调用中没有读取前端候选源码，最终只能给出弱复用结论。 | T-121 按 OMP ToolChoiceQueue/soft escalation 建立最小 evidence matrix；session `20260710T032336652934Z` 已读取需求、后端 Java 与前端 JS/Vue 后 final 收束。后续继续观察探索成本。 |
 | R-063 | 文件发现工具缺位导致错误负向结论 | 已关闭 MVP，持续压测 | 原样本把内容 no-match、截断目录和 primary Git 失败外推为“没有源码”；首轮 T-132A/B 又暴露百炼会传 `glob_files.path` 与超大结果。 | OMP `glob`/`grep` 分工已落地为 `glob_files`/`search_code`；结构化 complete/truncated/missing metadata 已进入 EvidenceLedger、CompletionAudit 和 FinalAnswerSteerer。T-132C 要求每个 authorized root 有 glob 覆盖、将 inventory 限为 per-root/totals budget，并记录 discovery/misuse；20260711T160446291065Z 进一步验证中文 inventory 意图、每 root schema 和无 candidate-read 耦合均能 0 error 收束。 |
-| R-069 | finalization ping-pong 或 root-local 证据漂移导致黑盒 session 不终止 | 已关闭 MVP，继续观察 provider 收敛效率 | stable `f155a8a` 的小牙 fixture 曾出现 `requirement_evidence`、`negative_existence`、`completion_audit`、`tool_usage_evidence` 和 `forced_final` 交替触发，且有样本没有 `run_summary` 挂住；primary 文档的 “No source code lives here” 也会被误导到 sibling service。 | 对齐 OMP queue/turn owner：`FinalizationCoordinator` 统一 terminal owner 与 aggregate budget，provider hanging 由外层 timeout 收口并始终写 summary；evidence 保留 `root/scope` provenance，root-local 文档默认只描述所属 root。live 两轮四个 fixture session 已全部稳定终止。 |
+| R-069 | finalization ping-pong 或 root-local 证据漂移导致黑盒 session 不终止 | 已关闭 MVP，继续观察 provider 收敛效率 | stable `f155a8a` 的小牙 fixture 曾出现 `requirement_evidence`、`negative_existence`、`completion_audit`、`tool_usage_evidence` 和 `forced_final` 交替触发，且有样本没有 `run_summary` 挂住；primary 文档的 “No source code lives here” 也会被误导到 sibling service。 | 对齐 OMP queue/turn owner：`FinalizationCoordinator` 统一 terminal owner 与 aggregate budget；普通和 forced-final 主请求 failure 都写 terminal closure。Evidence（含 pinned requirement）保留 `root/scope`，root-local 文档默认只描述所属 root。外层 timeout 不能强杀底层 daemon worker，残余线程风险持续观察。 |
 | R-033 | no-edit 停止路径可能跳过收束工具 | 已关闭 MVP 版 | T-074 复跑中模型正确停止，但没有维护 todo，也没有调用 `git_diff` 输出“无改动”证据；这会降低最终报告的可审计性。 | T-075 已参考 OMP current task / tool-choice steering 思路落地：no-edit stop 前缺 git/todo 收束会被 runtime steering 纠偏，并临时限制工具到 todo/git hygiene 集合。 |
 | R-034 | 过早做 fullscreen 重 TUI 可能拖慢核心能力 | 新增，中 | 如果把第一版前端理解成 Textual/fullscreen/pane/mouse/overlay，容易提前引入 scrollback、copy/paste、resize、输入法和渲染刷新问题。 | 第一版明确命名为 Terminal Frontend：`prompt_toolkit` 只管输入，`rich` 只管结构化输出，保留原生 terminal scrollback；先做 Event/Command Protocol，后续有真实瓶颈再升级 Textual/Bubble Tea/Ratatui/自研 renderer。 |
 | R-035 | Runtime 与前端输出耦合会阻碍后续终端体验 | 已关闭 MVP 版 | 如果工具日志、审批显示和最终输出继续散落在 Runtime/CLI print 中，后续 `prompt_toolkit + rich` 前端会难以复用和 replay。 | T-076 已参考 OMP runtime/TUI 分层思路，落地 dataclass Event/Command Protocol 和 `EventSink`；Runtime 产出 typed events，CLI 只是第一消费者。 |
@@ -469,10 +470,10 @@
 | 项目 | 结论 | 依据 |
 |---|---|---|
 | 主链路 | 通过 | 百炼真实小改复测已跑通 todo、dry_run、apply_patch、session allow、rollback、run_tests、git_diff。 |
-| 测试 | 通过 | P5 收口时 90 个 unittest、compileall、xlsx 检查、diff check 均通过；当前代码已跑通 441 个 unittest。 |
+| 测试 | 通过 | P5 收口时 90 个 unittest、compileall、xlsx 检查、diff check 均通过；当前代码已跑通 447 个 unittest。 |
 | 日用入口 | 通过 | README 已补只读分析和小改任务命令模板。 |
 | 开放风险 | 可接受 | shell 仍非沙箱、prompt injection 仍需靠审批和封闭 VM；provider/model 专用 tokenizer、输出 reserve、managed skills、完整 reviewer 和完整 OMP ToolChoiceQueue 继续后置评估。 |
-| 下一阶段 | P11 继续收束 | T-109~T-141 已完成 Intelligence Runtime 骨架、自主小改候选收束、dynamic workspace roots、有界 inventory、terminal nested interaction、stable/dev 隔离、benchmark 基线，以及 bounded finalization / multi-root provenance。下一步优先取得结算单 DDL、模板/下载中心或正确业务 owner 的源码证据，再验证 move 后的明确目标小改链路。 |
+| 下一阶段 | P11 继续收束 | T-109~T-142 已完成 Intelligence Runtime 骨架、自主小改候选收束、dynamic workspace roots、有界 inventory、terminal nested interaction、stable/dev 隔离、benchmark 基线，以及 bounded finalization / provider failure closure / multi-root provenance。下一步优先取得结算单 DDL、模板/下载中心或正确业务 owner 的源码证据，再验证 move 后的明确目标小改链路。 |
 
 ## 推荐工作流
 

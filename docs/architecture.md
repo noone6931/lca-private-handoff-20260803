@@ -273,8 +273,8 @@ T-132 已完成 roots 变更后的文件发现与负向证据闭环，详见 `do
 T-141 进一步把黑盒 multi-root finalization 的 owner 和 provenance 问题按 OMP 原则落回独立模块，而不是继续堆到主循环：
 
 - `finalization.py` 的 `FinalizationCoordinator` 是 terminal phase 的唯一 owner，统一管理 forced-final、aggregate retry budget、unresolved gate 和 terminal draft reuse 规则。
-- `chat_runtime.py` 为 provider `.chat(...)` 增加外层 timeout；即使底层 client 忽略 timeout，也会以 `LlmError` 收口并写出 `run_summary`。
-- `EvidenceLedger` / `ToolChoiceResult` / final steerers 对 path-based 证据保留 `root` + `scope` provenance；primary 的文档证据默认不跨 root 外推。
+- `chat_runtime.py` 为 provider `.chat(...)` 增加外层 timeout；普通与 forced-final 的主请求 `LlmError` 都经 terminal closure 写出 `final`、`run_summary`、`SessionFinished`，并区分 `llm_timeout` / `provider_error`。底层阻塞 worker 为 daemon，Runtime 可返回但不能在 Python 内强杀该 worker。
+- `EvidenceLedger` / `ToolChoiceResult` / final steerers 对 path-based 证据保留 `root` + `scope` provenance；pinned requirement 也带相同归属。primary 的文档证据默认不跨 root 外推。
 - provider 调用 active schema 外工具仍会被拒绝执行，但现在单独记为 `provider_schema_violation`，不再和普通 tool error 混在一起。
 
 当前还有两类人工上下文文件：

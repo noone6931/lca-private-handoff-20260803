@@ -377,7 +377,7 @@ T-140 的离线 6 个 fixture 继续全部通过。live provider 不再用固定
 | finalization ping-pong | `tool-choice-queue` / `agent-loop` 中 pending owner 与 continuation 上界明确，terminal phase 不被无界 reopen。 | 新增 `finalization.py`，由 `FinalizationCoordinator` 统一持有 forced-final terminal ownership、aggregate finalization budget 和 unresolved gate。 |
 | provider schema violation 只有普通 tool error | OMP 的 active tools 是硬边界，越界调用会被拒绝且可单独观测。 | `ToolRegistry` 对 runtime allowlist 外但名称已知的调用打上 `provider_schema_violation` metadata；`RunSummary` / benchmark 报告单列该指标。 |
 | root-local 文档被错误外推 | OMP 的 context/tool evidence 带来源与生命周期，active root 不应隐式跨仓传播结论。 | `EvidenceLedger` / `ToolChoiceResult` / final steerers 现在保留 `root` + `scope` provenance；primary 文档默认只覆盖 primary。 |
-| provider 不按 timeout 返回会卡住终端 | OMP 有 abort/deadline 贯穿 loop。 | 新增 `chat_runtime.py` 外层 timeout 封装；即使 provider client 忽略 timeout，也会以 `LlmError` 收口并写 `run_summary`。 |
+| provider 不按 timeout 返回会卡住终端 | OMP 有 abort/deadline 贯穿 loop。 | `chat_runtime.py` 增加外层 timeout；T-142 进一步让普通首轮与 forced-final 的 `LlmError` 都走 terminal closure，写入 `final`、`run_summary`、`SessionFinished`，并区分 `llm_timeout` / `provider_error`。 |
 
 ## 定向验证
 
@@ -407,4 +407,12 @@ T-140 的离线 6 个 fixture 继续全部通过。live provider 不再用固定
 
 ## 结论
 
-T-141 关闭了这一轮最危险的 runtime 缺口：现在即便 finalization 被多个 auditor 连续打回，也有统一 owner、统一预算和外层 timeout，不会再出现没有 `run_summary` 的悬挂 session。live 两轮都证明 multi-root inventory 与 scoped negative evidence 可以稳定终止，且 root-local 文档不会再跨 root 误指挥 sibling service。
+T-141/T-142 关闭了这一轮最危险的 runtime 缺口：finalization 被多个 auditor 连续打回时有统一 owner、统一预算和外层 timeout；普通首轮 provider timeout/error 也会明确收束，而不是把异常抛回 CLI。live 两轮证明 multi-root inventory 与 scoped negative evidence 可以稳定终止；pinned requirement 也保留 root-local 归属，不能再把 primary 文档外推为 sibling service 的修改指令。
+
+残余风险：Python 无法安全强杀正在底层阻塞的 provider worker。外层 timeout 会立即让 Runtime 回到 terminal prompt，worker 是 daemon，不会阻止进程退出；若 provider 永久不返回，该线程会在进程存活期间残留。后续若真实压测出现累积线程问题，再评估可取消 HTTP client 或进程隔离，不把当前行为描述为“已取消底层请求”。
+
+## T-142 provider terminal closure / pinned requirement provenance（2026-07-12）
+
+- 首轮 hanging client（`request_timeout=1`）返回明确未完成结果，termination=`llm_timeout`，并写入 `final`、`run_summary`、`SessionFinished`；memory consolidation 不再额外调用故障 provider。
+- 首轮立即抛出的 `LlmError` 返回 termination=`provider_error`，同样完成 session/event closure，不再把异常传到 CLI。
+- `RequirementEvidence`、`search_code`、`lsp_*` evidence 都记录 canonical `root` + `scope`；pinned requirement context 明确 `root_local` 只约束来源 root，除非用户明确要求跨 root 综合。
