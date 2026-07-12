@@ -40,7 +40,7 @@ def plan_narrow_test(workspace: Path, results: list[ToolResultSummary]) -> TestP
     the narrowest test unless Runtime can derive an exact module/test target.
     """
 
-    changed_paths = _changed_paths(results)
+    changed_paths = _changed_paths(workspace, results)
     if not changed_paths:
         return TestPlan(None, "no workspace write has been observed", "blocked")
     suffixes = {Path(path).suffix.lower() for path in changed_paths}
@@ -82,7 +82,7 @@ def _project_plan(command: str, reason: str, changed_paths: tuple[str, ...]) -> 
     return TestPlan(command, reason, "project", changed_paths)
 
 
-def _changed_paths(results: list[ToolResultSummary]) -> tuple[str, ...]:
+def _changed_paths(workspace: Path, results: list[ToolResultSummary]) -> tuple[str, ...]:
     write_index = last_workspace_write_index(results)
     if write_index < 0:
         return ()
@@ -92,10 +92,20 @@ def _changed_paths(results: list[ToolResultSummary]) -> tuple[str, ...]:
         if isinstance(metadata, dict):
             values = metadata.get("changed_paths")
             if isinstance(values, (list, tuple)):
-                paths.extend(str(value) for value in values if str(value).strip())
+                paths.extend(_display_path(workspace, str(value)) for value in values if str(value).strip())
         if result.name in {"apply_patch", "write_file", "rollback_patch"} and result.path:
-            paths.append(result.path)
+            paths.append(_display_path(workspace, result.path))
     return tuple(dict.fromkeys(paths))
+
+
+def _display_path(workspace: Path, raw_path: str) -> str:
+    path = Path(raw_path).expanduser()
+    if not path.is_absolute():
+        return raw_path.replace("\\", "/").lstrip("./")
+    try:
+        return path.resolve().relative_to(workspace.resolve()).as_posix()
+    except ValueError:
+        return str(path.resolve())
 
 
 def _package_test_script(path: Path) -> str | None:

@@ -45,3 +45,15 @@ class TestPlannerTests(unittest.TestCase):
 
         self.assertEqual(plan.command, "mvn test")
         self.assertEqual(plan.breadth, "project")
+
+    def test_changed_path_is_normalized_to_workspace_relative_form(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            (workspace / "tests").mkdir()
+            source = workspace / "src" / "app.py"
+            source.parent.mkdir()
+            source.write_text("pass\n", encoding="utf-8")
+
+            plan = plan_narrow_test(workspace, self._write_results(str(source)))
+
+        self.assertEqual(plan.changed_paths, ("src/app.py",))
