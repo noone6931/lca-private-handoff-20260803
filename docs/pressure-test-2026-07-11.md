@@ -416,3 +416,40 @@ T-141/T-142 关闭了这一轮最危险的 runtime 缺口：finalization 被多�
 - 首轮 hanging client（`request_timeout=1`）返回明确未完成结果，termination=`llm_timeout`，并写入 `final`、`run_summary`、`SessionFinished`；memory consolidation 不再额外调用故障 provider。
 - 首轮立即抛出的 `LlmError` 返回 termination=`provider_error`，同样完成 session/event closure，不再把异常传到 CLI。
 - `RequirementEvidence`、`search_code`、`lsp_*` evidence 都记录 canonical `root` + `scope`；pinned requirement context 明确 `root_local` 只约束来源 root，除非用户明确要求跨 root 综合。
+
+---
+
+# T-143 Verification Plan / Test Planner / Delivery Audit（2026-07-12）
+
+## 目标与 OMP 对齐
+
+本轮不复制 OMP 的平台层角色系统，复用其 `tool-choice-queue` / `agent-loop` 的核心原则：一个状态只能由被 Runtime 观察到的工具 turn 与结果推进，不能由模型在最终文本中自我宣告完成。
+
+LCA 将 RequirementContract 的业务 acceptance 保留为 `unverified` 信息；新增的 Runtime delivery checks 只覆盖四类可机械核验事实：
+
+1. 与最终有效写入路径相关的代码证据；
+2. 最后有效写入后的、包含本轮路径的当前净 diff；
+3. 最后有效写入后的测试结果或结构化 approval block；
+4. post-diff deterministic reviewer 结论。
+
+## 关闭的问题
+
+| 问题 | 原先风险 | T-143 措施 | 回归 |
+|---|---|---|---|
+| 代理事实伪完成 | 任意 write/read/run_tests 可能让“实现/遵循模式/补测试”被误标完成。 | `VerificationPlan` 让 contract 业务项永远不由代理事实改为 passed；delivery checks 独立状态化。 | 任意 write、无关 README read、旧测试都不能通过。 |
+| rollback / 脏 diff | rollback 后或用户已有 dirty diff 非空时，任意 `git_diff` 文本可能放行。 | `verification_timeline` 跟踪 effective write paths；diff 必须包含本轮当前路径。 | patch + rollback + README 脏 diff 仍为 pending。 |
+| approval deny | 过去只能从文本猜拒绝。 | ToolRegistry 给审批拒绝加入 `execution_status=denied` / `denial_kind=approval` metadata。 | test check 标为 blocked，绝不计为 passed。 |
+| 测试候选夸大 | `mvn test` / `npm test` / 全量 unittest 被称为最窄测试。 | `TestPlanner` 明确 `module` / `project` / `blocked`；当前 manifest 命令均为 project fallback。 | placeholder npm test 被识别为 blocked。 |
+| 终态只靠模型措辞 | VerificationPlan 即使机械通过，模型只答 `done` 仍会丢失改动、测试与剩余风险。 | `DeliveryReport` 由 Runtime 从实际 tool timeline 追加到每个有效写入的 final/incomplete 终态。 | `done` 成功答复仍含 changed path、实际测试命令和 passed=4；失败 fixture 保留 `src/math.py`、失败命令与 failed 状态。 |
+| 否定性元讨论被误判 | “不能推导出没有 Java 源码”被当成实际不存在结论，重新开放 glob 并拉长 finalization。 | 负向存在性审计改为 code/quote 排除和命中附近的 stance 判断。 | 中英文“cannot conclude / does not prove”、引用示例、无关 modal/后半句否定均有回归。 |
+
+## 验证
+
+- deterministic benchmark：7/7 通过，成功 fixture 锁定 `final` 与四项 delivery checks 全通过；新增“测试失败但保留变更”fixture，锁定 `incomplete_delivery`、`src/math.py` 与实际失败测试命令，不会伪装为完成。
+- 百炼 live synthetic fixture：session `20260712T005706166697Z` / run `82f103e7808a43b7a652c039e9ef2449`，9.8 秒、7 LLM、8 tools、0 errors；`src/math.py` 完成 read、dry-run、真实 patch、`PYTHONPATH=. python3 -m unittest tests.test_math`、git diff，delivery checks 为 passed=4 / pending=0 / failed=0 / blocked=0 / skipped=0。
+- 本轮未读取或发送企业源码；live 只使用临时 benchmark fixture。Delivery Report 本身以 deterministic fixture 验证，未为措辞重复调用 provider。
+
+## 残余风险
+
+- 多次交错 patch/rollback 同一路径时，effective-write 路径跟踪采取保守策略；无法证明当前本轮净变更时会要求重新验证，而不会错误放行。
+- T-144 Session Evidence Continuity 仍未实现：下一轮 follow-up 尚不能复用带 revision/content tag 的本轮证据缓存。

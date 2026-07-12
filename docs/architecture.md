@@ -1,6 +1,6 @@
 # Local Coding Agent 架构设计
 
-更新时间：2026-07-11
+更新时间：2026-07-12
 
 本文档描述 `local-coding-agent` 当前架构基线，以及按技术成熟度划分的待加入能力。它是给后续实现者和协作 Agent 读取的架构视图；项目进度事实源仍以 `docs/project-status.md` 和 `docs/project-management.md` 为准。
 
@@ -115,6 +115,7 @@ flowchart TD
 | Authored skills discovery | `[MVP-已落地]` | 启动时扫描 `.local-agent/skills/<name>/SKILL.md`。 | 只注入 name、description 和 source path；正文按需用 `read_file` 读取。 |
 | Frontend boundary | `[MVP-已落地]` | CLI、Terminal Frontend 和未来 Remote/Web 通过 Command/Event 协议接入 Runtime。 | Runtime 已开始产出 typed events；现有 CLI 输出由 `StderrEventSink` 渲染，Terminal Frontend 复用同一事件流。 |
 | Run summary / coverage | `[MVP-已落地]` | 每轮结束写入 `run_summary` session 事件，并产出 `RunSummary` typed event。 | 记录 termination reason、耗时、LLM 请求数、工具调用/错误/无效结果、synthetic tool result、compaction、tool counts、guard hits 和 steering counts；`/status` 可查看最近一轮摘要。T-141 之后还会单列 `provider_schema_violations` 与 `finalization_attempts`，方便区分 provider 越界与 runtime 收束成本。 |
+| Verification Plan / Test Planner / Delivery Audit | `[MVP-已落地]` | `verification_plan.py`、`test_planner.py`、`verification_timeline.py`、`delivery_report.py`、CompletionAudit。 | 对齐 OMP queue/turn ownership：业务 contract 不能被任意工具代理事实自动标记完成；只有 path-related evidence、last effective write 的当前净 diff、post-write test、post-diff reviewer 可推进 delivery checks。未闭环写入以 `incomplete_delivery` 终止；每个有效写入的终态由 Runtime 追加变更路径、实际测试命令、diff/reviewer 和未闭环项，测试候选不直接执行、不绕过 approval。 |
 
 ## 待加入能力矩阵
 

@@ -1,6 +1,6 @@
 # Local Coding Agent 项目状态
 
-更新时间：2026-07-11
+更新时间：2026-07-12
 
 本文档是开发 `local-coding-agent` 时给参与开发的人和协作 Agent 读取的项目管理基线。`docs/local-coding-agent-project-management.xlsx` 继续作为人工查看的表格视图；本 Markdown 文件作为后续开发时优先读取的项目状态、路线、Todo 和决策来源。它不是 LCA 运行时自己的 memory 或用户项目记忆。
 
@@ -30,7 +30,7 @@
 
 ## 当前进度
 
-当前项目已完成 P8 前端协议与交互基础 MVP，P9 真实需求使用准备已覆盖项目边界、源码验证、LSP 韧性和服务费结算链路压测，并进入 P10/P11 Intelligence Runtime 与真实跨项目任务收束。用户可以用自然语言描述任务，而不是每次手写工具顺序；Runtime 通过 RequirementContract、Planner/Explore、MiniToolChoiceQueue、CompletionAudit、二阶段 Patch Reviewer，以及 bounded finalization coordinator 保持任务目标、证据、写入、测试和 diff 的闭环。T-128~T-132 已完成动态 workspace roots、`/move`、跨 root 只读设计收束与有界文件 inventory；T-138~T-140 已补 stable/dev 隔离、规则符号链接边界和可重复 benchmark；T-141/T-142 补齐 terminal ownership、普通 provider failure closure、schema violation telemetry 和 multi-root/pinned requirement provenance。下一步仍是在已确认的真实 owner 边界内做明确小改；完整 async Command Bus/streaming follow-up queue 仍后置。详见 `docs/pressure-test-2026-07-11.md`。
+当前项目已完成 P8 前端协议与交互基础 MVP，P9 真实需求使用准备已覆盖项目边界、源码验证、LSP 韧性和服务费结算链路压测，并进入 P10/P11 Intelligence Runtime 与真实跨项目任务收束。用户可以用自然语言描述任务，而不是每次手写工具顺序；Runtime 通过 RequirementContract、Planner/Explore、MiniToolChoiceQueue、CompletionAudit、二阶段 Patch Reviewer、VerificationPlan/TestPlanner/DeliveryAudit，以及 bounded finalization coordinator 保持任务目标、证据、写入、测试和 diff 的闭环。T-143 明确分离“业务验收仍需人或业务 oracle 确认”和“Runtime 可由真实 tool timeline 证明的交付检查”，避免伪完成。下一步仍是在已确认的真实 owner 边界内做明确小改；完整 async Command Bus/streaming follow-up queue 仍后置。详见 `docs/pressure-test-2026-07-11.md`。
 
 已具备的核心能力：
 
@@ -213,7 +213,7 @@
 | no-edit evidence gate | 已完成 | CompletionAudit 不再接受只有“blocked/unexecuted”的文字自述；必须有 search/LSP 未命中、路径缺失、relevance/approval 拒绝等工具证据，才允许实现任务在无 diff 时收尾。 |
 | ToolRegistry 参数归一 | 已完成 MVP 版 | `src/local_agent/tools/argument_normalization.py` 在 schema 校验前仅映射已观测 scalar alias；冲突值直接拒绝，随后仍执行原 schema、approval、path/hash 和 anchored patch 校验。 |
 | 跨 root owner / impact evidence matrix | 已完成 MVP 版 | “设计/架构”以及“owner 定位/影响范围/调用链”的多 root 只读任务共用 requirement + 每 root source-read + 六次补证据预算；避免任务名称不是“设计”就无限探索。 |
-| 测试基线 | 已完成 | 本地正常环境下 447 个测试通过。 |
+| 测试基线 | 已完成 | 本地正常环境下 476 个测试通过。 |
 
 ## 下一步 Todo
 
@@ -464,16 +464,25 @@
 | ADR-040 | Path-scoped rules 采用 metadata 常驻、正文按命中路径加载 | 对齐 OMP project context/discovery，同时控制多 root prompt 体积；规则根隔离且 advisory，工具 policy 仍是唯一安全边界。 |
 | ADR-041 | Benchmark 默认 deterministic，live provider 显式运行 | 对齐 OMP run/coverage 可观测性；离线 fixture 防回归，live fixture 量化模型行为，二者都不等于企业需求实现通过。 |
 | ADR-042 | Finalization terminal ownership 与多 root provenance 必须进入独立模块而非继续堆到主循环。 | 对齐 OMP 的 queue/turn owner、active tool boundary 和 context provenance：terminal phase 由单一 coordinator 管理，provider 越界调用是独立遥测，root-local 证据默认不得跨 root 外推。 |
+| ADR-043 | Runtime delivery checks 与业务验收项分层。 | 对齐 OMP queue/turn ownership：状态只由已完成的工具 turn/result 推进。LCA 的 contract 项保持业务/人工验收提示；write/evidence/test/diff/review 作为独立 delivery checks，未闭环时终态必须是 incomplete，而不是“已完成”。 |
+
+## T-143 验证计划收口（2026-07-12）
+
+- `VerificationPlan` 位于 `src/local_agent/verification_plan.py`，每个 code-implementation run 写 typed snapshot/update session 事件，并在 `RunSummary` / `/status` 输出 delivery coverage；业务 acceptance 单列 `business_acceptance.unverified`，不混入交付完成度。
+- `TestPlanner` 仅从最后有效写入和本地 manifest 推导保守候选，标记为 `module`、`project` 或 `blocked`；当前 Python/Maven/Gradle/npm 命令是 manifest-backed project fallback，不伪称为最窄测试，也不直接执行或绕过审批。
+- `CompletionAudit` / Patch Reviewer 只消费 delivery checks。rollback、空 diff、写前旧测试、approval deny、与目标路径无关的 README 读取、仅含基线脏改的非空 diff 都不能通过。
+- 真实百炼合成 fixture：session `20260712T005706166697Z` / run `82f103e7808a43b7a652c039e9ef2449`，7 LLM、8 tools、0 error，`src/math.py` 完成 preview/patch/test/diff，delivery checks 4/4 passed。终态 Delivery Report 的内容由 deterministic 回归和 benchmark 锁定，保证模型只答 `done` 或测试失败时仍保留路径、实际测试命令、diff/reviewer 与未闭环项。离线 benchmark 为 7/7，完整 unittest 为 476/476。
+- T-144 仅登记：同 session follow-up 的 session evidence continuity（workspace revision/content tag/relevance cache，write/move/root change 时失效；用户输入事实与 repository evidence 分层）。本批未实现。
 
 ## P5 收口结论
 
 | 项目 | 结论 | 依据 |
 |---|---|---|
 | 主链路 | 通过 | 百炼真实小改复测已跑通 todo、dry_run、apply_patch、session allow、rollback、run_tests、git_diff。 |
-| 测试 | 通过 | P5 收口时 90 个 unittest、compileall、xlsx 检查、diff check 均通过；当前代码已跑通 447 个 unittest。 |
+| 测试 | 通过 | P5 收口时 90 个 unittest、compileall、xlsx 检查、diff check 均通过；当前代码已跑通 476 个 unittest。 |
 | 日用入口 | 通过 | README 已补只读分析和小改任务命令模板。 |
 | 开放风险 | 可接受 | shell 仍非沙箱、prompt injection 仍需靠审批和封闭 VM；provider/model 专用 tokenizer、输出 reserve、managed skills、完整 reviewer 和完整 OMP ToolChoiceQueue 继续后置评估。 |
-| 下一阶段 | P11 继续收束 | T-109~T-142 已完成 Intelligence Runtime 骨架、自主小改候选收束、dynamic workspace roots、有界 inventory、terminal nested interaction、stable/dev 隔离、benchmark 基线，以及 bounded finalization / provider failure closure / multi-root provenance。下一步优先取得结算单 DDL、模板/下载中心或正确业务 owner 的源码证据，再验证 move 后的明确目标小改链路。 |
+| 下一阶段 | P11 继续收束 | T-109~T-143 已完成 Intelligence Runtime 骨架、自主小改候选收束、dynamic workspace roots、有界 inventory、terminal nested interaction、stable/dev 隔离、benchmark 基线，以及 bounded finalization / provider failure closure / multi-root provenance / Runtime delivery report。下一步优先取得结算单 DDL、模板/下载中心或正确业务 owner 的源码证据，再验证 move 后的明确目标小改链路。 |
 
 ## 推荐工作流
 
