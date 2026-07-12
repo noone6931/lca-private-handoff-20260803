@@ -126,11 +126,12 @@ def _git(context: ToolContext, args: list[str]) -> ToolResult:
     completed = _git_raw(context.workspace, args)
     output = completed.stdout or completed.stderr or "(empty)"
     is_error = completed.returncode != 0
+    is_not_repository = is_error and "not a git repository" in output.lower()
     metadata = {
         "git_probe_root": str(context.workspace),
-        "git_repository": not is_error,
+        "git_repository": False if is_not_repository else not is_error if not is_error else None,
     }
-    if is_error and "not a git repository" in output.lower():
+    if is_not_repository:
         output = (
             f"{output.rstrip()}\n\n"
             f"git_status checks the primary workspace only: {context.workspace}. "

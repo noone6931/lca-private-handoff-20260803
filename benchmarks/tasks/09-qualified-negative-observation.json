@@ -8,6 +8,9 @@
   },
   "scripted_responses": [
     {
+      "content": "我检查后未发现 Java 文件。"
+    },
+    {
       "tool_calls": [
         {
           "name": "glob_files",

@@ -37,12 +37,52 @@ class NegativeEvidenceTests(unittest.TestCase):
         self.assertEqual(unsupported_negative_existence_claims(content, []), ())
 
     def test_observed_no_match_is_distinct_from_absolute_absence(self) -> None:
-        claims = parse_negative_evidence_claims("在 primary 的 glob 中未发现 Java 文件。")
+        content = "在 primary 的 glob 中未发现 Java 文件。"
+        claims = parse_negative_evidence_claims(content)
 
         self.assertEqual(len(claims), 1)
         self.assertEqual(claims[0].stance, OBSERVED_NO_MATCH)
         self.assertEqual(claims[0].scope, "primary")
-        self.assertEqual(unsupported_negative_existence_claims("在 primary 的 glob 中未发现 Java 文件。", []), ())
+        self.assertEqual(claims[0].root, "primary")
+        self.assertEqual(len(unsupported_negative_existence_claims(content, [])), 1)
+
+    def test_observed_no_match_requires_current_matching_tool_evidence(self) -> None:
+        content = "我检查后未发现 Java 文件。"
+        matching = ToolResultSummary(
+            "glob_files",
+            "{}",
+            useless=True,
+            metadata={
+                "negative_evidence_type": "path_no_match",
+                "patterns": ["**/*.java"],
+                "complete": True,
+                "truncated": False,
+                "result_limit_reached": False,
+                "evidence_root_label": "primary",
+            },
+        )
+        wrong_query = ToolResultSummary(
+            "search_code",
+            "No matches.",
+            useless=True,
+            metadata={
+                "negative_evidence_type": "content_no_match",
+                "pattern": "python",
+                "complete": True,
+                "evidence_root_label": "primary",
+            },
+        )
+        cached_no_match = ToolResultSummary(
+            "glob_files",
+            "{}",
+            useless=True,
+            metadata={**matching.metadata, "evidence_origin": "session_cached"},
+        )
+
+        self.assertEqual(len(unsupported_negative_existence_claims(content, [])), 1)
+        self.assertEqual(len(unsupported_negative_existence_claims(content, [wrong_query])), 1)
+        self.assertEqual(len(unsupported_negative_existence_claims(content, [cached_no_match])), 1)
+        self.assertEqual(unsupported_negative_existence_claims(content, [matching]), ())
 
     def test_hypothetical_and_example_are_not_asserted_absence(self) -> None:
         claims = parse_negative_evidence_claims("建议调用 glob_files；如果没有 Java 源码再合并。")
@@ -52,13 +92,23 @@ class NegativeEvidenceTests(unittest.TestCase):
         self.assertEqual(unsupported_negative_existence_claims("建议调用 glob_files；如果没有 Java 源码再合并。", []), ())
 
     def test_mixed_qualified_and_absolute_claim_only_blocks_absolute(self) -> None:
-        content = "未发现 Java，但这不等于证明没有 Java。另一个 root 没有源码。"
+        content = "未发现 Java 源码，不等于证明没有 Java 源码，同时另一个 root 没有源码。"
 
         claims = parse_negative_evidence_claims(content)
         issues = unsupported_negative_existence_claims(content, [])
 
         self.assertEqual([claim.stance for claim in claims], [EPISTEMICALLY_QUALIFIED, EPISTEMICALLY_QUALIFIED, ASSERTED_ABSENCE])
         self.assertEqual([(issue.kind, issue.subject) for issue in issues], [("source_tree", "source")])
+
+    def test_next_clause_qualifier_cannot_downgrade_an_asserted_absence(self) -> None:
+        for content in (
+            "该 root 没有 Java；这不等于证明没有项目价值。",
+            "No Java source exists; that does not mean no docs exist.",
+        ):
+            with self.subTest(content=content):
+                claims = parse_negative_evidence_claims(content)
+                self.assertEqual(claims[0].stance, ASSERTED_ABSENCE)
+                self.assertEqual(len(unsupported_negative_existence_claims(content, [])), 1)
 
     def test_unrelated_modal_does_not_hide_generic_entity_absence(self) -> None:
         claims = parse_negative_evidence_claims("无法读取 README，但这里不存在 Foo。")
@@ -90,6 +140,29 @@ class NegativeEvidenceTests(unittest.TestCase):
         )
 
         self.assertEqual(issues, ())
+
+    def test_quoted_claim_is_observed_in_taxonomy_without_triggering_a_gate(self) -> None:
+        content = '"没有 Java 源码"只是示例。'
+
+        claims = parse_negative_evidence_claims(content)
+        metrics = negative_claim_metrics(content, [])
+
+        self.assertEqual(len(claims), 1)
+        self.assertEqual(claims[0].stance, QUOTED_OR_HYPOTHETICAL)
+        self.assertGreater(claims[0].span_end, claims[0].span_start)
+        self.assertEqual(metrics["quoted_or_hypothetical"], 1)
+        self.assertEqual(unsupported_negative_existence_claims(content, []), ())
+
+    def test_quoted_claim_with_connector_is_not_split_into_assertions(self) -> None:
+        for content in (
+            'The phrase "No Java source and no codebase" is quoted.',
+            '“没有 Java 源码，但没有源码”只是引用。',
+        ):
+            with self.subTest(content=content):
+                claims = parse_negative_evidence_claims(content)
+                self.assertTrue(claims)
+                self.assertTrue(all(claim.stance == QUOTED_OR_HYPOTHETICAL for claim in claims))
+                self.assertEqual(unsupported_negative_existence_claims(content, []), ())
 
     def test_actual_java_absence_claim_still_requires_discovery_evidence(self) -> None:
         issues = unsupported_negative_existence_claims("该 root 没有 Java 源码。", [])
@@ -218,6 +291,84 @@ class NegativeEvidenceTests(unittest.TestCase):
 
         self.assertEqual(len(unsupported_negative_existence_claims(content, [one_root])), 1)
         self.assertEqual(unsupported_negative_existence_claims(content, [two_roots]), ())
+
+    def test_explicit_root_claim_requires_matching_root_provenance(self) -> None:
+        content = "附加 root 没有 Java 源码。"
+        base = {
+            "negative_evidence_type": "path_no_match",
+            "patterns": ["**/*.java"],
+            "complete": True,
+            "truncated": False,
+            "result_limit_reached": False,
+        }
+        primary = ToolResultSummary("glob_files", "{}", useless=True, metadata={**base, "evidence_root_label": "primary"})
+        additional = ToolResultSummary(
+            "glob_files",
+            "{}",
+            useless=True,
+            metadata={**base, "evidence_root_label": "/workspace/additional"},
+        )
+        missing_label = ToolResultSummary("glob_files", "{}", useless=True, metadata=base)
+
+        self.assertEqual(len(unsupported_negative_existence_claims(content, [primary])), 1)
+        self.assertEqual(len(unsupported_negative_existence_claims(content, [missing_label])), 1)
+        self.assertEqual(unsupported_negative_existence_claims(content, [additional]), ())
+        self.assertEqual(len(unsupported_negative_existence_claims("primary 没有 Java 源码。", [additional])), 1)
+
+    def test_git_claims_cannot_borrow_or_target_additional_root_probes(self) -> None:
+        primary_probe = ToolResultSummary(
+            "git_status",
+            "not a git repository",
+            is_error=True,
+            metadata={
+                "git_probe_root": True,
+                "git_repository": False,
+                "evidence_root_label": "primary",
+            },
+        )
+        additional_probe = ToolResultSummary(
+            "git_status",
+            "not a git repository",
+            is_error=True,
+            metadata={
+                "git_probe_root": True,
+                "git_repository": False,
+                "evidence_root_label": "/workspace/additional",
+            },
+        )
+
+        self.assertEqual(len(unsupported_negative_existence_claims("附加 root 不是 Git 仓库。", [primary_probe])), 1)
+        self.assertEqual(len(unsupported_negative_existence_claims("附加 root 不是 Git 仓库。", [additional_probe])), 1)
+        self.assertEqual(unsupported_negative_existence_claims("primary 不是 Git 仓库。", [primary_probe]), ())
+        execution_error = ToolResultSummary(
+            "git_status",
+            "git executable failed",
+            is_error=True,
+            metadata={
+                "git_probe_root": True,
+                "git_repository": None,
+                "evidence_root_label": "primary",
+            },
+        )
+        self.assertEqual(len(unsupported_negative_existence_claims("primary 不是 Git 仓库。", [execution_error])), 1)
+
+    def test_bare_java_claim_requires_file_or_workspace_scope(self) -> None:
+        for content in (
+            "团队没有 Java 经验。",
+            "项目没有 Java 依赖。",
+            "没有 Java 版本要求。",
+            "该 root 的团队没有 Java 经验。",
+            "workspace 没有 Java 依赖。",
+            "The team has no Java experience.",
+            "The project has no Java dependency.",
+            "There is no Java version requirement.",
+            "This workspace has no Java version requirement.",
+        ):
+            with self.subTest(content=content):
+                self.assertEqual(parse_negative_evidence_claims(content), ())
+
+        scoped = parse_negative_evidence_claims("当前 root 没有 Java。")
+        self.assertEqual([(claim.kind, claim.stance) for claim in scoped], [("extension", ASSERTED_ABSENCE)])
 
     def test_git_claim_for_additional_root_is_rewritten_without_git_probe(self) -> None:
         request = "只读分析附加目录中的项目，不要修改文件。"

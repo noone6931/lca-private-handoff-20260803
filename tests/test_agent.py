@@ -1625,6 +1625,31 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertEqual(metadata.get("evidence_root"), str(additional.resolve()))
         self.assertEqual(metadata.get("evidence_scope"), "root_local")
 
+    def test_glob_and_git_tool_results_preserve_primary_root_provenance(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=workspace,
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+            )
+            runtime = AgentRuntime(config, show_tool_logs=False)
+            runtime._record_tool_choice_result(
+                "glob_files",
+                {"paths": ["**/*.java"]},
+                ToolResult("{}", metadata={"searched_roots": [str(workspace)]}),
+            )
+            runtime._record_tool_choice_result("git_status", {}, ToolResult("{}"))
+
+        glob_metadata, git_metadata = (result.metadata for result in runtime._run.tool_choice_results[-2:])
+        self.assertEqual(glob_metadata.get("evidence_root_label"), "primary")
+        self.assertEqual(git_metadata.get("evidence_root_label"), "primary")
+
     def test_runtime_state_dir_keeps_sessions_and_todos_out_of_workspace(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp).resolve()

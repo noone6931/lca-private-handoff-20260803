@@ -2486,7 +2486,23 @@ class AgentRuntime:
             _session_evidence_query_identity(name, arguments, canonical_path=canonical_path),
         )
         if name == "glob_files":
+            searched_roots = metadata.get("searched_roots")
+            root_values = [str(root).strip() for root in searched_roots if str(root).strip()] if isinstance(searched_roots, list) else []
+            if len(root_values) == 1:
+                root = Path(root_values[0]).resolve()
+                metadata.setdefault("evidence_root", str(root))
+                metadata.setdefault(
+                    "evidence_root_label",
+                    evidence_root_label(root, self._workspace_context.primary, self._workspace_context.additional_roots),
+                )
+            elif len(root_values) > 1:
+                metadata.setdefault("evidence_scope", "multi_root")
             metadata.setdefault("evidence_scope", "root_discovery")
+        elif name == "git_status":
+            # Git is intentionally anchored to the active primary workspace.
+            metadata.setdefault("evidence_root", str(self._workspace_context.primary))
+            metadata.setdefault("evidence_root_label", "primary")
+            metadata.setdefault("evidence_scope", "root_local")
         if name == "search_code":
             paths = first_search_result_paths(result.content, limit=MAX_SESSION_EVIDENCE_TAGGED_PATHS + 1)
             metadata.setdefault("evidence_paths", paths[:MAX_SESSION_EVIDENCE_TAGGED_PATHS])
