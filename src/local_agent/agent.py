@@ -124,7 +124,7 @@ from .tools.relevance import is_code_implementation_request
 from .tools.relevance import path_matches_any
 from .tools.relevance import request_mentions_config_or_path
 from .tool_choice_queue import ToolChoiceDecision
-from .tool_choice_queue import ToolResultSummary
+from .tool_observation import ToolResultSummary
 from .tool_choice_queue import session_evidence_reuse_directive
 from .verification_timeline import workspace_write_happened
 from .user_facts import UserFactsLayer
@@ -367,9 +367,9 @@ class AgentRuntime:
         self._workspace_phase = WorkspaceLifecycle(self)
         self._evidence_phase = EvidenceVerificationLifecycle(self)
         self._memory_phase = MemoryConsolidationLifecycle(self)
-        missing_roots = self._restore_session_workspace_roots()
+        missing_roots = self._workspace_phase.restore_session_workspace_roots()
         self._path_rule_index = discover_path_scoped_rules(self._workspace_context.all_roots)
-        system_prompt = self._build_system_prompt()
+        system_prompt = self._workspace_phase.build_system_prompt()
         self._messages: list[dict[str, Any]] = [
             {"role": "system", "content": system_prompt},
             *self._session.load_messages(),
@@ -405,21 +405,6 @@ class AgentRuntime:
                     "message": f"Skipped missing session workspace root: {path}",
                 },
             )
-
-    def __getattr__(self, name: str):
-        """Expose phase-owned private hooks without reviving Runtime implementations."""
-
-        for component_name in (
-            "_provider_context_phase",
-            "_workspace_phase",
-            "_evidence_phase",
-            "_memory_phase",
-        ):
-            component = self.__dict__.get(component_name)
-            method = getattr(type(component), name, None) if component is not None else None
-            if callable(method):
-                return method.__get__(component, type(component))
-        raise AttributeError(name)
 
     def run(self, prompt: str) -> str:
         if self._is_running:
@@ -470,10 +455,10 @@ class AgentRuntime:
         self._start_run_collector(run_id, prompt, started_monotonic)
         self._user_facts.begin_run(prompt, run_id)
         self._run.user_facts_context = self._user_facts.render_for(prompt)
-        self._hydrate_session_evidence(prompt)
-        self._record_verification_plan_snapshot("snapshot")
+        self._evidence_phase.hydrate_session_evidence(prompt)
+        self._evidence_phase.record_verification_plan_snapshot("snapshot")
         self._messages.append({"role": "user", "content": model_prompt})
-        self._append_session_evidence_reuse_directive()
+        self._evidence_phase.append_session_evidence_reuse_directive()
         self._session.append("user", {"content": prompt})
         self._events.emit("UserMessage", {"content": prompt})
         self._session.append(
@@ -504,14 +489,14 @@ class AgentRuntime:
         )
         if self._run.soft_tool_requirement is not None:
             self._append_soft_tool_requirement_message(self._run.soft_tool_requirement)
-        self._record_workspace_root_evidence()
+        self._evidence_phase.record_workspace_root_evidence()
         tool_context = replace(
             self._tool_context,
             deadline_monotonic=deadline,
             git_baseline=git_baseline,
             current_user_request=prompt,
-            patch_relevance_checker=self._patch_relevance_denial_reason,
-            patch_preview_checker=self._patch_preview_denial_reason,
+            patch_relevance_checker=self._evidence_phase.patch_relevance_denial_reason,
+            patch_preview_checker=self._evidence_phase.patch_preview_denial_reason,
         )
 
         step = 1
@@ -527,7 +512,7 @@ class AgentRuntime:
                     run_start_index,
                     reason="tool_choice_queue",
                 )
-            messages_for_model = self._messages_for_model(deadline)
+            messages_for_model = self._provider_context_phase.messages_for_model(deadline)
             tools_for_model = self._tools_for_model()
             tool_schema_names = [
                 str(schema.get("function", {}).get("name") or "")
@@ -556,7 +541,7 @@ class AgentRuntime:
                     self._client,
                     messages_for_model,
                     tools_for_model,
-                    timeout=self._remaining_timeout(deadline),
+                    timeout=self._provider_context_phase.remaining_timeout(deadline),
                 )
             except LlmError as exc:
                 fallback = self._forced_final_timeout_fallback(
@@ -653,15 +638,15 @@ class AgentRuntime:
                     },
                 )
                 self._run.reset_forced_final_answer_continuations()
-                self._record_tool_choice_result(name, arguments, result)
-                self._record_successful_patch_preview(name, arguments, result)
-                self._record_read_file_evidence(name, arguments, result)
-                self._record_tool_evidence(name, arguments, result)
-                self._invalidate_stale_source_evidence_after_write(name, arguments, result)
+                self._evidence_phase.record_tool_choice_result(name, arguments, result)
+                self._evidence_phase.record_successful_patch_preview(name, arguments, result)
+                self._evidence_phase.record_read_file_evidence(name, arguments, result)
+                self._evidence_phase.record_tool_evidence(name, arguments, result)
+                self._evidence_phase.invalidate_stale_source_evidence_after_write(name, arguments, result)
                 self._observe_soft_tool_requirement(name, arguments, result)
                 if name == "git_diff" and not result.is_error:
                     patch_review = self._decide_post_diff_patch_review(run_start_index)
-                    self._record_verification_patch_review(patch_review)
+                    self._evidence_phase.record_verification_patch_review(patch_review)
                     if patch_review is not None:
                         self._apply_final_answer_steering(patch_review)
                         self._append_synthetic_tool_results(
@@ -682,7 +667,7 @@ class AgentRuntime:
                     repeated_read_guard_hits=guard_hits["repeated_read_file"],
                     semantic_exploration_skipped=guard_hits["semantic_exploration"] > guard_hits_before["semantic_exploration"],
                     semantic_exploration_guard_hits=guard_hits["semantic_exploration"],
-                    read_file_evidence=self._read_file_evidence_summary(),
+                    read_file_evidence=self._evidence_phase.read_file_evidence_summary(),
                     request_summary=self._final_answer_request_summary(),
                 )
                 termination_reason = self._run.tool_loop_steering.termination_reason(tool_loop_steering_signals)
@@ -1247,7 +1232,7 @@ class AgentRuntime:
                         self._workspace_context.additional_roots,
                     ),
                     range_count,
-                    evidence=self._evidence_for_read_file_range(read_file_range_key),
+                    evidence=self._evidence_phase.evidence_for_read_file_range(read_file_range_key),
                 )
         signature = _tool_call_signature(name, arguments)
         search_pattern_key = _search_pattern_key(name, arguments)
@@ -1455,7 +1440,7 @@ class AgentRuntime:
             requirement_evidence=list(self._run.evidence.pinned_requirement_evidence),
             required_design_evidence_roots=self._run.design_evidence_coverage.roots,
             design_evidence_read_paths=list(self._run.evidence.design_read_paths),
-            open_todos=self._open_todo_summary(),
+            open_todos=self._provider_context_phase.open_todo_summary(),
             is_code_implementation_request=is_code_implementation_request(self._run.current_user_request),
             steer_counts=self._final_answer_steer_counts(),
             verification_plan=self._run.verification_plan,
@@ -1643,7 +1628,7 @@ class AgentRuntime:
                 {"mode": self._config.memory_consolidation, "status": "skipped", "reason": reason},
             )
         else:
-            self._memory_phase._maybe_consolidate_session_memory(run_messages, content, deadline)
+            self._memory_phase.consolidate_session_memory(run_messages, content, deadline)
         run_summary = self._finish_run_summary(reason)
         self._events.emit(
             "SessionFinished",

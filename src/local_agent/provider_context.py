@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import time
-from typing import Any
+from typing import Any, Protocol
 
 from .chat_runtime import call_chat_with_timeout
 from .compaction import SUMMARY_INPUT_CHAR_LIMIT, SUMMARY_OUTPUT_CHAR_LIMIT, SUMMARY_REQUEST_TIMEOUT
@@ -34,21 +34,45 @@ from .runtime_prompt import _latest_user_content, _messages_with_runtime_context
 from .tools.base import tool_state_dir
 
 
+class ProviderRuntimePort(Protocol):
+    """Explicit runtime services consumed by provider-context composition."""
+
+    _base_system_prompt: str
+    _client: Any
+    _config: Any
+    _evidence_phase: Any
+    _messages: list[dict[str, Any]]
+    _path_rule_index: Any
+    _run: Any
+    _session: Any
+    _state_dir: Any
+    _summary_cache: dict[str, str]
+    _tool_context: Any
+    _user_config_dir: Any
+    _user_facts: Any
+    _workspace_context: Any
+
+    def _deadline_exceeded(self, deadline: float | None) -> bool: ...
+    def _record_context_compaction(self, **payload: Any) -> None: ...
+    def _record_llm_context_summary(self) -> None: ...
+    def _record_local_context_summary(self) -> None: ...
+
+
 class ProviderContextPhase:
     """Explicit provider-context component used by AgentRuntime turn orchestration."""
 
-    def __init__(self, runtime: object) -> None:
+    def __init__(self, runtime: ProviderRuntimePort) -> None:
         self._runtime = runtime
 
-    def _messages_for_model(self, deadline: float | None = None) -> list[dict[str, Any]]:
+    def messages_for_model(self, deadline: float | None = None) -> list[dict[str, Any]]:
         runtime = self._runtime
-        todo_summary = runtime._open_todo_summary()
+        todo_summary = self.open_todo_summary()
         provider_context = _prune_context_tool_outputs(runtime._messages)
-        if not runtime._context_budget_enabled():
-            return runtime._provider_safe_runtime_messages(provider_context, todo_summary)
-        thresholds = runtime._context_budget_thresholds()
-        if not runtime._context_budget_exceeded(provider_context):
-            return runtime._provider_safe_runtime_messages(provider_context, todo_summary)
+        if not self.context_budget_enabled():
+            return self.provider_safe_runtime_messages(provider_context, todo_summary)
+        thresholds = self.context_budget_thresholds()
+        if not self.context_budget_exceeded(provider_context):
+            return self.provider_safe_runtime_messages(provider_context, todo_summary)
 
         estimated_tokens_before = _estimate_message_tokens(provider_context)
 
@@ -65,7 +89,7 @@ class ProviderContextPhase:
                 recent_count=recent_count,
             )
             recent = _truncate_recent_tool_outputs(recent)
-            compaction_summary = runtime._build_compaction_summary(
+            compaction_summary = self.build_compaction_summary(
                 dropped,
                 current_user_request,
                 deadline,
@@ -77,7 +101,7 @@ class ProviderContextPhase:
                 recent,
                 default_system_content=runtime._base_system_prompt,
             )
-            still_exceeds_budget = runtime._context_budget_exceeded(compacted)
+            still_exceeds_budget = self.context_budget_exceeded(compacted)
             if not still_exceeds_budget or recent_count <= 6:
                 payload: dict[str, Any] = {
                     "original_messages": len(runtime._messages),
@@ -98,15 +122,15 @@ class ProviderContextPhase:
                     estimated_tokens_before=estimated_tokens_before,
                     estimated_tokens_after=int(payload["estimated_tokens_after"]),
                 )
-                return runtime._provider_safe_runtime_messages(compacted, todo_summary)
+                return self.provider_safe_runtime_messages(compacted, todo_summary)
             recent_count = max(6, recent_count // 2)
-        return runtime._provider_safe_runtime_messages(runtime._messages, todo_summary)
+        return self.provider_safe_runtime_messages(runtime._messages, todo_summary)
 
-    def _context_budget_enabled(self) -> bool:
+    def context_budget_enabled(self) -> bool:
         runtime = self._runtime
         return runtime._config.context_char_budget > 0 or runtime._config.context_token_budget > 0
 
-    def _context_budget_thresholds(self) -> dict[str, int]:
+    def context_budget_thresholds(self) -> dict[str, int]:
         runtime = self._runtime
         thresholds: dict[str, int] = {}
         if runtime._config.context_char_budget > 0:
@@ -115,7 +139,7 @@ class ProviderContextPhase:
             thresholds["threshold_tokens"] = _resolve_compaction_threshold_tokens(runtime._config.context_token_budget)
         return thresholds
 
-    def _context_budget_exceeded(self, messages: list[dict[str, Any]]) -> bool:
+    def context_budget_exceeded(self, messages: list[dict[str, Any]]) -> bool:
         runtime = self._runtime
         if runtime._config.context_token_budget > 0:
             threshold = _resolve_compaction_threshold_tokens(runtime._config.context_token_budget)
@@ -127,13 +151,13 @@ class ProviderContextPhase:
                 return True
         return False
 
-    def _provider_safe_runtime_messages(
+    def provider_safe_runtime_messages(
         self,
         messages: list[dict[str, Any]],
         todo_summary: list[str],
     ) -> list[dict[str, Any]]:
         runtime = self._runtime
-        evidence_ledger = runtime._evidence_ledger_summary()
+        evidence_ledger = runtime._evidence_phase.evidence_ledger_summary()
         planner_explore_context = render_planner_explore_context(
             runtime._run.requirement_contract,
             prompt=runtime._run.current_user_request,
@@ -182,7 +206,7 @@ class ProviderContextPhase:
             )
         )
 
-    def _build_compaction_summary(
+    def build_compaction_summary(
         self,
         dropped: list[dict[str, Any]],
         current_user_request: str | None,
@@ -191,14 +215,14 @@ class ProviderContextPhase:
         prefer_local: bool = False,
     ) -> str:
         runtime = self._runtime
-        todo_summary = runtime._open_todo_summary()
+        todo_summary = self.open_todo_summary()
         if not prefer_local and runtime._config.summary_mode in {"auto", "llm"}:
-            llm_summary = runtime._llm_compaction_summary(dropped, current_user_request, todo_summary, deadline)
+            llm_summary = self.llm_compaction_summary(dropped, current_user_request, todo_summary, deadline)
             if llm_summary:
                 return llm_summary
-        return runtime._local_compaction_summary(dropped, current_user_request, todo_summary)
+        return self.local_compaction_summary(dropped, current_user_request, todo_summary)
 
-    def _local_compaction_summary(
+    def local_compaction_summary(
         self,
         dropped: list[dict[str, Any]],
         current_user_request: str | None,
@@ -233,7 +257,7 @@ class ProviderContextPhase:
             lines.extend(["", "Earlier tool results:", *tool_items])
         return "\n".join(lines)
 
-    def _llm_compaction_summary(
+    def llm_compaction_summary(
         self,
         dropped: list[dict[str, Any]],
         current_user_request: str | None,
@@ -251,7 +275,7 @@ class ProviderContextPhase:
         if cached:
             return cached
 
-        remaining_timeout = runtime._remaining_timeout(deadline)
+        remaining_timeout = self.remaining_timeout(deadline)
         timeout = min(remaining_timeout, SUMMARY_REQUEST_TIMEOUT)
         if timeout < 1:
             return None
@@ -295,7 +319,7 @@ class ProviderContextPhase:
         )
         return summary
 
-    def _open_todo_summary(self) -> list[str]:
+    def open_todo_summary(self) -> list[str]:
         runtime = self._runtime
         path = tool_state_dir(runtime._tool_context) / "todos" / f"{runtime._session.session_id}.json"
         if not path.exists():
@@ -322,7 +346,7 @@ class ProviderContextPhase:
             lines.append(f"- [{status or 'todo'}] {todo_id}: {task}{suffix}")
         return lines[:20]
 
-    def _remaining_timeout(self, deadline: float | None) -> float:
+    def remaining_timeout(self, deadline: float | None) -> float:
         runtime = self._runtime
         if deadline is None:
             return float(runtime._config.request_timeout)

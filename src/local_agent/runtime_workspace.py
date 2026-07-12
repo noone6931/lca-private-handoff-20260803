@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 from .lsp.client import close_all_clients
 from .path_rules import discover_path_scoped_rules
@@ -20,40 +20,63 @@ STARTUP_SKILLS_CHAR_LIMIT = 4000
 MAX_AUTHORED_SKILLS = 40
 MAX_SKILL_DESCRIPTION_CHARS = 320
 
+
+class WorkspaceRuntimePort(Protocol):
+    """Explicit workspace/session services consumed by the workspace phase."""
+
+    _base_system_prompt: str
+    _evidence_phase: Any
+    _events: Any
+    _is_running: bool
+    _last_run_summary: Any
+    _messages: list[dict[str, Any]]
+    _path_rule_index: Any
+    _run: Any
+    _session: Any
+    _session_evidence: Any
+    _session_guards: Any
+    _state_dir: Path
+    _state_root: Path | None
+    _summary_cache: dict[str, str]
+    _tool_context: Any
+    _user_config_dir: Path
+    _workspace_context: WorkspaceContext
+
+
 class WorkspaceLifecycle:
     """Cohesive Runtime phase kept outside the turn orchestrator."""
 
-    def __init__(self, runtime: object) -> None:
+    def __init__(self, runtime: WorkspaceRuntimePort) -> None:
         self._runtime = runtime
 
     def add_workspace_root(self, raw_path: str) -> Path:
         runtime = self._runtime
-        runtime._ensure_workspace_idle()
+        self.ensure_workspace_idle()
         next_context = runtime._workspace_context.copy()
         path, changed = next_context.add_session_root(raw_path)
-        runtime._record_workspace_roots_change(next_context, "add", path, changed)
+        self.record_workspace_roots_change(next_context, "add", path, changed)
         return path
 
     def remove_workspace_root(self, raw_path: str) -> Path:
         runtime = self._runtime
-        runtime._ensure_workspace_idle()
+        self.ensure_workspace_idle()
         next_context = runtime._workspace_context.copy()
         path, changed = next_context.remove_session_root(raw_path)
-        runtime._record_workspace_roots_change(next_context, "remove", path, changed)
+        self.record_workspace_roots_change(next_context, "remove", path, changed)
         return path
 
     def reset_workspace_roots(self) -> None:
         runtime = self._runtime
-        runtime._ensure_workspace_idle()
+        self.ensure_workspace_idle()
         next_context = runtime._workspace_context.copy()
         changed = next_context.reset_session_roots()
-        runtime._record_workspace_roots_change(next_context, "reset", None, changed)
+        self.record_workspace_roots_change(next_context, "reset", None, changed)
 
     def move_workspace(self, raw_path: str) -> Path:
         runtime = self._runtime
         """Move this session's primary workspace without losing its session identity."""
 
-        runtime._ensure_workspace_idle()
+        self.ensure_workspace_idle()
         next_context, changed = runtime._workspace_context.moved_primary(raw_path)
         if not changed:
             return runtime._workspace_context.primary
@@ -67,7 +90,7 @@ class WorkspaceLifecycle:
         # Loading startup sources is intentionally done before moving any artifact.
         # A read failure must not leave the session split across two state dirs.
         try:
-            next_system_prompt = runtime._build_system_prompt_for(next_context, next_state_dir)
+            next_system_prompt = self.build_system_prompt_for(next_context, next_state_dir)
             next_path_rule_index = discover_path_scoped_rules(next_context.all_roots)
             previous_session_bytes = runtime._session.path.read_bytes()
         except OSError as exc:
@@ -147,16 +170,16 @@ class WorkspaceLifecycle:
                 runtime._session.path = previous_session_location[2]
             detail = f"; rollback failed: {rollback_error}" if rollback_error is not None else ""
             raise WorkspaceMigrationError(f"Workspace move failed and was rolled back: {exc}{detail}") from exc
-        runtime._invalidate_session_evidence_for_workspace_change("workspace_moved")
-        runtime._emit_post_commit_event("WorkspaceMoved", payload)
+        self.invalidate_session_evidence_for_workspace_change("workspace_moved")
+        self.emit_post_commit_event("WorkspaceMoved", payload)
         return next_context.primary
 
-    def _ensure_workspace_idle(self) -> None:
+    def ensure_workspace_idle(self) -> None:
         runtime = self._runtime
         if runtime._is_running:
             raise RuntimeError("Workspace roots can only be changed while the runtime is idle.")
 
-    def _record_workspace_roots_change(
+    def record_workspace_roots_change(
         self,
         next_context: WorkspaceContext,
         operation: str,
@@ -186,21 +209,21 @@ class WorkspaceLifecycle:
         )
         runtime._session_guards = SessionGuardState()
         runtime._summary_cache = {}
-        runtime._invalidate_session_evidence_for_workspace_change("workspace_roots_changed")
-        runtime._refresh_path_rules()
-        runtime._emit_post_commit_event("WorkspaceRootsChanged", payload)
+        self.invalidate_session_evidence_for_workspace_change("workspace_roots_changed")
+        self.refresh_path_rules()
+        self.emit_post_commit_event("WorkspaceRootsChanged", payload)
 
-    def _refresh_path_rules(self) -> None:
+    def refresh_path_rules(self) -> None:
         runtime = self._runtime
         runtime._path_rule_index = discover_path_scoped_rules(runtime._workspace_context.all_roots)
 
-    def _invalidate_session_evidence_for_workspace_change(self, reason: str) -> None:
+    def invalidate_session_evidence_for_workspace_change(self, reason: str) -> None:
         runtime = self._runtime
         removed = runtime._session_evidence.invalidate_workspace_revision()
         if removed:
-            runtime._record_session_evidence_event("invalidated", {"reason": reason, "count": removed})
+            runtime._evidence_phase.record_session_evidence_event("invalidated", {"reason": reason, "count": removed})
 
-    def _emit_post_commit_event(self, event_type: str, payload: dict[str, object]) -> None:
+    def emit_post_commit_event(self, event_type: str, payload: dict[str, object]) -> None:
         runtime = self._runtime
         """Notify an external sink without turning a committed workspace change into a rollback."""
 
@@ -218,7 +241,7 @@ class WorkspaceLifecycle:
             except Exception:
                 pass
 
-    def _restore_session_workspace_roots(self) -> tuple[Path, ...]:
+    def restore_session_workspace_roots(self) -> tuple[Path, ...]:
         runtime = self._runtime
         snapshot = runtime._session.load_latest_workspace_roots()
         if snapshot is None:
@@ -236,11 +259,11 @@ class WorkspaceLifecycle:
             normalized_revision = 0
         return runtime._workspace_context.restore_session_roots(tuple(raw_paths), normalized_revision)
 
-    def _build_system_prompt(self) -> str:
+    def build_system_prompt(self) -> str:
         runtime = self._runtime
-        return runtime._build_system_prompt_for(runtime._workspace_context, runtime._state_dir)
+        return self.build_system_prompt_for(runtime._workspace_context, runtime._state_dir)
 
-    def _build_system_prompt_for(self, workspace_context: WorkspaceContext, state_dir: Path) -> str:
+    def build_system_prompt_for(self, workspace_context: WorkspaceContext, state_dir: Path) -> str:
         runtime = self._runtime
         return build_system_prompt(
             runtime._base_system_prompt,

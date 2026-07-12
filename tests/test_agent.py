@@ -1781,7 +1781,7 @@ class AgentRuntimeTests(unittest.TestCase):
             )
             runtime = AgentRuntime(config, show_tool_logs=False)
 
-            runtime._record_tool_choice_result(
+            runtime._evidence_phase.record_tool_choice_result(
                 "read_file",
                 {"path": str(source)},
                 ToolResult("[App.java#tag]\n1:class App {}"),
@@ -1805,12 +1805,12 @@ class AgentRuntimeTests(unittest.TestCase):
                 approval_mode="yolo",
             )
             runtime = AgentRuntime(config, show_tool_logs=False)
-            runtime._record_tool_choice_result(
+            runtime._evidence_phase.record_tool_choice_result(
                 "glob_files",
                 {"paths": ["**/*.java"]},
                 ToolResult("{}", metadata={"searched_roots": [str(workspace)]}),
             )
-            runtime._record_tool_choice_result("git_status", {}, ToolResult("{}"))
+            runtime._evidence_phase.record_tool_choice_result("git_status", {}, ToolResult("{}"))
 
         glob_metadata, git_metadata = (result.metadata for result in runtime._run.tool_choice_results[-2:])
         self.assertEqual(glob_metadata.get("evidence_root_label"), "primary")
@@ -2368,12 +2368,12 @@ class AgentRuntimeTests(unittest.TestCase):
                 generate_requirement_contract("请实现用户名规范化，并补充单元测试。")
             )
 
-            runtime._record_verification_patch_review(None)
+            runtime._evidence_phase.record_verification_patch_review(None)
             passed = next(item for item in runtime._run.verification_plan.items if item.id == "runtime-review")
             self.assertEqual(passed.status, "passed")
 
             runtime._run.final_answer_steers["patch_reviewer"] = 2
-            runtime._record_verification_patch_review(None)
+            runtime._evidence_phase.record_verification_patch_review(None)
             skipped = next(item for item in runtime._run.verification_plan.items if item.id == "runtime-review")
             self.assertEqual(skipped.status, "skipped")
 
@@ -3463,13 +3463,13 @@ class AgentRuntimeTests(unittest.TestCase):
                 approval_mode="yolo",
             )
             runtime = AgentRuntime(config, show_tool_logs=False)
-            runtime._record_read_file_evidence(
+            runtime._evidence_phase.record_read_file_evidence(
                 "read_file",
                 {"path": str(document)},
                 ToolResult("[requirements/需求文档-结算.md#tag]\n50:支持批量合并制单。"),
             )
 
-            messages = runtime._provider_safe_runtime_messages(runtime._messages, [])
+            messages = runtime._provider_context_phase.provider_safe_runtime_messages(runtime._messages, [])
 
         self.assertEqual(len(runtime._run.pinned_requirement_evidence), 1)
         self.assertIn("[Pinned requirement evidence]", messages[0]["content"])
@@ -3495,7 +3495,7 @@ class AgentRuntimeTests(unittest.TestCase):
                 SourceEvidence("src/Other.java", "stable implementation"),
             ]
 
-            runtime._invalidate_stale_source_evidence_after_write(
+            runtime._evidence_phase.invalidate_stale_source_evidence_after_write(
                 "apply_patch",
                 {"path": "src/UserService.java"},
                 ToolResult("Applied patch"),
@@ -3531,7 +3531,7 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertEqual(runtime._run.read_file_evidence_paths, [])
         self.assertEqual(runtime._run.strong_relevance_paths, [])
         self.assertTrue(runtime._run.workspace_root_evidence_recorded)
-        self.assertNotIn("src/Old.java", runtime._evidence_ledger_summary())
+        self.assertNotIn("src/Old.java", runtime._evidence_phase.evidence_ledger_summary())
 
     def test_preview_contract_requires_matching_successful_preview_before_real_patch(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -3560,9 +3560,9 @@ class AgentRuntimeTests(unittest.TestCase):
                 "new_text": "class UserService { void normalize() {} }\n",
             }
 
-            denied = runtime._patch_preview_denial_reason(args, target)
-            runtime._record_successful_patch_preview("apply_patch", {**args, "dry_run": True}, ToolResult("preview"))
-            allowed = runtime._patch_preview_denial_reason(args, target)
+            denied = runtime._evidence_phase.patch_preview_denial_reason(args, target)
+            runtime._evidence_phase.record_successful_patch_preview("apply_patch", {**args, "dry_run": True}, ToolResult("preview"))
+            allowed = runtime._evidence_phase.patch_preview_denial_reason(args, target)
 
         self.assertIn("Preview contract", denied or "")
         self.assertIsNone(allowed)
@@ -3680,7 +3680,7 @@ class AgentRuntimeTests(unittest.TestCase):
                 runtime = AgentRuntime(config, show_tool_logs=False)
                 first = runtime.run("请只读读取 service-b/app.py，确认 service-b 使用什么语言。")
                 runtime._messages.append({"role": "user", "content": "older context " + ("x" * 2000)})
-                compacted = runtime._messages_for_model()
+                compacted = runtime._provider_context_phase.messages_for_model()
                 second = runtime.run("service-b 呢？请基于已读源码回答，不要修改。")
                 summary = dict(runtime._last_run_summary or {})
             fresh_runtime = AgentRuntime(config, show_tool_logs=False)
@@ -3727,13 +3727,13 @@ class AgentRuntimeTests(unittest.TestCase):
                 runtime._run.run_id = f"run-{path.name}"
                 runtime._run.current_user_request = request
                 result = ToolResult(path.read_text(encoding="utf-8"))
-                runtime._record_tool_choice_result("read_file", {"path": raw_path}, result)
-                runtime._record_read_file_evidence("read_file", {"path": raw_path}, result)
-                runtime._record_tool_evidence("read_file", {"path": raw_path}, result)
+                runtime._evidence_phase.record_tool_choice_result("read_file", {"path": raw_path}, result)
+                runtime._evidence_phase.record_read_file_evidence("read_file", {"path": raw_path}, result)
+                runtime._evidence_phase.record_tool_evidence("read_file", {"path": raw_path}, result)
                 runtime._session_evidence.remember_request(request, runtime._run.run_id)
 
             runtime._run = runtime._run.__class__()
-            runtime._hydrate_session_evidence("检查 service-b requirements")
+            runtime._evidence_phase.hydrate_session_evidence("检查 service-b requirements")
 
         cached_sources = runtime._run.evidence.source_evidence
         cached_read_paths = [
@@ -3779,11 +3779,11 @@ class AgentRuntimeTests(unittest.TestCase):
             runtime._run.run_id = "seed"
             runtime._run.current_user_request = "inspect src/app.py"
             read = ToolResult(source.read_text(encoding="utf-8"))
-            runtime._record_tool_choice_result("read_file", {"path": "src/app.py"}, read)
-            runtime._record_read_file_evidence("read_file", {"path": "src/app.py"}, read)
-            runtime._record_tool_evidence("read_file", {"path": "src/app.py"}, read)
+            runtime._evidence_phase.record_tool_choice_result("read_file", {"path": "src/app.py"}, read)
+            runtime._evidence_phase.record_read_file_evidence("read_file", {"path": "src/app.py"}, read)
+            runtime._evidence_phase.record_tool_evidence("read_file", {"path": "src/app.py"}, read)
             runtime._session_evidence.remember_request("inspect src/app.py", "seed")
-            runtime._invalidate_stale_source_evidence_after_write(
+            runtime._evidence_phase.invalidate_stale_source_evidence_after_write(
                 "apply_patch",
                 {"path": "src/app.py", "dry_run": True},
                 ToolResult("Dry run only"),
@@ -3794,7 +3794,7 @@ class AgentRuntimeTests(unittest.TestCase):
             runtime._run.run_id = "write-run"
             runtime._run.current_user_request = "update src/app.py"
             runtime._run.collector.start("write-run", "update src/app.py", time.monotonic(), guard_start={}, steer_start={})
-            runtime._invalidate_stale_source_evidence_after_write(
+            runtime._evidence_phase.invalidate_stale_source_evidence_after_write(
                 "apply_patch",
                 {"path": "src/app.py"},
                 ToolResult("Applied patch"),
@@ -3833,9 +3833,9 @@ class AgentRuntimeTests(unittest.TestCase):
                 runtime._run.run_id = "seed"
                 runtime._run.current_user_request = "inspect app.py"
                 read = ToolResult(source.read_text(encoding="utf-8"))
-                runtime._record_tool_choice_result("read_file", {"path": "app.py"}, read)
-                runtime._record_read_file_evidence("read_file", {"path": "app.py"}, read)
-                runtime._record_tool_evidence("read_file", {"path": "app.py"}, read)
+                runtime._evidence_phase.record_tool_choice_result("read_file", {"path": "app.py"}, read)
+                runtime._evidence_phase.record_read_file_evidence("read_file", {"path": "app.py"}, read)
+                runtime._evidence_phase.record_tool_evidence("read_file", {"path": "app.py"}, read)
 
             seed()
             self.assertEqual(runtime._session_evidence.snapshot()["entries"], 1)
@@ -3905,12 +3905,12 @@ class AgentRuntimeTests(unittest.TestCase):
 
             runtime._run.current_user_request = "实现 Java 导入校验需求"
             runtime._run.read_file_evidence_paths = ["deployMessage/nacos/app.properties"]
-            denied = runtime._patch_relevance_denial_reason(
+            denied = runtime._evidence_phase.patch_relevance_denial_reason(
                 "deployMessage/nacos/app.properties",
                 target,
             )
             runtime._run.current_user_request = "请修改 nacos 配置"
-            allowed = runtime._patch_relevance_denial_reason(
+            allowed = runtime._evidence_phase.patch_relevance_denial_reason(
                 "deployMessage/nacos/app.properties",
                 target,
             )
@@ -4818,7 +4818,7 @@ class AgentRuntimeTests(unittest.TestCase):
                         _tool_result_message("call-2", "second tool " + ("q" * 12000)),
                     ]
                 )
-                messages = runtime._messages_for_model()
+                messages = runtime._provider_context_phase.messages_for_model()
                 records = [json.loads(line) for line in runtime._session.path.read_text(encoding="utf-8").splitlines()]
 
             system_or_developer = [message for message in messages if message.get("role") in {"system", "developer"}]
@@ -4866,7 +4866,7 @@ class AgentRuntimeTests(unittest.TestCase):
                     {"role": "user", "content": current},
                 ]
             )
-            messages = runtime._messages_for_model()
+            messages = runtime._provider_context_phase.messages_for_model()
 
         self.assertEqual(sum(prior in str(message.get("content")) for message in messages), 1)
         self.assertFalse(any("[Prior user-provided context]" in str(message.get("content")) for message in messages))
@@ -4901,7 +4901,7 @@ class AgentRuntimeTests(unittest.TestCase):
                     _tool_result_message("call-echo", "result " + ("z" * 6000)),
                 ]
             )
-            messages = runtime._messages_for_model()
+            messages = runtime._provider_context_phase.messages_for_model()
 
         elevated = [message for message in messages if message.get("role") in {"system", "developer"}]
         self.assertFalse(any(marker in str(message.get("content")) for message in elevated))
@@ -5007,7 +5007,7 @@ class AgentRuntimeTests(unittest.TestCase):
                     },
                 ]
             )
-            sent_messages = runtime._messages_for_model()
+            sent_messages = runtime._provider_context_phase.messages_for_model()
 
         sent_tool_messages = [message for message in sent_messages if message.get("role") == "tool"]
         stored_tool_messages = [message for message in runtime._messages if message.get("role") == "tool"]
@@ -5252,7 +5252,7 @@ class AgentRuntimeTests(unittest.TestCase):
             with patch("local_agent.agent.OpenAICompatibleClient", _FailingClient):
                 runtime = AgentRuntime(config, show_tool_logs=False)
                 runtime._run.force_final_answer_without_tools = True
-                summary = runtime._build_compaction_summary(
+                summary = runtime._provider_context_phase.build_compaction_summary(
                     [{"role": "user", "content": "earlier request"}],
                     "current request",
                     None,

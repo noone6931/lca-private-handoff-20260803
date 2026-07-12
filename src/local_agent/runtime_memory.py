@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import time
-from typing import Any
+from typing import Any, Protocol
 
 from .chat_runtime import call_chat_with_timeout
 from .llm import LlmError
@@ -11,13 +11,25 @@ from .memory_consolidation import _append_consolidated_memory, _memory_consolida
 
 MEMORY_CONSOLIDATION_REQUEST_TIMEOUT = 30.0
 
+
+class MemoryRuntimePort(Protocol):
+    """Explicit memory-consolidation dependencies supplied by AgentRuntime."""
+
+    _client: Any
+    _config: Any
+    _session: Any
+    _state_dir: Any
+    _workspace_context: Any
+
+    def _deadline_exceeded(self, deadline: float | None) -> bool: ...
+
 class MemoryConsolidationLifecycle:
     """Cohesive Runtime phase kept outside the turn orchestrator."""
 
-    def __init__(self, runtime: object) -> None:
+    def __init__(self, runtime: MemoryRuntimePort) -> None:
         self._runtime = runtime
 
-    def _maybe_consolidate_session_memory(
+    def consolidate_session_memory(
         self,
         run_messages: list[dict[str, Any]],
         final_content: str,
@@ -49,7 +61,7 @@ class MemoryConsolidationLifecycle:
                 {"mode": mode, "status": "skipped", "reason": "no durable signal"},
             )
             return
-        extracted = runtime._llm_memory_consolidation(transcript, deadline)
+        extracted = self.llm_memory_consolidation(transcript, deadline)
         if not extracted:
             return
         memory_root = _memory_consolidation_root(
@@ -69,7 +81,7 @@ class MemoryConsolidationLifecycle:
             },
         )
 
-    def _llm_memory_consolidation(self, transcript: str, deadline: float | None) -> dict[str, list[str]] | None:
+    def llm_memory_consolidation(self, transcript: str, deadline: float | None) -> dict[str, list[str]] | None:
         runtime = self._runtime
         if deadline is None:
             remaining_timeout = float(runtime._config.request_timeout)

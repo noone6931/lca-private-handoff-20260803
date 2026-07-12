@@ -4,7 +4,7 @@ import re
 from dataclasses import dataclass
 from typing import Iterable
 
-from .tool_choice_queue import ToolResultSummary
+from .tool_observation import ToolResultSummary
 
 
 ASSERTED_ABSENCE = "asserted_absence"

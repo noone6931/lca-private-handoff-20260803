@@ -2,13 +2,14 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, Protocol
 
 from .evidence import EvidenceRecord, evidence_root_for_path, evidence_root_label
 from .patch.anchored import PatchError, display_workspace_path, resolve_workspace_path
 from .patch_reviewer import review_input_metadata, review_input_summary
 from .test_planner import plan_narrow_test
-from .tool_choice_queue import ToolResultSummary, session_evidence_reuse_directive
+from .tool_choice_queue import session_evidence_reuse_directive
+from .tool_observation import ToolResultSummary
 from .tools.base import ToolResult
 from .tools.relevance import is_code_implementation_request, request_mentions_config_or_path
 from .verification_plan import VerificationPlan
@@ -17,13 +18,31 @@ from .tool_gateway import _display_read_file_range_subject, _request_requires_pa
 
 MAX_PATCH_REVIEW_STEERS = 2
 
+
+class EvidenceRuntimePort(Protocol):
+    """Explicit evidence/verification dependencies supplied by AgentRuntime."""
+
+    _events: Any
+    _messages: list[dict[str, Any]]
+    _run: Any
+    _session: Any
+    _session_evidence: Any
+    _workspace_context: Any
+
+    def _tool_choice_result_metadata(
+        self,
+        name: str,
+        arguments: str | dict[str, Any],
+        result: ToolResult,
+    ) -> dict[str, Any]: ...
+
 class EvidenceVerificationLifecycle:
     """Cohesive Runtime phase kept outside the turn orchestrator."""
 
-    def __init__(self, runtime: object) -> None:
+    def __init__(self, runtime: EvidenceRuntimePort) -> None:
         self._runtime = runtime
 
-    def _record_read_file_evidence(self, name: str, arguments: str | dict[str, Any], result: ToolResult) -> None:
+    def record_read_file_evidence(self, name: str, arguments: str | dict[str, Any], result: ToolResult) -> None:
         runtime = self._runtime
         if name == "read_file":
             requirement = runtime._run.soft_tool_requirement
@@ -35,7 +54,7 @@ class EvidenceVerificationLifecycle:
                 requirement_candidates=requirement.candidate_files if requirement is not None else (),
             )
 
-    def _record_tool_choice_result(self, name: str, arguments: str | dict[str, Any], result: ToolResult) -> None:
+    def record_tool_choice_result(self, name: str, arguments: str | dict[str, Any], result: ToolResult) -> None:
         runtime = self._runtime
         metadata = runtime._tool_choice_result_metadata(name, arguments, result)
         if is_session_evidence_reread(
@@ -63,9 +82,9 @@ class EvidenceVerificationLifecycle:
         )
         runtime._run.tool_choice_results = runtime._run.tool_choice_results[-80:]
         runtime._run.consume_tool_choice_read(name)
-        runtime._refresh_verification_plan()
+        self.refresh_verification_plan()
 
-    def _refresh_verification_plan(self) -> None:
+    def refresh_verification_plan(self) -> None:
         runtime = self._runtime
         plan = runtime._run.verification_plan
         if not plan.active:
@@ -74,9 +93,9 @@ class EvidenceVerificationLifecycle:
         test_plan_changed = test_plan != runtime._run.verification_test_plan
         runtime._run.verification_test_plan = test_plan
         if plan.observe(runtime._run.tool_choice_results, test_plan=test_plan) or test_plan_changed:
-            runtime._record_verification_plan_snapshot("update")
+            self.record_verification_plan_snapshot("update")
 
-    def _record_verification_plan_snapshot(self, event: str) -> None:
+    def record_verification_plan_snapshot(self, event: str) -> None:
         runtime = self._runtime
         plan = runtime._run.verification_plan
         if not plan.active:
@@ -87,7 +106,7 @@ class EvidenceVerificationLifecycle:
         runtime._session.append(f"verification_plan_{event}", payload)
         runtime._events.emit("ContextUpdated", {"kind": f"verification_plan_{event}", **payload})
 
-    def _record_verification_patch_review(self, decision: SteeringDecision | None) -> None:
+    def record_verification_patch_review(self, decision: SteeringDecision | None) -> None:
         runtime = self._runtime
         plan = runtime._run.verification_plan
         if not plan.active:
@@ -112,9 +131,9 @@ class EvidenceVerificationLifecycle:
                 refs=["git_diff:post-write", f"steerer:{decision.kind}"],
             )
         if changed:
-            runtime._record_verification_plan_snapshot("update")
+            self.record_verification_plan_snapshot("update")
 
-    def _record_tool_evidence(self, name: str, arguments: str | dict[str, Any], result: ToolResult) -> None:
+    def record_tool_evidence(self, name: str, arguments: str | dict[str, Any], result: ToolResult) -> None:
         runtime = self._runtime
         record = runtime._run.evidence.record_tool(
             name=name,
@@ -124,10 +143,10 @@ class EvidenceVerificationLifecycle:
             allowed_dirs=runtime._workspace_context.additional_roots,
         )
         if record is not None:
-            runtime._append_evidence_record(record)
-        runtime._capture_session_evidence(record)
+            self.append_evidence_record(record)
+        self.capture_session_evidence(record)
 
-    def _invalidate_stale_source_evidence_after_write(
+    def invalidate_stale_source_evidence_after_write(
         self,
         name: str,
         arguments: str | dict[str, Any],
@@ -159,12 +178,12 @@ class EvidenceVerificationLifecycle:
         removed = runtime._session_evidence.invalidate_paths((changed_path,))
         if removed:
             runtime._run.collector.record_session_evidence_invalidation(removed)
-            runtime._record_session_evidence_event(
+            self.record_session_evidence_event(
                 "invalidated",
                 {"reason": "workspace_write", "paths": [str(changed_path)], "count": removed},
             )
 
-    def _capture_session_evidence(self, record: EvidenceRecord | None) -> None:
+    def capture_session_evidence(self, record: EvidenceRecord | None) -> None:
         runtime = self._runtime
         if record is None or not runtime._run.tool_choice_results:
             return
@@ -208,9 +227,9 @@ class EvidenceVerificationLifecycle:
             request=runtime._run.current_user_request or "",
             run_id=runtime._run.run_id or "",
         ):
-            runtime._record_session_evidence_event("captured", {"tool": tool_result.name, "path": tool_result.path})
+            self.record_session_evidence_event("captured", {"tool": tool_result.name, "path": tool_result.path})
 
-    def _hydrate_session_evidence(self, prompt: str) -> None:
+    def hydrate_session_evidence(self, prompt: str) -> None:
         runtime = self._runtime
         reuse = runtime._session_evidence.reuse_for_request(
             prompt=prompt,
@@ -223,7 +242,7 @@ class EvidenceVerificationLifecycle:
             misses=reuse.miss_count,
             stale=reuse.stale_count,
             invalidations=reuse.invalidation_count,
-            reused_paths=[runtime._display_session_evidence_path(path) for path in reuse.reused_paths],
+            reused_paths=[self.display_session_evidence_path(path) for path in reuse.reused_paths],
         )
         for entry in reuse.entries:
             runtime._run.tool_choice_results.append(entry.tool_result)
@@ -245,17 +264,17 @@ class EvidenceVerificationLifecycle:
                     },
                 )
         if reuse.hit_count or reuse.stale_count:
-            runtime._record_session_evidence_event(
+            self.record_session_evidence_event(
                 "reused",
                 {
                     "hits": reuse.hit_count,
                     "misses": reuse.miss_count,
                     "stale": reuse.stale_count,
-                    "reused_paths": [runtime._display_session_evidence_path(path) for path in reuse.reused_paths],
+                    "reused_paths": [self.display_session_evidence_path(path) for path in reuse.reused_paths],
                 },
             )
 
-    def _append_session_evidence_reuse_directive(self) -> None:
+    def append_session_evidence_reuse_directive(self) -> None:
         runtime = self._runtime
         if runtime._run.session_evidence_directive_emitted:
             return
@@ -274,13 +293,13 @@ class EvidenceVerificationLifecycle:
             {"kind": directive.kind, "paths": list(directive.paths)},
         )
 
-    def _record_session_evidence_event(self, event: str, payload: Mapping[str, Any]) -> None:
+    def record_session_evidence_event(self, event: str, payload: Mapping[str, Any]) -> None:
         runtime = self._runtime
         data = {"event": event, **dict(payload)}
         runtime._session.append(f"session_evidence_{event}", data)
         runtime._events.emit("ContextUpdated", {"kind": f"session_evidence_{event}", **data})
 
-    def _display_session_evidence_path(self, raw_path: str) -> str:
+    def display_session_evidence_path(self, raw_path: str) -> str:
         runtime = self._runtime
         try:
             resolved = Path(raw_path).resolve()
@@ -294,7 +313,7 @@ class EvidenceVerificationLifecycle:
         except (OSError, ValueError):
             return raw_path
 
-    def _append_evidence_record(self, record: EvidenceRecord) -> None:
+    def append_evidence_record(self, record: EvidenceRecord) -> None:
         runtime = self._runtime
         if not runtime._run.evidence.append(record):
             return
@@ -309,13 +328,13 @@ class EvidenceVerificationLifecycle:
             },
         )
 
-    def _record_workspace_root_evidence(self) -> None:
+    def record_workspace_root_evidence(self) -> None:
         runtime = self._runtime
         record = runtime._run.evidence.record_workspace_root(runtime._workspace_context.primary)
         if record is not None:
-            runtime._append_evidence_record(record)
+            self.append_evidence_record(record)
 
-    def _patch_relevance_denial_reason(self, raw_path: str, resolved_path: Path) -> str | None:
+    def patch_relevance_denial_reason(self, raw_path: str, resolved_path: Path) -> str | None:
         runtime = self._runtime
         display_path = display_workspace_path(runtime._workspace_context.primary, resolved_path, runtime._workspace_context.additional_roots)
         return runtime._run.evidence.patch_relevance_denial_reason(
@@ -327,7 +346,7 @@ class EvidenceVerificationLifecycle:
             request_mentions_config_or_path=request_mentions_config_or_path(runtime._run.current_user_request, display_path),
         )
 
-    def _patch_preview_denial_reason(self, args: dict[str, Any], resolved_path: Path) -> str | None:
+    def patch_preview_denial_reason(self, args: dict[str, Any], resolved_path: Path) -> str | None:
         runtime = self._runtime
         return runtime._run.evidence.patch_preview_denial_reason(
             args,
@@ -335,7 +354,7 @@ class EvidenceVerificationLifecycle:
             preview_required=_request_requires_patch_preview(runtime._run.current_user_request),
         )
 
-    def _record_successful_patch_preview(
+    def record_successful_patch_preview(
         self,
         name: str,
         arguments: str | dict[str, Any],
@@ -350,15 +369,15 @@ class EvidenceVerificationLifecycle:
             allowed_dirs=runtime._workspace_context.additional_roots,
         )
 
-    def _read_file_evidence_summary(self) -> str:
+    def read_file_evidence_summary(self) -> str:
         runtime = self._runtime
         return runtime._run.evidence.read_file_summary()
 
-    def _evidence_for_read_file_range(self, range_key: tuple[str, int, str]) -> str:
+    def evidence_for_read_file_range(self, range_key: tuple[str, int, str]) -> str:
         runtime = self._runtime
         subject = _display_read_file_range_subject(range_key, runtime._workspace_context.primary, runtime._workspace_context.additional_roots)
         return runtime._run.evidence.evidence_for_read_file_range(subject)
 
-    def _evidence_ledger_summary(self) -> str:
+    def evidence_ledger_summary(self) -> str:
         runtime = self._runtime
         return runtime._run.evidence.summary()

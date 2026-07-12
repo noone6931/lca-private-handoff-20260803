@@ -11,7 +11,7 @@ from typing import Any, Iterable, Mapping
 from .evidence import EvidenceRecord
 from .requirement_evidence import RequirementEvidence
 from .steering.final_answer import SourceEvidence
-from .tool_choice_queue import ToolResultSummary
+from .tool_observation import ToolResultSummary
 
 
 MAX_SESSION_EVIDENCE_ENTRIES = 24

@@ -8,7 +8,7 @@ from typing import Any, Protocol
 
 from ..requirement_evidence import RequirementEvidence
 from ..task_contract import RequirementContract
-from ..tool_choice_queue import ToolResultSummary
+from ..tool_observation import ToolResultSummary
 from ..verification_plan import VerificationPlan
 
 NO_EDIT_FINAL_HYGIENE_TOOLS = {"todo_read", "todo_add", "todo_update", "git_status", "git_diff"}

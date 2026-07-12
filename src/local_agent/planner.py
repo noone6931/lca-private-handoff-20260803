@@ -5,7 +5,7 @@ from typing import Literal
 from .task_contract import RequirementContract
 from .tool_choice_queue import CODE_EVIDENCE_TOOL_NAMES
 from .tool_choice_queue import autonomous_small_change_candidate_paths
-from .tool_choice_queue import ToolResultSummary
+from .tool_observation import ToolResultSummary
 from .tool_choice_queue import WRITE_TOOL_NAMES
 
 

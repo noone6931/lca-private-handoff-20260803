@@ -225,9 +225,9 @@ class WorkspaceRuntimeTests(unittest.TestCase):
             runtime._run.run_id = "seed"
             runtime._run.current_user_request = "inspect src/App.py"
             read = ToolResult(source.read_text(encoding="utf-8"))
-            runtime._record_tool_choice_result("read_file", {"path": "src/App.py"}, read)
-            runtime._record_read_file_evidence("read_file", {"path": "src/App.py"}, read)
-            runtime._record_tool_evidence("read_file", {"path": "src/App.py"}, read)
+            runtime._evidence_phase.record_tool_choice_result("read_file", {"path": "src/App.py"}, read)
+            runtime._evidence_phase.record_read_file_evidence("read_file", {"path": "src/App.py"}, read)
+            runtime._evidence_phase.record_tool_evidence("read_file", {"path": "src/App.py"}, read)
             self.assertEqual(runtime._session_evidence.snapshot()["entries"], 1)
 
             runtime.move_workspace(str(frontend))
@@ -243,9 +243,9 @@ class WorkspaceRuntimeTests(unittest.TestCase):
             runtime._run.run_id = "seed"
             runtime._run.current_user_request = "inspect src/App.py"
             read = ToolResult(source.read_text(encoding="utf-8"))
-            runtime._record_tool_choice_result("read_file", {"path": "src/App.py"}, read)
-            runtime._record_read_file_evidence("read_file", {"path": "src/App.py"}, read)
-            runtime._record_tool_evidence("read_file", {"path": "src/App.py"}, read)
+            runtime._evidence_phase.record_tool_choice_result("read_file", {"path": "src/App.py"}, read)
+            runtime._evidence_phase.record_read_file_evidence("read_file", {"path": "src/App.py"}, read)
+            runtime._evidence_phase.record_tool_evidence("read_file", {"path": "src/App.py"}, read)
             original_append = runtime._session.append
 
             def fail_move_append(event: str, payload: dict[str, object]) -> None:
@@ -373,7 +373,7 @@ class WorkspaceRuntimeTests(unittest.TestCase):
             session_id = runtime._session.session_id
             original_session = (backend_state / "sessions" / f"{session_id}.jsonl").read_bytes()
 
-            with patch.object(runtime, "_build_system_prompt_for", side_effect=OSError("simulated context reload failure")):
+            with patch.object(runtime._workspace_phase, "build_system_prompt_for", side_effect=OSError("simulated context reload failure")):
                 with self.assertRaisesRegex(WorkspaceMigrationError, "simulated context reload failure"):
                     runtime.move_workspace(str(frontend))
 
@@ -543,7 +543,7 @@ def _assert_move_rolled_back(
 
 
 def _system_content(runtime: AgentRuntime) -> str:
-    messages = runtime._provider_safe_runtime_messages(runtime._messages, [])
+    messages = runtime._provider_context_phase.provider_safe_runtime_messages(runtime._messages, [])
     return str(next(message["content"] for message in messages if message.get("role") == "system"))
 
 

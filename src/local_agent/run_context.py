@@ -16,7 +16,7 @@ from .soft_tool_requirement import SoftToolRequirement
 from .steering.tool_loop import ToolLoopSteeringRegistry
 from .task_contract import RequirementContract
 from .tool_choice_queue import ToolChoiceQueue
-from .tool_choice_queue import ToolResultSummary
+from .tool_observation import ToolResultSummary
 from .verification_plan import VerificationPlan
 from .test_planner import TestPlan
 from .session_evidence import SessionEvidenceReuse

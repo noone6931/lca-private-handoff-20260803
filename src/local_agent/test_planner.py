@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from .tool_choice_queue import ToolResultSummary
+from .tool_observation import ToolResultSummary
 from .verification_timeline import last_workspace_write_index
 
 

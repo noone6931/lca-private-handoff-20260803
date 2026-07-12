@@ -7,7 +7,9 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .design_evidence import missing_design_evidence_roots
+from .negative_evidence import allowed_tools_for_negative_claims, parse_negative_evidence_claims, unsupported_negative_existence_claims
 from .task_contract import is_inspection_forbidden
+from .tool_observation import ToolResultSummary
 from .verification_timeline import last_workspace_write_index
 from .verification_timeline import result_changed_workspace
 from .verification_timeline import successful_tool_after_last_write
@@ -263,17 +265,6 @@ CANNOT_TEST_MARKERS = frozenset(
         "无法运行测试",
     }
 )
-@dataclass(frozen=True)
-class ToolResultSummary:
-    name: str
-    content: str = ""
-    is_error: bool = False
-    useless: bool = False
-    path: str | None = None
-    changed: bool | None = None
-    metadata: Mapping[str, Any] = field(default_factory=dict)
-
-
 @dataclass(frozen=True)
 class ToolChoiceDecision:
     steering_required: bool
@@ -605,10 +596,6 @@ def _negative_discovery_decision(
     initialization. This is a soft scheduling decision, not a textual final
     answer audit.
     """
-
-    from .negative_evidence import allowed_tools_for_negative_claims
-    from .negative_evidence import parse_negative_evidence_claims
-    from .negative_evidence import unsupported_negative_existence_claims
 
     claims = parse_negative_evidence_claims(prompt)
     actionable = tuple(claim for claim in claims if claim.stance in {"asserted_absence", "observed_no_match"})

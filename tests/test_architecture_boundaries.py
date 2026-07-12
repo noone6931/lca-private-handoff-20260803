@@ -33,6 +33,17 @@ class ArchitectureBoundaryTests(unittest.TestCase):
             "def _maybe_consolidate_session_memory",
         ):
             self.assertNotIn(helper, content)
+        self.assertNotIn("def __getattr__", content)
+
+    def test_runtime_calls_phase_owners_explicitly(self) -> None:
+        content = (ROOT / "src/local_agent/agent.py").read_text(encoding="utf-8")
+        for call in (
+            "self._provider_context_phase.messages_for_model(",
+            "self._evidence_phase.hydrate_session_evidence(",
+            "self._evidence_phase.append_session_evidence_reuse_directive(",
+            "self._memory_phase.consolidate_session_memory(",
+        ):
+            self.assertIn(call, content)
 
     def test_runtime_uses_explicit_phase_components_not_a_provider_mixin(self) -> None:
         provider_context = (ROOT / "src/local_agent/provider_context.py").read_text(encoding="utf-8")

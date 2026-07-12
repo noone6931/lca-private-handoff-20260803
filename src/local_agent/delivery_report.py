@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from .tool_choice_queue import ToolResultSummary
+from .tool_observation import ToolResultSummary
 from .verification_plan import VerificationPlan
 from .verification_timeline import effective_workspace_write_paths
 from .verification_timeline import results_after_last_write

@@ -11,7 +11,7 @@ from .verification_timeline import workspace_write_happened
 
 if TYPE_CHECKING:
     from .test_planner import TestPlan
-    from .tool_choice_queue import ToolResultSummary
+    from .tool_observation import ToolResultSummary
 
 
 PlanKind = Literal["acceptance", "evidence", "verification"]

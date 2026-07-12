@@ -9,7 +9,7 @@ from .negative_evidence import render_negative_existence_issues
 from .negative_evidence import unsupported_negative_existence_claims
 from .task_contract import RequirementContract
 from .tool_choice_queue import CODE_EVIDENCE_TOOL_NAMES
-from .tool_choice_queue import ToolResultSummary
+from .tool_observation import ToolResultSummary
 from .verification_timeline import results_after_last_write
 from .verification_timeline import successful_tool_after_last_write
 from .verification_timeline import workspace_write_happened
