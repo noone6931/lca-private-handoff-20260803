@@ -788,6 +788,12 @@ def _render_markdown_report(payload: Mapping[str, Any]) -> str:
                 f"max_consecutive_zero_gain={summary.get('max_consecutive_zero_gain_compactions', 0)}, "
                 f"estimated_token_reduction={summary.get('compaction_estimated_token_reduction', 0)}"
             )
+        if summary.get("provider_schema_violations") or summary.get("finalization_attempts"):
+            lines.append(
+                "  Runtime reliability: "
+                f"provider_schema_violations={summary.get('provider_schema_violations', 0)}, "
+                f"finalization_attempts={summary.get('finalization_attempts', 0)}"
+            )
         if raw_result.get("error"):
             lines.append("  Error: " + str(raw_result["error"]))
         lines.append("  Residual risk: " + str(raw_result.get("residual_risk") or "none"))

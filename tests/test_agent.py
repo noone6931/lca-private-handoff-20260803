@@ -1492,6 +1492,39 @@ class AgentRuntimeTests(unittest.TestCase):
             )
         )
 
+    def test_tool_choice_results_preserve_additional_root_provenance(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            host = Path(tmp).resolve()
+            workspace = host / "workspace"
+            workspace.mkdir()
+            additional = host / "service-root"
+            additional.mkdir()
+            source = additional / "src" / "main" / "java" / "App.java"
+            source.parent.mkdir(parents=True)
+            source.write_text("class App {}\n", encoding="utf-8")
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=workspace,
+                allowed_dirs=(additional,),
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+            )
+            runtime = AgentRuntime(config, show_tool_logs=False)
+
+            runtime._record_tool_choice_result(
+                "read_file",
+                {"path": str(source)},
+                ToolResult("[App.java#tag]\n1:class App {}"),
+            )
+
+        metadata = runtime._run.tool_choice_results[-1].metadata
+        self.assertEqual(metadata.get("evidence_root"), str(additional.resolve()))
+        self.assertEqual(metadata.get("evidence_scope"), "root_local")
+
     def test_runtime_state_dir_keeps_sessions_and_todos_out_of_workspace(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp).resolve()

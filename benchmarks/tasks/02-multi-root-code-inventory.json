@@ -64,6 +64,10 @@
       "answer_regex": [
         "(?:maven|pom\\.xml).{0,160}(?:java|\\.java)|(?:java|\\.java).{0,160}(?:maven|pom\\.xml)"
       ],
+      "answer_forbidden_regex": [
+        "requirements\\.md.{0,180}(?:冲突|conflict|清理|删除|remove|should clean)",
+        "documentation root.{0,180}(?:冲突|conflict|清理|删除|remove|should clean)"
+      ],
       "glob_coverage_roots": [
         "primary",
         "service"

@@ -81,6 +81,8 @@ class EvidenceLedger:
             resolved_path = resolve_workspace_path(workspace, raw_path.strip(), allowed_dirs)
         except PatchError:
             return
+        root_path = evidence_root_for_path(resolved_path, workspace, allowed_dirs)
+        root_label = evidence_root_label(root_path, workspace, allowed_dirs)
         canonical_path = str(resolved_path)
         if canonical_path not in self.design_read_paths:
             self.design_read_paths.append(canonical_path)
@@ -89,7 +91,14 @@ class EvidenceLedger:
         if display_path not in self.read_file_paths:
             self.read_file_paths.append(display_path)
             self.read_file_paths = self.read_file_paths[-MAX_READ_FILE_PATHS:]
-        self.source_evidence.append(SourceEvidence(display_path, result.content))
+        self.source_evidence.append(
+            SourceEvidence(
+                display_path,
+                result.content,
+                root=str(root_path),
+                scope="root_local",
+            )
+        )
         self.source_evidence = self.source_evidence[-MAX_SOURCE_EVIDENCE:]
         if _is_requirement_candidate(resolved_path, requirement_candidates) or is_requirement_source_path(display_path):
             self.pinned_requirement_evidence = update_requirement_evidence(
@@ -121,6 +130,11 @@ class EvidenceLedger:
             tool="workspace",
             subject="root",
             summary="Primary workspace contains: " + ", ".join(markers) + ".",
+            details={
+                "evidence_root": str(workspace.resolve()),
+                "evidence_root_label": "primary",
+                "evidence_scope": "workspace_root",
+            },
         )
         return record
 
@@ -242,6 +256,7 @@ class EvidenceLedger:
             "Runtime-collected tool evidence for this run. Use it to distinguish evidence-backed facts from inference.",
             "In final answers, cite exact paths only when they appear here or in tool results; label guessed files/classes as unverified.",
             "Do not claim workspace root files are missing when workspace evidence lists them.",
+            "Read-file and rule/document evidence is root-local by default: it applies only to the workspace root it came from unless the user explicitly asked for cross-root synthesis.",
             *(record.render() for record in self.records[-CONTEXT_RECORDS:]),
         ]
         return one_line_block("\n".join(lines), max_chars=CONTEXT_CHAR_LIMIT)
@@ -315,7 +330,13 @@ def build_tool_evidence_record(
         file_count = len(files) if isinstance(files, list) else metadata.get("file_count", 0)
         scopes = metadata.get("searched_scopes")
         scope_text = ", ".join(str(scope) for scope in scopes) if isinstance(scopes, list) else "(unknown)"
-        summary = f"{file_count} file(s) for {pattern_text}; scopes: {scope_text}."
+        searched_roots = metadata.get("searched_roots")
+        root_text = ", ".join(
+            evidence_root_label(Path(str(root)), workspace, allowed_dirs)
+            for root in searched_roots
+            if isinstance(root, str) and root.strip()
+        ) if isinstance(searched_roots, list) else "(unknown)"
+        summary = f"{file_count} file(s) for {pattern_text}; roots: {root_text}; scopes: {scope_text}."
         if metadata.get("truncated"):
             summary += " Result limit reached; scan is incomplete."
         if metadata.get("missing_paths"):
@@ -340,31 +361,64 @@ def build_tool_evidence_record(
         raw_path = parsed.get("path")
         if not isinstance(raw_path, str) or not raw_path.strip():
             return None
+        try:
+            resolved_path = resolve_workspace_path(workspace, raw_path.strip(), allowed_dirs)
+            root_path = evidence_root_for_path(resolved_path, workspace, allowed_dirs)
+            root_label = evidence_root_label(root_path, workspace, allowed_dirs)
+        except PatchError:
+            resolved_path = None
+            root_path = None
+            root_label = "(unknown)"
         start_line = parsed.get("start_line") or 1
         end_line = parsed.get("end_line")
         line_range = f"lines {start_line}-{end_line}" if end_line else f"from line {start_line}"
         return EvidenceRecord(
             tool="read_file",
             subject=display_read_file_path(workspace, raw_path.strip(), allowed_dirs),
-            summary=f"{one_line(first_nonempty_line(result.content), max_chars=180)}; read {line_range}.",
+            summary=f"{one_line(first_nonempty_line(result.content), max_chars=180)}; read {line_range}; root: {root_label}.",
+            details={
+                **metadata,
+                "evidence_root": str(root_path) if root_path is not None else "",
+                "evidence_root_label": root_label,
+                "evidence_scope": "root_local",
+                "resolved_path": str(resolved_path) if resolved_path is not None else "",
+            },
         )
     if name == "search_code" and not result.is_error:
         pattern = str(parsed.get("pattern") or "").strip()
         if not pattern:
             return None
         raw_path = str(parsed.get("path") or ".").strip() or "."
+        try:
+            resolved_path = resolve_workspace_path(workspace, raw_path, allowed_dirs)
+            root_label = evidence_root_label(evidence_root_for_path(resolved_path, workspace, allowed_dirs), workspace, allowed_dirs)
+        except PatchError:
+            root_label = "(unknown)"
         subject = f"pattern={pattern!r} path={raw_path!r}"
         if result.useless or result.content.strip().startswith("No matches."):
             return EvidenceRecord(
                 "search_code",
                 subject,
-                "No matches returned.",
+                f"No matches returned; root: {root_label}.",
                 status=negative_type or "content_no_match",
-                details=metadata,
+                details={
+                    **metadata,
+                    "evidence_root_label": root_label,
+                    "evidence_scope": "path_or_root_local",
+                },
             )
         paths = first_search_result_paths(result.content, limit=5)
         summary = "Matched files: " + ", ".join(paths) if paths else "Returned matches; inspect the search_code tool result for exact lines."
-        return EvidenceRecord("search_code", subject, summary)
+        return EvidenceRecord(
+            "search_code",
+            subject,
+            f"{summary}; root: {root_label}.",
+            details={
+                **metadata,
+                "evidence_root_label": root_label,
+                "evidence_scope": "path_or_root_local",
+            },
+        )
     if name.startswith("lsp_") and not result.is_error:
         subject = lsp_subject(parsed) or "query"
         if result.useless or result.content.strip().startswith("No "):
@@ -433,6 +487,31 @@ def workspace_root_markers(workspace: Path) -> list[str]:
         ("src", workspace / "src"),
     ]
     return [label for label, path in candidates if path.exists()]
+
+
+def evidence_root_for_path(path: Path, workspace: Path, allowed_dirs: tuple[Path, ...]) -> Path:
+    roots = sorted(
+        (workspace.resolve(), *(root.resolve() for root in allowed_dirs)),
+        key=lambda item: len(item.parts),
+        reverse=True,
+    )
+    resolved = path.resolve()
+    for root in roots:
+        try:
+            resolved.relative_to(root)
+            return root
+        except ValueError:
+            continue
+    return workspace.resolve()
+
+
+def evidence_root_label(root: Path, workspace: Path, allowed_dirs: tuple[Path, ...]) -> str:
+    try:
+        if root.resolve() == workspace.resolve():
+            return "primary"
+    except OSError:
+        return "(unknown)"
+    return display_workspace_path(workspace, root, allowed_dirs)
 
 
 def first_search_result_paths(content: str, *, limit: int) -> list[str]:

@@ -29,6 +29,7 @@ class EvidenceLedgerTests(unittest.TestCase):
         self.assertEqual(ledger.read_file_paths, ["requirements/需求文档.md"])
         self.assertEqual(len(ledger.pinned_requirement_evidence), 1)
         self.assertEqual(ledger.source_evidence[0].path, "requirements/需求文档.md")
+        self.assertEqual(ledger.source_evidence[0].scope, "root_local")
 
     def test_candidate_requirement_is_pinned_even_when_file_name_has_no_requirement_marker(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -138,6 +139,39 @@ class EvidenceLedgerTests(unittest.TestCase):
         self.assertTrue(no_match.details["complete"])
         self.assertFalse(incomplete.details["complete"])
         self.assertEqual(missing.subject, "src/main/java")
+
+    def test_additional_root_read_evidence_keeps_root_local_provenance(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            host = Path(tmp).resolve()
+            workspace = host / "workspace"
+            workspace.mkdir()
+            additional = host / "external-service"
+            additional.mkdir()
+            source = additional / "src" / "main" / "java" / "App.java"
+            source.parent.mkdir(parents=True)
+            source.write_text("class App {}\n", encoding="utf-8")
+            ledger = EvidenceLedger()
+
+            ledger.record_read_file(
+                arguments={"path": str(source)},
+                result=ToolResult("[App.java#tag]\n1:class App {}"),
+                workspace=workspace,
+                allowed_dirs=(additional,),
+            )
+            record = ledger.record_tool(
+                name="read_file",
+                arguments={"path": str(source)},
+                result=ToolResult("[App.java#tag]\n1:class App {}"),
+                workspace=workspace,
+                allowed_dirs=(additional,),
+            )
+            if record is not None:
+                ledger.append(record)
+            summary = ledger.summary()
+
+        self.assertEqual(len(ledger.source_evidence), 1)
+        self.assertEqual(ledger.source_evidence[0].root, str(additional.resolve()))
+        self.assertIn("root-local", summary)
 
 
 if __name__ == "__main__":

@@ -32,6 +32,8 @@ from .config import normalize_approval_mode
 from .design_evidence import FINAL_RESPONSE_RESERVE_SECONDS
 from .design_evidence import cross_root_design_evidence_roots
 from .evidence import EvidenceRecord
+from .evidence import evidence_root_for_path
+from .evidence import evidence_root_label
 from .finalization import FINAL_ANSWER_STEERING_HARD
 from .finalization import MAX_FINALIZATION_ATTEMPTS
 from .llm import LlmError
@@ -1635,6 +1637,7 @@ class AgentRuntime:
             )
 
     def _record_tool_choice_result(self, name: str, arguments: str | dict[str, Any], result: ToolResult) -> None:
+        metadata = self._tool_choice_result_metadata(name, arguments, result)
         self._run.tool_choice_tool_names.append(name)
         self._run.tool_choice_tool_names = self._run.tool_choice_tool_names[-80:]
         self._run.tool_choice_results.append(
@@ -1646,7 +1649,7 @@ class AgentRuntime:
                 path=_tool_choice_argument_path(arguments),
                 metadata={
                     **review_input_metadata(name, result.content),
-                    **dict(result.metadata),
+                    **metadata,
                 },
             )
         )
@@ -2143,6 +2146,43 @@ class AgentRuntime:
                 "_lca_useless": bool(useless and not is_error),
             }
         )
+
+    def _tool_choice_result_metadata(
+        self,
+        name: str,
+        arguments: str | dict[str, Any],
+        result: ToolResult,
+    ) -> dict[str, Any]:
+        metadata = dict(result.metadata)
+        raw_path = _tool_choice_argument_path(arguments)
+        if raw_path:
+            try:
+                resolved = resolve_workspace_path(
+                    self._workspace_context.primary,
+                    raw_path,
+                    self._workspace_context.additional_roots,
+                )
+            except PatchError:
+                resolved = None
+            if resolved is not None:
+                root = evidence_root_for_path(
+                    resolved,
+                    self._workspace_context.primary,
+                    self._workspace_context.additional_roots,
+                )
+                metadata.setdefault("evidence_root", str(root))
+                metadata.setdefault(
+                    "evidence_root_label",
+                    evidence_root_label(
+                        root,
+                        self._workspace_context.primary,
+                        self._workspace_context.additional_roots,
+                    ),
+                )
+                metadata.setdefault("evidence_scope", "root_local")
+        if name == "glob_files":
+            metadata.setdefault("evidence_scope", "root_discovery")
+        return metadata
 
     def _queue_forced_final_answer(
         self,

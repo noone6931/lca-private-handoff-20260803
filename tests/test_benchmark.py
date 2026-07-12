@@ -70,7 +70,14 @@ class BenchmarkTests(unittest.TestCase):
             mode="live",
             answer="",
             elapsed_ms=10,
-            run_summary={"run_id": "run-1", "tool_errors": 1, "compactions": 1, "zero_gain_compactions": 1},
+            run_summary={
+                "run_id": "run-1",
+                "tool_errors": 1,
+                "compactions": 1,
+                "zero_gain_compactions": 1,
+                "provider_schema_violations": 1,
+                "finalization_attempts": 2,
+            },
             acceptance=(),
             changed_files=(),
             test_evidence=(),
@@ -86,6 +93,8 @@ class BenchmarkTests(unittest.TestCase):
         self.assertIn("Session/run: session-1 / run-1", markdown)
         self.assertIn("Tool error [run_tests]: command not found", markdown)
         self.assertIn("Compaction effectiveness", markdown)
+        self.assertIn("provider_schema_violations=1", markdown)
+        self.assertIn("finalization_attempts=2", markdown)
 
 
 if __name__ == "__main__":

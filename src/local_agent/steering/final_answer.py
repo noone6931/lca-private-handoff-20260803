@@ -311,6 +311,8 @@ class FinalAnswerSteeringSeverity(str, Enum):
 class SourceEvidence:
     path: str
     content: str
+    root: str | None = field(default=None, compare=False)
+    scope: str = field(default="root_local", compare=False)
 
 
 @dataclass(frozen=True)
