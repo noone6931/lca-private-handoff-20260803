@@ -139,6 +139,54 @@ class CompletionAuditTests(unittest.TestCase):
 
         self.assertTrue(result.passed)
 
+    def test_git_metadata_conclusion_accepts_primary_workspace_synonym_only_for_matching_probe(self) -> None:
+        request = "当前primary是不是Git仓库？"
+        final_content = (
+            "**不是**，当前 primary 工作空间 **不是 Git 仓库**。\n"
+            "证据：git_status 返回 non-repository。此结论仅适用于 primary 工作空间。"
+            "若存在其他工作空间根（secondary roots），需切换（/move）后单独检查。"
+        )
+        primary_false = ToolResultSummary(
+            "git_status",
+            "not a git repository",
+            is_error=True,
+            metadata={
+                "git_repository": False,
+                "git_probe_root": "/tmp/primary",
+                "evidence_root_label": "primary",
+            },
+        )
+        primary_true = ToolResultSummary(
+            "git_status",
+            "clean",
+            metadata={
+                "git_repository": True,
+                "git_probe_root": "/tmp/primary",
+                "evidence_root_label": "primary",
+            },
+        )
+
+        self.assertTrue(
+            audit_completion(
+                generate_requirement_contract(request),
+                request=request,
+                final_content=final_content,
+                tool_results=[primary_false],
+                source_paths=[],
+                open_todos=[],
+            ).passed
+        )
+        self.assertFalse(
+            audit_completion(
+                generate_requirement_contract(request),
+                request=request,
+                final_content=final_content,
+                tool_results=[primary_true],
+                source_paths=[],
+                open_todos=[],
+            ).passed
+        )
+
     def test_git_metadata_conclusion_requires_one_primary_declarative_polarity(self) -> None:
         request = "当前primary是不是Git仓库？"
         probe = ToolResultSummary(

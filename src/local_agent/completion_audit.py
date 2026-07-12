@@ -581,8 +581,8 @@ def _git_repository_conclusion(content: str) -> bool | None:
 
 _GIT_CONCLUSION_CLAUSE_BREAK = re.compile(r"[。！？!?；;\n]+")
 _PRIMARY_GIT_SUBJECT = (
-    r"(?:当前\s*primary(?:\s*(?:workspace|root|目录|工作区))?|"
-    r"primary(?:\s*(?:workspace|root|目录|工作区))?|主工作区|当前工作区|"
+    r"(?:当前\s*primary(?:\s*(?:workspace|root|目录|工作区|工作空间))?|"
+    r"primary(?:\s*(?:workspace|root|目录|工作区|工作空间))?|主工作区|当前工作区|主工作空间|当前工作空间|"
     r"(?:the\s+)?(?:current|this|primary)\s+(?:workspace|root|directory))"
 )
 _PRIMARY_GIT_NEGATIVE = re.compile(
