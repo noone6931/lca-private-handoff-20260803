@@ -20,6 +20,21 @@ AuditCategory = Literal["acceptance", "evidence", "verification"]
 AuditStatus = Literal["passed", "missing"]
 
 
+@dataclass(frozen=True)
+class GitRepositoryObservation:
+    """Typed primary-workspace metadata observed from a Git probe.
+
+    This is a LCA contract-owner fact, not a reconstruction from final-answer
+    prose. The prose check below is a bounded LCA audit that verifies the
+    answer does not invert this typed observation.
+    """
+
+    subject: str
+    root_label: str
+    repository: bool
+    provenance: str
+
+
 EVIDENCE_TOOLS = frozenset({"glob_files", "list_files", *CODE_EVIDENCE_TOOL_NAMES})
 IMPLEMENTATION_EVIDENCE_TOOLS = frozenset({"list_files", *CODE_EVIDENCE_TOOL_NAMES})
 IMPLEMENTATION_VERIFICATION_TOOLS = frozenset({"git_diff", "run_tests"})
@@ -472,8 +487,11 @@ def _git_metadata_items(
         0,
         "Answer the primary workspace Git-repository question directly from a structured Git probe.",
     )
-    probe = next((result for result in tool_results if _is_primary_git_probe(result)), None)
-    if probe is None:
+    observation = next(
+        (candidate for result in tool_results if (candidate := _git_repository_observation(result)) is not None),
+        None,
+    )
+    if observation is None:
         return [
             _missing(
                 "acceptance",
@@ -482,7 +500,7 @@ def _git_metadata_items(
                 ("git_status",),
             )
         ]
-    expected_repository = probe.metadata.get("git_repository") is True
+    expected_repository = observation.repository
     actual_repository = _git_repository_conclusion(final_content)
     if actual_repository is None:
         return [
@@ -516,13 +534,21 @@ def _git_metadata_items(
     ]
 
 
-def _is_primary_git_probe(result: ToolResultSummary) -> bool:
+def _git_repository_observation(result: ToolResultSummary) -> GitRepositoryObservation | None:
     if result.name != "git_status":
-        return False
+        return None
     metadata = result.metadata
-    if metadata.get("git_repository") not in {True, False}:
-        return False
-    return str(metadata.get("evidence_root_label") or "") == "primary"
+    repository = metadata.get("git_repository")
+    root_label = str(metadata.get("evidence_root_label") or "")
+    if repository not in {True, False} or root_label != "primary":
+        return None
+    probe_root = str(metadata.get("git_probe_root") or "")
+    return GitRepositoryObservation(
+        subject="git_repository",
+        root_label=root_label,
+        repository=bool(repository),
+        provenance=f"git_status:{probe_root or 'primary'}",
+    )
 
 
 def _has_direct_semantic_answer(content: str) -> bool:
