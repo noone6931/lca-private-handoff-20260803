@@ -32,6 +32,8 @@ from .config import normalize_approval_mode
 from .design_evidence import FINAL_RESPONSE_RESERVE_SECONDS
 from .design_evidence import cross_root_design_evidence_roots
 from .evidence import EvidenceRecord
+from .evidence import first_result_line_paths
+from .evidence import first_search_result_paths
 from .evidence import evidence_root_for_path
 from .evidence import evidence_root_label
 from .finalization import FINAL_ANSWER_STEERING_HARD
@@ -100,6 +102,7 @@ from .steering.termination import synthetic_tool_stop_message
 from .steering.termination import termination_message
 from .task_contract import generate_requirement_contract
 from .task_contract import render_contract_context
+from .test_planner import plan_narrow_test
 from .tools import create_default_registry
 from .tools.base import ToolContext
 from .tools.base import ToolResult
@@ -111,6 +114,7 @@ from .tools.relevance import path_matches_any
 from .tools.relevance import request_mentions_config_or_path
 from .tool_choice_queue import ToolChoiceDecision
 from .tool_choice_queue import ToolResultSummary
+from .verification_timeline import workspace_write_happened
 
 
 SYSTEM_PROMPT = """You are a local coding agent running inside a user's workspace.
@@ -371,6 +375,7 @@ class AgentRuntime:
             requirement_contract_context=requirement_contract_context,
             design_evidence_roots=design_evidence_roots,
         )
+        self._record_verification_plan_snapshot("snapshot")
         self._start_run_collector(run_id, prompt, started_monotonic)
         self._messages.append({"role": "user", "content": model_prompt})
         self._session.append("user", {"content": prompt})
@@ -532,6 +537,7 @@ class AgentRuntime:
                 self._observe_soft_tool_requirement(name, arguments, result)
                 if name == "git_diff" and not result.is_error:
                     patch_review = self._decide_post_diff_patch_review(run_start_index)
+                    self._record_verification_patch_review(patch_review)
                     if patch_review is not None:
                         self._apply_final_answer_steering(patch_review)
                         self._append_synthetic_tool_results(
@@ -1130,6 +1136,11 @@ class AgentRuntime:
             },
         )
         payload["finalization_attempts"] = self._run.finalization.aggregate_attempts
+        if self._run.verification_plan.active:
+            payload["verification_plan"] = self._run.verification_plan.coverage(delivery_only=True)
+            payload["business_acceptance"] = self._run.verification_plan.business_acceptance_summary()
+            if self._run.verification_test_plan is not None:
+                payload["test_plan"] = self._run.verification_test_plan.snapshot()
         self._last_run_summary = payload
         self._session.append("run_summary", payload)
         self._events.emit("RunSummary", payload)
@@ -1218,6 +1229,13 @@ class AgentRuntime:
             prompt=self._run.current_user_request,
             tool_results=list(self._run.tool_choice_results),
         )
+        verification_plan_context = self._run.verification_plan.render_context()
+        if self._run.verification_test_plan is not None:
+            test_plan = self._run.verification_test_plan
+            verification_plan_context = (
+                verification_plan_context
+                + f"\n- Test candidate ({test_plan.breadth}): {test_plan.command or '(none)'} ({test_plan.reason})"
+            )
         path_rule_candidates = candidate_paths_for_path_rules(
             self._run.current_user_request or "",
             (result.path for result in self._run.tool_choice_results if result.path),
@@ -1239,6 +1257,7 @@ class AgentRuntime:
                 render_pinned_requirement_evidence(self._run.evidence.pinned_requirement_evidence),
                 path_rule_metadata,
                 matched_path_rules,
+                verification_plan_context,
             )
         )
 
@@ -1679,7 +1698,7 @@ class AgentRuntime:
                 content=review_input_summary(name, result.content, max_chars=6000),
                 is_error=result.is_error,
                 useless=result.useless,
-                path=_tool_choice_argument_path(arguments),
+                path=_tool_choice_result_path(arguments, result),
                 metadata={
                     **review_input_metadata(name, result.content),
                     **metadata,
@@ -1688,6 +1707,53 @@ class AgentRuntime:
         )
         self._run.tool_choice_results = self._run.tool_choice_results[-80:]
         self._run.consume_tool_choice_read(name)
+        self._refresh_verification_plan()
+
+    def _refresh_verification_plan(self) -> None:
+        plan = self._run.verification_plan
+        if not plan.active:
+            return
+        test_plan = plan_narrow_test(self._workspace_context.primary, self._run.tool_choice_results)
+        test_plan_changed = test_plan != self._run.verification_test_plan
+        self._run.verification_test_plan = test_plan
+        if plan.observe(self._run.tool_choice_results, test_plan=test_plan) or test_plan_changed:
+            self._record_verification_plan_snapshot("update")
+
+    def _record_verification_plan_snapshot(self, event: str) -> None:
+        plan = self._run.verification_plan
+        if not plan.active:
+            return
+        payload: dict[str, Any] = {"event": event, **plan.snapshot()}
+        if self._run.verification_test_plan is not None:
+            payload["test_plan"] = self._run.verification_test_plan.snapshot()
+        self._session.append(f"verification_plan_{event}", payload)
+        self._events.emit("ContextUpdated", {"kind": f"verification_plan_{event}", **payload})
+
+    def _record_verification_patch_review(self, decision: SteeringDecision | None) -> None:
+        plan = self._run.verification_plan
+        if not plan.active:
+            return
+        review_capped = self._run.final_answer_steers.get("patch_reviewer", 0) >= MAX_PATCH_REVIEW_STEERS
+        if decision is None and review_capped:
+            changed = plan.record_patch_review(
+                passed=None,
+                reason="deterministic post-diff reviewer was skipped because its continuation cap was reached",
+                refs=["git_diff:post-write"],
+            )
+        elif decision is None:
+            changed = plan.record_patch_review(
+                passed=True,
+                reason="deterministic post-diff reviewer completed without blocking findings",
+                refs=["git_diff:post-write"],
+            )
+        else:
+            changed = plan.record_patch_review(
+                passed=False,
+                reason=decision.message,
+                refs=["git_diff:post-write", f"steerer:{decision.kind}"],
+            )
+        if changed:
+            self._record_verification_plan_snapshot("update")
 
     def _record_tool_evidence(self, name: str, arguments: str | dict[str, Any], result: ToolResult) -> None:
         record = self._run.evidence.record_tool(
@@ -1819,6 +1885,7 @@ class AgentRuntime:
             open_todos=self._open_todo_summary(),
             is_code_implementation_request=is_code_implementation_request(self._run.current_user_request),
             steer_counts=self._final_answer_steer_counts(),
+            verification_plan=self._run.verification_plan,
         )
 
     def _apply_final_answer_steering(self, decision: SteeringDecision) -> bool:
@@ -1984,6 +2051,11 @@ class AgentRuntime:
             content = render_unverified_final_answer(hard_gate.kind, hard_gate.reason)
             if reason == "final":
                 reason = "unverified_final_gate"
+        elif reason == "final" and workspace_write_happened(self._run.tool_choice_results):
+            incomplete_delivery = self._run.verification_plan.render_incomplete_terminal()
+            if incomplete_delivery:
+                content = incomplete_delivery
+                reason = "incomplete_delivery"
         self._session.append("final", {"content": content})
         run_messages = self._messages[run_start_index:]
         if skip_memory_consolidation:
@@ -2194,7 +2266,7 @@ class AgentRuntime:
         result: ToolResult,
     ) -> dict[str, Any]:
         metadata = dict(result.metadata)
-        raw_path = _tool_choice_argument_path(arguments)
+        raw_path = _tool_choice_result_path(arguments, result)
         if raw_path:
             try:
                 resolved = resolve_workspace_path(
@@ -2222,6 +2294,10 @@ class AgentRuntime:
                 metadata.setdefault("evidence_scope", "root_local")
         if name == "glob_files":
             metadata.setdefault("evidence_scope", "root_discovery")
+        if name == "search_code":
+            metadata.setdefault("evidence_paths", first_search_result_paths(result.content, limit=8))
+        elif name.startswith("lsp_"):
+            metadata.setdefault("evidence_paths", first_result_line_paths(result.content, limit=8))
         return metadata
 
     def _queue_forced_final_answer(
@@ -2399,6 +2475,7 @@ def _messages_with_runtime_context(
     pinned_requirement_evidence: str = "",
     path_rule_metadata: str = "",
     matched_path_rules: str = "",
+    verification_plan_context: str = "",
 ) -> list[dict[str, Any]]:
     updated = list(messages)
     workspace_roots = workspace_roots_context(workspace, allowed_dirs)
@@ -2419,6 +2496,8 @@ def _messages_with_runtime_context(
         updated = _messages_with_path_rule_context(updated, path_rule_metadata, "[Path-scoped rules]")
     if matched_path_rules:
         updated = _messages_with_path_rule_context(updated, matched_path_rules, "[Matched path-scoped rules]")
+    if verification_plan_context:
+        updated = _messages_with_path_rule_context(updated, verification_plan_context, "[Verification plan]")
     sticky_rules = load_sticky_rules(workspace, user_config_dir, max_chars=STICKY_RULES_CHAR_LIMIT)
     if sticky_rules:
         updated = _messages_with_sticky_rules(updated, sticky_rules)
@@ -2676,6 +2755,14 @@ def _format_last_run_status(summary: dict[str, Any]) -> list[str]:
     if isinstance(steering_counts, dict) and steering_counts:
         rendered_steers = ", ".join(f"{name}={count}" for name, count in sorted(steering_counts.items()))
         lines.append(f"  - steering: {rendered_steers}")
+    verification_plan = summary.get("verification_plan")
+    if isinstance(verification_plan, dict):
+        rendered_plan = ", ".join(f"{name}={count}" for name, count in sorted(verification_plan.items()))
+        lines.append(f"  - delivery_checks: {rendered_plan}")
+    business_acceptance = summary.get("business_acceptance")
+    if isinstance(business_acceptance, dict):
+        rendered_business = ", ".join(f"{name}={count}" for name, count in sorted(business_acceptance.items()))
+        lines.append(f"  - business_acceptance_unverified: {rendered_business}")
     return lines
 
 
@@ -3018,7 +3105,7 @@ def _tool_choice_steering_message(decision: ToolChoiceDecision, current_user_req
     )
 
 
-def _tool_choice_argument_path(arguments: str | dict[str, Any]) -> str | None:
+def _tool_choice_result_path(arguments: str | dict[str, Any], result: ToolResult) -> str | None:
     parsed: Any = arguments
     if isinstance(arguments, str):
         try:
@@ -3028,7 +3115,10 @@ def _tool_choice_argument_path(arguments: str | dict[str, Any]) -> str | None:
     if not isinstance(parsed, dict):
         return None
     path = parsed.get("path")
-    return str(path) if path is not None else None
+    if path is not None:
+        return str(path)
+    changed_path = result.metadata.get("changed_path") if isinstance(result.metadata, Mapping) else None
+    return str(changed_path) if isinstance(changed_path, str) and changed_path.strip() else None
 
 
 def _request_requires_patch_preview(request: str | None) -> bool:

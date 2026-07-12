@@ -15,11 +15,11 @@ from local_agent.benchmark import write_benchmark_reports
 
 
 class BenchmarkTests(unittest.TestCase):
-    def test_default_task_catalog_covers_six_representative_workflows(self) -> None:
+    def test_default_task_catalog_covers_representative_workflows(self) -> None:
         tasks = load_benchmark_tasks()
         identifiers = {task.identifier for task in tasks}
 
-        self.assertEqual(len(tasks), 6)
+        self.assertEqual(len(tasks), 7)
         self.assertEqual(
             identifiers,
             {
@@ -29,6 +29,7 @@ class BenchmarkTests(unittest.TestCase):
                 "small-code-change-test-diff",
                 "denied-tool-schema",
                 "budget-exhausted-incomplete",
+                "small-code-test-failure-incomplete",
             },
         )
         self.assertTrue(DEFAULT_TASKS_DIR.is_dir())
@@ -40,12 +41,13 @@ class BenchmarkTests(unittest.TestCase):
             payload = json.loads((output_dir / "benchmark-report.json").read_text(encoding="utf-8"))
             markdown = (output_dir / "benchmark-report.md").read_text(encoding="utf-8")
 
-        self.assertEqual(len(results), 6)
+        self.assertEqual(len(results), 7)
         self.assertTrue(all(result.passed for result in results))
-        self.assertEqual(payload["passed"], 6)
+        self.assertEqual(payload["passed"], 7)
         self.assertEqual(payload["failed"], 0)
         self.assertIn("small-code-change-test-diff", markdown)
         self.assertIn("budget-exhausted-incomplete", markdown)
+        self.assertIn("small-code-test-failure-incomplete", markdown)
 
     def test_live_inventory_acceptance_uses_semantic_terms_instead_of_fixed_wording(self) -> None:
         tasks = {task.identifier: task for task in load_benchmark_tasks()}

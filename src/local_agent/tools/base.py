@@ -118,7 +118,15 @@ class ToolRegistry:
         try:
             denial_reason = _approval_denial_reason(tool, context)
             if denial_reason:
-                return ToolResult(denial_reason, is_error=True)
+                return ToolResult(
+                    denial_reason,
+                    is_error=True,
+                    metadata={
+                        "execution_status": "denied",
+                        "denial_kind": "approval",
+                        "tool": tool.name,
+                    },
+                )
             arguments = raw_arguments if isinstance(raw_arguments, dict) else json.loads(raw_arguments or "{}")
             if not isinstance(arguments, dict):
                 return ToolResult("Tool arguments must be a JSON object.", is_error=True)

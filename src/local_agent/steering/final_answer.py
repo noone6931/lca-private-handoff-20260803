@@ -18,6 +18,7 @@ from ..requirement_evidence import RequirementEvidence
 from ..requirement_evidence import requirement_fact_citation_issues
 from ..task_contract import RequirementContract
 from ..tool_choice_queue import ToolResultSummary
+from ..verification_plan import VerificationPlan
 
 
 NO_EDIT_FINAL_HYGIENE_TOOLS = {"todo_read", "todo_add", "todo_update", "git_status", "git_diff"}
@@ -331,6 +332,7 @@ class FinalAnswerContext:
     requirement_evidence: list[RequirementEvidence] = field(default_factory=list)
     required_design_evidence_roots: tuple[str, ...] = ()
     design_evidence_read_paths: list[str] = field(default_factory=list)
+    verification_plan: VerificationPlan | None = None
 
 
 @dataclass(frozen=True)
@@ -692,6 +694,7 @@ class CompletionAuditSteerer:
             tool_results=context.tool_results,
             source_paths=context.read_file_evidence_paths,
             open_todos=context.open_todos,
+            verification_plan=context.verification_plan,
         )
         if result.passed:
             return None

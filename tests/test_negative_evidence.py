@@ -10,6 +10,52 @@ from local_agent.tool_choice_queue import ToolResultSummary
 
 
 class NegativeEvidenceTests(unittest.TestCase):
+    def test_meta_negative_statements_do_not_become_existence_claims(self) -> None:
+        issues = unsupported_negative_existence_claims(
+            "不能推导出无 Java 源码；未验证，不能陈述无源码。",
+            [],
+        )
+
+        self.assertEqual(issues, ())
+
+    def test_english_meta_negative_statements_do_not_become_existence_claims(self) -> None:
+        issues = unsupported_negative_existence_claims(
+            "This does not prove no source code exists; I cannot conclude there are no Java files.",
+            [],
+        )
+
+        self.assertEqual(issues, ())
+
+    def test_quoted_and_inline_examples_do_not_become_existence_claims(self) -> None:
+        issues = unsupported_negative_existence_claims(
+            "The phrase `No Java source` is only an example. \"No source code\" is not a verified conclusion.",
+            [],
+        )
+
+        self.assertEqual(issues, ())
+
+    def test_actual_java_absence_claim_still_requires_discovery_evidence(self) -> None:
+        issues = unsupported_negative_existence_claims("该 root 没有 Java 源码。", [])
+
+        self.assertEqual(len(issues), 1)
+        self.assertEqual(issues[0].kind, "extension")
+
+    def test_later_unrelated_negation_does_not_hide_real_chinese_assertion(self) -> None:
+        issues = unsupported_negative_existence_claims(
+            "该 root 没有 Java 源码，但这不等于没有项目价值。",
+            [],
+        )
+
+        self.assertEqual(len(issues), 1)
+
+    def test_later_unrelated_negation_does_not_hide_real_english_assertion(self) -> None:
+        issues = unsupported_negative_existence_claims(
+            "No source code exists; that does not mean no docs exist.",
+            [],
+        )
+
+        self.assertEqual(len(issues), 1)
+
     def test_content_no_match_does_not_support_java_file_absence(self) -> None:
         issues = unsupported_negative_existence_claims(
             "已验证：search_code 未找到 \\.java$，因此没有 Java 文件。",

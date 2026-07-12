@@ -1809,6 +1809,8 @@ class ToolTests(unittest.TestCase):
 
         self.assertTrue(result.is_error)
         self.assertIn("stdin closed", result.content)
+        self.assertEqual(result.metadata["execution_status"], "denied")
+        self.assertEqual(result.metadata["denial_kind"], "approval")
 
     def test_auto_approve_tool_bypasses_prompt_in_ask_mode(self) -> None:
         registry = ToolRegistry(

@@ -509,6 +509,22 @@ def _evaluate_acceptance(
         checks.append(_check("max_tool_errors", actual_errors <= max_errors, max_errors, actual_errors))
     if acceptance.get("requires_test_evidence"):
         checks.append(_check("test_evidence", bool(test_evidence), "successful run_tests result", test_evidence))
+    expected_delivery_checks = acceptance.get("delivery_checks")
+    if isinstance(expected_delivery_checks, Mapping):
+        actual_delivery_checks = (runtime._last_run_summary or {}).get("verification_plan") or {}
+        expected_counts = {
+            str(name): int(value)
+            for name, value in expected_delivery_checks.items()
+            if isinstance(value, int)
+        }
+        checks.append(
+            _check(
+                "delivery_checks",
+                all(int(actual_delivery_checks.get(name) or 0) == value for name, value in expected_counts.items()),
+                expected_counts,
+                actual_delivery_checks,
+            )
+        )
     schema_excludes = _string_list(acceptance.get("schema_excludes"))
     if schema_excludes:
         schemas = client.tool_schema_names

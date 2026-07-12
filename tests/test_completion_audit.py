@@ -4,7 +4,9 @@ import unittest
 
 from local_agent.completion_audit import audit_completion
 from local_agent.task_contract import generate_requirement_contract
+from local_agent.test_planner import TestPlan
 from local_agent.tool_choice_queue import ToolResultSummary
+from local_agent.verification_plan import VerificationPlan
 
 
 class CompletionAuditTests(unittest.TestCase):
@@ -102,6 +104,64 @@ class CompletionAuditTests(unittest.TestCase):
         allowed = set(result.allowed_tool_names())
         self.assertIn("git_diff", allowed)
         self.assertIn("run_tests", allowed)
+
+    def test_runtime_plan_gates_delivery_checks_but_not_unverified_business_items(self) -> None:
+        request = "请实现用户注册接口的邮箱唯一性校验，并补充单元测试。"
+        contract = generate_requirement_contract(request)
+        plan = VerificationPlan.from_contract(contract)
+        results = [
+            ToolResultSummary("read_file", "class UserService {}", path="src/UserService.java"),
+            ToolResultSummary("apply_patch", "Applied patch", changed=True, path="src/UserService.java"),
+            ToolResultSummary("run_tests", "OK"),
+            ToolResultSummary("git_diff", "diff --git a/src/UserService.java b/src/UserService.java"),
+        ]
+        plan.observe(results, test_plan=TestPlan("mvn test", "project fallback", "project"))
+        plan.record_patch_review(passed=True, reason="review passed", refs=["git_diff:post-write"])
+
+        result = audit_completion(
+            contract,
+            request=request,
+            final_content="已完成实现。",
+            tool_results=results,
+            source_paths=["src/UserService.java"],
+            open_todos=[],
+            verification_plan=plan,
+        )
+
+        self.assertTrue(result.passed)
+        self.assertTrue(all("business-level" not in item.reason for item in result.items))
+
+    def test_blocked_runtime_check_is_not_a_successful_delivery(self) -> None:
+        request = "请实现用户注册接口的邮箱唯一性校验，并补充单元测试。"
+        contract = generate_requirement_contract(request)
+        plan = VerificationPlan.from_contract(contract)
+        results = [
+            ToolResultSummary("read_file", "class UserService {}", path="src/UserService.java"),
+            ToolResultSummary("apply_patch", "Applied patch", changed=True, path="src/UserService.java"),
+            ToolResultSummary("git_diff", "diff --git a/src/UserService.java b/src/UserService.java"),
+            ToolResultSummary(
+                "run_tests",
+                "denied",
+                is_error=True,
+                metadata={"execution_status": "denied", "denial_kind": "approval"},
+            ),
+        ]
+        plan.observe(results, test_plan=TestPlan("mvn test", "project fallback", "project"))
+        plan.record_patch_review(passed=True, reason="review passed", refs=["git_diff:post-write"])
+
+        result = audit_completion(
+            contract,
+            request=request,
+            final_content="测试被拒绝，交付未完成。",
+            tool_results=results,
+            source_paths=["src/UserService.java"],
+            open_todos=[],
+            verification_plan=plan,
+        )
+
+        self.assertFalse(result.passed)
+        self.assertTrue(any("runtime-backed blocked" in item.reason for item in result.missing_items))
+        self.assertEqual(result.allowed_tool_names(), ())
 
     def test_blocked_no_edit_claim_requires_tool_observed_blocking_evidence(self) -> None:
         contract = generate_requirement_contract("请实现用户注册接口的邮箱唯一性校验，并补充单元测试。")

@@ -13,6 +13,7 @@ from .tool_choice_queue import ToolResultSummary
 from .verification_timeline import results_after_last_write
 from .verification_timeline import successful_tool_after_last_write
 from .verification_timeline import workspace_write_happened
+from .verification_plan import VerificationPlan
 
 
 AuditCategory = Literal["acceptance", "evidence", "verification"]
@@ -192,6 +193,7 @@ def audit_completion(
     tool_results: list[ToolResultSummary],
     source_paths: list[str],
     open_todos: list[str],
+    verification_plan: VerificationPlan | None = None,
 ) -> CompletionAuditResult:
     """Check whether a proposed final answer satisfies the current task contract."""
 
@@ -211,6 +213,8 @@ def audit_completion(
             )
         )
     if mode == "code-implementation":
+        if verification_plan is not None and verification_plan.active and workspace_write_happened(tool_results):
+            return CompletionAuditResult(tuple(_verification_plan_items(verification_plan)))
         return CompletionAuditResult(
             tuple(
                 _implementation_items(
@@ -223,6 +227,34 @@ def audit_completion(
             )
         )
     return CompletionAuditResult(())
+
+
+def _verification_plan_items(plan: VerificationPlan) -> list[CompletionAuditItem]:
+    """Use runtime-owned verification facts after a write instead of final-answer wording."""
+
+    items: list[CompletionAuditItem] = []
+    for item in plan.delivery_items():
+        if item.status == "passed":
+            reason = item.reason
+            items.append(_passed(item.kind, item.description, reason))
+            continue
+        if item.status in {"blocked", "skipped"}:
+            # A blocked check may close the run as explicitly incomplete, but it
+            # must never look like a successful delivery to the audit.
+            items.append(_missing(item.kind, item.description, f"runtime-backed {item.status}: {item.reason}"))
+            continue
+        if item.status == "failed":
+            allowed = ("read_file", "search_code", "apply_patch", "run_tests", "git_diff")
+        elif item.id == "runtime-current-diff":
+            allowed = ("git_diff",)
+        elif item.kind == "verification":
+            allowed = ("run_tests", "git_diff")
+        elif item.kind == "evidence":
+            allowed = IMPLEMENTATION_EVIDENCE_TOOLS
+        else:
+            allowed = ("read_file", "search_code", "apply_patch")
+        items.append(_missing(item.kind, item.description, item.reason, allowed))
+    return items
 
 
 def render_completion_audit_message(

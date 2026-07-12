@@ -17,6 +17,8 @@ from .steering.tool_loop import ToolLoopSteeringRegistry
 from .task_contract import RequirementContract
 from .tool_choice_queue import ToolChoiceQueue
 from .tool_choice_queue import ToolResultSummary
+from .verification_plan import VerificationPlan
+from .test_planner import TestPlan
 
 
 @dataclass
@@ -41,6 +43,8 @@ class RunContext:
     tool_choice_tool_names: list[str] = field(default_factory=list)
     requirement_contract: RequirementContract | None = None
     requirement_contract_context: str = ""
+    verification_plan: VerificationPlan = field(default_factory=VerificationPlan)
+    verification_test_plan: TestPlan | None = None
     design_evidence_coverage: DesignEvidenceCoverageSteerer = field(default_factory=DesignEvidenceCoverageSteerer)
     soft_tool_requirement: SoftToolRequirement | None = None
     read_file_range_counts: dict[tuple[str, int, str], int] = field(default_factory=dict)
@@ -146,6 +150,8 @@ class RunContext:
         self.tool_choice_tool_names.clear()
         self.requirement_contract = requirement_contract
         self.requirement_contract_context = requirement_contract_context
+        self.verification_plan = VerificationPlan.from_contract(requirement_contract)
+        self.verification_test_plan = None
         self.design_evidence_coverage.reset(design_evidence_roots)
         self.soft_tool_requirement = None
         self.read_file_range_counts.clear()

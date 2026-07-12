@@ -37,6 +37,23 @@ _GIT_CLAIM = re.compile(
     re.IGNORECASE,
 )
 
+_FENCED_CODE = re.compile(r"```.*?```", re.DOTALL)
+_INLINE_CODE = re.compile(r"`[^`]*`")
+_QUOTED_EXAMPLE = re.compile(r"(?:\"[^\"]*\"|'[^']*'|“[^”]*”|‘[^’]*’)")
+_CLAUSE_BOUNDARY = re.compile(r"(?<=[。！？!?；;])|\n+")
+_NON_ASSERTIVE_PREFIX = re.compile(
+    r"(?:不能|无法|不应|不要|不可|未验证|尚未验证|不足以|并非|仅引用|只是引用|避免|禁止).{0,28}$"
+    r"|(?:cannot\s+(?:conclude|state|claim)|can't\s+(?:conclude|state|claim)|do\s+not\s+(?:conclude|state|claim)|"
+    r"don't\s+(?:conclude|state|claim)|should\s+not\s+(?:conclude|state|claim)|does\s+not\s+prove|"
+    r"doesn't\s+prove|not\s+enough\s+to\s+conclude).{0,28}$",
+    re.IGNORECASE,
+)
+_NON_ASSERTIVE_SUFFIX = re.compile(
+    r"^\s*(?:[（(]\s*)?(?:未验证|尚未验证|不成立|仅作示例|只是引用|not\s+verified|unverified|"
+    r"only\s+(?:an\s+)?example|quoted\s+example)(?:\s*[）)])?",
+    re.IGNORECASE,
+)
+
 
 def unsupported_negative_existence_claims(
     content: str,
@@ -58,16 +75,20 @@ def unsupported_negative_existence_claims(
 
 def negative_existence_claims(content: str) -> tuple[NegativeExistenceClaim, ...]:
     claims: list[NegativeExistenceClaim] = []
-    if _JAVA_CLAIM.search(content):
-        claims.append(NegativeExistenceClaim("extension", "java", _first_match(_JAVA_CLAIM, content)))
-    if _SOURCE_CLAIM.search(content):
-        claims.append(NegativeExistenceClaim("source_tree", "source", _first_match(_SOURCE_CLAIM, content)))
-    for match in _EXACT_PATH_CLAIM.finditer(content):
+    sanitized = _non_code_text(content)
+    for match in _JAVA_CLAIM.finditer(sanitized):
+        if _is_asserted_claim(sanitized, match):
+            claims.append(NegativeExistenceClaim("extension", "java", match.group(0)))
+    for match in _SOURCE_CLAIM.finditer(sanitized):
+        if _is_asserted_claim(sanitized, match):
+            claims.append(NegativeExistenceClaim("source_tree", "source", match.group(0)))
+    for match in _EXACT_PATH_CLAIM.finditer(sanitized):
         subject = (match.group("path") or match.group("reverse") or "").lower()
-        if subject:
+        if subject and _is_asserted_claim(sanitized, match):
             claims.append(NegativeExistenceClaim("exact_path", subject, match.group(0)))
-    if _GIT_CLAIM.search(content):
-        claims.append(NegativeExistenceClaim("git_repository", "git", _first_match(_GIT_CLAIM, content)))
+    for match in _GIT_CLAIM.finditer(sanitized):
+        if _is_asserted_claim(sanitized, match):
+            claims.append(NegativeExistenceClaim("git_repository", "git", match.group(0)))
     return tuple(claims)
 
 
@@ -128,9 +149,28 @@ def _is_complete_path_no_match(result: ToolResultSummary, subject: str) -> bool:
     return patterns.strip() in {"**/*", "**", "*"}
 
 
-def _first_match(pattern: re.Pattern[str], content: str) -> str:
-    match = pattern.search(content)
-    return match.group(0) if match is not None else ""
+def _non_code_text(content: str) -> str:
+    """Preserve offsets while preventing quoted/code examples from becoming claims."""
+
+    def blank(match: re.Match[str]) -> str:
+        return "".join("\n" if char == "\n" else " " for char in match.group(0))
+
+    return _QUOTED_EXAMPLE.sub(blank, _INLINE_CODE.sub(blank, _FENCED_CODE.sub(blank, content or "")))
+
+
+def _is_asserted_claim(content: str, match: re.Match[str]) -> bool:
+    start = max(
+        (boundary.end() for boundary in _CLAUSE_BOUNDARY.finditer(content, 0, match.start())),
+        default=0,
+    )
+    next_boundary = _CLAUSE_BOUNDARY.search(content, match.end())
+    end = next_boundary.start() if next_boundary is not None else len(content)
+    prefix = content[start : match.start()]
+    suffix = content[match.end() : end]
+    # Only the governing prefix or an immediate qualifier can negate a claim.
+    # A later unrelated phrase such as "but that does not mean no docs" must
+    # not erase an earlier real assertion that this root has no source code.
+    return not bool(_NON_ASSERTIVE_PREFIX.search(prefix) or _NON_ASSERTIVE_SUFFIX.search(suffix))
 
 
 __all__ = [

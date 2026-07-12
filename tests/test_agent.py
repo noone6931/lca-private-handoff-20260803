@@ -35,6 +35,7 @@ from local_agent.task_contract import generate_requirement_contract
 from local_agent.tool_choice_queue import ToolResultSummary
 from local_agent.tool_choice_queue import ToolChoiceDecision
 from local_agent.tools.base import ToolResult
+from local_agent.verification_plan import VerificationPlan
 
 
 def _tool_names_from_schema_call(tools: list[dict]) -> set[str]:
@@ -2078,6 +2079,32 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertEqual(decision.kind, "patch_reviewer")
         self.assertIn("requested_test_missing", str(decision.payload))
         self.assertIn("apply_patch", decision.temporary_tool_allowlist or set())
+
+    def test_runtime_records_post_diff_reviewer_pass_and_skip_distinctly(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=Path(tmp).resolve(),
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+            )
+            runtime = AgentRuntime(config, show_tool_logs=False)
+            runtime._run.verification_plan = VerificationPlan.from_contract(
+                generate_requirement_contract("请实现用户名规范化，并补充单元测试。")
+            )
+
+            runtime._record_verification_patch_review(None)
+            passed = next(item for item in runtime._run.verification_plan.items if item.id == "runtime-review")
+            self.assertEqual(passed.status, "passed")
+
+            runtime._run.final_answer_steers["patch_reviewer"] = 2
+            runtime._record_verification_patch_review(None)
+            skipped = next(item for item in runtime._run.verification_plan.items if item.id == "runtime-review")
+            self.assertEqual(skipped.status, "skipped")
 
     def test_final_answer_steer_counts_reset_at_the_start_of_each_run(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

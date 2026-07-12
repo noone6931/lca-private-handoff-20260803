@@ -212,7 +212,10 @@ def patch_file(args: dict[str, Any], context: ToolContext) -> ToolResult:
         after_tag=result.new_tag,
         diff=result.diff,
     )
-    return ToolResult(f"{tag_note}Applied patch. Patch id: {patch_id}. New tag: {result.new_tag}\n\n{result.diff}")
+    return ToolResult(
+        f"{tag_note}Applied patch. Patch id: {patch_id}. New tag: {result.new_tag}\n\n{result.diff}",
+        metadata={"changed_path": display_workspace_path(context.workspace, path, context.allowed_dirs)},
+    )
 
 
 def rollback_patch(args: dict[str, Any], context: ToolContext) -> ToolResult:
@@ -252,7 +255,10 @@ def rollback_patch(args: dict[str, Any], context: ToolContext) -> ToolResult:
                 tofile=f"b/{record['path']}",
             )
         )
-        return ToolResult(f"Rolled back patch {record['id']}. Deleted created file.\n\n{diff}")
+        return ToolResult(
+            f"Rolled back patch {record['id']}. Deleted created file.\n\n{diff}",
+            metadata={"changed_path": str(record["path"]), "rollback_of": str(record["id"])},
+        )
 
     before_text = str(record["before_text"])
     path.write_bytes(before_text.encode("utf-8"))
@@ -265,7 +271,10 @@ def rollback_patch(args: dict[str, Any], context: ToolContext) -> ToolResult:
             tofile=f"b/{record['path']}",
         )
     )
-    return ToolResult(f"Rolled back patch {record['id']}. Restored tag: {record['before_tag']}\n\n{diff}")
+    return ToolResult(
+        f"Rolled back patch {record['id']}. Restored tag: {record['before_tag']}\n\n{diff}",
+        metadata={"changed_path": str(record["path"]), "rollback_of": str(record["id"])},
+    )
 
 
 def _normalize_patch_tag(value: object) -> tuple[str, str | None]:
@@ -327,7 +336,10 @@ def write_file(args: dict[str, Any], context: ToolContext) -> ToolResult:
         diff=diff,
         before_exists=False,
     )
-    return ToolResult(f"Wrote {display_path}. Patch id: {patch_id}. New tag: {after_tag}\n\n{diff}")
+    return ToolResult(
+        f"Wrote {display_path}. Patch id: {patch_id}. New tag: {after_tag}\n\n{diff}",
+        metadata={"changed_path": display_path},
+    )
 
 
 def _record_patch(
