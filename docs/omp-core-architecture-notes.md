@@ -560,6 +560,16 @@ LCA 已在 T-052 直接采纳这个设计的 MVP 版：
 ./agent --max-steps 200 "执行一个可能很多轮的任务"
 ```
 
+### T-148 架构债收口依据
+
+T-148 不是复制 OMP 的 TypeScript 类层次，而是采用其职责边界。已复核的源码事实是：
+
+- `packages/agent/src/agent-loop.ts` 持有模型 turn、pending message、active tool 与 continuation 的生命周期，不把 compaction、session queue 和 UI 状态全塞进 loop；
+- `packages/coding-agent/src/session/tool-choice-queue.ts` 把 directive 分成 pending / in-flight / resolved / rejected，而不是让最终文案关键词反向决定工具可用性；
+- `packages/coding-agent/src/session/agent-session.ts` 持有 queue，并在 `turn_end` 收束其状态。
+
+LCA 的裁剪落地：`agent.py` 只保留 turn orchestration、公共 CLI/session API 和 terminal finish wiring；provider context、workspace/session-root 生命周期、evidence/verification/session-cache 生命周期、memory consolidation 分别移交独立 phase component。session evidence 命中只产生一次 soft directive，`read_file` 仍在 active schema，模型自主复读会正常执行并被 telemetry 记录。这是对齐 OMP 的 queue/turn ownership，不是声称 OMP 具有 LCA 的 VerificationPlan、negative-evidence parser 或 DeliveryAudit。
+
 ## 后续禁止反复争论的点
 
 - 不再把 `max_steps=100` 当作默认方案。
