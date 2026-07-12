@@ -30,7 +30,7 @@
 
 ## 当前进度
 
-当前项目已完成 P8 前端协议与交互基础 MVP，P9 真实需求使用准备已覆盖项目边界、源码验证、LSP 韧性和服务费结算链路压测，并进入 P10/P11 Intelligence Runtime 与真实跨项目任务收束。用户可以用自然语言描述任务，而不是每次手写工具顺序；Runtime 通过 RequirementContract、Planner/Explore、MiniToolChoiceQueue、CompletionAudit、二阶段 Patch Reviewer、VerificationPlan/TestPlanner/DeliveryAudit，以及 bounded finalization coordinator 保持任务目标、证据、写入、测试和 diff 的闭环。T-143 明确分离“业务验收仍需人或业务 oracle 确认”和“Runtime 可由真实 tool timeline 证明的交付检查”，避免伪完成。下一步仍是在已确认的真实 owner 边界内做明确小改；完整 async Command Bus/streaming follow-up queue 仍后置。详见 `docs/pressure-test-2026-07-11.md`。
+当前项目已完成 P8 前端协议与交互基础 MVP，P9 真实需求使用准备已覆盖项目边界、源码验证、LSP 韧性和服务费结算链路压测，并进入 P10/P11 Intelligence Runtime 与真实跨项目任务收束。用户可以用自然语言描述任务，而不是每次手写工具顺序；Runtime 通过 RequirementContract、Planner/Explore、MiniToolChoiceQueue、CompletionAudit、二阶段 Patch Reviewer、VerificationPlan/TestPlanner/DeliveryAudit、bounded finalization coordinator 与 T-144 的 session evidence continuity 保持任务目标、证据、写入、测试和 diff 的闭环。T-143 分离业务验收与机器可证明交付，T-144 让同一 chat 的相关 follow-up 能复用新鲜源码证据，但不把负向结论或用户原文提升为系统事实。下一步仍是在已确认的真实 owner 边界内做明确小改；完整 async Command Bus/streaming follow-up queue 仍后置。详见 `docs/pressure-test-2026-07-11.md`。
 
 已具备的核心能力：
 
@@ -213,7 +213,7 @@
 | no-edit evidence gate | 已完成 | CompletionAudit 不再接受只有“blocked/unexecuted”的文字自述；必须有 search/LSP 未命中、路径缺失、relevance/approval 拒绝等工具证据，才允许实现任务在无 diff 时收尾。 |
 | ToolRegistry 参数归一 | 已完成 MVP 版 | `src/local_agent/tools/argument_normalization.py` 在 schema 校验前仅映射已观测 scalar alias；冲突值直接拒绝，随后仍执行原 schema、approval、path/hash 和 anchored patch 校验。 |
 | 跨 root owner / impact evidence matrix | 已完成 MVP 版 | “设计/架构”以及“owner 定位/影响范围/调用链”的多 root 只读任务共用 requirement + 每 root source-read + 六次补证据预算；避免任务名称不是“设计”就无限探索。 |
-| 测试基线 | 已完成 | 本地正常环境下 476 个测试通过。 |
+| 测试基线 | 已完成 | 本地正常环境下 500 个测试通过。 |
 
 ## 下一步 Todo
 
@@ -347,6 +347,7 @@
 | T-140 | Offline reproducible benchmark / eval harness | 已完成并真实 provider 复测 | P11 | 6 个临时 fixture 用 deterministic fake provider 跑完整 Runtime，覆盖单 root、multi-root、scope negative、小改测 diff、deny schema、budget stop；输出 JSON/Markdown，`--live` 才显式使用外部 provider。live acceptance 使用 normalized term/regex、glob root coverage 和禁止错误外推，不再把有效语义答案误判为固定文案不符；报告记录 session/run、脱敏 tool errors 和 compaction 效果。phantom tool evidence 由 FinalAnswerSteerer 纠偏，下一次 provider schema 会记录实际 active names。提交 `4069836`、`9588db9`、`03f7039`。 |
 | T-141 | Xiaoya black-box multi-root finalization reliability | 已完成并真实复测 | P11 | stable `f155a8a` 的黑盒 fixture 曾暴露 finalization ping-pong、无 `run_summary` 悬挂 session、provider 越界工具调用缺少单独遥测，以及 primary 文档证据误导 sibling root。 | 新增 `finalization.py` / `FinalizationCoordinator` 收束 terminal ownership 与 aggregate finalization budget，`chat_runtime.py` 提供 provider-agnostic 外层 timeout，`RunSummary` / benchmark 单列 `provider_schema_violations` 与 `finalization_attempts`，`EvidenceLedger` / final steerers 保留 `root` + `scope` provenance。全量 441 tests 与离线 benchmark 6/6 通过；百炼 live 两轮四个 session 均正常终止并写 `run_summary`。提交 `e0aeb75`、`d295c5b`、`8527915`。 |
 | T-142 | Provider terminal closure / pinned requirement provenance | 已完成 | P11 | T-141 只覆盖 forced-final hanging；普通首轮 LLM failure 缺失 final/run summary，pinned requirement 未带 root/scope。 | 普通和 forced-final 主请求的 timeout/error 均会以 `llm_timeout` / `provider_error` terminal closure 收束；RequirementEvidence、search、LSP evidence 都带 canonical root/scope。全量 447 tests、offline benchmark 6/6 通过。提交 `509554e` 与后续 review fix。 |
+| T-144 | Session Evidence Continuity / User Facts Layer | 已完成，真实 provider 仍有重复读 | P11 | 同一 chat follow-up 原先每轮清空 RunContext/EvidenceLedger，已读证据被迫重取；用户输入还可能被错误降为模型推断或提升到 system context。 | 新增仅内存、按 canonical root / workspace revision / 全路径 content tag / relevance 复用的正向证据缓存；负向、截断、overflow、全局查询不跨轮复用，外部变化、真实 write/rollback、root add/remove/reset、成功 `/move` 均失效。缓存投影保留 `session_cached` 来源，计入 `/status` / RunSummary 但不计新工具调用。重复 read/search/LSP 按 canonical path 与 query/range 替换旧 entry。compaction 遵循 OMP message role 边界：最新真实 user message 保留为 user，混合摘要也为 `[Local context compaction; attribution=runtime]` user message，不升为 system。500 tests、offline benchmark 8/8。百炼合成双轮 session `20260712T013348513387Z` / second run `13193d5bb817450eb7fb20c151850d85` 有 cache hit=1、0 error，但模型仍重复 `read_file` 两次；记录为 provider efficiency 残余风险。提交 `3cbb62d`、`1e2ebf4`、`ddae090`。 |
 
 ## 风险清单
 
@@ -396,6 +397,7 @@
 | R-062 | 跨前后端设计未覆盖最小源码证据集就持续探索 | 已关闭 MVP，继续观察 | session `20260710T025606504484Z` 57 次工具调用中没有读取前端候选源码，最终只能给出弱复用结论。 | T-121 按 OMP ToolChoiceQueue/soft escalation 建立最小 evidence matrix；session `20260710T032336652934Z` 已读取需求、后端 Java 与前端 JS/Vue 后 final 收束。后续继续观察探索成本。 |
 | R-063 | 文件发现工具缺位导致错误负向结论 | 已关闭 MVP，持续压测 | 原样本把内容 no-match、截断目录和 primary Git 失败外推为“没有源码”；首轮 T-132A/B 又暴露百炼会传 `glob_files.path` 与超大结果。 | OMP `glob`/`grep` 分工已落地为 `glob_files`/`search_code`；结构化 complete/truncated/missing metadata 已进入 EvidenceLedger、CompletionAudit 和 FinalAnswerSteerer。T-132C 要求每个 authorized root 有 glob 覆盖、将 inventory 限为 per-root/totals budget，并记录 discovery/misuse；20260711T160446291065Z 进一步验证中文 inventory 意图、每 root schema 和无 candidate-read 耦合均能 0 error 收束。 |
 | R-069 | finalization ping-pong 或 root-local 证据漂移导致黑盒 session 不终止 | 已关闭 MVP，继续观察 provider 收敛效率 | stable `f155a8a` 的小牙 fixture 曾出现 `requirement_evidence`、`negative_existence`、`completion_audit`、`tool_usage_evidence` 和 `forced_final` 交替触发，且有样本没有 `run_summary` 挂住；primary 文档的 “No source code lives here” 也会被误导到 sibling service。 | 对齐 OMP queue/turn owner：`FinalizationCoordinator` 统一 terminal owner 与 aggregate budget；普通和 forced-final 主请求 failure 都写 terminal closure。Evidence（含 pinned requirement）保留 `root/scope`，root-local 文档默认只描述所属 root。外层 timeout 不能强杀底层 daemon worker，残余线程风险持续观察。 |
+| R-071 | 跨轮 follow-up 失去已验证证据或把旧证据伪装成当前事实 | 已关闭 MVP，持续观察 provider 效率 | 同一 session follow-up 会清空本轮 ledger；若直接复用旧 no-match、根 mtime 或用户原文，又会产生陈旧负向结论或 prompt-injection 升权。 | T-144 只缓存成功、正向、complete 且每个具体路径都重新 hash 的 read/search/LSP 证据；negative/incomplete/global/overflow 结果不复用。write、rollback、workspace revision 和 move 失效；同一 Runtime 的 related follow-up 才可命中。百炼仍可能主动重复读取，属于模型效率而非证据正确性放行。 |
 | R-033 | no-edit 停止路径可能跳过收束工具 | 已关闭 MVP 版 | T-074 复跑中模型正确停止，但没有维护 todo，也没有调用 `git_diff` 输出“无改动”证据；这会降低最终报告的可审计性。 | T-075 已参考 OMP current task / tool-choice steering 思路落地：no-edit stop 前缺 git/todo 收束会被 runtime steering 纠偏，并临时限制工具到 todo/git hygiene 集合。 |
 | R-034 | 过早做 fullscreen 重 TUI 可能拖慢核心能力 | 新增，中 | 如果把第一版前端理解成 Textual/fullscreen/pane/mouse/overlay，容易提前引入 scrollback、copy/paste、resize、输入法和渲染刷新问题。 | 第一版明确命名为 Terminal Frontend：`prompt_toolkit` 只管输入，`rich` 只管结构化输出，保留原生 terminal scrollback；先做 Event/Command Protocol，后续有真实瓶颈再升级 Textual/Bubble Tea/Ratatui/自研 renderer。 |
 | R-035 | Runtime 与前端输出耦合会阻碍后续终端体验 | 已关闭 MVP 版 | 如果工具日志、审批显示和最终输出继续散落在 Runtime/CLI print 中，后续 `prompt_toolkit + rich` 前端会难以复用和 replay。 | T-076 已参考 OMP runtime/TUI 分层思路，落地 dataclass Event/Command Protocol 和 `EventSink`；Runtime 产出 typed events，CLI 只是第一消费者。 |
@@ -466,23 +468,31 @@
 | ADR-042 | Finalization terminal ownership 与多 root provenance 必须进入独立模块而非继续堆到主循环。 | 对齐 OMP 的 queue/turn owner、active tool boundary 和 context provenance：terminal phase 由单一 coordinator 管理，provider 越界调用是独立遥测，root-local 证据默认不得跨 root 外推。 |
 | ADR-043 | Runtime delivery checks 与业务验收项分层。 | 对齐 OMP queue/turn ownership：状态只由已完成的工具 turn/result 推进。LCA 的 contract 项保持业务/人工验收提示；write/evidence/test/diff/review 作为独立 delivery checks，未闭环时终态必须是 incomplete，而不是“已完成”。 |
 
+| ADR-044 | Session evidence 以 freshness-first 的内存缓存延续，compaction 不提升消息角色。 | 对齐 OMP session tool-result/context continuity 与 `compaction/messages.ts`：跨 turn 可复用的只能是仍可验证的新鲜工具事实；compaction summary 以 user role、`attribution=runtime` 传递。LCA 不持久化此缓存、不复用 negative/existence evidence；用户原文维持 user role，system 只注入固定 provenance 规则。 |
+
 ## T-143 验证计划收口（2026-07-12）
 
 - `VerificationPlan` 位于 `src/local_agent/verification_plan.py`，每个 code-implementation run 写 typed snapshot/update session 事件，并在 `RunSummary` / `/status` 输出 delivery coverage；业务 acceptance 单列 `business_acceptance.unverified`，不混入交付完成度。
 - `TestPlanner` 仅从最后有效写入和本地 manifest 推导保守候选，标记为 `module`、`project` 或 `blocked`；当前 Python/Maven/Gradle/npm 命令是 manifest-backed project fallback，不伪称为最窄测试，也不直接执行或绕过审批。
 - `CompletionAudit` / Patch Reviewer 只消费 delivery checks。rollback、空 diff、写前旧测试、approval deny、与目标路径无关的 README 读取、仅含基线脏改的非空 diff 都不能通过。
 - 真实百炼合成 fixture：session `20260712T005706166697Z` / run `82f103e7808a43b7a652c039e9ef2449`，7 LLM、8 tools、0 error，`src/math.py` 完成 preview/patch/test/diff，delivery checks 4/4 passed。终态 Delivery Report 的内容由 deterministic 回归和 benchmark 锁定，保证模型只答 `done` 或测试失败时仍保留路径、实际测试命令、diff/reviewer 与未闭环项。离线 benchmark 为 7/7，完整 unittest 为 476/476。
-- T-144 仅登记：同 session follow-up 的 session evidence continuity（workspace revision/content tag/relevance cache，write/move/root change 时失效；用户输入事实与 repository evidence 分层）。本批未实现。
+
+## T-144 Session Evidence Continuity / User Facts Layer（2026-07-12）
+
+- `session_evidence.py` 是同一 `AgentRuntime` 的内存缓存：只保留成功、正向、complete 且具备全部 concrete-path content tag 的 `read_file` / `search_code` / LSP 证据。投影前逐路径重新 hash；外部变化淘汰 stale entry，negative/no-match、截断、workspace-global、overflow 结果从不跨轮复用。
+- 缓存由 canonical root、workspace revision、最近完成 run 与请求 relevance 约束。真实 write/rollback、root add/remove/reset 和成功 `/move` 清空相关缓存；dry-run 不失效。重复观测按 canonical tagged paths 与 query/read range identity 替换旧 entry。缓存证据以 `origin=session_cached` 进入 EvidenceLedger / Queue，`RunSummary` 单列 hit/miss/stale/invalidation/reused paths，绝不计为本轮真实工具调用。
+- `UserFactsLayer` 仅提供 provenance metadata；当前用户原文仍在 user role，相关但已被 compaction 丢弃的 prior user input 以明确的 user-role context 恢复。system/developer message 不复制用户原文。最新真实 user message 保留；混合 user/tool 的 compaction summary 同样以 user role `[Local context compaction; attribution=runtime]` 发送，避免摘要回显被提升为 system 指令。
+- 验证：500/500 unittest、compileall、diff check、offline benchmark 8/8。百炼临时 Python fixture 双轮 session `20260712T013348513387Z` 的第二轮有 cache hit=1、0 error、termination=final，但模型主动重复读两次；严格零工具 live acceptance 因此为 0/1。该结果证明 Runtime 复用可用，但不把 provider 的冗余读取粉饰为已收敛。
 
 ## P5 收口结论
 
 | 项目 | 结论 | 依据 |
 |---|---|---|
 | 主链路 | 通过 | 百炼真实小改复测已跑通 todo、dry_run、apply_patch、session allow、rollback、run_tests、git_diff。 |
-| 测试 | 通过 | P5 收口时 90 个 unittest、compileall、xlsx 检查、diff check 均通过；当前代码已跑通 476 个 unittest。 |
+| 测试 | 通过 | P5 收口时 90 个 unittest、compileall、xlsx 检查、diff check 均通过；当前代码已跑通 500 个 unittest。 |
 | 日用入口 | 通过 | README 已补只读分析和小改任务命令模板。 |
 | 开放风险 | 可接受 | shell 仍非沙箱、prompt injection 仍需靠审批和封闭 VM；provider/model 专用 tokenizer、输出 reserve、managed skills、完整 reviewer 和完整 OMP ToolChoiceQueue 继续后置评估。 |
-| 下一阶段 | P11 继续收束 | T-109~T-143 已完成 Intelligence Runtime 骨架、自主小改候选收束、dynamic workspace roots、有界 inventory、terminal nested interaction、stable/dev 隔离、benchmark 基线，以及 bounded finalization / provider failure closure / multi-root provenance / Runtime delivery report。下一步优先取得结算单 DDL、模板/下载中心或正确业务 owner 的源码证据，再验证 move 后的明确目标小改链路。 |
+| 下一阶段 | P11 继续收束 | T-109~T-144 已完成 Intelligence Runtime 骨架、自主小改候选收束、dynamic workspace roots、有界 inventory、terminal nested interaction、stable/dev 隔离、benchmark 基线、bounded finalization / provider failure closure / multi-root provenance / Runtime delivery report，以及同 session evidence continuity。下一步优先取得结算单 DDL、模板/下载中心或正确业务 owner 的源码证据，再验证 move 后的明确目标小改链路。 |
 
 ## 推荐工作流
 

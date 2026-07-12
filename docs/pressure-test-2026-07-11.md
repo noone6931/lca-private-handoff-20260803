@@ -452,4 +452,27 @@ LCA 将 RequirementContract 的业务 acceptance 保留为 `unverified` 信息�
 ## 残余风险
 
 - 多次交错 patch/rollback 同一路径时，effective-write 路径跟踪采取保守策略；无法证明当前本轮净变更时会要求重新验证，而不会错误放行。
-- T-144 Session Evidence Continuity 仍未实现：下一轮 follow-up 尚不能复用带 revision/content tag 的本轮证据缓存。
+- T-144 已在本文件后续章节收口：同一 Runtime 的相关 follow-up 可复用带 revision/content tag 的正向证据；负向存在性证据仍保守地不跨轮复用。
+
+---
+
+# T-144 Session Evidence Continuity / User Facts Layer（2026-07-12）
+
+## 范围与 OMP 对齐
+
+本轮只使用临时 Python fixture 和 deterministic fake provider；未读取或发送企业源码。对齐 OMP 的 session tool-result/context continuity：Runtime 可以跨同一 chat turn 延续仍新鲜的工具事实，但不把历史文本、负向结果或用户原文当作当前 repository 证据。OMP 的 `compaction/messages.ts` 将 compaction summary 映射为 `role: user` 且标记 attribution；LCA 采用同一信任边界，不复制 OMP 平台层。
+
+## 实现与回归
+
+| 问题 | 措施 | 回归 |
+|---|---|---|
+| follow-up 被迫重复 read/search/LSP | `SessionEvidenceCache` 仅缓存 positive / complete / concrete-path evidence；每次投影前对全部路径重算 content tag。 | 同 Runtime follow-up 可在 0 新工具下通过 deterministic audit；新 Runtime 不继承 cache。 |
+| 外部变化、写入或 root 变更使旧事实失真 | external hash 不匹配即淘汰；write/rollback、add/remove/reset、成功 `/move` 失效；dry-run 不失效。 | 覆盖 stale eviction、实际写入、rollback、workspace lifecycle 与 move rollback。 |
+| 重复观测让 cache 和上下文逐轮膨胀 | entry identity 按 canonical tagged paths 与 read range/search/LSP query 建立，不含 run id；新观察替换旧条目。 | 相对/绝对 path、缺省/显式 `start_line=1` 合并；不同 range/query 分开。 |
+| user text 被 compaction 或 summary 升权 | 最新真实 user message 永远保留；prior user fact 只有相关且已丢失时才以 user-role context 恢复；system/developer 不复制 raw user text。混合 summary 为 `[Local context compaction; attribution=runtime]` user message。 | local/LLM compaction、workflow nudge、echoing summary、tool-pair validity、超长 tail 都有回归。 |
+
+## 验证与残余风险
+
+- 完整 unittest：**500/500**；`compileall`、`git diff --check` 通过；deterministic benchmark：**8/8**。
+- live synthetic 双轮：session `20260712T013348513387Z` / second run `13193d5bb817450eb7fb20c151850d85`，cache hit=1、0 tool error、termination=`final`。provider 仍主动执行两次 `read_file`，所以严格零工具 live acceptance 为 0/1；这是百炼工具选择效率样本，不是 cache 正确性失败。
+- 残余风险：缓存只在内存/当前 Runtime 生效，relevance 使用保守 token/上一轮关联；不缓存 negative/existence evidence，宁可重新搜索。后续若真实 follow-up 的重复读成本持续显著，再从 ToolChoiceQueue 的 active tools/turn ownership 观察，不以关键词硬禁工具。
