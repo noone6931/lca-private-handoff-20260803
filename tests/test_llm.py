@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import json
+import socket
 import tempfile
 import unittest
+import urllib.error
 from pathlib import Path
 from unittest.mock import patch
 
 from local_agent.config import AgentConfig
-from local_agent.llm import LlmError, OpenAICompatibleClient
+from local_agent.llm import LlmError, LlmTimeoutError, OpenAICompatibleClient
 
 
 class _FakeResponse:
@@ -88,6 +90,21 @@ class LlmClientTests(unittest.TestCase):
         self.assertEqual(response.message["content"], "summary")
         self.assertNotIn("tools", captured_payload)
         self.assertNotIn("tool_choice", captured_payload)
+
+    def test_url_error_with_socket_timeout_is_structured_timeout(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=Path(tmp).resolve(),
+            )
+            client = OpenAICompatibleClient(config)
+            timeout_error = urllib.error.URLError(socket.timeout("timed out"))
+            with patch("urllib.request.urlopen", side_effect=timeout_error):
+                with self.assertRaises(LlmTimeoutError):
+                    client.chat([], [])
 
 
 if __name__ == "__main__":

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import socket
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -59,6 +60,8 @@ class OpenAICompatibleClient:
             detail = exc.read().decode("utf-8", errors="replace")
             raise LlmError(f"LLM API returned HTTP {exc.code}: {detail}") from exc
         except urllib.error.URLError as exc:
+            if isinstance(exc.reason, (TimeoutError, socket.timeout)):
+                raise LlmTimeoutError(f"LLM API request timed out after {request_timeout} seconds.") from exc
             raise LlmError(f"LLM API request failed: {exc}") from exc
         except TimeoutError as exc:
             raise LlmTimeoutError(f"LLM API request timed out after {request_timeout} seconds.") from exc

@@ -109,11 +109,13 @@ class _ForcedFinalHangingClient:
 
 class _InitialHangingClient:
     release = threading.Event()
+    calls = 0
 
     def __init__(self, config: AgentConfig):
         self.config = config
 
     def chat(self, messages, tools, *, timeout=None):
+        type(self).calls += 1
         type(self).release.wait(60)
         return type("Response", (), {"message": {"content": "late response"}})()
 
@@ -123,6 +125,34 @@ class _InitialProviderErrorClient:
         self.config = config
 
     def chat(self, messages, tools, *, timeout=None):
+        raise LlmError("provider is temporarily unavailable")
+
+
+class _ToolThenProviderErrorClient:
+    calls = 0
+
+    def __init__(self, config: AgentConfig):
+        self.config = config
+
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).calls += 1
+        if type(self).calls == 1:
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "call_list",
+                                "type": "function",
+                                "function": {"name": "list_files", "arguments": "{}"},
+                            }
+                        ],
+                    }
+                },
+            )()
         raise LlmError("provider is temporarily unavailable")
 
 
@@ -2554,6 +2584,7 @@ class AgentRuntimeTests(unittest.TestCase):
 
     def test_initial_hanging_provider_returns_timeout_terminal_closure(self) -> None:
         _InitialHangingClient.release = threading.Event()
+        _InitialHangingClient.calls = 0
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp).resolve()
             sink = ListEventSink()
@@ -2564,6 +2595,7 @@ class AgentRuntimeTests(unittest.TestCase):
                 model="model",
                 workspace=workspace,
                 request_timeout=1,
+                memory_consolidation="llm",
                 max_steps=0,
                 budget_seconds=None,
                 approval_mode="yolo",
@@ -2576,6 +2608,7 @@ class AgentRuntimeTests(unittest.TestCase):
 
         self.assertIn("模型请求超时", result)
         self.assertEqual(runtime._last_run_summary["termination_reason"], "llm_timeout")
+        self.assertEqual(_InitialHangingClient.calls, 1)
         self.assertTrue(any(record.get("event") == "final" for record in records))
         self.assertTrue(any(record.get("event") == "run_summary" for record in records))
         self.assertIn("SessionFinished", [event.type for event in sink.events])
@@ -2604,6 +2637,31 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertTrue(any(record.get("event") == "final" for record in records))
         self.assertTrue(any(record.get("event") == "run_summary" for record in records))
         self.assertIn("SessionFinished", [event.type for event in sink.events])
+
+    def test_provider_error_after_tool_does_not_claim_no_prior_actions(self) -> None:
+        _ToolThenProviderErrorClient.calls = 0
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            (workspace / "README.md").write_text("# Demo\n", encoding="utf-8")
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=workspace,
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _ToolThenProviderErrorClient):
+                runtime = AgentRuntime(config, show_tool_logs=False)
+                result = runtime.run("请查看项目结构后说明。")
+
+        self.assertEqual(runtime._last_run_summary["termination_reason"], "provider_error")
+        self.assertEqual(runtime._last_run_summary["tool_counts"], {"list_files": 1})
+        self.assertIn("此前动作以本轮 tool timeline 和 diff 为准", result)
+        self.assertNotIn("未继续执行工具或写入操作", result)
+        self.assertNotIn("任务在收到模型响应前已停止", result)
 
     def test_source_evidence_false_negative_gate_does_not_preempt_implementation_repair(self) -> None:
         contract = generate_requirement_contract("请实现用户注册接口邮箱唯一性校验，并补充单元测试。")

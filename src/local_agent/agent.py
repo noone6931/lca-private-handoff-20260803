@@ -1437,15 +1437,23 @@ class AgentRuntime:
         self._events.emit("ErrorEvent", {"kind": reason, "message": str(error)})
         if reason == "llm_timeout":
             content = (
-                "未完成：模型请求超时，任务在收到模型响应前已停止。"
-                "未继续执行工具或写入操作；请检查 provider 连通性后重试。"
+                "未完成：本次模型请求超时且未返回响应，任务已停止。"
+                "失败后未继续请求模型或执行后续步骤；此前动作以本轮 tool timeline 和 diff 为准。"
+                "请检查 provider 连通性后重试。"
             )
         else:
             content = (
-                "未完成：模型 provider 请求失败，任务在收到模型响应前已停止。"
-                "未继续执行工具或写入操作；请检查 provider 配置或稍后重试。"
+                "未完成：本次模型 provider 请求失败且未返回响应，任务已停止。"
+                "失败后未继续请求模型或执行后续步骤；此前动作以本轮 tool timeline 和 diff 为准。"
+                "请检查 provider 配置或稍后重试。"
             )
-        return self._finish_run(content, deadline, run_start_index, reason=reason)
+        return self._finish_run(
+            content,
+            deadline,
+            run_start_index,
+            reason=reason,
+            skip_memory_consolidation=True,
+        )
 
     def _execute_tool_with_repeat_guard(
         self,
@@ -1969,6 +1977,7 @@ class AgentRuntime:
         run_start_index: int,
         *,
         reason: str = "final",
+        skip_memory_consolidation: bool = False,
     ) -> str:
         hard_gate = self._run.unresolved_final_answer_gate
         if hard_gate is not None:
@@ -1977,7 +1986,13 @@ class AgentRuntime:
                 reason = "unverified_final_gate"
         self._session.append("final", {"content": content})
         run_messages = self._messages[run_start_index:]
-        self._maybe_consolidate_session_memory(run_messages, content, deadline)
+        if skip_memory_consolidation:
+            self._session.append(
+                "memory_consolidation",
+                {"mode": self._config.memory_consolidation, "status": "skipped", "reason": reason},
+            )
+        else:
+            self._maybe_consolidate_session_memory(run_messages, content, deadline)
         run_summary = self._finish_run_summary(reason)
         self._events.emit(
             "SessionFinished",
@@ -3230,10 +3245,6 @@ def _display_read_file_range_subject(
 
 def _llm_failure_reason(error: LlmError) -> str:
     if isinstance(error, LlmTimeoutError):
-        return "llm_timeout"
-    # Third-party compatible clients may only provide LlmError text. Keep this
-    # narrow compatibility fallback until provider errors carry structured kinds.
-    if "timed out" in str(error).lower() or "timeout" in str(error).lower():
         return "llm_timeout"
     return "provider_error"
 
