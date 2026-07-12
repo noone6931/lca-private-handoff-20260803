@@ -43,9 +43,18 @@
     },
     "session_evidence": {
       "hits": 1,
-      "stale": 0
+      "stale": 0,
+      "directives": 1,
+      "model_rereads": 0
     },
     "max_tool_errors": 0
   },
-  "residual_risk": "This proves deterministic cross-run evidence reuse inside one Runtime, not provider reliability on ambiguous follow-up wording."
+  "residual_risk": "This proves deterministic cross-run evidence reuse inside one Runtime, not provider reliability on ambiguous follow-up wording.",
+  "live": {
+    "run_summary": null,
+    "session_evidence": {
+      "hits": 1,
+      "directives": 1
+    }
+  }
 }
