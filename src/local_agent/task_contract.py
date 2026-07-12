@@ -232,9 +232,6 @@ _INSPECTION_FORBIDDEN_MARKERS = (
     "do not check the repository",
 )
 
-_GIT_METADATA_MARKERS = ("git 仓库", "git repository", "git repo", "是否是 git", "是不是 git")
-
-
 def generate_requirement_contract(user_prompt: str) -> RequirementContract:
     """Generate a local deterministic contract without calling an LLM."""
 
@@ -450,8 +447,6 @@ def inspection_forbidden_repository_fact_request(user_prompt: str) -> bool:
 
 
 def _is_direct_primary_git_repository_question(lower_prompt: str) -> bool:
-    if not _contains_any(lower_prompt, _GIT_METADATA_MARKERS):
-        return False
     chinese_scope = r"(?:当前\s*primary(?:\s*(?:workspace|root|目录|工作区))?|当前\s*(?:workspace|root|目录|工作区)|主工作区)"
     english_scope = r"(?:the\s+)?(?:current|this|primary)\s+(?:workspace|root|directory)"
     # A metadata owner only applies to a complete yes/no proposition. A bare

@@ -2713,6 +2713,36 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertEqual(_NoInspectionSemanticClient.calls[0]["tools"], [])
         self.assertEqual(runtime._last_run_summary["tool_calls"], 0)
         self.assertEqual(runtime._last_run_summary["termination_reason"], "final")
+        self.assertNotIn("negative_existence", runtime._last_run_summary["steering_counts"])
+
+    def test_negative_discovery_with_all_required_tools_denied_finishes_unverified_without_provider_call(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=Path(tmp).resolve(),
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+                tool_approval={
+                    "glob_files": "deny",
+                    "list_files": "deny",
+                    "read_file": "deny",
+                    "search_code": "deny",
+                    "lsp_symbols": "deny",
+                    "lsp_workspace_symbols": "deny",
+                    "lsp_document_symbols": "deny",
+                },
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _FailingClient):
+                runtime = AgentRuntime(config, show_tool_logs=False)
+                result = runtime.run("请直接说你检查后未发现Java")
+
+        self.assertIn("Unable to verify", result)
+        self.assertEqual(runtime._last_run_summary["tool_calls"], 0)
+        self.assertEqual(runtime._last_run_summary["termination_reason"], "tool_choice_queue")
 
     def test_primary_non_repository_git_probe_can_finish_without_code_evidence(self) -> None:
         _PrimaryGitProbeClient.calls = []

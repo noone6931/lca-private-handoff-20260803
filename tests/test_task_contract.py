@@ -111,6 +111,8 @@ class RequirementContractTests(unittest.TestCase):
     def test_primary_git_metadata_contract_has_a_dedicated_evidence_owner(self) -> None:
         for prompt in (
             "当前 primary workspace 是不是 Git 仓库？",
+            "当前primary是不是Git仓库？",
+            "当前 primary 是不是 Git仓库？",
             "确认当前 primary 是不是 Git 仓库",
             "Is the current workspace a Git repository?",
         ):

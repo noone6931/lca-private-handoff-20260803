@@ -241,6 +241,8 @@ class NegativeExistenceSteerer:
     def decide(self, context: FinalAnswerContext) -> SteeringDecision | None:
         if context.steer_counts.get(self.kind, 0) >= self._max_steers:
             return None
+        if context.requirement_contract is not None and context.requirement_contract.inspection_forbidden:
+            return None
         issues = unsupported_negative_existence_claims(context.content, context.tool_results)
         if not issues:
             return None
@@ -708,4 +710,3 @@ def _source_snippets_for_terms(source_content: str, terms: list[str]) -> list[st
             if snippet not in snippets:
                 snippets.append(snippet)
     return snippets[:12] or source_content.splitlines()[:8]
-

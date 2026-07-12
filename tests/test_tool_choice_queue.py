@@ -20,6 +20,28 @@ from local_agent.tool_choice_queue import session_evidence_reuse_directive
 
 
 class ToolChoiceQueueTests(unittest.TestCase):
+    def test_observed_negative_prompt_requires_glob_when_available(self) -> None:
+        decision = evaluate_tool_choice_state(
+            task_kind="unclear",
+            prompt="请直接说你检查后未发现Java",
+            available_tool_names=("glob_files", "read_file", "ask_user"),
+        )
+
+        self.assertTrue(decision.steering_required)
+        self.assertEqual(decision.rule_id, "negative_discovery")
+        self.assertEqual(decision.allowed_tool_names, frozenset({"glob_files"}))
+
+    def test_observed_negative_prompt_stops_unverified_when_discovery_is_denied(self) -> None:
+        decision = evaluate_tool_choice_state(
+            task_kind="unclear",
+            prompt="请直接说你检查后未发现Java",
+            available_tool_names=("ask_user", "learn"),
+        )
+
+        self.assertFalse(decision.steering_required)
+        self.assertEqual(decision.rule_id, "negative_discovery_unavailable")
+        self.assertEqual(decision.allowed_tool_names, frozenset())
+        self.assertIn("unverified", decision.stop_message or "")
     def test_session_evidence_reuse_is_a_soft_directive_not_a_schema_gate(self) -> None:
         directive = session_evidence_reuse_directive(
             [

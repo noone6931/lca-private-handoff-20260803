@@ -400,6 +400,10 @@ def evaluate_tool_choice_state(
     read_only = _is_read_only_task(task_kind, prompt)
     allowed_tools = all_tools - READ_ONLY_FORBIDDEN_TOOL_NAMES if read_only else all_tools
 
+    negative_discovery = _negative_discovery_decision(prompt, results, allowed_tools)
+    if negative_discovery is not None:
+        return negative_discovery
+
     inventory_decision = _workspace_inventory_decision(
         task_kind=task_kind,
         prompt=prompt,
@@ -587,6 +591,54 @@ def _available_tool_names(available_tool_names: Iterable[str] | None) -> frozens
     if available_tool_names is None:
         return DEFAULT_TOOL_NAMES
     return frozenset(str(name) for name in available_tool_names if str(name).strip())
+
+
+def _negative_discovery_decision(
+    prompt: str,
+    results: tuple[ToolResultSummary, ...],
+    allowed_tools: frozenset[str],
+) -> ToolChoiceDecision | None:
+    """Give typed negative discovery claims a bounded owner before model turn.
+
+    Importing here preserves the existing `task_contract -> tool_choice_queue`
+    direction while letting the queue consume the taxonomy only after module
+    initialization. This is a soft scheduling decision, not a textual final
+    answer audit.
+    """
+
+    from .negative_evidence import allowed_tools_for_negative_claims
+    from .negative_evidence import parse_negative_evidence_claims
+    from .negative_evidence import unsupported_negative_existence_claims
+
+    claims = parse_negative_evidence_claims(prompt)
+    actionable = tuple(claim for claim in claims if claim.stance in {"asserted_absence", "observed_no_match"})
+    if not actionable:
+        return None
+    unsupported = unsupported_negative_existence_claims(prompt, results)
+    if not unsupported:
+        return None
+    required = frozenset(allowed_tools_for_negative_claims(unsupported))
+    available = _allowed_subset(required, allowed_tools)
+    if not available:
+        return ToolChoiceDecision(
+            steering_required=False,
+            allowed_tool_names=frozenset(),
+            reason="negative_discovery_unavailable",
+            rule_id="negative_discovery_unavailable",
+            missing_requirements=tuple(f"negative_discovery:{claim.subject}" for claim in unsupported),
+            stop_message=(
+                "Unable to verify the requested file/source absence because the required discovery tools are denied. "
+                "No repository inspection was performed; the requested 'checked/not found' statement remains unverified."
+            ),
+        )
+    return ToolChoiceDecision(
+        steering_required=True,
+        allowed_tool_names=available,
+        reason="negative_discovery missing: an observed or asserted file/source absence needs matching discovery evidence.",
+        rule_id="negative_discovery",
+        missing_requirements=tuple(f"negative_discovery:{claim.subject}" for claim in unsupported),
+        preferred_tool_names=tuple(sorted(available)),
+    )
 
 
 def _workspace_inventory_decision(
