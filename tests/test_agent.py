@@ -84,6 +84,93 @@ class _FinalClient:
         return type("Response", (), {"message": {"content": "done"}})()
 
 
+class _NoInspectionSemanticClient:
+    calls: list[dict] = []
+
+    def __init__(self, config: AgentConfig):
+        self.config = config
+
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
+        return type(
+            "Response",
+            (),
+            {
+                "message": {
+                    "content": (
+                        "这句话是在表达源码缺失的语义；未检查仓库，因此不把它当作已验证的仓库事实。"
+                    )
+                }
+            },
+        )()
+
+
+class _BareObservedNoMatchClient:
+    calls: list[dict] = []
+
+    def __init__(self, config: AgentConfig):
+        self.config = config
+
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
+        if len(type(self).calls) == 1:
+            return type("Response", (), {"message": {"content": "我检查后未发现 Java。"}})()
+        if len(type(self).calls) == 2:
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "call_glob_java",
+                                "type": "function",
+                                "function": {"name": "glob_files", "arguments": json.dumps({"paths": ["**/*.java"]})},
+                            }
+                        ],
+                    }
+                },
+            )()
+        return type(
+            "Response",
+            (),
+            {"message": {"content": "已验证：glob_files 在当前 scope 未发现 Java 文件；结论仅覆盖该完整扫描范围。"}},
+        )()
+
+
+class _PrimaryGitProbeClient:
+    calls: list[dict] = []
+
+    def __init__(self, config: AgentConfig):
+        self.config = config
+
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
+        if len(type(self).calls) == 1:
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "call_git_status",
+                                "type": "function",
+                                "function": {"name": "git_status", "arguments": "{}"},
+                            }
+                        ],
+                    }
+                },
+            )()
+        return type(
+            "Response",
+            (),
+            {"message": {"content": "已验证：当前 primary workspace 不是 Git 仓库；附加 root 需要先 /move 才能判断。"}},
+        )()
+
+
 class _QualifiedNegativeFinalClient:
     def __init__(self, config: AgentConfig):
         self.config = config
@@ -2532,6 +2619,89 @@ class AgentRuntimeTests(unittest.TestCase):
         for content in future_conditions:
             with self.subTest(content=content):
                 self.assertEqual(phantom_tool_evidence_claims(content, []), ())
+
+    def test_tool_usage_evidence_gate_detects_claimed_glob_inspection_but_not_explicit_no_run(self) -> None:
+        self.assertEqual(
+            phantom_tool_evidence_claims("已使用 glob_files 查找 .java 文件，结果未找到。", []),
+            ("glob_files",),
+        )
+        for content in (
+            "未执行 glob_files，因此没有结论。",
+            "没有使用 list_files，不能说明目录结构。",
+            "glob_files was not run, so this remains unverified.",
+        ):
+            with self.subTest(content=content):
+                self.assertEqual(phantom_tool_evidence_claims(content, []), ())
+
+    def test_bare_observed_no_match_cannot_finalize_without_discovery_evidence(self) -> None:
+        _BareObservedNoMatchClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=Path(tmp).resolve(),
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _BareObservedNoMatchClient):
+                runtime = AgentRuntime(config, show_tool_logs=False)
+                result = runtime.run("只读确认当前 workspace 是否有 Java 文件，不要修改文件。")
+
+        self.assertIn("glob_files", result)
+        self.assertEqual(len(_BareObservedNoMatchClient.calls), 3)
+        self.assertEqual(runtime._last_run_summary["tool_calls"], 1)
+        self.assertEqual(runtime._last_run_summary["termination_reason"], "final")
+
+    def test_semantic_no_inspection_task_has_no_tool_schema_or_tool_calls(self) -> None:
+        _NoInspectionSemanticClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=Path(tmp).resolve(),
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _NoInspectionSemanticClient):
+                runtime = AgentRuntime(config, show_tool_logs=False)
+                result = runtime.run(
+                    "只解释这些句子的语义，不判断仓库，不检查文件：‘没有 Java 源码’是什么意思？"
+                )
+
+        self.assertIn("未检查仓库", result)
+        self.assertEqual(len(_NoInspectionSemanticClient.calls), 1)
+        self.assertEqual(_NoInspectionSemanticClient.calls[0]["tools"], [])
+        self.assertEqual(runtime._last_run_summary["tool_calls"], 0)
+        self.assertEqual(runtime._last_run_summary["termination_reason"], "final")
+
+    def test_primary_non_repository_git_probe_can_finish_without_code_evidence(self) -> None:
+        _PrimaryGitProbeClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=workspace,
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _PrimaryGitProbeClient):
+                runtime = AgentRuntime(config, show_tool_logs=False)
+                result = runtime.run("当前 primary workspace 是不是 Git 仓库？")
+
+        self.assertIn("不是 Git 仓库", result)
+        self.assertEqual(len(_PrimaryGitProbeClient.calls), 2)
+        self.assertEqual(runtime._last_run_summary["tool_calls"], 1)
+        self.assertEqual(runtime._last_run_summary["termination_reason"], "final")
 
     def test_tool_usage_evidence_gate_keeps_unobserved_lsp_result_claim(self) -> None:
         claims = phantom_tool_evidence_claims(

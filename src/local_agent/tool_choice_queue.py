@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .design_evidence import missing_design_evidence_roots
+from .task_contract import is_inspection_forbidden
 from .verification_timeline import last_workspace_write_index
 from .verification_timeline import result_changed_workspace
 from .verification_timeline import successful_tool_after_last_write
@@ -338,6 +339,13 @@ def evaluate_tool_choice_state(
     design_evidence_roots: Iterable[str] | None = None,
     workspace_roots: Iterable[str] | None = None,
 ) -> ToolChoiceDecision:
+    if is_inspection_forbidden(prompt):
+        return ToolChoiceDecision(
+            steering_required=False,
+            allowed_tool_names=frozenset(),
+            reason="inspection_forbidden: semantic-only task must not inspect the workspace.",
+            rule_id="inspection_forbidden",
+        )
     results = tuple(_normalize_tool_result(result) for result in (tool_results or ()))
     seen_tool_names = _tool_name_set(tool_names, results)
     all_tools = _available_tool_names(available_tool_names)

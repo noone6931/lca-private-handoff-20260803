@@ -373,7 +373,7 @@ class AgentRuntime:
         requirement_contract_context = render_contract_context(requirement_contract)
         design_evidence_roots = (
             cross_root_design_evidence_roots(self._workspace_context.primary, self._workspace_context.additional_roots, prompt)
-            if requirement_contract.task_kind == "read-only"
+            if requirement_contract.task_kind == "read-only" and not requirement_contract.inspection_forbidden
             else ()
         )
         self._run.begin(
@@ -411,11 +411,15 @@ class AgentRuntime:
         if model_prompt != prompt:
             self._session.append("workflow_nudge", {"content": WORKFLOW_NUDGE})
         self._run.read_file_drift_guard_enabled = _should_guard_repeated_read_file(prompt)
-        self._run.soft_tool_requirement = initial_soft_tool_requirement(
-            prompt,
-            self._workspace_context.primary,
-            self._workspace_context.additional_roots,
-            max_skill_description_chars=MAX_SKILL_DESCRIPTION_CHARS,
+        self._run.soft_tool_requirement = (
+            None
+            if requirement_contract.inspection_forbidden
+            else initial_soft_tool_requirement(
+                prompt,
+                self._workspace_context.primary,
+                self._workspace_context.additional_roots,
+                max_skill_description_chars=MAX_SKILL_DESCRIPTION_CHARS,
+            )
         )
         if self._run.soft_tool_requirement is not None:
             self._append_soft_tool_requirement_message(self._run.soft_tool_requirement)
@@ -663,6 +667,8 @@ class AgentRuntime:
 
     def _effective_runtime_tool_allowlist(self) -> set[str] | None:
         if self._run.force_final_answer_without_tools:
+            return set()
+        if self._run.requirement_contract is not None and self._run.requirement_contract.inspection_forbidden:
             return set()
         allowed_names: set[str] | None = None
         if self._run.temporary_tool_allowlist is not None:

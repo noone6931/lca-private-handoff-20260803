@@ -100,6 +100,12 @@ _ROOT_REFERENCE = re.compile(
 )
 _ROOT_SCOPE_MARKER = _ROOT_REFERENCE
 _BARE_JAVA_TAIL = re.compile(r"^\s*(?:$|[。！？!?；;,，.].*)")
+_OBSERVED_BARE_JAVA_TAIL = re.compile(r"^\s*(?:was|were)\s+found\s*(?:[。！？!?；;,，.]|$)", re.IGNORECASE)
+_BARE_JAVA_SOURCE_TAIL = re.compile(
+    r"^\s*(?:相关(?:的)?\s*)?(?:文件|源码|源代码|代码|source|files?|code)"
+    r"(?:\s*(?:或|and|or)\s*(?:文件|源码|源代码|代码|source|files?|code))?",
+    re.IGNORECASE,
+)
 
 
 def parse_negative_evidence_claims(content: str) -> tuple[NegativeExistenceClaim, ...]:
@@ -213,7 +219,7 @@ def _claim_stance(clause: str, match: re.Match[str], following_clause: str) -> s
         return QUOTED_OR_HYPOTHETICAL
     before = clause[max(0, match.start() - 56) : match.start()]
     after = clause[match.end() : match.end() + 72]
-    observed = bool(_OBSERVED_MARKER.search(match.group(0)))
+    observed = bool(_OBSERVED_MARKER.search(match.group(0) + after[:48]))
     if _QUALIFYING_PREFIX.search(before) or _QUALIFYING_SUFFIX.search(after):
         return EPISTEMICALLY_QUALIFIED
     if observed and _NEXT_CLAUSE_QUALIFIER.search(following_clause):
@@ -250,7 +256,15 @@ def _claim_scope_and_root(clause: str, claim_match: re.Match[str]) -> tuple[str,
 def _bare_java_has_file_scope(clause: str, match: re.Match[str]) -> bool:
     """Avoid treating experience, dependency, or version language as file discovery facts."""
     nearby = clause[max(0, match.start() - 48) : match.end() + 48]
-    return bool(_ROOT_SCOPE_MARKER.search(nearby) and _BARE_JAVA_TAIL.match(clause[match.end() :]))
+    tail = clause[match.end() :]
+    observed = bool(_OBSERVED_MARKER.search(match.group(0) + tail[:48]))
+    has_source_noun = bool(_BARE_JAVA_SOURCE_TAIL.match(tail))
+    has_bounded_tail = bool(_BARE_JAVA_TAIL.match(tail))
+    # "I checked and found no Java." is an observation claim even without a
+    # root label. An absolute "no Java" remains a file/root-scoped claim.
+    return has_source_noun or (
+        observed and (has_bounded_tail or bool(_OBSERVED_BARE_JAVA_TAIL.match(tail)))
+    ) or (has_bounded_tail and bool(_ROOT_SCOPE_MARKER.search(nearby)))
 
 
 def _overlaps_existing_match(match: re.Match[str], matcher: re.Pattern[str], clause: str) -> bool:

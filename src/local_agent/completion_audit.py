@@ -290,6 +290,10 @@ def _read_only_items(
     tool_results: list[ToolResultSummary],
     source_paths: list[str],
 ) -> list[CompletionAuditItem]:
+    if contract.inspection_forbidden:
+        return _inspection_forbidden_items(contract, final_content=final_content)
+    if contract.workspace_metadata_subject == "git_repository":
+        return _git_metadata_items(contract, final_content=final_content, tool_results=tool_results)
     content = final_content or ""
     code_evidence = _has_successful_code_evidence(tool_results)
     path_discovery_evidence = _has_complete_path_discovery_evidence(tool_results)
@@ -418,6 +422,91 @@ def _read_only_items(
         items.append(_passed("verification", no_edit_requirement, "no workspace write tool results exist"))
 
     return items
+
+
+def _inspection_forbidden_items(
+    contract: RequirementContract,
+    *,
+    final_content: str,
+) -> list[CompletionAuditItem]:
+    content = final_content or ""
+    direct = _requirement_at(contract.acceptance_items, 0, "Explain the requested language or semantic meaning directly.")
+    provenance = _requirement_at(
+        contract.acceptance_items,
+        1,
+        "Do not present repository facts as verified when inspection is forbidden.",
+    )
+    items = [_passed("acceptance", direct, "semantic-only answer does not require repository inspection")]
+    if _has_evidence_status(content) or not _mentions_repository_fact_request(contract.objective):
+        items.append(_passed("evidence", provenance, "repository facts are labelled or not requested"))
+    else:
+        items.append(
+            _missing(
+                "evidence",
+                provenance,
+                "repository fact was requested while inspection is forbidden; label it unverified instead",
+            )
+        )
+    items.append(
+        _passed(
+            "verification",
+            _requirement_at(contract.verification_requirements, 0, "Do not call repository inspection tools for this task."),
+            "inspection is forbidden by the task contract",
+        )
+    )
+    return items
+
+
+def _git_metadata_items(
+    contract: RequirementContract,
+    *,
+    final_content: str,
+    tool_results: list[ToolResultSummary],
+) -> list[CompletionAuditItem]:
+    requirement = _requirement_at(
+        contract.acceptance_items,
+        0,
+        "Answer the primary workspace Git-repository question directly from a structured Git probe.",
+    )
+    probe = next((result for result in tool_results if _is_primary_git_probe(result)), None)
+    if probe is None:
+        return [
+            _missing(
+                "acceptance",
+                requirement,
+                "no structured primary git_status probe exists; additional roots require /move",
+                ("git_status",),
+            )
+        ]
+    return [
+        _passed("acceptance", requirement, "structured primary Git probe is available"),
+        _passed(
+            "evidence",
+            _requirement_at(contract.evidence_requirements, 0, "Cite the primary git_status probe."),
+            "Git probe distinguishes repository state from execution errors",
+        ),
+        _passed(
+            "verification",
+            _requirement_at(contract.verification_requirements, 0, "Do not modify files for this workspace metadata check."),
+            "workspace metadata check is read-only",
+        ),
+    ]
+
+
+def _is_primary_git_probe(result: ToolResultSummary) -> bool:
+    if result.name != "git_status":
+        return False
+    metadata = result.metadata
+    if metadata.get("git_repository") not in {True, False}:
+        return False
+    root_label = str(metadata.get("evidence_root_label") or "")
+    probe_root = metadata.get("git_probe_root")
+    return root_label == "primary" or bool(probe_root)
+
+
+def _mentions_repository_fact_request(text: str) -> bool:
+    lower = (text or "").lower()
+    return any(marker in lower for marker in ("仓库", "源码", "代码", "文件", "repository", "source", "code", "file"))
 
 
 def _implementation_items(

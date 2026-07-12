@@ -18,6 +18,7 @@ from ..patch_reviewer import review_patch
 from ..requirement_evidence import RequirementEvidence
 from ..requirement_evidence import requirement_fact_citation_issues
 from ..task_contract import RequirementContract
+from ..task_contract import is_inspection_forbidden
 from ..tool_choice_queue import ToolResultSummary
 from ..verification_plan import VerificationPlan
 
@@ -299,6 +300,24 @@ TOOL_EVIDENCE_CLAIM_MARKERS = (
     "无结果",
     "没有结果",
     "均未",
+    "使用",
+    "执行",
+    "运行",
+    "检查",
+    "查找",
+    "检索",
+    "used",
+    "executed",
+    "ran",
+    "checked",
+    "searched",
+    "found",
+)
+
+_EXPLICIT_TOOL_NON_EXECUTION = re.compile(
+    r"(?:未|没有|并未|未曾)\s*(?:调用|使用|执行|运行|检查|查找|检索)"
+    r"|(?:did\s+not|didn't|not)\s+(?:call|use|run|execute|check|search)",
+    re.IGNORECASE,
 )
 
 
@@ -401,6 +420,8 @@ class RequirementEvidenceSteerer:
     def decide(self, context: FinalAnswerContext) -> SteeringDecision | None:
         if context.steer_counts.get(self.kind, 0) >= self._max_steers:
             return None
+        if context.requirement_contract is not None and context.requirement_contract.inspection_forbidden:
+            return None
         if context.requirement_contract is not None and context.requirement_contract.task_kind == "code-implementation":
             return None
         issues = requirement_fact_citation_issues(context.content, context.requirement_evidence)
@@ -437,6 +458,8 @@ class DesignEvidenceSteerer:
 
     def decide(self, context: FinalAnswerContext) -> SteeringDecision | None:
         if context.steer_counts.get(self.kind, 0) >= self._max_steers:
+            return None
+        if context.requirement_contract is not None and context.requirement_contract.inspection_forbidden:
             return None
         missing_roots = missing_design_evidence_roots(
             context.required_design_evidence_roots,
@@ -880,6 +903,8 @@ def content_has_evidence_status_label(content: str) -> bool:
 
 
 def request_needs_read_only_code_evidence(request: str | None) -> bool:
+    if is_inspection_forbidden(request or ""):
+        return False
     lowered = (request or "").lower()
     if not lowered.strip():
         return False
@@ -1009,7 +1034,7 @@ def phantom_tool_evidence_claims(
     for segment in re.split(r"[\n。！？!?;]+", content.lower()):
         if not segment.strip() or not _looks_like_tool_evidence_claim(segment):
             continue
-        if re.search(r"(?:未|没有|not)\s*(?:调用|call(?:ed)?)", segment):
+        if _EXPLICIT_TOOL_NON_EXECUTION.search(segment):
             continue
         for tool in KNOWN_TOOL_EVIDENCE_NAMES - observed:
             if _tool_reference_is_recommendation(segment, tool):

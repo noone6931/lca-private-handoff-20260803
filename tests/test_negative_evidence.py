@@ -84,6 +84,27 @@ class NegativeEvidenceTests(unittest.TestCase):
         self.assertEqual(len(unsupported_negative_existence_claims(content, [cached_no_match])), 1)
         self.assertEqual(unsupported_negative_existence_claims(content, [matching]), ())
 
+    def test_bare_observed_java_claim_is_gated_without_a_root_marker(self) -> None:
+        for content in (
+            "我检查后未发现 Java。",
+            "未发现 Java 相关的文件或代码。",
+            "No Java was found.",
+        ):
+            with self.subTest(content=content):
+                claims = parse_negative_evidence_claims(content)
+                self.assertEqual(len(claims), 1)
+                self.assertEqual(claims[0].stance, OBSERVED_NO_MATCH)
+                self.assertEqual(len(unsupported_negative_existence_claims(content, [])), 1)
+
+    def test_bare_java_experience_dependency_and_version_are_not_file_claims(self) -> None:
+        for content in (
+            "未发现 Java 经验。",
+            "workspace 没有 Java 依赖。",
+            "This workspace has no Java version requirement.",
+        ):
+            with self.subTest(content=content):
+                self.assertEqual(parse_negative_evidence_claims(content), ())
+
     def test_hypothetical_and_example_are_not_asserted_absence(self) -> None:
         claims = parse_negative_evidence_claims("建议调用 glob_files；如果没有 Java 源码再合并。")
 

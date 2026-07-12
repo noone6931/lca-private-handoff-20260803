@@ -42,6 +42,64 @@ class CompletionAuditTests(unittest.TestCase):
 
         self.assertTrue(result.passed)
 
+    def test_semantic_only_no_inspection_task_does_not_reopen_code_evidence(self) -> None:
+        request = "只解释这句话的语义，不判断仓库，不检查文件：‘没有 Java 源码’是什么意思？"
+        result = audit_completion(
+            generate_requirement_contract(request),
+            request=request,
+            final_content="这句话表达的是一个缺失断言；未检查仓库，因此不把它当作已验证的仓库事实。",
+            tool_results=[],
+            source_paths=[],
+            open_todos=[],
+        )
+
+        self.assertTrue(result.passed)
+        self.assertEqual(result.allowed_tool_names(), ())
+
+    def test_primary_non_repository_git_probe_is_sufficient_metadata_evidence(self) -> None:
+        request = "当前 primary workspace 是不是 Git 仓库？"
+        result = audit_completion(
+            generate_requirement_contract(request),
+            request=request,
+            final_content="已验证：当前 primary workspace 不是 Git 仓库；附加 root 需要先 /move 才能判断。",
+            tool_results=[
+                ToolResultSummary(
+                    "git_status",
+                    "not a git repository",
+                    is_error=True,
+                    metadata={
+                        "git_repository": False,
+                        "git_probe_root": "/tmp/primary",
+                        "evidence_root_label": "primary",
+                    },
+                )
+            ],
+            source_paths=[],
+            open_todos=[],
+        )
+
+        self.assertTrue(result.passed)
+
+    def test_generic_git_error_is_not_accepted_as_repository_metadata_evidence(self) -> None:
+        request = "当前 primary workspace 是不是 Git 仓库？"
+        result = audit_completion(
+            generate_requirement_contract(request),
+            request=request,
+            final_content="未验证：git 命令执行失败。",
+            tool_results=[
+                ToolResultSummary(
+                    "git_status",
+                    "git executable failed",
+                    is_error=True,
+                    metadata={"git_repository": None, "git_probe_root": "/tmp/primary", "evidence_root_label": "primary"},
+                )
+            ],
+            source_paths=[],
+            open_todos=[],
+        )
+
+        self.assertFalse(result.passed)
+
     def test_implementation_answer_requires_tests_and_diff_after_write(self) -> None:
         contract = generate_requirement_contract("请实现用户注册接口的邮箱唯一性校验，并补充单元测试。")
 

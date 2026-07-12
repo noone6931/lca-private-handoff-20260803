@@ -19,6 +19,8 @@ class RequirementContract:
     verification_requirements: list[str]
     risk_notes: list[str]
     task_kind: TaskKind
+    inspection_forbidden: bool = False
+    workspace_metadata_subject: str | None = None
 
 
 _READ_ONLY_MARKERS = (
@@ -197,6 +199,40 @@ _DESIGN_MARKERS = (
     "fee",
 )
 
+_META_SEMANTIC_MARKERS = (
+    "语义",
+    "措辞",
+    "句子",
+    "文本含义",
+    "语言解释",
+    "semantics",
+    "wording",
+    "sentence meaning",
+    "language meaning",
+)
+
+_INSPECTION_FORBIDDEN_MARKERS = (
+    "不要检查",
+    "不检查",
+    "不要读取",
+    "不读取",
+    "不要读文件",
+    "不读文件",
+    "不要搜索",
+    "不搜索",
+    "不要判断仓库",
+    "不判断仓库",
+    "do not inspect",
+    "don't inspect",
+    "do not read",
+    "don't read",
+    "do not search",
+    "don't search",
+    "do not check the repository",
+)
+
+_GIT_METADATA_MARKERS = ("git 仓库", "git repository", "git repo", "是否是 git", "是不是 git")
+
 
 def generate_requirement_contract(user_prompt: str) -> RequirementContract:
     """Generate a local deterministic contract without calling an LLM."""
@@ -204,6 +240,57 @@ def generate_requirement_contract(user_prompt: str) -> RequirementContract:
     prompt = _normalize_prompt(user_prompt)
     task_kind = classify_task_kind(prompt)
     objective = _derive_objective(prompt, task_kind)
+    inspection_forbidden = is_inspection_forbidden(prompt)
+    metadata_subject = workspace_metadata_subject(prompt)
+
+    if inspection_forbidden:
+        return RequirementContract(
+            objective=objective,
+            scope=(
+                "Meta-semantic interpretation only. Do not inspect the repository, files, or workspace; "
+                "answer from the user-role text and label any requested repository fact as unverified."
+            ),
+            acceptance_items=[
+                "Explain the requested language or semantic meaning directly.",
+                "Do not present repository facts as verified when inspection is forbidden.",
+            ],
+            evidence_requirements=[
+                "Keep user-provided wording distinct from repository-verified evidence.",
+            ],
+            verification_requirements=[
+                "Do not call repository inspection tools for this task.",
+            ],
+            risk_notes=[
+                "A repository fact requested alongside a no-inspection directive remains unverified.",
+            ],
+            task_kind="read-only",
+            inspection_forbidden=True,
+            workspace_metadata_subject=None,
+        )
+
+    if metadata_subject == "git_repository":
+        return RequirementContract(
+            objective=objective,
+            scope=(
+                "Read-only primary-workspace Git metadata check. A structured primary git_status probe is the "
+                "authoritative evidence; additional roots require /move before Git conclusions."
+            ),
+            acceptance_items=[
+                "Answer the primary workspace Git-repository question directly from a structured Git probe.",
+                "State the scope of the Git conclusion and any /move limitation for additional roots.",
+            ],
+            evidence_requirements=[
+                "Cite the primary git_status probe and distinguish a non-repository result from an execution error.",
+            ],
+            verification_requirements=[
+                "Do not modify files for this workspace metadata check.",
+            ],
+            risk_notes=[
+                "Git status is anchored to the primary workspace and cannot inspect an additional root.",
+            ],
+            task_kind="read-only",
+            workspace_metadata_subject=metadata_subject,
+        )
 
     if task_kind == "read-only":
         return RequirementContract(
@@ -277,6 +364,9 @@ def classify_task_kind(user_prompt: str) -> TaskKind:
     if not prompt:
         return "unclear"
 
+    if is_inspection_forbidden(prompt):
+        return "read-only"
+
     lower = prompt.lower()
     has_read_only_marker = _contains_any(lower, _READ_ONLY_MARKERS)
     has_explicit_read_only_directive = _has_global_read_only_directive(lower)
@@ -308,6 +398,10 @@ def render_contract_context(contract: RequirementContract) -> str:
         ("Risks", contract.risk_notes),
     ]
     lines = ["Requirement Contract", f"Task kind: {contract.task_kind}"]
+    if contract.inspection_forbidden:
+        lines.append("Inspection policy: repository inspection is forbidden for this task.")
+    if contract.workspace_metadata_subject:
+        lines.append(f"Workspace metadata subject: {contract.workspace_metadata_subject}")
     for title, items in sections:
         lines.append(f"{title}:")
         lines.extend(f"- {item}" for item in items if item)
@@ -316,6 +410,24 @@ def render_contract_context(contract: RequirementContract) -> str:
 
 def _normalize_prompt(user_prompt: str) -> str:
     return re.sub(r"\s+", " ", user_prompt or "").strip()
+
+
+def is_inspection_forbidden(user_prompt: str) -> bool:
+    """Recognize a semantic-only request that explicitly forbids repository inspection.
+
+    This is an intent boundary, not a content keyword escape hatch: it requires
+    both a language/semantic objective and an explicit no-inspection directive.
+    """
+
+    lower = _normalize_prompt(user_prompt).lower()
+    return _contains_any(lower, _META_SEMANTIC_MARKERS) and _contains_any(lower, _INSPECTION_FORBIDDEN_MARKERS)
+
+
+def workspace_metadata_subject(user_prompt: str) -> str | None:
+    lower = _normalize_prompt(user_prompt).lower()
+    if _contains_any(lower, _GIT_METADATA_MARKERS):
+        return "git_repository"
+    return None
 
 
 def _derive_objective(prompt: str, task_kind: TaskKind) -> str:
@@ -469,5 +581,7 @@ __all__ = [
     "TaskKind",
     "classify_task_kind",
     "generate_requirement_contract",
+    "is_inspection_forbidden",
     "render_contract_context",
+    "workspace_metadata_subject",
 ]
