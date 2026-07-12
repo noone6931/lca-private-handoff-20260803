@@ -91,6 +91,14 @@
     ],
     "requires_test_evidence": true,
     "max_tool_errors": 0,
+    "termination_reason": "final",
+    "delivery_checks": {
+      "passed": 4,
+      "pending": 0,
+      "failed": 0,
+      "blocked": 0,
+      "skipped": 0
+    },
     "command": "PYTHONPATH=. python3 -m unittest tests.test_math"
   },
   "residual_risk": "This evaluates a controlled anchored edit; it does not prove model selection quality for an ambiguous change."

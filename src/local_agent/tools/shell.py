@@ -71,8 +71,19 @@ def run_tests(args: dict[str, Any], context: ToolContext) -> ToolResult:
             "run_tests command looks like a Python test module, not an executable command. "
             f"Use `python3 -m unittest {command}` (and add PYTHONPATH=... when the project needs it).",
             is_error=True,
+            metadata={"executed_command": command, "execution_status": "not_run"},
         )
-    return _run_command(command, args, context, default_timeout=120)
+    result = _run_command(command, args, context, default_timeout=120)
+    return ToolResult(
+        result.content,
+        is_error=result.is_error,
+        useless=result.useless,
+        metadata={
+            **dict(result.metadata),
+            "executed_command": command,
+            "execution_status": "failed" if result.is_error else "succeeded",
+        },
+    )
 
 
 def run_shell(args: dict[str, Any], context: ToolContext) -> ToolResult:

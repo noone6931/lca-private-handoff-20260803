@@ -2106,6 +2106,47 @@ class AgentRuntimeTests(unittest.TestCase):
             skipped = next(item for item in runtime._run.verification_plan.items if item.id == "runtime-review")
             self.assertEqual(skipped.status, "skipped")
 
+    def test_terminal_delivery_report_is_appended_when_model_only_says_done(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=Path(tmp).resolve(),
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+            )
+            runtime = AgentRuntime(config, show_tool_logs=False)
+            runtime._run.verification_plan = VerificationPlan.from_contract(
+                generate_requirement_contract("修复 subtract 并运行测试。")
+            )
+            runtime._run.tool_choice_results = [
+                ToolResultSummary("read_file", "def subtract(a, b): return a + b", path="src/math.py"),
+                ToolResultSummary("apply_patch", "Applied patch", changed=True, path="src/math.py"),
+                ToolResultSummary(
+                    "run_tests",
+                    "OK",
+                    metadata={
+                        "executed_command": "PYTHONPATH=. python3 -m unittest tests.test_math",
+                        "execution_status": "succeeded",
+                    },
+                ),
+                ToolResultSummary("git_diff", "diff --git a/src/math.py b/src/math.py"),
+            ]
+            runtime._run.verification_plan.observe(runtime._run.tool_choice_results)
+            runtime._run.verification_plan.record_patch_review(passed=True, reason="review passed", refs=[])
+
+            result = runtime._finish_run("done", None, 0)
+
+        self.assertIn("done", result)
+        self.assertIn("[Runtime delivery report]", result)
+        self.assertIn("src/math.py", result)
+        self.assertIn("PYTHONPATH=. python3 -m unittest tests.test_math", result)
+        self.assertIn("passed=4", result)
+        self.assertIn("business_acceptance_unverified", result)
+
     def test_final_answer_steer_counts_reset_at_the_start_of_each_run(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             config = AgentConfig(

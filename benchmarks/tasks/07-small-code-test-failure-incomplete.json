@@ -19,8 +19,19 @@
     "required_tools": ["read_file", "apply_patch", "run_tests", "git_diff"],
     "changed_files": ["src/math.py"],
     "file_contains": {"src/math.py": "return a - b"},
-    "answer_contains": ["未完成"],
-    "delivery_checks": {"failed": 1},
+    "answer_contains": [
+      "未完成",
+      "src/math.py",
+      "PYTHONPATH=. python3 -m unittest tests.test_math"
+    ],
+    "termination_reason": "incomplete_delivery",
+    "delivery_checks": {
+      "passed": 3,
+      "pending": 0,
+      "failed": 1,
+      "blocked": 0,
+      "skipped": 0
+    },
     "max_tool_errors": 1
   },
   "residual_risk": "The scripted fixture verifies truthful incomplete delivery after a failed post-write test; it does not judge whether a live model can repair the failure."

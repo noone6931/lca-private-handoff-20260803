@@ -31,6 +31,7 @@ from .config import AgentConfig
 from .config import normalize_approval_mode
 from .design_evidence import FINAL_RESPONSE_RESERVE_SECONDS
 from .design_evidence import cross_root_design_evidence_roots
+from .delivery_report import render_delivery_report
 from .evidence import EvidenceRecord
 from .evidence import first_result_line_paths
 from .evidence import first_search_result_paths
@@ -2056,6 +2057,9 @@ class AgentRuntime:
             if incomplete_delivery:
                 content = incomplete_delivery
                 reason = "incomplete_delivery"
+        delivery_report = render_delivery_report(self._run.verification_plan, self._run.tool_choice_results)
+        if delivery_report:
+            content = f"{content.rstrip()}\n\n{delivery_report}"
         self._session.append("final", {"content": content})
         run_messages = self._messages[run_start_index:]
         if skip_memory_consolidation:
