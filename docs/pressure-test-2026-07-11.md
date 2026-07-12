@@ -476,3 +476,40 @@ LCA 将 RequirementContract 的业务 acceptance 保留为 `unverified` 信息�
 - 完整 unittest：**500/500**；`compileall`、`git diff --check` 通过；deterministic benchmark：**8/8**。
 - live synthetic 双轮：session `20260712T013348513387Z` / second run `13193d5bb817450eb7fb20c151850d85`，cache hit=1、0 tool error、termination=`final`。provider 仍主动执行两次 `read_file`，所以严格零工具 live acceptance 为 0/1；这是百炼工具选择效率样本，不是 cache 正确性失败。
 - 残余风险：缓存只在内存/当前 Runtime 生效，relevance 使用保守 token/上一轮关联；不缓存 negative/existence evidence，宁可重新搜索。后续若真实 follow-up 的重复读成本持续显著，再从 ToolChoiceQueue 的 active tools/turn ownership 观察，不以关键词硬禁工具。
+
+---
+
+# T-145 Epistemic Claim Taxonomy / Negative Evidence Stance（2026-07-12）
+
+## 触发样本与 OMP 对齐
+
+小牙 stable session `20260712T011400898209Z` / run `984902aaa5084111a62b6f50d0920a11` 中，模型表达“未发现 Java 源码，但这不等于证明 primary 无 Java”，旧的负向审计把该谨慎表述误判为绝对缺失，重开 discovery 并增加 finalization 长尾。
+
+本轮参考 OMP `packages/coding-agent/src/session/tool-choice-queue.ts` 的有界 pending owner，以及 `packages/agent/src/agent-loop.ts` 的 active-tool/continuation 生命周期：工具事实与 Runtime 状态决定是否继续，不由多个消费者各自扫描自然语言。LCA 没有复制 OMP 平台代码，而是在 `negative_evidence.py` 建立确定性的 clause-local parser。
+
+## Runtime 改动
+
+| 旧行为 | T-145 改动 | 证据政策 |
+|---|---|---|
+| “没有/未发现/no”短语一律按缺失处理 | 结构化为 `asserted_absence`、`observed_no_match`、`epistemically_qualified`、`quoted_or_hypothetical`，保留 subject、scope、support requirement 与 clause span。 | 只有 `asserted_absence` 可触发 complete discovery/Git evidence gate。 |
+| “不能运行测试，但该 root 没有 Java”容易被前半句 modal 吞掉 | clause-local 支配关系保留后半句实际断言。 | 仍需完整、未截断、scope-matched 的 `glob_files`/Git evidence。 |
+| “未发现 Java，但不等于证明没有 Java”、引用或假设也会补搜 | 限定、引用、示例、问题和假设不会升级为 absolute claim。 | 可陈述本次观察与范围；不因此强迫额外工具调用。 |
+| 负向证据策略分散在 steerer/audit | `NegativeExistenceSteerer` 与 CompletionAudit 共享 parser；session/RunSummary 记录 stance、blocked assertions、qualified skips。 | cached positive search/LSP、content no-match、截断结果不能支持 absolute absence；multi-root claim 要完整覆盖多个 root。 |
+
+## 验证
+
+- deterministic 回归：中文/英文限定语、引用/假设、无关 modal 后的真实断言、mixed claim、truncated/cached positive、multi-root scope 和 bounded steerer cap 均覆盖。
+- 全量 unittest：**510/510**；`compileall`、`git diff --check` 通过。
+- offline benchmark：**9/9**。新增 `qualified-negative-observation`：完整 `glob_files` 后的“未发现但不等于证明”自然结束，只有一次 discovery，不会触发 negative steerer。
+
+## 百炼 live 合成压测
+
+仅向百炼发送临时 fixture 的 `README.md` 和 benchmark 任务，不读取或发送企业源码。
+
+| session / run | Runtime taxonomy | 结果 | 指标与结论 |
+|---|---|---|---|
+| `20260712T020107510742Z` / `dd5a3da31f654088b5787f90db4cfce6` | `observed_no_match=1`，无 `negative_existence` steering | strict acceptance 未通过 | 5 LLM、3 tools、0 error、termination=`final`。百炼自行追加 `list_files` 和第二次 `glob_files`；CompletionAudit forced-final 后返回原始 XML tool-call 文本，未输出要求的最终谨慎结论。taxonomy 未回归，暴露的是 provider 探索效率与 forced-final 文本质量。 |
+
+## 后续候选
+
+T-146 候选：在不放松 hard evidence/CompletionAudit 的前提下，单独评估 forced-final 对 provider 原始 tool-markup 的结构化处理，以及 provider 已有充分 discovery 后的 active-tool 收束质量。该项不在本轮提前实现，需先积累更多合成或真实安全样本。
