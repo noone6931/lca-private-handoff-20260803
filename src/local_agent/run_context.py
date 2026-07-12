@@ -55,6 +55,7 @@ class RunContext:
     tool_choice_queue: ToolChoiceQueue = field(default_factory=ToolChoiceQueue)
     collector: RunCollector = field(default_factory=RunCollector)
     session_evidence_reuse: SessionEvidenceReuse = field(default_factory=SessionEvidenceReuse)
+    session_evidence_directive_emitted: bool = False
     user_facts_context: str = ""
     negative_claim_metrics: dict[str, int] = field(default_factory=dict)
 
@@ -163,6 +164,7 @@ class RunContext:
         self.final_answer_steers.clear()
         self.tool_loop_steering.reset()
         self.session_evidence_reuse = SessionEvidenceReuse()
+        self.session_evidence_directive_emitted = False
         self.user_facts_context = ""
         self.negative_claim_metrics.clear()
 

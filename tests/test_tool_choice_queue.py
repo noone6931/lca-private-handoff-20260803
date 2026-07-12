@@ -16,9 +16,36 @@ from local_agent.tool_choice_queue import POST_DIFF_REMEDIATION_TOOL_NAMES
 from local_agent.tool_choice_queue import ToolChoiceQueue
 from local_agent.tool_choice_queue import ToolResultSummary
 from local_agent.tool_choice_queue import evaluate_tool_choice_state
+from local_agent.tool_choice_queue import session_evidence_reuse_directive
 
 
 class ToolChoiceQueueTests(unittest.TestCase):
+    def test_session_evidence_reuse_is_a_soft_directive_not_a_schema_gate(self) -> None:
+        directive = session_evidence_reuse_directive(
+            [
+                ToolResultSummary(
+                    "read_file",
+                    "class App {}",
+                    path="/workspace/service/App.java",
+                    metadata={"evidence_origin": "session_cached"},
+                )
+            ]
+        )
+
+        self.assertIsNotNone(directive)
+        assert directive is not None
+        self.assertEqual(directive.kind, "session_evidence_reuse")
+        self.assertIn("advisory", directive.message)
+        self.assertIn("read_file", directive.message)
+        self.assertEqual(directive.paths, ("/workspace/service/App.java",))
+
+    def test_session_evidence_reuse_ignores_current_run_results(self) -> None:
+        self.assertIsNone(
+            session_evidence_reuse_directive(
+                [ToolResultSummary("read_file", "current", metadata={"evidence_origin": "current_run"})]
+            )
+        )
+
     def test_workspace_inventory_requires_path_discovery_before_answering(self) -> None:
         decision = evaluate_tool_choice_state(
             task_kind="read_only",

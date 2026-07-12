@@ -99,6 +99,28 @@ def _tool_choice_result_path(arguments: str | dict[str, Any], result: ToolResult
     return str(changed_path) if isinstance(changed_path, str) and changed_path.strip() else None
 
 
+def is_session_evidence_reread(
+    name: str,
+    arguments: str | dict[str, Any],
+    *,
+    workspace: Path,
+    allowed_dirs: tuple[Path, ...],
+    cached_paths: tuple[str, ...],
+) -> bool:
+    """Whether a normal tool execution revisits a freshly projected cache path."""
+
+    if name != "read_file" or not cached_paths:
+        return False
+    raw_path = _parse_tool_arguments(arguments).get("path")
+    if not isinstance(raw_path, str) or not raw_path.strip():
+        return False
+    try:
+        resolved = str(resolve_workspace_path(workspace, raw_path, allowed_dirs))
+    except PatchError:
+        return False
+    return resolved in cached_paths
+
+
 def _tool_call_uses_dry_run(arguments: str | dict[str, Any]) -> bool:
     if isinstance(arguments, dict):
         return bool(arguments.get("dry_run"))

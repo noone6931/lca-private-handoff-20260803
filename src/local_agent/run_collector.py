@@ -40,6 +40,8 @@ class RunStats:
     session_evidence_stale: int = 0
     session_evidence_invalidations: int = 0
     session_evidence_reused_paths: list[str] = field(default_factory=list)
+    session_evidence_directives: int = 0
+    session_evidence_model_rereads: int = 0
     tool_counts: dict[str, int] = field(default_factory=dict)
     guard_start: dict[str, int] = field(default_factory=dict)
     steer_start: dict[str, int] = field(default_factory=dict)
@@ -194,6 +196,14 @@ class RunCollector:
         if self._stats is not None and count > 0:
             self._stats.session_evidence_invalidations += count
 
+    def record_session_evidence_directive(self) -> None:
+        if self._stats is not None:
+            self._stats.session_evidence_directives += 1
+
+    def record_session_evidence_model_reread(self) -> None:
+        if self._stats is not None:
+            self._stats.session_evidence_model_rereads += 1
+
     def finish(
         self,
         reason: str,
@@ -247,6 +257,8 @@ class RunCollector:
                 "stale": stats.session_evidence_stale,
                 "invalidations": stats.session_evidence_invalidations,
                 "reused_paths": list(stats.session_evidence_reused_paths),
+                "directives": stats.session_evidence_directives,
+                "model_rereads": stats.session_evidence_model_rereads,
             },
             "tool_counts": dict(sorted(stats.tool_counts.items())),
             "guard_hits": {key: value for key, value in guard_hits.items() if value},

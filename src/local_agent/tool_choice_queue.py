@@ -302,6 +302,54 @@ class ToolChoiceDecision:
         return self.stop_message is not None
 
 
+@dataclass(frozen=True)
+class SoftToolDirective:
+    """A bounded turn reminder which never changes the active tool schema."""
+
+    kind: str
+    message: str
+    paths: tuple[str, ...] = ()
+
+
+def session_evidence_reuse_directive(
+    tool_results: Iterable[ToolResultSummary],
+) -> SoftToolDirective | None:
+    """Remind a follow-up turn that fresh cached evidence is already available.
+
+    This follows the OMP soft-tool-choice shape: it is an advisory turn
+    directive, not a schema restriction or a synthetic tool result. The model
+    remains free to re-read a file when it needs a fresher observation.
+    """
+
+    cached = [
+        result
+        for result in tool_results
+        if result.metadata.get("evidence_origin") == "session_cached"
+    ]
+    if not cached:
+        return None
+    paths: list[str] = []
+    descriptions: list[str] = []
+    for result in cached:
+        path = result.path or str(result.metadata.get("display_path") or "")
+        if path and path not in paths:
+            paths.append(path)
+        description = f"- {result.name}: {path or 'previous verified result'}"
+        if description not in descriptions:
+            descriptions.append(description)
+    return SoftToolDirective(
+        kind="session_evidence_reuse",
+        paths=tuple(paths),
+        message=(
+            "[Runtime session evidence reminder]\n"
+            "Fresh evidence from the immediately relevant earlier turn was revalidated for this request. "
+            "Reuse it before repeating the same read/search; call a tool again only when the current question needs "
+            "different scope or a new freshness check. This is advisory and does not restrict available tools.\n"
+            + "\n".join(descriptions[:6])
+        ),
+    )
+
+
 class RequiredToolGate:
     def evaluate(
         self,

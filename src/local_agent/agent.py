@@ -125,6 +125,7 @@ from .tools.relevance import path_matches_any
 from .tools.relevance import request_mentions_config_or_path
 from .tool_choice_queue import ToolChoiceDecision
 from .tool_choice_queue import ToolResultSummary
+from .tool_choice_queue import session_evidence_reuse_directive
 from .verification_timeline import workspace_write_happened
 from .user_facts import UserFactsLayer
 from .provider_context import ProviderContextMixin
@@ -180,6 +181,7 @@ from .tool_gateway import _display_read_file_range_key
 from .tool_gateway import _display_read_file_range_subject
 from .tool_gateway import _llm_failure_reason
 from .tool_gateway import _validate_runtime_tool_name
+from .tool_gateway import is_session_evidence_reread
 
 
 SYSTEM_PROMPT = """You are a local coding agent running inside a user's workspace.
@@ -449,6 +451,7 @@ class AgentRuntime(ProviderContextMixin):
         self._hydrate_session_evidence(prompt)
         self._record_verification_plan_snapshot("snapshot")
         self._messages.append({"role": "user", "content": model_prompt})
+        self._append_session_evidence_reuse_directive()
         self._session.append("user", {"content": prompt})
         self._events.emit("UserMessage", {"content": prompt})
         self._session.append(
@@ -1603,6 +1606,14 @@ class AgentRuntime(ProviderContextMixin):
 
     def _record_tool_choice_result(self, name: str, arguments: str | dict[str, Any], result: ToolResult) -> None:
         metadata = self._tool_choice_result_metadata(name, arguments, result)
+        if is_session_evidence_reread(
+            name,
+            arguments,
+            workspace=self._workspace_context.primary,
+            allowed_dirs=self._workspace_context.additional_roots,
+            cached_paths=self._run.session_evidence_reuse.reused_paths,
+        ):
+            self._run.collector.record_session_evidence_model_reread()
         self._run.tool_choice_tool_names.append(name)
         self._run.tool_choice_tool_names = self._run.tool_choice_tool_names[-80:]
         self._run.tool_choice_results.append(
@@ -1804,6 +1815,24 @@ class AgentRuntime(ProviderContextMixin):
                     "reused_paths": [self._display_session_evidence_path(path) for path in reuse.reused_paths],
                 },
             )
+
+    def _append_session_evidence_reuse_directive(self) -> None:
+        if self._run.session_evidence_directive_emitted:
+            return
+        directive = session_evidence_reuse_directive(self._run.tool_choice_results)
+        if directive is None:
+            return
+        self._run.session_evidence_directive_emitted = True
+        self._messages.append({"role": "user", "content": directive.message})
+        self._run.collector.record_session_evidence_directive()
+        self._session.append(
+            "runtime_steering",
+            {"kind": directive.kind, "paths": list(directive.paths)},
+        )
+        self._events.emit(
+            "ContextUpdated",
+            {"kind": directive.kind, "paths": list(directive.paths)},
+        )
 
     def _record_session_evidence_event(self, event: str, payload: Mapping[str, Any]) -> None:
         data = {"event": event, **dict(payload)}
