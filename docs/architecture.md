@@ -279,7 +279,7 @@ T-141 进一步把黑盒 multi-root finalization 的 owner 和 provenance 问题
 - `chat_runtime.py` 为 provider `.chat(...)` 增加外层 timeout；普通与 forced-final 的主请求 `LlmError` 都经 terminal closure 写出 `final`、`run_summary`、`SessionFinished`，并区分 `llm_timeout` / `provider_error`。底层阻塞 worker 为 daemon，Runtime 可返回但不能在 Python 内强杀该 worker。
 - `EvidenceLedger` / `ToolChoiceResult` / final steerers 对 path-based 证据保留 `root` + `scope` provenance；pinned requirement 也带相同归属。primary 的文档证据默认不跨 root 外推。
 - provider 调用 active schema 外工具仍会被拒绝执行，但现在单独记为 `provider_schema_violation`，不再和普通 tool error 混在一起。
-- T-146 将 forced-final 进一步定义为 terminal-only：该 turn 的 active tools 为空；若 provider 仍回传 structured `tool_calls`，或百炼兼容层把完整 `<tool_call><function=…>` 信封塞进 content，Runtime 不执行、不回显原始参数，写脱敏 `provider_protocol_violation` / RunSummary 后结束。普通阶段的合法 tool call 与代码围栏/XML 示例不受影响。该边界借鉴 OMP 每 turn 的 active-tool / toolChoice owner 以及未执行 tool result 的显式终态处理，不复制其平台代码。
+- T-146/T-147 将 forced-final 定义为 terminal-only：该 turn 的 active tools 为空；若 provider 仍回传 structured `tool_calls`，或百炼兼容层把完整、未围栏 `<tool_call><function=…>` 信封塞进 content，Runtime 不执行、不回显原始参数，写脱敏 `provider_protocol_violation` / RunSummary 后结束。普通 phase 的正常 structured tool call 仍可执行，但已分类的 text envelope 以 `provider_protocol_violation` 终止，不会静默作为最终文本展示；代码围栏/XML 示例保持原样。该边界借鉴 OMP 每 turn 的 active-tool / toolChoice owner 以及未执行 tool result 的显式终态处理，不复制其平台代码。
 
 当前还有两类人工上下文文件：
 

@@ -534,3 +534,25 @@ OMP 的 `agent-loop.ts` 在每个 logical turn 只解析一次 active tool-choic
 | `20260712T030231154898Z` / `06186df00300400c98f418595a891fb8` | 未复现 markup，正常 final | 21,179 ms、3 LLM、1 `read_file`、0 tool error、`finalization_attempts=1`、`forced_final_protocol_violations=0` | provider 在无工具 final turn 直接给出正常表格答案；live acceptance 不再要求必须复现违规。该次只发送临时 fixture README，未读取企业源码。 |
 
 残余风险：目前只识别已观测的百炼 XML 信封，其他 provider-specific text protocol 会保持原样并由后续安全样本决定是否扩展；normal final 不代表 provider 在其他模型/版本上不会再次违规。T-146 不发布 stable，等待独立 review。
+
+## T-147 Evidence Intent / Metadata Audit Closure（2026-07-12）
+
+### 触发样本与根因
+
+stable 黑盒样本显示三类同源问题：模型可以在没有 tool result 时说“我检查后未发现 Java”；只要求解释引号内句子语义、并明确禁止检查仓库的任务，会被 `源码`/`Java` 等词触发 read-only evidence queue；primary `git_status` 的 `git_repository=false` 结构化结果则会被 CompletionAudit 错当成缺 read/search/LSP 证据。它们都不是业务关键词问题，而是 intent、claim 和 evidence owner 没有对齐。
+
+### 修复与 OMP 对齐
+
+- `RequirementContract` 增加 semantic-only `inspection_forbidden` 状态。它要求同时出现语义目标和明确 no-inspection 指令；ToolChoiceQueue、active schema、soft requirement、cross-root design coverage 与 CompletionAudit 都消费同一状态。用户若同时要求仓库事实，Runtime 不会检查，而是要求把该事实标为未验证。
+- `negative_evidence.py` 把 bare observed Java（例如“检查后未发现 Java”“Java 相关文件/代码未发现”）解析为 `observed_no_match`；它需要本轮、同 root、匹配 discovery evidence 才能结束。绝对“没有 Java”继续要求文件/root scope，Java 经验、依赖与版本要求不进入文件 taxonomy。
+- ToolUsageEvidence 识别“已调用/使用/检查/查找工具并得到结果”的虚构工具证据，也识别明确 no-run 与建议语，避免两者互相误伤。
+- Git repository 属于 primary workspace metadata owner：结构化 `git_status` non-repository 结果可以完成 Git-specific read-only contract；generic Git execution error 或 additional root 结论仍保持未验证，additional root 仍需 `/move`。
+- T-146 复审同时收紧普通 phase：已识别的完整、未围栏百炼 XML tool envelope 不会再静默作为普通答案展示，而是 `provider_protocol_violation`；fenced/quoted XML 与正常 structured tool-call phase 不受影响。该做法延续 OMP 的 active-tool / turn-owner 边界，不复制其 UI 或平台层。
+
+### 验证
+
+- 全量 unittest：**538/538**；`compileall`、`git diff --check` 通过。
+- offline benchmark：**11/11**。新增 `bare-observed-no-match`：模型先给无工具“检查后未发现 Java”，Runtime 必须先取得 `glob_files` 完整 no-match 才能 natural final。
+- 未重复调用百炼 live；本批 deterministic 覆盖三组 stable 黑盒语义，避免为措辞质量重复刷外部 API。T-147 不发布 stable，等待独立 review。
+
+残余风险：semantic-only intent 仍是保守、有限的规则识别，不做 NLP judge；未识别的 provider-specific protocol text 继续保持原样，只有被严格 adapter grammar 识别的 envelope 才会被 terminal policy 拦截。
