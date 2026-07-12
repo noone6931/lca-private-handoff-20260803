@@ -1,0 +1,52 @@
+{
+  "id": "bare-observed-no-match",
+  "title": "Bare observed Java no-match requires real discovery evidence",
+  "prompt": "只读确认当前 workspace 是否有 Java 文件，不要修改文件。",
+  "budget_seconds": 90,
+  "workspace_files": {
+    "README.md": "# Documentation-only fixture\n"
+  },
+  "scripted_responses": [
+    {
+      "content": "我检查后未发现 Java。"
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "glob_files",
+          "arguments": {
+            "paths": [
+              "**/*.java"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "content": "已验证：glob_files 在当前完整扫描范围未发现 Java 文件；该观察仅覆盖本次 workspace scope。"
+    }
+  ],
+  "acceptance": {
+    "required_tools": [
+      "glob_files"
+    ],
+    "forbidden_tools": [
+      "apply_patch",
+      "write_file",
+      "shell",
+      "run_tests"
+    ],
+    "changed_files": [],
+    "answer_contains": [
+      "glob_files",
+      "workspace scope"
+    ],
+    "termination_reason": "final",
+    "run_summary": {
+      "tool_calls": 1,
+      "tool_errors": 0
+    },
+    "max_tool_errors": 0
+  },
+  "residual_risk": "The fixture proves that an observed no-match cannot finalize without matching discovery evidence; live wording and tool-selection behavior remain provider-dependent."
+}

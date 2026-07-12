@@ -56,8 +56,14 @@
     },
     "live": {
       "answer_contains": [],
-      "termination_reason": null,
-      "run_summary": null
+      "termination_reason_any_of": [
+        "final",
+        "forced_final_protocol_violation"
+      ],
+      "run_summary": {
+        "tool_calls": 1,
+        "tool_errors": 0
+      }
     },
     "max_tool_errors": 0
   },

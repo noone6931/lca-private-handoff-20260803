@@ -45,6 +45,8 @@ from .llm import LlmError
 from .llm import LlmTimeoutError
 from .llm import OpenAICompatibleClient
 from .provider_protocol import ProviderProtocolArtifact
+from .provider_protocol import protocol_violation_message
+from .provider_protocol import protocol_violation_payload
 from .provider_protocol import classify_provider_content_artifact
 from .lsp.client import close_all_clients
 from .negative_evidence import negative_claim_metrics as _negative_claim_metrics
@@ -493,18 +495,20 @@ class AgentRuntime:
             if artifact is None:
                 artifact = classify_provider_content_artifact(self._config.provider, raw_message.get("content"))
             if force_final_answer and isinstance(raw_tool_calls, list) and raw_tool_calls:
-                return self._stop_for_forced_final_protocol_violation(
+                return self._stop_for_provider_protocol_violation(
                     deadline,
                     run_start_index,
+                    phase="forced_final",
                     forced_final_kind=forced_final_kind or "runtime_forced_final",
                     artifact_kind="structured_tool_calls",
                     tool_calls=raw_tool_calls,
                 )
-            if force_final_answer and isinstance(artifact, ProviderProtocolArtifact):
-                return self._stop_for_forced_final_protocol_violation(
+            if isinstance(artifact, ProviderProtocolArtifact):
+                return self._stop_for_provider_protocol_violation(
                     deadline,
                     run_start_index,
-                    forced_final_kind=forced_final_kind or "runtime_forced_final",
+                    phase="forced_final" if force_final_answer else "ordinary",
+                    forced_final_kind=(forced_final_kind or "runtime_forced_final") if force_final_answer else None,
                     artifact_kind=artifact.kind,
                     artifact=artifact,
                 )
@@ -1164,13 +1168,15 @@ class AgentRuntime:
     def _record_synthetic_tool_result_for_run(self) -> None:
         self._run.collector.record_synthetic_tool_result()
 
-    def _record_forced_final_protocol_violation_for_run(
+    def _record_provider_protocol_violation_for_run(
         self,
         *,
+        phase: str,
         artifact_kind: str,
         suppressed_tool_calls: int,
     ) -> None:
-        self._run.collector.record_forced_final_protocol_violation(
+        self._run.collector.record_provider_protocol_violation(
+            phase=phase,
             artifact_kind=artifact_kind,
             suppressed_tool_calls=suppressed_tool_calls,
         )
@@ -1563,52 +1569,45 @@ class AgentRuntime:
             skip_memory_consolidation=True,
         )
 
-    def _stop_for_forced_final_protocol_violation(
+    def _stop_for_provider_protocol_violation(
         self,
         deadline: float | None,
         run_start_index: int,
         *,
-        forced_final_kind: str,
+        phase: str,
+        forced_final_kind: str | None,
         artifact_kind: str,
         tool_calls: list[object] = (),
         artifact: ProviderProtocolArtifact | None = None,
     ) -> str:
-        outcome = self._run.finalization.reject_forced_final_protocol_response(
-            artifact_kind=artifact_kind,
-            suppressed_tool_calls=len(tool_calls),
-        )
-        self._record_forced_final_protocol_violation_for_run(
-            artifact_kind=artifact_kind,
-            suppressed_tool_calls=len(tool_calls),
-        )
-        payload: dict[str, Any] = {
-            "phase": "forced_final",
-            "kind": artifact_kind,
-            "steering_kind": forced_final_kind or outcome.steering_kind,
-            "suppressed_tool_calls": len(tool_calls),
-        }
-        if artifact is not None:
-            payload.update(
-                {
-                    "tool_name": artifact.tool_name,
-                    "parameter_names": list(artifact.parameter_names),
-                    "preview": artifact.preview,
-                }
+        outcome = (
+            self._run.finalization.reject_forced_final_protocol_response(
+                artifact_kind=artifact_kind,
+                suppressed_tool_calls=len(tool_calls),
             )
-        elif tool_calls:
-            payload["tool_names"] = _bounded_tool_call_names(tool_calls)
-        self._session.append("provider_protocol_violation", payload)
-        self._events.emit("ErrorEvent", {"kind": "forced_final_protocol_violation", **payload})
-        content = (
-            "未完成/未验证：模型在无工具的最终收束阶段返回了工具协议内容。"
-            "Runtime 未执行其中的工具调用，也未将该协议内容作为最终答复展示；"
-            "请重试或检查 provider 的 tool-calling 兼容性。"
+            if phase == "forced_final"
+            else None
         )
+        self._record_provider_protocol_violation_for_run(
+            phase=phase,
+            artifact_kind=artifact_kind,
+            suppressed_tool_calls=len(tool_calls),
+        )
+        payload = protocol_violation_payload(
+            phase=phase,
+            artifact_kind=artifact_kind,
+            steering_kind=forced_final_kind or (outcome.steering_kind if outcome is not None else None),
+            tool_calls=tool_calls,
+            artifact=artifact,
+        )
+        self._session.append("provider_protocol_violation", payload)
+        reason = "forced_final_protocol_violation" if phase == "forced_final" else "provider_protocol_violation"
+        self._events.emit("ErrorEvent", {"kind": reason, **payload})
         return self._finish_run(
-            content,
+            protocol_violation_message(phase=phase),
             deadline,
             run_start_index,
-            reason="forced_final_protocol_violation",
+            reason=reason,
             skip_memory_consolidation=True,
             preserve_terminal_content=True,
         )
@@ -2653,20 +2652,6 @@ def _assistant_event_payload(message: dict[str, Any]) -> dict[str, Any]:
         "content": message.get("content") or "",
         "tool_calls": [_tool_call_event_payload(tool_call) for tool_call in tool_calls if isinstance(tool_call, dict)],
     }
-
-
-def _bounded_tool_call_names(tool_calls: list[object], *, limit: int = 8) -> list[str]:
-    names: list[str] = []
-    for tool_call in tool_calls:
-        if not isinstance(tool_call, Mapping):
-            continue
-        function = tool_call.get("function")
-        name = function.get("name") if isinstance(function, Mapping) else None
-        if isinstance(name, str) and name and name not in names:
-            names.append(name)
-        if len(names) >= limit:
-            break
-    return names
 
 
 def _provider_safe_assistant_message(message: dict[str, Any]) -> dict[str, Any]:

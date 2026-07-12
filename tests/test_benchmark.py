@@ -19,7 +19,7 @@ class BenchmarkTests(unittest.TestCase):
         tasks = load_benchmark_tasks()
         identifiers = {task.identifier for task in tasks}
 
-        self.assertEqual(len(tasks), 10)
+        self.assertEqual(len(tasks), 11)
         self.assertEqual(
             identifiers,
             {
@@ -33,6 +33,7 @@ class BenchmarkTests(unittest.TestCase):
                 "session-evidence-followup",
                 "qualified-negative-observation",
                 "forced-final-protocol-artifact",
+                "bare-observed-no-match",
             },
         )
         self.assertTrue(DEFAULT_TASKS_DIR.is_dir())
@@ -44,9 +45,9 @@ class BenchmarkTests(unittest.TestCase):
             payload = json.loads((output_dir / "benchmark-report.json").read_text(encoding="utf-8"))
             markdown = (output_dir / "benchmark-report.md").read_text(encoding="utf-8")
 
-        self.assertEqual(len(results), 10)
+        self.assertEqual(len(results), 11)
         self.assertTrue(all(result.passed for result in results))
-        self.assertEqual(payload["passed"], 10)
+        self.assertEqual(payload["passed"], 11)
         self.assertEqual(payload["failed"], 0)
         self.assertIn("small-code-change-test-diff", markdown)
         self.assertIn("budget-exhausted-incomplete", markdown)
@@ -54,6 +55,7 @@ class BenchmarkTests(unittest.TestCase):
         self.assertIn("session-evidence-followup", markdown)
         self.assertIn("qualified-negative-observation", markdown)
         self.assertIn("forced-final-protocol-artifact", markdown)
+        self.assertIn("bare-observed-no-match", markdown)
 
     def test_mapping_acceptance_requires_explicit_metric_values(self) -> None:
         from local_agent.benchmark import _mapping_integer_values_match
@@ -77,8 +79,8 @@ class BenchmarkTests(unittest.TestCase):
                 "当前 primary workspace 不存在 Java 源码，结论只覆盖当前 primary。",
             )
         )
-        self.assertNotIn("termination_reason", forced_final)
-        self.assertNotIn("run_summary", forced_final)
+        self.assertEqual(forced_final["termination_reason_any_of"], ["final", "forced_final_protocol_violation"])
+        self.assertEqual(forced_final["run_summary"], {"tool_calls": 1, "tool_errors": 0})
 
     def test_report_includes_bounded_diagnostics_and_run_identity(self) -> None:
         result = BenchmarkResult(

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import Any
 
 
 _BAILIAN_PROVIDER_NAMES = frozenset({"bailian", "bailian-intl", "dashscope", "aliyun"})
@@ -29,9 +31,9 @@ def classify_provider_content_artifact(
 ) -> ProviderProtocolArtifact | None:
     """Classify only a complete known Bailian XML tool envelope.
 
-    This deliberately does not strip or rewrite content. Callers decide whether
-    the current phase treats a classified envelope as a protocol violation or
-    leaves it as ordinary user-visible text.
+    This deliberately does not strip or rewrite content. The Runtime owns the
+    phase policy: a classified envelope is a provider protocol violation rather
+    than ordinary user-visible text, while fenced/quoted XML stays untouched.
     """
     if provider.strip().lower() not in _BAILIAN_PROVIDER_NAMES or not isinstance(content, str):
         return None
@@ -60,6 +62,66 @@ def classify_provider_content_artifact(
     )
 
 
+def bounded_tool_call_names(tool_calls: list[object], *, limit: int = 8) -> list[str]:
+    """Return only structural names; never retain provider argument values."""
+
+    names: list[str] = []
+    for tool_call in tool_calls:
+        if not isinstance(tool_call, Mapping):
+            continue
+        function = tool_call.get("function")
+        name = function.get("name") if isinstance(function, Mapping) else None
+        if isinstance(name, str) and name and name not in names:
+            names.append(name)
+        if len(names) >= limit:
+            break
+    return names
+
+
+def protocol_violation_payload(
+    *,
+    phase: str,
+    artifact_kind: str,
+    steering_kind: str | None = None,
+    tool_calls: list[object] = (),
+    artifact: ProviderProtocolArtifact | None = None,
+) -> dict[str, Any]:
+    """Build redacted telemetry for an adapter-recognized protocol violation."""
+
+    payload: dict[str, Any] = {
+        "phase": phase,
+        "kind": artifact_kind,
+        "suppressed_tool_calls": len(tool_calls),
+    }
+    if steering_kind:
+        payload["steering_kind"] = steering_kind
+    if artifact is not None:
+        payload.update(
+            {
+                "tool_name": artifact.tool_name,
+                "parameter_names": list(artifact.parameter_names),
+                "preview": artifact.preview,
+            }
+        )
+    elif tool_calls:
+        payload["tool_names"] = bounded_tool_call_names(tool_calls)
+    return payload
+
+
+def protocol_violation_message(*, phase: str) -> str:
+    if phase == "forced_final":
+        return (
+            "未完成/未验证：模型在无工具的最终收束阶段返回了工具协议内容。"
+            "Runtime 未执行其中的工具调用，也未将该协议内容作为最终答复展示；"
+            "请重试或检查 provider 的 tool-calling 兼容性。"
+        )
+    return (
+        "未完成/未验证：provider 将已识别的工具协议内容放进普通文本响应。"
+        "Runtime 未执行其中的工具调用，也未将该协议内容作为最终答复展示；"
+        "请重试或检查 provider 的 tool-calling 兼容性。"
+    )
+
+
 def _inside_fenced_code(content: str, position: int) -> bool:
     return content[:position].count("```") % 2 == 1
 
@@ -69,4 +131,10 @@ def _structural_preview(tool_name: str, parameter_names: tuple[str, ...]) -> str
     return f"<tool_call><function={tool_name}>{parameters}</function></tool_call>"
 
 
-__all__ = ["ProviderProtocolArtifact", "classify_provider_content_artifact"]
+__all__ = [
+    "ProviderProtocolArtifact",
+    "bounded_tool_call_names",
+    "classify_provider_content_artifact",
+    "protocol_violation_message",
+    "protocol_violation_payload",
+]

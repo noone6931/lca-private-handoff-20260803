@@ -3036,6 +3036,38 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertEqual(result, sample)
         self.assertEqual(runtime._last_run_summary["forced_final_protocol_violations"], 0)
 
+    def test_recognized_bailian_tool_envelope_is_not_shown_as_a_normal_final_answer(self) -> None:
+        sample = (
+            "I need one more check.\n<tool_call>\n<function=read_file>\n"
+            "<parameter=path>should-not-appear.py</parameter>\n</function>\n</tool_call>"
+        )
+        _ForcedFinalProtocolClient.calls = []
+        _ForcedFinalProtocolClient.mode = "markup"
+        _ForcedFinalProtocolClient.first_content = sample
+        with tempfile.TemporaryDirectory() as tmp:
+            sink = ListEventSink()
+            config = AgentConfig(
+                provider="bailian",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=Path(tmp).resolve(),
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _ForcedFinalProtocolClient):
+                runtime = AgentRuntime(config, show_tool_logs=False, event_sink=sink)
+                result = runtime.run("请回答当前状态。")
+
+        self.assertIn("未完成/未验证", result)
+        self.assertNotIn("<tool_call>", result)
+        self.assertEqual(len(_ForcedFinalProtocolClient.calls), 1)
+        self.assertFalse(any(event.type == "ToolStarted" for event in sink.events))
+        self.assertEqual(runtime._last_run_summary["termination_reason"], "provider_protocol_violation")
+        self.assertEqual(runtime._last_run_summary["provider_protocol_violations"], 1)
+        self.assertEqual(runtime._last_run_summary["forced_final_protocol_violations"], 0)
+
     def test_fenced_xml_example_remains_visible_during_forced_final(self) -> None:
         sample = "```xml\n<tool_call><function=read_file><parameter=path>example.py</parameter></function></tool_call>\n```"
         _ForcedFinalProtocolClient.calls = []

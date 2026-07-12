@@ -519,6 +519,12 @@ def _evaluate_acceptance(
     if isinstance(expected_reason, str):
         actual_reason = str((runtime._last_run_summary or {}).get("termination_reason") or "")
         checks.append(_check("termination_reason", actual_reason == expected_reason, expected_reason, actual_reason))
+    expected_reasons = _string_list(acceptance.get("termination_reason_any_of"))
+    if expected_reasons:
+        actual_reason = str((runtime._last_run_summary or {}).get("termination_reason") or "")
+        checks.append(
+            _check("termination_reason_any_of", actual_reason in expected_reasons, expected_reasons, actual_reason)
+        )
     max_errors = acceptance.get("max_tool_errors")
     if isinstance(max_errors, int):
         actual_errors = int((runtime._last_run_summary or {}).get("tool_errors") or 0)
