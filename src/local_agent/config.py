@@ -85,7 +85,7 @@ def load_config(
     # Keep provider credentials outside both a project checkout and a stable
     # release snapshot. setdefault preserves explicit process/CLI values.
     _load_dotenv(_resolve_env_file(env_file, workspace), required=env_file is not None)
-    _load_dotenv(default_config_root() / ".env")
+    _load_dotenv(_implicit_user_env_file())
     _load_dotenv(workspace / ".env")
 
     resolved_provider = _resolve_provider(provider or file_config.get("provider"))
@@ -350,6 +350,25 @@ def _load_dotenv(path: Path | None, *, required: bool = False) -> None:
             if not key or not all(char.isalnum() or char == "_" for char in key):
                 continue
             os.environ.setdefault(key, _strip_env_quotes(value.strip()))
+
+
+def _implicit_user_env_file() -> Path | None:
+    """Return the default user config env only when the process configured a home/config root.
+
+    Tests and release gates often run with ``patch.dict(os.environ, clear=True)``.
+    In that mode we should not fall back to the passwd home directory and
+    silently load a developer's real ``~/.config/local-coding-agent/.env``.
+    Normal interactive shells still set HOME (or AGENT_CONFIG_DIR /
+    XDG_CONFIG_HOME), so stable/dev runtime behavior remains unchanged.
+    """
+
+    if os.environ.get("AGENT_CONFIG_DIR"):
+        return default_config_root() / ".env"
+    if os.environ.get("XDG_CONFIG_HOME"):
+        return default_config_root() / ".env"
+    if os.environ.get("HOME"):
+        return default_config_root() / ".env"
+    return None
 
 
 def _strip_env_quotes(value: str) -> str:
