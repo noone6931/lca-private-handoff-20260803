@@ -4,8 +4,9 @@ from dataclasses import dataclass
 from dataclasses import replace
 from pathlib import Path
 import hashlib
+import json
 import re
-from typing import Iterable, Mapping
+from typing import Any, Iterable, Mapping
 
 from .evidence import EvidenceRecord
 from .requirement_evidence import RequirementEvidence
@@ -241,6 +242,65 @@ class SessionEvidenceCache:
             "invalidations": self._invalidations,
             "paths": list(_cached_paths(self._entries)),
         }
+
+
+def query_identity(
+    name: str,
+    arguments: str | Mapping[str, Any],
+    *,
+    canonical_path: str | None = None,
+) -> str:
+    """Stable semantic identity for replacing duplicate cross-run observations."""
+    parsed = _parse_arguments(arguments)
+    if name == "read_file":
+        fields = {
+            "path": canonical_path or str(parsed.get("path") or ""),
+            "start_line": _positive_int_or_default(parsed.get("start_line"), default=1),
+            "end_line": _optional_positive_int(parsed.get("end_line")),
+        }
+    elif name == "search_code":
+        fields = {
+            "path": canonical_path or str(parsed.get("path") or ""),
+            "pattern": str(parsed.get("pattern") or ""),
+            "max_results": _optional_positive_int(parsed.get("max_results")),
+        }
+    elif name.startswith("lsp_"):
+        fields = {
+            key: (canonical_path if key == "path" and canonical_path else parsed.get(key))
+            for key in ("path", "symbol", "query", "line", "character", "max_results")
+            if key in parsed
+        }
+    else:
+        fields = parsed
+    return json.dumps({"tool": name, "arguments": fields}, ensure_ascii=False, sort_keys=True, default=str)
+
+
+def _parse_arguments(arguments: str | Mapping[str, Any]) -> dict[str, Any]:
+    if isinstance(arguments, Mapping):
+        return dict(arguments)
+    try:
+        parsed = json.loads(arguments or "{}")
+    except json.JSONDecodeError:
+        return {}
+    return dict(parsed) if isinstance(parsed, Mapping) else {}
+
+
+def _positive_int_or_default(value: Any, *, default: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed > 0 else default
+
+
+def _optional_positive_int(value: Any) -> int | None:
+    if value is None or value == "":
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
 
 
 def _content_tags_for(
