@@ -159,7 +159,7 @@ class SessionEvidenceCache:
         if requirement_evidence is not None:
             requirement_evidence = replace(requirement_evidence, origin="current_run")
         entry = CachedEvidenceEntry(
-            entry_id=_entry_id(run_id, normalized_summary, content_tags),
+            entry_id=_entry_id(normalized_summary, normalized_record, content_tags),
             tool_result=normalized_summary,
             record=normalized_record,
             source_evidence=source_evidence,
@@ -367,8 +367,17 @@ def _evidence_tokens(
     return _meaningful_tokens(material)
 
 
-def _entry_id(run_id: str, result: ToolResultSummary, tags: Mapping[str, str]) -> str:
-    payload = f"{run_id}|{result.name}|{result.path}|{sorted(tags.items())}"
+def _entry_id(result: ToolResultSummary, record: EvidenceRecord, tags: Mapping[str, str]) -> str:
+    """Identify a logical observation across runs, not one specific execution."""
+    query_identity = result.metadata.get("session_evidence_query_identity")
+    fallback_identity = (result.path or "", record.subject)
+    payload = repr(
+        (
+            result.name,
+            query_identity if isinstance(query_identity, str) else fallback_identity,
+            tuple(sorted(tags)),
+        )
+    )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:20]
 
 

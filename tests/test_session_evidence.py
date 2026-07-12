@@ -300,6 +300,60 @@ class SessionEvidenceCacheTests(unittest.TestCase):
         self.assertNotIn("service-b 是 Python", unrelated)
         self.assertIn("run-d", unrelated)
 
+    def test_prior_user_context_normalizes_workflow_nudge_and_stays_bounded(self) -> None:
+        facts = UserFactsLayer()
+        prior = "请记住 service-b 是 Python"
+        facts.begin_run(prior, "run-a")
+        facts.begin_run("service-b 呢？", "run-b")
+
+        projected = facts.render_relevant_prior_user_context("service-b 呢？", retained_user_contents=())
+        retained = facts.render_relevant_prior_user_context(
+            "service-b 呢？",
+            retained_user_contents=(prior + "\n\n[Runtime workflow reminder]\nworkflow",),
+        )
+
+        self.assertIn(prior, projected)
+        self.assertEqual(retained, "")
+
+    def test_semantic_dedupe_replaces_repeated_observation_and_keeps_distinct_ranges(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            source = root / "a.py"
+            source.write_text("one\ntwo\n", encoding="utf-8")
+            runtime = AgentRuntime(_config(root), show_tool_logs=False)
+            result = ToolResult(source.read_text(encoding="utf-8"))
+            implicit = runtime._tool_choice_result_metadata("read_file", {"path": "a.py"}, result)
+            explicit_first = runtime._tool_choice_result_metadata("read_file", {"path": "a.py", "start_line": 1}, result)
+            second_line = runtime._tool_choice_result_metadata("read_file", {"path": "a.py", "start_line": 2}, result)
+            self.assertEqual(implicit["session_evidence_query_identity"], explicit_first["session_evidence_query_identity"])
+            self.assertNotEqual(implicit["session_evidence_query_identity"], second_line["session_evidence_query_identity"])
+            cache = SessionEvidenceCache()
+            _capture_read(cache, root, source, request="inspect a.py", run_id="run-a", metadata=implicit)
+            _capture_read(cache, root, source, request="inspect a.py", run_id="run-b", metadata=implicit)
+            self.assertEqual(cache.snapshot()["entries"], 1)
+            _capture_read(cache, root, source, request="inspect a.py line 2", run_id="run-c", metadata=second_line)
+            self.assertEqual(cache.snapshot()["entries"], 2)
+            cache.remember_request("inspect a.py", "run-c")
+            reuse = cache.reuse_for_request(prompt="inspect a.py", workspace_revision=0, authorized_roots=(root,))
+
+        self.assertEqual(reuse.hit_count, 2)
+
+    def test_relative_and_absolute_reads_share_a_canonical_dedupe_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            source = root / "a.py"
+            source.write_text("VALUE = 1\n", encoding="utf-8")
+            runtime = AgentRuntime(_config(root), show_tool_logs=False)
+            result = ToolResult(source.read_text(encoding="utf-8"))
+            relative = runtime._tool_choice_result_metadata("read_file", {"path": "a.py"}, result)
+            absolute = runtime._tool_choice_result_metadata("read_file", {"path": str(source)}, result)
+            self.assertEqual(relative["session_evidence_query_identity"], absolute["session_evidence_query_identity"])
+            cache = SessionEvidenceCache()
+            _capture_read(cache, root, source, request="inspect a.py", run_id="run-a", metadata=relative, path="a.py")
+            _capture_read(cache, root, source, request="inspect a.py", run_id="run-b", metadata=absolute, path=str(source))
+
+        self.assertEqual(cache.snapshot()["entries"], 1)
+
     def test_unrelated_cached_module_is_not_reused_as_code_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp).resolve()
@@ -329,14 +383,23 @@ def _cache_read(
     return cache
 
 
-def _capture_read(cache: SessionEvidenceCache, cache_root: Path, source: Path, *, request: str, run_id: str) -> None:
+def _capture_read(
+    cache: SessionEvidenceCache,
+    cache_root: Path,
+    source: Path,
+    *,
+    request: str,
+    run_id: str,
+    metadata: dict[str, object] | None = None,
+    path: str | None = None,
+) -> None:
     display = str(source.relative_to(cache_root))
     source_evidence = SourceEvidence(display, source.read_text(encoding="utf-8"), root=str(cache_root))
     result = ToolResultSummary(
         "read_file",
         source_evidence.content,
-        path=display,
-        metadata={"evidence_root": str(cache_root), "evidence_paths": [display]},
+        path=path or display,
+        metadata={"evidence_root": str(cache_root), "evidence_paths": [display], **(metadata or {})},
     )
     record = EvidenceRecord(
         "read_file",
@@ -352,4 +415,17 @@ def _capture_read(cache: SessionEvidenceCache, cache_root: Path, source: Path, *
         workspace_revision=0,
         request=request,
         run_id=run_id,
+    )
+
+
+def _config(workspace: Path) -> AgentConfig:
+    return AgentConfig(
+        provider="openai-compatible",
+        api_base_url="https://example.invalid/v1",
+        api_key="token",
+        model="model",
+        workspace=workspace,
+        max_steps=0,
+        budget_seconds=None,
+        approval_mode="yolo",
     )
