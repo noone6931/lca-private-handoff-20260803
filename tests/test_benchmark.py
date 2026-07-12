@@ -19,7 +19,7 @@ class BenchmarkTests(unittest.TestCase):
         tasks = load_benchmark_tasks()
         identifiers = {task.identifier for task in tasks}
 
-        self.assertEqual(len(tasks), 7)
+        self.assertEqual(len(tasks), 8)
         self.assertEqual(
             identifiers,
             {
@@ -30,6 +30,7 @@ class BenchmarkTests(unittest.TestCase):
                 "denied-tool-schema",
                 "budget-exhausted-incomplete",
                 "small-code-test-failure-incomplete",
+                "session-evidence-followup",
             },
         )
         self.assertTrue(DEFAULT_TASKS_DIR.is_dir())
@@ -41,13 +42,21 @@ class BenchmarkTests(unittest.TestCase):
             payload = json.loads((output_dir / "benchmark-report.json").read_text(encoding="utf-8"))
             markdown = (output_dir / "benchmark-report.md").read_text(encoding="utf-8")
 
-        self.assertEqual(len(results), 7)
+        self.assertEqual(len(results), 8)
         self.assertTrue(all(result.passed for result in results))
-        self.assertEqual(payload["passed"], 7)
+        self.assertEqual(payload["passed"], 8)
         self.assertEqual(payload["failed"], 0)
         self.assertIn("small-code-change-test-diff", markdown)
         self.assertIn("budget-exhausted-incomplete", markdown)
         self.assertIn("small-code-test-failure-incomplete", markdown)
+        self.assertIn("session-evidence-followup", markdown)
+
+    def test_mapping_acceptance_requires_explicit_metric_values(self) -> None:
+        from local_agent.benchmark import _mapping_integer_values_match
+
+        self.assertTrue(_mapping_integer_values_match({"tool_calls": 0}, {"tool_calls": 0}))
+        self.assertFalse(_mapping_integer_values_match({}, {"tool_calls": 0}))
+        self.assertFalse(_mapping_integer_values_match({"tool_calls": "0"}, {"tool_calls": 0}))
 
     def test_live_inventory_acceptance_uses_semantic_terms_instead_of_fixed_wording(self) -> None:
         tasks = {task.identifier: task for task in load_benchmark_tasks()}

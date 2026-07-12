@@ -36,7 +36,8 @@ class EvidenceRecord:
     details: Mapping[str, Any] = field(default_factory=dict)
 
     def render(self) -> str:
-        return f"- [{self.status}] {self.tool} {self.subject}: {self.summary}"
+        origin = str(self.details.get("evidence_origin") or "current_run")
+        return f"- [{self.status}; {origin}] {self.tool} {self.subject}: {self.summary}"
 
 
 @dataclass
@@ -269,6 +270,37 @@ class EvidenceLedger:
         self.records.append(record)
         self.records = self.records[-MAX_RECORDS:]
         return True
+
+    def hydrate_session_cached(
+        self,
+        *,
+        record: EvidenceRecord,
+        source_evidence: SourceEvidence | None,
+        requirement_evidence: RequirementEvidence | None,
+        canonical_paths: tuple[str, ...] = (),
+    ) -> bool:
+        """Project fresh session evidence into this run without claiming a new tool call."""
+
+        changed = self.append(record)
+        if source_evidence is not None:
+            if source_evidence.path not in self.read_file_paths:
+                self.read_file_paths.append(source_evidence.path)
+                self.read_file_paths = self.read_file_paths[-MAX_READ_FILE_PATHS:]
+            for design_path in canonical_paths or (source_evidence.path,):
+                if design_path not in self.design_read_paths:
+                    self.design_read_paths.append(design_path)
+            self.design_read_paths = self.design_read_paths[-MAX_DESIGN_READ_PATHS:]
+            if source_evidence not in self.source_evidence:
+                self.source_evidence.append(source_evidence)
+                self.source_evidence = self.source_evidence[-MAX_SOURCE_EVIDENCE:]
+                changed = True
+        if requirement_evidence is not None and requirement_evidence not in self.pinned_requirement_evidence:
+            self.pinned_requirement_evidence = [
+                *self.pinned_requirement_evidence,
+                requirement_evidence,
+            ][-2:]
+            changed = True
+        return changed
 
     def _record_strong_relevance_paths(self, name: str, result: ToolResult) -> None:
         if result.is_error:

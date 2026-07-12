@@ -30,6 +30,11 @@ class RunStats:
     unknown_tool_suggestions: int = 0
     filename_search_misuse_calls: int = 0
     provider_schema_violations: int = 0
+    session_evidence_hits: int = 0
+    session_evidence_misses: int = 0
+    session_evidence_stale: int = 0
+    session_evidence_invalidations: int = 0
+    session_evidence_reused_paths: list[str] = field(default_factory=list)
     tool_counts: dict[str, int] = field(default_factory=dict)
     guard_start: dict[str, int] = field(default_factory=dict)
     steer_start: dict[str, int] = field(default_factory=dict)
@@ -142,6 +147,29 @@ class RunCollector:
         self._stats.synthetic_tool_results += 1
         self._stats.tool_errors += 1
 
+    def record_session_evidence(
+        self,
+        *,
+        hits: int,
+        misses: int,
+        stale: int,
+        invalidations: int,
+        reused_paths: list[str],
+    ) -> None:
+        if self._stats is None:
+            return
+        self._stats.session_evidence_hits += hits
+        self._stats.session_evidence_misses += misses
+        self._stats.session_evidence_stale += stale
+        self._stats.session_evidence_invalidations += invalidations
+        for path in reused_paths:
+            if path not in self._stats.session_evidence_reused_paths:
+                self._stats.session_evidence_reused_paths.append(path)
+
+    def record_session_evidence_invalidation(self, count: int) -> None:
+        if self._stats is not None and count > 0:
+            self._stats.session_evidence_invalidations += count
+
     def finish(
         self,
         reason: str,
@@ -184,6 +212,13 @@ class RunCollector:
             "unknown_tool_suggestions": stats.unknown_tool_suggestions,
             "filename_search_misuse_calls": stats.filename_search_misuse_calls,
             "provider_schema_violations": stats.provider_schema_violations,
+            "session_evidence": {
+                "hits": stats.session_evidence_hits,
+                "misses": stats.session_evidence_misses,
+                "stale": stats.session_evidence_stale,
+                "invalidations": stats.session_evidence_invalidations,
+                "reused_paths": list(stats.session_evidence_reused_paths),
+            },
             "tool_counts": dict(sorted(stats.tool_counts.items())),
             "guard_hits": {key: value for key, value in guard_hits.items() if value},
             "steering_counts": {key: value for key, value in steering_counts.items() if value},

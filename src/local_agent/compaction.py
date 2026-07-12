@@ -198,8 +198,7 @@ def format_llm_compaction_summary(
         lines.extend(
             [
                 "",
-                "Current user request:",
-                f"- {_one_line(current_user_request, max_chars=1200)}",
+                "The current user request remains in user-role conversation context.",
                 "- After completing explicitly requested tool calls, answer the requested final response instead of exploring further unless more information is truly necessary.",
             ]
         )

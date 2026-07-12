@@ -19,6 +19,7 @@ from .tool_choice_queue import ToolChoiceQueue
 from .tool_choice_queue import ToolResultSummary
 from .verification_plan import VerificationPlan
 from .test_planner import TestPlan
+from .session_evidence import SessionEvidenceReuse
 
 
 @dataclass
@@ -53,6 +54,8 @@ class RunContext:
     tool_loop_steering: ToolLoopSteeringRegistry = field(default_factory=ToolLoopSteeringRegistry)
     tool_choice_queue: ToolChoiceQueue = field(default_factory=ToolChoiceQueue)
     collector: RunCollector = field(default_factory=RunCollector)
+    session_evidence_reuse: SessionEvidenceReuse = field(default_factory=SessionEvidenceReuse)
+    user_facts_context: str = ""
 
     # Compatibility views keep existing runtime tests and integrations stable while
     # EvidenceLedger becomes the single owner of the mutable evidence state.
@@ -158,6 +161,8 @@ class RunContext:
         self.evidence.reset()
         self.final_answer_steers.clear()
         self.tool_loop_steering.reset()
+        self.session_evidence_reuse = SessionEvidenceReuse()
+        self.user_facts_context = ""
 
     def update_tool_choice_read_scope(
         self,

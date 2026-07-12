@@ -11,6 +11,7 @@ from local_agent.config import AgentConfig
 from local_agent.design_evidence import cross_root_design_evidence_roots
 from local_agent.protocol.events import ListEventSink
 from local_agent.state import workspace_state_dir
+from local_agent.tools.base import ToolResult
 from local_agent.workspace_migration import WorkspaceMigrationError
 
 
@@ -214,6 +215,50 @@ class WorkspaceRuntimeTests(unittest.TestCase):
             self.assertIn(backend, reopened._workspace_context.session)
             self.assertTrue(any(event.type == "WorkspaceMoved" for event in sink.events))
             close_clients.assert_called_once()
+
+    def test_move_clears_session_evidence_cache_after_commit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime, backend, frontend, _, _, _ = _move_runtime(Path(tmp))
+            source = backend / "src" / "App.py"
+            source.parent.mkdir()
+            source.write_text("VALUE = 1\n", encoding="utf-8")
+            runtime._run.run_id = "seed"
+            runtime._run.current_user_request = "inspect src/App.py"
+            read = ToolResult(source.read_text(encoding="utf-8"))
+            runtime._record_tool_choice_result("read_file", {"path": "src/App.py"}, read)
+            runtime._record_read_file_evidence("read_file", {"path": "src/App.py"}, read)
+            runtime._record_tool_evidence("read_file", {"path": "src/App.py"}, read)
+            self.assertEqual(runtime._session_evidence.snapshot()["entries"], 1)
+
+            runtime.move_workspace(str(frontend))
+
+        self.assertEqual(runtime._session_evidence.snapshot()["entries"], 0)
+
+    def test_failed_move_keeps_existing_session_evidence_cache(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime, backend, frontend, _, _, _ = _move_runtime(Path(tmp))
+            source = backend / "src" / "App.py"
+            source.parent.mkdir()
+            source.write_text("VALUE = 1\n", encoding="utf-8")
+            runtime._run.run_id = "seed"
+            runtime._run.current_user_request = "inspect src/App.py"
+            read = ToolResult(source.read_text(encoding="utf-8"))
+            runtime._record_tool_choice_result("read_file", {"path": "src/App.py"}, read)
+            runtime._record_read_file_evidence("read_file", {"path": "src/App.py"}, read)
+            runtime._record_tool_evidence("read_file", {"path": "src/App.py"}, read)
+            original_append = runtime._session.append
+
+            def fail_move_append(event: str, payload: dict[str, object]) -> None:
+                original_append(event, payload)
+                if event == "workspace_moved":
+                    raise OSError("simulated move append failure")
+
+            with patch.object(runtime._session, "append", side_effect=fail_move_append):
+                with self.assertRaises(WorkspaceMigrationError):
+                    runtime.move_workspace(str(frontend))
+
+        self.assertEqual(runtime._workspace_context.primary, backend)
+        self.assertEqual(runtime._session_evidence.snapshot()["entries"], 1)
 
     def test_path_scoped_rules_reload_after_add_and_move(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

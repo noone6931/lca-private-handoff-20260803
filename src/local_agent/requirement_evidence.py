@@ -18,6 +18,7 @@ class RequirementEvidence:
     content: str
     root: str | None = None
     scope: str = "root_local"
+    origin: str = "current_run"
 
 
 def is_requirement_source_path(path: str, candidate_paths: tuple[Path, ...] = ()) -> bool:
@@ -34,12 +35,14 @@ def update_requirement_evidence(
     content: str,
     root: str | None = None,
     scope: str = "root_local",
+    origin: str = "current_run",
 ) -> list[RequirementEvidence]:
     latest = RequirementEvidence(
         path=path,
         content=content[:PINNED_REQUIREMENT_EVIDENCE_CHAR_LIMIT],
         root=root,
         scope=scope,
+        origin=origin,
     )
     remaining = [item for item in current if item.path != path]
     return [*remaining, latest][-MAX_PINNED_REQUIREMENT_SOURCES:]
@@ -51,7 +54,8 @@ def render_pinned_requirement_evidence(evidence: list[RequirementEvidence]) -> s
     lines = [
         "[Pinned requirement evidence]",
         "These successfully read requirement documents are authoritative only within their recorded scope and outrank "
-        "any compaction summary or inferred workflow.",
+        "any compaction summary or inferred workflow. Current user-provided task facts may refine or override scope; "
+        "when they conflict with repository evidence, report both origins instead of silently choosing one.",
         "A root_local requirement or rule constrains only its source root. Do not infer that sibling roots must delete, "
         "modify, or omit code unless the user explicitly requested cross-root synthesis.",
         "Do not turn later-planning items into current scope. For every requirement fact in the final answer, cite "
@@ -59,7 +63,7 @@ def render_pinned_requirement_evidence(evidence: list[RequirementEvidence]) -> s
     ]
     for item in evidence:
         root = item.root or "(unknown root)"
-        lines.extend(["", f"Source: {item.path} [root={root}; scope={item.scope}]", item.content])
+        lines.extend(["", f"Source: {item.path} [root={root}; scope={item.scope}; origin={item.origin}]", item.content])
     return "\n".join(lines)
 
 

@@ -29,6 +29,7 @@ class BenchmarkTask:
     identifier: str
     title: str
     prompt: str
+    followup_prompt: str | None
     workspace_files: Mapping[str, str]
     additional_roots: Mapping[str, Mapping[str, str]]
     scripted_responses: tuple[Mapping[str, Any], ...]
@@ -268,6 +269,8 @@ def run_benchmark_task(
                 client = SchemaRecordingClient(runtime._client)
                 runtime._client = client
             answer = runtime.run(_render_prompt(task.prompt, workspace, named_roots))
+            if task.followup_prompt:
+                answer = runtime.run(_render_prompt(task.followup_prompt, workspace, named_roots))
             after = _snapshot_workspace_files(workspace)
             changed_files = _changed_files(before, after)
             run_summary = dict(runtime._last_run_summary or {})
@@ -349,6 +352,9 @@ def _load_benchmark_task(path: Path) -> BenchmarkTask:
     identifier = _required_text(raw, "id", path)
     title = _required_text(raw, "title", path)
     prompt = _required_text(raw, "prompt", path)
+    followup_prompt = raw.get("followup_prompt")
+    if followup_prompt is not None and (not isinstance(followup_prompt, str) or not followup_prompt.strip()):
+        raise ValueError(f"Benchmark task {path} followup_prompt must be a non-empty string when provided.")
     workspace_files = _string_mapping(raw.get("workspace_files"), "workspace_files", path)
     additional_roots = _nested_string_mapping(raw.get("additional_roots"), "additional_roots", path)
     responses = raw.get("scripted_responses") or []
@@ -365,6 +371,7 @@ def _load_benchmark_task(path: Path) -> BenchmarkTask:
         identifier=identifier,
         title=title,
         prompt=prompt,
+        followup_prompt=followup_prompt.strip() if isinstance(followup_prompt, str) else None,
         workspace_files=workspace_files,
         additional_roots=additional_roots,
         scripted_responses=tuple(responses),
@@ -512,17 +519,37 @@ def _evaluate_acceptance(
     expected_delivery_checks = acceptance.get("delivery_checks")
     if isinstance(expected_delivery_checks, Mapping):
         actual_delivery_checks = (runtime._last_run_summary or {}).get("verification_plan") or {}
-        expected_counts = {
-            str(name): int(value)
-            for name, value in expected_delivery_checks.items()
-            if isinstance(value, int)
-        }
+        expected_counts = _integer_mapping(expected_delivery_checks)
         checks.append(
             _check(
                 "delivery_checks",
-                all(int(actual_delivery_checks.get(name) or 0) == value for name, value in expected_counts.items()),
+                _mapping_integer_values_match(actual_delivery_checks, expected_counts),
                 expected_counts,
                 actual_delivery_checks,
+            )
+        )
+    expected_run_summary = acceptance.get("run_summary")
+    if isinstance(expected_run_summary, Mapping):
+        actual_run_summary = runtime._last_run_summary or {}
+        expected_counts = _integer_mapping(expected_run_summary)
+        checks.append(
+            _check(
+                "run_summary",
+                _mapping_integer_values_match(actual_run_summary, expected_counts),
+                expected_counts,
+                actual_run_summary,
+            )
+        )
+    expected_session_evidence = acceptance.get("session_evidence")
+    if isinstance(expected_session_evidence, Mapping):
+        actual_session_evidence = (runtime._last_run_summary or {}).get("session_evidence") or {}
+        expected_counts = _integer_mapping(expected_session_evidence)
+        checks.append(
+            _check(
+                "session_evidence",
+                _mapping_integer_values_match(actual_session_evidence, expected_counts),
+                expected_counts,
+                actual_session_evidence,
             )
         )
     schema_excludes = _string_list(acceptance.get("schema_excludes"))
@@ -544,6 +571,19 @@ def _evaluate_acceptance(
         output = (completed.stdout + completed.stderr).strip()[:4000]
         checks.append(_check("acceptance_command", completed.returncode == 0, command, output))
     return checks
+
+
+def _integer_mapping(values: Mapping[str, Any]) -> dict[str, int]:
+    return {str(name): int(value) for name, value in values.items() if isinstance(value, int)}
+
+
+def _mapping_integer_values_match(actual: Mapping[str, Any], expected: Mapping[str, int]) -> bool:
+    """Require an explicitly present integer for every benchmarked metric."""
+    for name, value in expected.items():
+        actual_value = actual.get(name)
+        if isinstance(actual_value, bool) or not isinstance(actual_value, int) or actual_value != value:
+            return False
+    return True
 
 
 def _test_evidence(runtime: AgentRuntime) -> list[str]:

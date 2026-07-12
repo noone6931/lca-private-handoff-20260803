@@ -1,0 +1,51 @@
+{
+  "id": "session-evidence-followup",
+  "title": "Fresh session evidence serves a relevant follow-up without a new tool call",
+  "prompt": "只读读取 service-b/app.py，确认 service-b 使用什么语言。不要修改文件。",
+  "followup_prompt": "service-b 呢？请基于已读源码回答，不要修改。",
+  "budget_seconds": 90,
+  "workspace_files": {
+    "service-b/app.py": "LANGUAGE = 'python'\n"
+  },
+  "scripted_responses": [
+    {
+      "tool_calls": [
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "service-b/app.py"
+          }
+        }
+      ]
+    },
+    {
+      "content": "已验证：service-b/app.py 显示 service-b 使用 Python。"
+    },
+    {
+      "content": "已验证：service-b/app.py 显示 service-b 使用 Python。"
+    }
+  ],
+  "acceptance": {
+    "forbidden_tools": [
+      "apply_patch",
+      "write_file",
+      "shell",
+      "run_tests"
+    ],
+    "changed_files": [],
+    "answer_contains": [
+      "service-b/app.py",
+      "Python"
+    ],
+    "termination_reason": "final",
+    "run_summary": {
+      "tool_calls": 0
+    },
+    "session_evidence": {
+      "hits": 1,
+      "stale": 0
+    },
+    "max_tool_errors": 0
+  },
+  "residual_risk": "This proves deterministic cross-run evidence reuse inside one Runtime, not provider reliability on ambiguous follow-up wording."
+}

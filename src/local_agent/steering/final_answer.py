@@ -314,6 +314,7 @@ class SourceEvidence:
     content: str
     root: str | None = field(default=None, compare=False)
     scope: str = field(default="root_local", compare=False)
+    origin: str = field(default="current_run", compare=False)
 
 
 @dataclass(frozen=True)
