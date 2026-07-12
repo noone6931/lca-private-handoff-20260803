@@ -163,7 +163,7 @@ def _claim_from_match(
     clause_start: int,
 ) -> NegativeExistenceClaim:
     claim_text = match.group(0)
-    stance = _claim_stance(clause, claim_text, following_clause)
+    stance = _claim_stance(clause, match, following_clause)
     support = "complete_git_probe" if kind == "git_repository" else "complete_discovery"
     return NegativeExistenceClaim(
         kind=kind,
@@ -177,18 +177,18 @@ def _claim_from_match(
     )
 
 
-def _claim_stance(clause: str, claim_text: str, following_clause: str) -> str:
+def _claim_stance(clause: str, match: re.Match[str], following_clause: str) -> str:
     if _QUESTION_OR_HYPOTHETICAL.search(clause):
         return QUOTED_OR_HYPOTHETICAL
-    before = clause[: clause.lower().find(claim_text.lower())]
-    after = clause[clause.lower().find(claim_text.lower()) + len(claim_text) :]
+    before = clause[: match.start()]
+    after = clause[match.end() :]
     if (
         _QUALIFYING_PREFIX.search(before)
         or _QUALIFYING_SUFFIX.search(after)
         or _NEXT_CLAUSE_QUALIFIER.search(following_clause)
     ):
         return EPISTEMICALLY_QUALIFIED
-    if _OBSERVED_MARKER.search(claim_text):
+    if _OBSERVED_MARKER.search(match.group(0)):
         return OBSERVED_NO_MATCH
     return ASSERTED_ABSENCE
 

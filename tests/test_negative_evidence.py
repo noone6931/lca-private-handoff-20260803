@@ -273,6 +273,24 @@ class NegativeEvidenceTests(unittest.TestCase):
         self.assertEqual(decision.temporary_tool_allowlist, {"glob_files"})
         self.assertEqual(decision.payload["claim_metrics"]["blocked_assertions"], 1)
 
+    def test_negative_existence_steerer_respects_its_bounded_retry_cap(self) -> None:
+        request = "只读确认当前目录是否有 Java 文件。"
+        context = FinalAnswerContext(
+            request=request,
+            content="该 root 没有 Java 源码。",
+            messages=[],
+            run_start_index=0,
+            requirement_contract=generate_requirement_contract(request),
+            tool_results=[],
+            read_file_evidence_paths=[],
+            source_evidence=[],
+            open_todos=[],
+            is_code_implementation_request=False,
+            steer_counts={"negative_existence": 1},
+        )
+
+        self.assertIsNone(NegativeExistenceSteerer(max_steers=1).decide(context))
+
 
 if __name__ == "__main__":
     unittest.main()
