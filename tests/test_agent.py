@@ -107,6 +107,25 @@ class _ForcedFinalHangingClient:
         return type("Response", (), {"message": {"content": "late draft"}})()
 
 
+class _InitialHangingClient:
+    release = threading.Event()
+
+    def __init__(self, config: AgentConfig):
+        self.config = config
+
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).release.wait(60)
+        return type("Response", (), {"message": {"content": "late response"}})()
+
+
+class _InitialProviderErrorClient:
+    def __init__(self, config: AgentConfig):
+        self.config = config
+
+    def chat(self, messages, tools, *, timeout=None):
+        raise LlmError("provider is temporarily unavailable")
+
+
 class _SchemaViolationClient:
     calls: list[dict] = []
 
@@ -2532,6 +2551,59 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertEqual(runtime._last_run_summary["termination_reason"], "forced_final_timeout_unverified")
         self.assertEqual(runtime._last_run_summary["finalization_attempts"], 1)
         self.assertGreaterEqual(len(_ForcedFinalHangingClient.timeouts), 2)
+
+    def test_initial_hanging_provider_returns_timeout_terminal_closure(self) -> None:
+        _InitialHangingClient.release = threading.Event()
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            sink = ListEventSink()
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=workspace,
+                request_timeout=1,
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _InitialHangingClient):
+                runtime = AgentRuntime(config, show_tool_logs=False, event_sink=sink)
+                result = runtime.run("请只读分析当前项目。")
+            records = [json.loads(line) for line in runtime._session.path.read_text(encoding="utf-8").splitlines()]
+        _InitialHangingClient.release.set()
+
+        self.assertIn("模型请求超时", result)
+        self.assertEqual(runtime._last_run_summary["termination_reason"], "llm_timeout")
+        self.assertTrue(any(record.get("event") == "final" for record in records))
+        self.assertTrue(any(record.get("event") == "run_summary" for record in records))
+        self.assertIn("SessionFinished", [event.type for event in sink.events])
+
+    def test_initial_provider_error_returns_terminal_closure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            sink = ListEventSink()
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=workspace,
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _InitialProviderErrorClient):
+                runtime = AgentRuntime(config, show_tool_logs=False, event_sink=sink)
+                result = runtime.run("请只读分析当前项目。")
+            records = [json.loads(line) for line in runtime._session.path.read_text(encoding="utf-8").splitlines()]
+
+        self.assertIn("provider 请求失败", result)
+        self.assertEqual(runtime._last_run_summary["termination_reason"], "provider_error")
+        self.assertTrue(any(record.get("event") == "final" for record in records))
+        self.assertTrue(any(record.get("event") == "run_summary" for record in records))
+        self.assertIn("SessionFinished", [event.type for event in sink.events])
 
     def test_source_evidence_false_negative_gate_does_not_preempt_implementation_repair(self) -> None:
         contract = generate_requirement_contract("请实现用户注册接口邮箱唯一性校验，并补充单元测试。")

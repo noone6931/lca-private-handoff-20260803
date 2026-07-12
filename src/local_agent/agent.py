@@ -37,6 +37,7 @@ from .evidence import evidence_root_label
 from .finalization import FINAL_ANSWER_STEERING_HARD
 from .finalization import MAX_FINALIZATION_ATTEMPTS
 from .llm import LlmError
+from .llm import LlmTimeoutError
 from .llm import OpenAICompatibleClient
 from .lsp.client import close_all_clients
 from .patch.anchored import display_workspace_path
@@ -460,7 +461,7 @@ class AgentRuntime:
                 )
                 if fallback is not None:
                     return fallback
-                raise
+                return self._stop_for_provider_failure(exc, deadline, run_start_index)
             if force_final_answer:
                 self._session.append("runtime_steering", {"kind": "forced_final_answer", "step": step})
                 self._run.clear_forced_final_answer_request()
@@ -1421,6 +1422,30 @@ class AgentRuntime:
             "注：最终的格式/证据校验重写请求超时，已返回上一版基于已读取证据的答复；未继续调用工具。"
         )
         return self._finish_run(content, deadline, run_start_index, reason="forced_final_timeout_fallback")
+
+    def _stop_for_provider_failure(
+        self,
+        error: LlmError,
+        deadline: float | None,
+        run_start_index: int,
+    ) -> str:
+        reason = _llm_failure_reason(error)
+        self._session.append(
+            "runtime_error",
+            {"kind": reason, "error": str(error)},
+        )
+        self._events.emit("ErrorEvent", {"kind": reason, "message": str(error)})
+        if reason == "llm_timeout":
+            content = (
+                "未完成：模型请求超时，任务在收到模型响应前已停止。"
+                "未继续执行工具或写入操作；请检查 provider 连通性后重试。"
+            )
+        else:
+            content = (
+                "未完成：模型 provider 请求失败，任务在收到模型响应前已停止。"
+                "未继续执行工具或写入操作；请检查 provider 配置或稍后重试。"
+            )
+        return self._finish_run(content, deadline, run_start_index, reason=reason)
 
     def _execute_tool_with_repeat_guard(
         self,
@@ -3201,6 +3226,16 @@ def _display_read_file_range_subject(
         return display_workspace_path(workspace, Path(path_key), allowed_dirs)
     except (OSError, RuntimeError, ValueError):
         return path_key
+
+
+def _llm_failure_reason(error: LlmError) -> str:
+    if isinstance(error, LlmTimeoutError):
+        return "llm_timeout"
+    # Third-party compatible clients may only provide LlmError text. Keep this
+    # narrow compatibility fallback until provider errors carry structured kinds.
+    if "timed out" in str(error).lower() or "timeout" in str(error).lower():
+        return "llm_timeout"
+    return "provider_error"
 
 
 def _validate_runtime_tool_name(tool: str) -> str:

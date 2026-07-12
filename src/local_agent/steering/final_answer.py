@@ -402,13 +402,18 @@ class RequirementEvidenceSteerer:
         issues = requirement_fact_citation_issues(context.content, context.requirement_evidence)
         if not issues:
             return None
-        sources = ", ".join(item.path for item in context.requirement_evidence)
+        sources = ", ".join(
+            f"{item.path} [root={item.root or '(unknown)'}; scope={item.scope}]"
+            for item in context.requirement_evidence
+        )
         steering = (
             "Runtime steering: the previous read-only design answer states requirement facts without an exact "
             "requirement-file path and line citation. Do not call tools. Rewrite the final answer using the pinned "
             "requirement evidence as the authority. Remove any workflow that is not in the requirement source, and "
             "label new classes, fields, routes, or integration choices as 推断/建议 rather than verified facts.\n"
             f"- Requirement sources: {sources}\n"
+            "- A root_local source constrains only that source root; it does not require changes in sibling roots unless "
+            "the user explicitly requested cross-root synthesis.\n"
             "- Cite every requirement fact as `path:line`; do not cite a made-up section or line.\n"
             f"- Missing condition: {', '.join(issues)}"
             f"{final_answer_request_summary(context.request)}"

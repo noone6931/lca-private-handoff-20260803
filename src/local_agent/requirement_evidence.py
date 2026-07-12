@@ -16,6 +16,8 @@ _REQUIREMENT_FACT_MARKERS = ("需求", "需求文档", "需求原文", "业务�
 class RequirementEvidence:
     path: str
     content: str
+    root: str | None = None
+    scope: str = "root_local"
 
 
 def is_requirement_source_path(path: str, candidate_paths: tuple[Path, ...] = ()) -> bool:
@@ -30,8 +32,15 @@ def update_requirement_evidence(
     *,
     path: str,
     content: str,
+    root: str | None = None,
+    scope: str = "root_local",
 ) -> list[RequirementEvidence]:
-    latest = RequirementEvidence(path=path, content=content[:PINNED_REQUIREMENT_EVIDENCE_CHAR_LIMIT])
+    latest = RequirementEvidence(
+        path=path,
+        content=content[:PINNED_REQUIREMENT_EVIDENCE_CHAR_LIMIT],
+        root=root,
+        scope=scope,
+    )
     remaining = [item for item in current if item.path != path]
     return [*remaining, latest][-MAX_PINNED_REQUIREMENT_SOURCES:]
 
@@ -41,13 +50,16 @@ def render_pinned_requirement_evidence(evidence: list[RequirementEvidence]) -> s
         return ""
     lines = [
         "[Pinned requirement evidence]",
-        "These successfully read requirement documents are authoritative for the current task and outrank any "
-        "compaction summary or inferred workflow.",
+        "These successfully read requirement documents are authoritative only within their recorded scope and outrank "
+        "any compaction summary or inferred workflow.",
+        "A root_local requirement or rule constrains only its source root. Do not infer that sibling roots must delete, "
+        "modify, or omit code unless the user explicitly requested cross-root synthesis.",
         "Do not turn later-planning items into current scope. For every requirement fact in the final answer, cite "
         "the real requirement path and line number in the form `path:line`; label new design proposals as 推断/建议.",
     ]
     for item in evidence:
-        lines.extend(["", f"Source: {item.path}", item.content])
+        root = item.root or "(unknown root)"
+        lines.extend(["", f"Source: {item.path} [root={root}; scope={item.scope}]", item.content])
     return "\n".join(lines)
 
 

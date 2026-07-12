@@ -34,6 +34,20 @@ class RequirementEvidenceTests(unittest.TestCase):
         self.assertIn("docs/需求文档-结算.md", rendered)
         self.assertIn("50:支持批量合并制单。", rendered)
 
+    def test_pinned_root_local_requirement_does_not_claim_cross_root_authority(self) -> None:
+        evidence = update_requirement_evidence(
+            [],
+            path="requirements.md",
+            content="1:No source code lives here.",
+            root="/workspace/primary",
+        )
+
+        rendered = render_pinned_requirement_evidence(evidence)
+
+        self.assertIn("root=/workspace/primary", rendered)
+        self.assertIn("root_local", rendered)
+        self.assertIn("sibling roots must delete", rendered)
+
     def test_requirement_facts_need_path_and_line_citation(self) -> None:
         evidence = [RequirementEvidence("docs/需求文档-结算.md", "50:支持批量合并制单。")]
 

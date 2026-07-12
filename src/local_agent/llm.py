@@ -13,6 +13,10 @@ class LlmError(RuntimeError):
     """Raised when the LLM API request fails."""
 
 
+class LlmTimeoutError(LlmError):
+    """Raised when a provider request exceeds its configured deadline."""
+
+
 @dataclass(frozen=True)
 class ChatResponse:
     message: dict[str, Any]
@@ -57,7 +61,7 @@ class OpenAICompatibleClient:
         except urllib.error.URLError as exc:
             raise LlmError(f"LLM API request failed: {exc}") from exc
         except TimeoutError as exc:
-            raise LlmError(f"LLM API request timed out after {request_timeout} seconds.") from exc
+            raise LlmTimeoutError(f"LLM API request timed out after {request_timeout} seconds.") from exc
 
         try:
             data = json.loads(body)

@@ -5,6 +5,7 @@ import threading
 from typing import Any
 
 from .llm import LlmError
+from .llm import LlmTimeoutError
 
 
 def call_chat_with_timeout(
@@ -32,7 +33,7 @@ def call_chat_with_timeout(
     thread.start()
     thread.join(timeout)
     if thread.is_alive():
-        raise LlmError(f"LLM API request timed out after {timeout} seconds.")
+        raise LlmTimeoutError(f"LLM API request timed out after {timeout} seconds.")
     try:
         status, payload = result_queue.get_nowait()
     except queue.Empty as exc:

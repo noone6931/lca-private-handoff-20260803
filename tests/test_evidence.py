@@ -173,6 +173,38 @@ class EvidenceLedgerTests(unittest.TestCase):
         self.assertEqual(ledger.source_evidence[0].root, str(additional.resolve()))
         self.assertIn("root-local", summary)
 
+    def test_lsp_and_search_evidence_keep_full_root_provenance(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            host = Path(tmp).resolve()
+            workspace = host / "workspace"
+            workspace.mkdir()
+            additional = host / "service"
+            additional.mkdir()
+            source = additional / "src" / "App.java"
+            source.parent.mkdir()
+            source.write_text("class App {}\n", encoding="utf-8")
+            ledger = EvidenceLedger()
+
+            search = ledger.record_tool(
+                name="search_code",
+                arguments={"pattern": "class App", "path": str(additional)},
+                result=ToolResult(f"{source}:1:class App {{}}"),
+                workspace=workspace,
+                allowed_dirs=(additional,),
+            )
+            lsp = ledger.record_tool(
+                name="lsp_symbols",
+                arguments={"path": str(additional)},
+                result=ToolResult(f"{source}:1:1: class App"),
+                workspace=workspace,
+                allowed_dirs=(additional,),
+            )
+
+        self.assertEqual(search.details["evidence_root"], str(additional))
+        self.assertEqual(search.details["evidence_scope"], "path_or_root_local")
+        self.assertEqual(lsp.details["evidence_root"], str(additional))
+        self.assertEqual(lsp.details["evidence_scope"], "root_local")
+
 
 if __name__ == "__main__":
     unittest.main()

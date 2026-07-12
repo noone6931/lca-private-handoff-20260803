@@ -105,6 +105,8 @@ class EvidenceLedger:
                 self.pinned_requirement_evidence,
                 path=display_path,
                 content=result.content,
+                root=str(root_path),
+                scope="root_local",
             )
 
     def record_tool(
@@ -391,8 +393,10 @@ def build_tool_evidence_record(
         raw_path = str(parsed.get("path") or ".").strip() or "."
         try:
             resolved_path = resolve_workspace_path(workspace, raw_path, allowed_dirs)
-            root_label = evidence_root_label(evidence_root_for_path(resolved_path, workspace, allowed_dirs), workspace, allowed_dirs)
+            root_path = evidence_root_for_path(resolved_path, workspace, allowed_dirs)
+            root_label = evidence_root_label(root_path, workspace, allowed_dirs)
         except PatchError:
+            root_path = None
             root_label = "(unknown)"
         subject = f"pattern={pattern!r} path={raw_path!r}"
         if result.useless or result.content.strip().startswith("No matches."):
@@ -403,6 +407,7 @@ def build_tool_evidence_record(
                 status=negative_type or "content_no_match",
                 details={
                     **metadata,
+                    "evidence_root": str(root_path) if root_path is not None else "",
                     "evidence_root_label": root_label,
                     "evidence_scope": "path_or_root_local",
                 },
@@ -415,17 +420,25 @@ def build_tool_evidence_record(
             f"{summary}; root: {root_label}.",
             details={
                 **metadata,
+                "evidence_root": str(root_path) if root_path is not None else "",
                 "evidence_root_label": root_label,
                 "evidence_scope": "path_or_root_local",
             },
         )
     if name.startswith("lsp_") and not result.is_error:
         subject = lsp_subject(parsed) or "query"
+        provenance = tool_evidence_provenance(parsed, workspace, allowed_dirs)
         if result.useless or result.content.strip().startswith("No "):
-            return EvidenceRecord(name, subject, one_line(result.content, max_chars=220), status="no_match")
+            return EvidenceRecord(
+                name,
+                subject,
+                one_line(result.content, max_chars=220),
+                status="no_match",
+                details={**metadata, **provenance},
+            )
         lines = first_content_lines(result.content, limit=4)
         summary = " | ".join(one_line(line, max_chars=160) for line in lines) or "Returned lightweight code navigation results."
-        return EvidenceRecord(name, subject, summary)
+        return EvidenceRecord(name, subject, summary, details={**metadata, **provenance})
     if name in {"apply_patch", "rollback_patch", "write_file"}:
         raw_path = parsed.get("path") if isinstance(parsed.get("path"), str) else ""
         status = "error" if result.is_error else "preview" if name == "apply_patch" and parsed.get("dry_run") else "ok"
@@ -512,6 +525,31 @@ def evidence_root_label(root: Path, workspace: Path, allowed_dirs: tuple[Path, .
     except OSError:
         return "(unknown)"
     return display_workspace_path(workspace, root, allowed_dirs)
+
+
+def tool_evidence_provenance(
+    parsed: Mapping[str, Any],
+    workspace: Path,
+    allowed_dirs: tuple[Path, ...],
+) -> dict[str, str]:
+    """Describe the authorized root a path-oriented tool result can speak for."""
+
+    raw_path = parsed.get("path")
+    path_text = raw_path.strip() if isinstance(raw_path, str) and raw_path.strip() else "."
+    try:
+        resolved = resolve_workspace_path(workspace, path_text, allowed_dirs)
+    except PatchError:
+        return {
+            "evidence_root": "",
+            "evidence_root_label": "(unknown)",
+            "evidence_scope": "incomplete",
+        }
+    root = evidence_root_for_path(resolved, workspace, allowed_dirs)
+    return {
+        "evidence_root": str(root),
+        "evidence_root_label": evidence_root_label(root, workspace, allowed_dirs),
+        "evidence_scope": "root_local",
+    }
 
 
 def first_search_result_paths(content: str, *, limit: int) -> list[str]:
