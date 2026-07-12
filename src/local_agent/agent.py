@@ -508,7 +508,11 @@ class AgentRuntime:
                     tool_choice_stop_message,
                     deadline,
                     run_start_index,
-                    reason="tool_choice_queue",
+                    reason=(
+                        "unverified_final_gate"
+                        if self._run.unresolved_final_answer_gate is not None
+                        else "tool_choice_queue"
+                    ),
                 )
             messages_for_model = self._provider_context_phase.messages_for_model(deadline)
             tools_for_model = self._tools_for_model()
@@ -818,15 +822,19 @@ class AgentRuntime:
                     if self._queue_forced_final_answer(kind=coverage.kind):
                         self._run.force_final_answer_without_tools = True
                     else:
+                        skip_reason = self._run.finalization_rewrite_skip_reason() or "continuation_limit"
                         self._session.append(
                             "runtime_steering",
                             {
                                 "kind": "forced_final_answer_skipped",
                                 "source": coverage.kind,
-                                "reason": "continuation_limit",
+                                "reason": skip_reason,
                             },
                         )
+                        self._run.block_unverified_final_answer(kind=coverage.kind, reason=skip_reason)
                         self._run.force_final_answer_without_tools = False
+                        self._run.temporary_tool_allowlist = None
+                        return "Runtime could not safely schedule the required final answer rewrite."
                 else:
                     self._run.force_final_answer_without_tools = False
                 self._run.temporary_tool_allowlist = None

@@ -235,6 +235,46 @@ class _ShortBudgetGitCorrectionClient:
         return type("Response", (), {"message": {"content": "已验证：当前primary不是Git仓库。"}})()
 
 
+class _DeadlineReserveDesignEvidenceClient:
+    calls: list[dict] = []
+
+    def __init__(self, config: AgentConfig):
+        self.config = config
+
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
+        if len(type(self).calls) > 1:
+            raise AssertionError("The design-evidence hard gate must stop before another provider request.")
+        additional = self.config.allowed_dirs[0]
+        return type(
+            "Response",
+            (),
+            {
+                "message": {
+                    "content": "stale draft that must not be reused",
+                    "tool_calls": [
+                        {
+                            "id": "read_primary",
+                            "type": "function",
+                            "function": {
+                                "name": "read_file",
+                                "arguments": json.dumps({"path": str(self.config.workspace / "src" / "Primary.java")}),
+                            },
+                        },
+                        {
+                            "id": "read_additional",
+                            "type": "function",
+                            "function": {
+                                "name": "read_file",
+                                "arguments": json.dumps({"path": str(additional / "src" / "Additional.java")}),
+                            },
+                        },
+                    ],
+                }
+            },
+        )()
+
+
 class _QualifiedNegativeFinalClient:
     def __init__(self, config: AgentConfig):
         self.config = config
@@ -2847,6 +2887,72 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertEqual(_ShortBudgetGitCorrectionClient.calls[2]["tools"], [])
         self.assertEqual(runtime._last_run_summary["termination_reason"], "final")
         self.assertEqual(runtime._last_run_summary["steering_counts"], {"completion_audit": 1})
+
+    def test_design_evidence_deadline_reserve_records_reason_and_stops_unverified(self) -> None:
+        _DeadlineReserveDesignEvidenceClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            primary = root / "primary"
+            additional = root / "additional"
+            primary_source = primary / "src" / "Primary.java"
+            additional_source = additional / "src" / "Additional.java"
+            primary_source.parent.mkdir(parents=True)
+            additional_source.parent.mkdir(parents=True)
+            primary_source.write_text("class Primary {}\n", encoding="utf-8")
+            additional_source.write_text("class Additional {}\n", encoding="utf-8")
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=primary,
+                allowed_dirs=(additional,),
+                max_steps=0,
+                budget_seconds=1,
+                approval_mode="yolo",
+            )
+            with (
+                patch("local_agent.agent.OpenAICompatibleClient", _DeadlineReserveDesignEvidenceClient),
+                patch("local_agent.agent.time.monotonic", return_value=100.0),
+                patch("local_agent.finalization.time.monotonic", return_value=100.0),
+            ):
+                runtime = AgentRuntime(config, show_tool_logs=False)
+                with patch.object(
+                    runtime._run.tool_choice_queue,
+                    "evaluate",
+                    side_effect=(
+                        ToolChoiceDecision(
+                            steering_required=True,
+                            allowed_tool_names=frozenset({"read_file"}),
+                            reason="collect cross-root source reads",
+                        ),
+                        ToolChoiceDecision(
+                            steering_required=False,
+                            allowed_tool_names=frozenset({"read_file"}),
+                            reason="cross-root evidence is complete",
+                        ),
+                    ),
+                ):
+                    result = runtime.run("请只读分析两个项目的跨项目设计方案，不要修改文件。")
+                records = [
+                    json.loads(line)
+                    for line in runtime._session.path.read_text(encoding="utf-8").splitlines()
+                ]
+
+        self.assertIn("未完成/未验证", result)
+        self.assertNotIn("stale draft that must not be reused", result)
+        self.assertEqual(len(_DeadlineReserveDesignEvidenceClient.calls), 1)
+        self.assertEqual(runtime._last_run_summary["tool_calls"], 2)
+        self.assertEqual(runtime._last_run_summary["termination_reason"], "unverified_final_gate")
+        self.assertTrue(
+            any(
+                record.get("event") == "runtime_steering"
+                and record.get("payload", {}).get("kind") == "forced_final_answer_skipped"
+                and record.get("payload", {}).get("source") == "design_evidence_final"
+                and record.get("payload", {}).get("reason") == "deadline_reserve"
+                for record in records
+            )
+        )
 
     def test_tool_usage_evidence_gate_keeps_unobserved_lsp_result_claim(self) -> None:
         claims = phantom_tool_evidence_claims(
