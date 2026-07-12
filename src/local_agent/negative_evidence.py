@@ -42,7 +42,9 @@ _INLINE_CODE = re.compile(r"`[^`]*`")
 _QUOTED_EXAMPLE = re.compile(r"(?:\"[^\"]*\"|'[^']*'|“[^”]*”|‘[^’]*’)")
 _CLAUSE_BOUNDARY = re.compile(r"(?<=[。！？!?；;])|\n+")
 _NON_ASSERTIVE_PREFIX = re.compile(
-    r"(?:不能|无法|不应|不要|不可|未验证|尚未验证|不足以|并非|仅引用|只是引用|避免|禁止).{0,28}$"
+    r"(?:(?:不能|无法|不可|不要)\s*(?:据此\s*)?(?:推导|断言|声称|陈述|认定|证明|说明|得出|判断)|"
+    r"(?:未验证|尚未验证).{0,18}(?:推导|断言|声称|陈述|认定|证明|说明|得出|判断)|"
+    r"不足以证明|不等于|并非|仅引用|只是引用).{0,28}$"
     r"|(?:cannot\s+(?:conclude|state|claim)|can't\s+(?:conclude|state|claim)|do\s+not\s+(?:conclude|state|claim)|"
     r"don't\s+(?:conclude|state|claim)|should\s+not\s+(?:conclude|state|claim)|does\s+not\s+prove|"
     r"doesn't\s+prove|not\s+enough\s+to\s+conclude).{0,28}$",

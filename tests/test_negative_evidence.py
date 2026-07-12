@@ -56,6 +56,23 @@ class NegativeEvidenceTests(unittest.TestCase):
 
         self.assertEqual(len(issues), 1)
 
+    def test_unrelated_chinese_modal_prefix_does_not_hide_real_assertion(self) -> None:
+        for content in (
+            "不能运行测试，但该 root 没有 Java 源码。",
+            "无法读取 README，但该 root 没有 Java 源码。",
+            "不要修改代码，但该 root 没有 Java 源码。",
+        ):
+            with self.subTest(content=content):
+                self.assertEqual(len(unsupported_negative_existence_claims(content, [])), 1)
+
+    def test_chinese_conclusion_negation_still_skips_claim(self) -> None:
+        for content in (
+            "不能据此推导出无 Java 源码。",
+            "未验证，不能陈述无源码。",
+        ):
+            with self.subTest(content=content):
+                self.assertEqual(unsupported_negative_existence_claims(content, []), ())
+
     def test_content_no_match_does_not_support_java_file_absence(self) -> None:
         issues = unsupported_negative_existence_claims(
             "已验证：search_code 未找到 \\.java$，因此没有 Java 文件。",
