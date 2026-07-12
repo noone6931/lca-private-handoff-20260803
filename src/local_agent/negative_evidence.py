@@ -90,12 +90,16 @@ _NEXT_CLAUSE_QUALIFIER = re.compile(
     r"^\s*(?:(?:but|however)\s+)?(?:this\s+)?(?:does\s+not\s+(?:prove|establish)|is\s+not\s+proof)",
     re.IGNORECASE,
 )
-_ROOT_SCOPE_MARKER = re.compile(
-    r"(?:\b(?:primary|workspace|root|directory|folder)\b|主工作区|当前工作区|附加(?:\s*root|目录)|"
-    r"额外(?:\s*root|目录)|同级(?:\s*root|目录)|另一个\s*root|当前目录|该目录|文件夹)",
+_ROOT_REFERENCE = re.compile(
+    r"(?P<multi>\b(?:all|every)\s+roots?\b|所有(?:\s*root|目录)|全部目录)|"
+    r"(?P<primary>\bprimary(?:\s+(?:workspace|root))?\b|主工作区|当前工作区)|"
+    r"(?P<additional>\b(?:additional|sibling)(?:\s+root)?\b|附加(?:\s*(?:root|目录))?|"
+    r"额外(?:\s*(?:root|目录))?|同级(?:\s*(?:root|目录))?|另一个\s*root)|"
+    r"(?P<local>\b(?:this\s+)?(?:root|workspace|directory|folder)\b|当前目录|该目录|这里|文件夹)",
     re.IGNORECASE,
 )
-_BARE_JAVA_TAIL = re.compile(r"^\s*(?:$|[。！？!?；;,].*)")
+_ROOT_SCOPE_MARKER = _ROOT_REFERENCE
+_BARE_JAVA_TAIL = re.compile(r"^\s*(?:$|[。！？!?；;,，.].*)")
 
 
 def parse_negative_evidence_claims(content: str) -> tuple[NegativeExistenceClaim, ...]:
@@ -190,7 +194,7 @@ def _claim_from_match(
     claim_text = match.group(0)
     stance = _claim_stance(clause, match, following_clause)
     support = "complete_git_probe" if kind == "git_repository" else "complete_discovery"
-    scope, root = _claim_scope_and_root(clause)
+    scope, root = _claim_scope_and_root(clause, match)
     return NegativeExistenceClaim(
         kind=kind,
         subject=subject,
@@ -219,17 +223,28 @@ def _claim_stance(clause: str, match: re.Match[str], following_clause: str) -> s
     return ASSERTED_ABSENCE
 
 
-def _claim_scope_and_root(clause: str) -> tuple[str, str | None]:
-    lowered = clause.lower()
-    if any(value in lowered for value in ("all roots", "所有 root", "所有目录", "全部目录")):
+def _claim_scope_and_root(clause: str, claim_match: re.Match[str]) -> tuple[str, str | None]:
+    """Bind scope to the root reference governing this particular claim.
+
+    A single clause can describe several roots.  Selecting a root from the whole
+    clause lets an earlier primary reference incorrectly authorize a later
+    additional-root absence claim, so prefer the closest preceding typed marker.
+    """
+    references = tuple(_ROOT_REFERENCE.finditer(clause))
+    preceding = [reference for reference in references if reference.end() <= claim_match.start()]
+    reference = preceding[-1] if preceding else next(
+        (candidate for candidate in references if candidate.start() >= claim_match.end()),
+        None,
+    )
+    if reference is None:
+        return "unspecified", None
+    if reference.group("multi"):
         return "multi_root", "multi_root"
-    if any(value in lowered for value in ("primary", "主工作区", "当前工作区")):
+    if reference.group("primary"):
         return "primary", "primary"
-    if any(value in lowered for value in ("additional", "附加", "额外", "sibling", "同级", "另一个 root")):
+    if reference.group("additional"):
         return "root_local", "additional"
-    if any(value in lowered for value in ("root", "当前目录", "该目录", "这里", "this directory", "this root")):
-        return "root_local", None
-    return "unspecified", None
+    return "root_local", None
 
 
 def _bare_java_has_file_scope(clause: str, match: re.Match[str]) -> bool:

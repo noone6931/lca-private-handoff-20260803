@@ -315,6 +315,34 @@ class NegativeEvidenceTests(unittest.TestCase):
         self.assertEqual(unsupported_negative_existence_claims(content, [additional]), ())
         self.assertEqual(len(unsupported_negative_existence_claims("primary 没有 Java 源码。", [additional])), 1)
 
+    def test_root_reference_binds_to_the_nearest_claim_in_a_multi_root_clause(self) -> None:
+        base = {
+            "negative_evidence_type": "path_no_match",
+            "patterns": ["**/*.java"],
+            "complete": True,
+            "truncated": False,
+            "result_limit_reached": False,
+        }
+        primary = ToolResultSummary("glob_files", "{}", useless=True, metadata={**base, "evidence_root_label": "primary"})
+        additional = ToolResultSummary(
+            "glob_files",
+            "{}",
+            useless=True,
+            metadata={**base, "evidence_root_label": "/workspace/additional"},
+        )
+        for content, expected_root, supporting_result, non_supporting_result in (
+            ("primary 有源码，附加 root 没有 Java 源码。", "additional", additional, primary),
+            ("Primary has source, additional root has no Java source.", "additional", additional, primary),
+            ("附加 root 有源码，primary 没有 Java 源码。", "primary", primary, additional),
+            ("Additional root has source and primary has no Java source.", "primary", primary, additional),
+        ):
+            with self.subTest(content=content):
+                claim = next(claim for claim in parse_negative_evidence_claims(content) if claim.kind == "extension")
+                expected_scope = "primary" if expected_root == "primary" else "root_local"
+                self.assertEqual((claim.scope, claim.root), (expected_scope, expected_root))
+                self.assertEqual(len(unsupported_negative_existence_claims(content, [non_supporting_result])), 1)
+                self.assertEqual(unsupported_negative_existence_claims(content, [supporting_result]), ())
+
     def test_git_claims_cannot_borrow_or_target_additional_root_probes(self) -> None:
         primary_probe = ToolResultSummary(
             "git_status",
@@ -367,8 +395,10 @@ class NegativeEvidenceTests(unittest.TestCase):
             with self.subTest(content=content):
                 self.assertEqual(parse_negative_evidence_claims(content), ())
 
-        scoped = parse_negative_evidence_claims("当前 root 没有 Java。")
-        self.assertEqual([(claim.kind, claim.stance) for claim in scoped], [("extension", ASSERTED_ABSENCE)])
+        for content in ("当前 root 没有 Java，但仍需验证。", "This root has no Java."):
+            with self.subTest(content=content):
+                scoped = parse_negative_evidence_claims(content)
+                self.assertEqual([(claim.kind, claim.stance) for claim in scoped], [("extension", ASSERTED_ABSENCE)])
 
     def test_git_claim_for_additional_root_is_rewritten_without_git_probe(self) -> None:
         request = "只读分析附加目录中的项目，不要修改文件。"

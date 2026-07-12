@@ -270,6 +270,7 @@ class CompletionAuditTests(unittest.TestCase):
                         "complete": True,
                         "truncated": False,
                         "result_limit_reached": False,
+                        "evidence_root_label": "primary",
                     },
                 )
             ],
