@@ -568,7 +568,7 @@ T-148 不是复制 OMP 的 TypeScript 类层次，而是采用其职责边界。
 - `packages/coding-agent/src/session/tool-choice-queue.ts` 把 directive 分成 pending / in-flight / resolved / rejected，而不是让最终文案关键词反向决定工具可用性；
 - `packages/coding-agent/src/session/agent-session.ts` 持有 queue，并在 `turn_end` 收束其状态。
 
-LCA 的裁剪落地：`agent.py` 只保留 turn orchestration、公共 CLI/session API 和 terminal finish wiring；provider context、workspace/session-root 生命周期、evidence/verification/session-cache 生命周期、memory consolidation 分别移交独立 phase component。session evidence 命中只产生一次 soft directive，`read_file` 仍在 active schema，模型自主复读会正常执行并被 telemetry 记录。这是对齐 OMP 的 queue/turn ownership，不是声称 OMP 具有 LCA 的 VerificationPlan、negative-evidence parser 或 DeliveryAudit。
+LCA 的裁剪落地：`agent.py` 只保留 turn orchestration、公共 CLI/session API 和 terminal finish wiring；provider context、workspace/session-root 生命周期、evidence/verification/session-cache 生命周期、memory consolidation 分别移交独立 phase component。组件以明确的 Protocol port 声明 Runtime 依赖，Runtime 直接调用 owner，不通过 `__getattr__` 动态转发私有 hook。`ToolResultSummary` 位于中性 observation owner，避免 negative-evidence 与 ToolChoiceQueue 相互导入。session evidence 命中只产生一次 soft directive，`read_file` 仍在 active schema，模型自主复读会正常执行并被 telemetry 记录。这是对齐 OMP 的 queue/turn ownership，不是声称 OMP 具有 LCA 的 VerificationPlan、negative-evidence parser 或 DeliveryAudit。
 
 ## 后续禁止反复争论的点
 
