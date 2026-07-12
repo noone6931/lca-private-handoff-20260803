@@ -29,6 +29,7 @@ class RunStats:
     unknown_tool_calls: int = 0
     unknown_tool_suggestions: int = 0
     filename_search_misuse_calls: int = 0
+    provider_schema_violations: int = 0
     tool_counts: dict[str, int] = field(default_factory=dict)
     guard_start: dict[str, int] = field(default_factory=dict)
     steer_start: dict[str, int] = field(default_factory=dict)
@@ -132,6 +133,8 @@ class RunCollector:
                 self._stats.unknown_tool_suggestions += 1
         if metadata.get("filename_search_misuse"):
             self._stats.filename_search_misuse_calls += 1
+        if metadata.get("provider_schema_violation"):
+            self._stats.provider_schema_violations += 1
 
     def record_synthetic_tool_result(self) -> None:
         if self._stats is None:
@@ -180,6 +183,7 @@ class RunCollector:
             "unknown_tool_calls": stats.unknown_tool_calls,
             "unknown_tool_suggestions": stats.unknown_tool_suggestions,
             "filename_search_misuse_calls": stats.filename_search_misuse_calls,
+            "provider_schema_violations": stats.provider_schema_violations,
             "tool_counts": dict(sorted(stats.tool_counts.items())),
             "guard_hits": {key: value for key, value in guard_hits.items() if value},
             "steering_counts": {key: value for key, value in steering_counts.items() if value},

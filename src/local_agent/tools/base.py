@@ -109,6 +109,11 @@ class ToolRegistry:
                 f"Runtime tool choice restriction: '{name}' is not allowed at this step. "
                 f"Allowed tools: {allowed}. Follow the current workflow before retrying.",
                 is_error=True,
+                metadata={
+                    "provider_schema_violation": True,
+                    "requested_tool": name,
+                    "allowed_tools": sorted(context.runtime_tool_allowlist),
+                },
             )
         try:
             denial_reason = _approval_denial_reason(tool, context)

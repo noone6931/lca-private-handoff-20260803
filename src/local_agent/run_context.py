@@ -6,25 +6,17 @@ from typing import Any
 from .design_evidence import DesignEvidenceCoverageSteerer
 from .evidence import EvidenceLedger
 from .evidence import EvidenceRecord
+from .finalization import FINAL_ANSWER_STEERING_PRESENTATION
+from .finalization import FINAL_ANSWER_STEERING_HARD
+from .finalization import FinalizationCoordinator
+from .finalization import MAX_FORCED_FINAL_ANSWER_CONTINUATIONS
+from .finalization import UnresolvedFinalAnswerGate
 from .run_collector import RunCollector
 from .soft_tool_requirement import SoftToolRequirement
 from .steering.tool_loop import ToolLoopSteeringRegistry
 from .task_contract import RequirementContract
 from .tool_choice_queue import ToolChoiceQueue
 from .tool_choice_queue import ToolResultSummary
-
-
-MAX_FORCED_FINAL_ANSWER_CONTINUATIONS = 8
-FINAL_ANSWER_STEERING_HARD = "hard"
-FINAL_ANSWER_STEERING_PRESENTATION = "presentation"
-
-
-@dataclass(frozen=True)
-class UnresolvedFinalAnswerGate:
-    """A correctness gate that could not be rewritten before the run stopped."""
-
-    kind: str
-    reason: str
 
 
 @dataclass
@@ -38,11 +30,7 @@ class RunContext:
     git_baseline: dict[str, Any] = field(default_factory=dict)
     current_user_request: str | None = None
     read_file_drift_guard_enabled: bool = False
-    force_final_answer_without_tools: bool = False
-    forced_final_answer_continuations: int = 0
-    forced_final_answer_kind: str = "runtime_forced_final"
-    forced_final_answer_severity: str = FINAL_ANSWER_STEERING_HARD
-    unresolved_final_answer_gate: UnresolvedFinalAnswerGate | None = None
+    finalization: FinalizationCoordinator = field(default_factory=FinalizationCoordinator)
     temporary_tool_allowlist: set[str] | None = None
     tool_choice_allowed_tool_names: set[str] | None = None
     tool_choice_read_file_paths: set[str] | None = None
@@ -148,11 +136,7 @@ class RunContext:
         self.git_baseline = dict(git_baseline)
         self.current_user_request = prompt
         self.read_file_drift_guard_enabled = False
-        self.force_final_answer_without_tools = False
-        self.forced_final_answer_continuations = 0
-        self.forced_final_answer_kind = "runtime_forced_final"
-        self.forced_final_answer_severity = FINAL_ANSWER_STEERING_HARD
-        self.unresolved_final_answer_gate = None
+        self.finalization.reset()
         self.temporary_tool_allowlist = None
         self.tool_choice_allowed_tool_names = None
         self.tool_choice_read_file_paths = None
@@ -189,7 +173,7 @@ class RunContext:
         self.tool_choice_read_file_remaining = max(0, self.tool_choice_read_file_remaining - 1)
 
     def can_queue_forced_final_answer(self) -> bool:
-        return self.forced_final_answer_continuations < MAX_FORCED_FINAL_ANSWER_CONTINUATIONS
+        return self.finalization.can_queue()
 
     def queue_forced_final_answer(
         self,
@@ -197,38 +181,68 @@ class RunContext:
         kind: str = "runtime_forced_final",
         severity: str = FINAL_ANSWER_STEERING_HARD,
     ) -> bool:
-        if not self.can_queue_forced_final_answer():
-            return False
-        self.forced_final_answer_continuations += 1
-        self.forced_final_answer_kind = kind
-        self.forced_final_answer_severity = severity
-        return True
+        return self.finalization.request(kind=kind, severity=severity).accepted
 
     def request_forced_final_answer(
         self,
         *,
         kind: str,
         severity: str = FINAL_ANSWER_STEERING_HARD,
-    ) -> None:
+    ) -> bool:
         """Record why the next no-tool response is being forced."""
 
-        self.force_final_answer_without_tools = True
-        self.forced_final_answer_kind = kind
-        self.forced_final_answer_severity = severity
+        return self.finalization.request(kind=kind, severity=severity).accepted
 
     def clear_forced_final_answer_request(self) -> None:
-        self.force_final_answer_without_tools = False
-        self.forced_final_answer_kind = "runtime_forced_final"
-        self.forced_final_answer_severity = FINAL_ANSWER_STEERING_HARD
+        self.finalization.clear_pending_request()
 
     def allows_forced_final_draft_fallback(self) -> bool:
-        return self.forced_final_answer_severity == FINAL_ANSWER_STEERING_PRESENTATION
+        return self.finalization.allows_draft_fallback()
 
     def block_unverified_final_answer(self, *, kind: str, reason: str) -> None:
-        self.unresolved_final_answer_gate = UnresolvedFinalAnswerGate(kind=kind, reason=reason)
+        self.finalization.block_unverified(kind=kind, reason=reason)
 
     def reset_forced_final_answer_continuations(self) -> None:
         # Mirrors OMP's continuation accounting: a real tool turn resets the
         # no-tool resample budget because the agent made observable progress.
-        self.forced_final_answer_continuations = 0
-        self.clear_forced_final_answer_request()
+        self.finalization.observe_tool_progress()
+
+    @property
+    def force_final_answer_without_tools(self) -> bool:
+        return self.finalization.pending_force_final
+
+    @force_final_answer_without_tools.setter
+    def force_final_answer_without_tools(self, value: bool) -> None:
+        self.finalization.pending_force_final = bool(value)
+
+    @property
+    def forced_final_answer_continuations(self) -> int:
+        return self.finalization.continuations
+
+    @forced_final_answer_continuations.setter
+    def forced_final_answer_continuations(self, value: int) -> None:
+        self.finalization.continuations = max(0, int(value))
+
+    @property
+    def forced_final_answer_kind(self) -> str:
+        return self.finalization.kind
+
+    @forced_final_answer_kind.setter
+    def forced_final_answer_kind(self, value: str) -> None:
+        self.finalization.kind = value or "runtime_forced_final"
+
+    @property
+    def forced_final_answer_severity(self) -> str:
+        return self.finalization.severity
+
+    @forced_final_answer_severity.setter
+    def forced_final_answer_severity(self, value: str) -> None:
+        self.finalization.severity = value or FINAL_ANSWER_STEERING_HARD
+
+    @property
+    def unresolved_final_answer_gate(self) -> UnresolvedFinalAnswerGate | None:
+        return self.finalization.unresolved_gate
+
+    @unresolved_final_answer_gate.setter
+    def unresolved_final_answer_gate(self, value: UnresolvedFinalAnswerGate | None) -> None:
+        self.finalization.unresolved_gate = value

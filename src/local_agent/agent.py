@@ -26,11 +26,14 @@ from .compaction import summary_request_content as _summary_request_content
 from .compaction import tool_snippets as _tool_snippets
 from .compaction import truncate_recent_tool_outputs as _truncate_recent_tool_outputs
 from .compaction import valid_recent_messages as _valid_recent_messages
+from .chat_runtime import call_chat_with_timeout
 from .config import AgentConfig
 from .config import normalize_approval_mode
 from .design_evidence import FINAL_RESPONSE_RESERVE_SECONDS
 from .design_evidence import cross_root_design_evidence_roots
 from .evidence import EvidenceRecord
+from .finalization import FINAL_ANSWER_STEERING_HARD
+from .finalization import MAX_FINALIZATION_ATTEMPTS
 from .llm import LlmError
 from .llm import OpenAICompatibleClient
 from .lsp.client import close_all_clients
@@ -438,10 +441,10 @@ class AgentRuntime:
                     "force_final_answer": self._run.force_final_answer_without_tools,
                 },
             )
-            force_final_answer = self._run.force_final_answer_without_tools
-            self._run.force_final_answer_without_tools = False
+            force_final_answer = self._run.finalization.begin_forced_final_turn()
             try:
-                response = self._client.chat(
+                response = call_chat_with_timeout(
+                    self._client,
                     messages_for_model,
                     tools_for_model,
                     timeout=self._remaining_timeout(deadline),
@@ -656,7 +659,11 @@ class AgentRuntime:
                     "force_final_answer_without_tools": True,
                 },
             )
-            self._run.request_forced_final_answer(kind=decision.rule_id or "tool_choice_queue")
+            if not self._queue_forced_final_answer(kind=decision.rule_id or "tool_choice_queue"):
+                self._run.block_unverified_final_answer(
+                    kind=decision.rule_id or "tool_choice_queue",
+                    reason=self._final_answer_rewrite_skip_reason() or "continuation_limit",
+                )
             return None
         if decision.should_stop:
             self._session.append(
@@ -690,7 +697,7 @@ class AgentRuntime:
             if coverage.message is not None:
                 self._messages.append({"role": "user", "content": coverage.message})
                 if coverage.force_final_answer_without_tools:
-                    if self._run.queue_forced_final_answer(kind=coverage.kind):
+                    if self._queue_forced_final_answer(kind=coverage.kind):
                         self._run.force_final_answer_without_tools = True
                     else:
                         self._session.append(
@@ -1119,6 +1126,7 @@ class AgentRuntime:
                 "soft_tool_requirement": self._run.soft_tool_requirement.steers if self._run.soft_tool_requirement else 0,
             },
         )
+        payload["finalization_attempts"] = self._run.finalization.aggregate_attempts
         self._last_run_summary = payload
         self._session.append("run_summary", payload)
         self._events.emit("RunSummary", payload)
@@ -1317,7 +1325,7 @@ class AgentRuntime:
             },
         ]
         try:
-            response = self._client.chat(messages, [], timeout=timeout)
+            response = call_chat_with_timeout(self._client, messages, [], timeout=timeout)
         except LlmError as exc:
             self._session.append("context_summary_error", {"mode": "llm", "error": str(exc)})
             return None
@@ -1600,7 +1608,11 @@ class AgentRuntime:
         }
         self._session.append("runtime_steering", payload)
         if decision.force_final_answer_without_tools:
-            self._run.request_forced_final_answer(kind=decision.kind)
+            if not self._queue_forced_final_answer(kind=decision.kind):
+                self._run.block_unverified_final_answer(
+                    kind=decision.kind,
+                    reason=self._final_answer_rewrite_skip_reason() or "continuation_limit",
+                )
         else:
             self._run.clear_forced_final_answer_request()
         self._run.temporary_tool_allowlist = decision.temporary_tool_allowlist
@@ -1796,26 +1808,24 @@ class AgentRuntime:
                         },
                     )
                 return False
-            if not self._run.queue_forced_final_answer(
-                kind=decision.kind,
-                severity=decision.severity.value,
-            ):
+            if not self._queue_forced_final_answer(kind=decision.kind, severity=decision.severity.value):
+                skip_reason = self._final_answer_rewrite_skip_reason() or "continuation_limit"
                 self._session.append(
                     "runtime_steering",
                     {
                         "kind": "final_answer_steering_skipped",
                         "skipped_kind": decision.kind,
-                        "reason": "continuation_limit",
+                        "reason": skip_reason,
                     },
                 )
                 if decision.severity == FinalAnswerSteeringSeverity.HARD:
-                    self._run.block_unverified_final_answer(kind=decision.kind, reason="continuation_limit")
+                    self._run.block_unverified_final_answer(kind=decision.kind, reason=skip_reason)
                     self._session.append(
                         "runtime_steering",
                         {
                             "kind": "final_answer_hard_gate_unresolved",
                             "steering_kind": decision.kind,
-                            "reason": "continuation_limit",
+                            "reason": skip_reason,
                         },
                     )
                 return False
@@ -1838,6 +1848,8 @@ class AgentRuntime:
         deadline = self._run.deadline_monotonic
         if deadline is not None and deadline - time.monotonic() <= FINAL_RESPONSE_RESERVE_SECONDS:
             return "deadline_reserve"
+        if self._run.finalization.aggregate_attempts >= MAX_FINALIZATION_ATTEMPTS:
+            return "aggregate_limit"
         if not self._run.can_queue_forced_final_answer():
             return "continuation_limit"
         return None
@@ -2030,7 +2042,7 @@ class AgentRuntime:
             },
         ]
         try:
-            response = self._client.chat(messages, [], timeout=timeout)
+            response = call_chat_with_timeout(self._client, messages, [], timeout=timeout)
         except LlmError as exc:
             self._session.append("memory_consolidation_error", {"mode": "llm", "error": str(exc)})
             return None
@@ -2112,6 +2124,15 @@ class AgentRuntime:
                 "content_preview": _event_preview(content),
             },
         )
+        if metadata and metadata.get("provider_schema_violation"):
+            self._events.emit(
+                "ErrorEvent",
+                {
+                    "kind": "provider_schema_violation",
+                    "tool": name,
+                    "allowed_tools": list(metadata.get("allowed_tools") or ()),
+                },
+            )
         self._messages.append(
             {
                 "role": "tool",
@@ -2122,6 +2143,20 @@ class AgentRuntime:
                 "_lca_useless": bool(useless and not is_error),
             }
         )
+
+    def _queue_forced_final_answer(
+        self,
+        *,
+        kind: str,
+        severity: str = FINAL_ANSWER_STEERING_HARD,
+    ) -> bool:
+        outcome = self._run.finalization.request(
+            kind=kind,
+            severity=severity,
+            deadline_monotonic=self._run.deadline_monotonic,
+            reserve_seconds=FINAL_RESPONSE_RESERVE_SECONDS,
+        )
+        return outcome.accepted
 
     def _append_synthetic_tool_results(self, tool_calls: list[dict[str, Any]], content: str) -> None:
         for tool_call in tool_calls:

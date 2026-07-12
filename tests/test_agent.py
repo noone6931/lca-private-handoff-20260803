@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import subprocess
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -86,6 +87,54 @@ class _ToolSchemaRecordingClient:
 
     def chat(self, messages, tools, *, timeout=None):
         type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
+        return type("Response", (), {"message": {"content": "done"}})()
+
+
+class _ForcedFinalHangingClient:
+    timeouts: list[float] = []
+    release = threading.Event()
+    calls = 0
+
+    def __init__(self, config: AgentConfig):
+        self.config = config
+
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).timeouts.append(timeout)
+        type(self).calls += 1
+        if type(self).calls == 1:
+            return type("Response", (), {"message": {"content": "first draft"}})()
+        type(self).release.wait(60)
+        return type("Response", (), {"message": {"content": "late draft"}})()
+
+
+class _SchemaViolationClient:
+    calls: list[dict] = []
+
+    def __init__(self, config: AgentConfig):
+        self.config = config
+
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
+        if len(type(self).calls) == 1:
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "call_violation",
+                                "type": "function",
+                                "function": {
+                                    "name": "list_files",
+                                    "arguments": json.dumps({}),
+                                },
+                            }
+                        ],
+                    }
+                },
+            )()
         return type("Response", (), {"message": {"content": "done"}})()
 
 
@@ -1346,6 +1395,39 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertNotIn("list_files", second_names)
         self.assertEqual(second_names, set(second.allowed_tool_names))
 
+    def test_provider_schema_violation_is_recorded_separately_from_generic_tool_errors(self) -> None:
+        _SchemaViolationClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=workspace,
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+            )
+            sink = ListEventSink()
+            decision = ToolChoiceDecision(
+                steering_required=False,
+                allowed_tool_names=frozenset({"read_file"}),
+                reason="read only evidence",
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _SchemaViolationClient):
+                runtime = AgentRuntime(config, show_tool_logs=False, event_sink=sink)
+                with patch.object(runtime._run.tool_choice_queue, "evaluate", return_value=decision):
+                    result = runtime.run("请只读取证据后再回答。")
+
+        self.assertEqual(result, "done")
+        self.assertEqual(runtime._last_run_summary["provider_schema_violations"], 1)
+        error_events = [event for event in sink.events if event.type == "ErrorEvent"]
+        self.assertEqual(len(error_events), 1)
+        self.assertEqual(error_events[0].payload["kind"], "provider_schema_violation")
+        self.assertEqual(runtime._run.tool_choice_results[0].name, "list_files")
+        self.assertTrue(runtime._run.tool_choice_results[0].metadata.get("provider_schema_violation"))
+
     def test_runtime_emits_protocol_events_and_records_event_v1(self) -> None:
         _ReadFileThenFinalClient.calls = []
         with tempfile.TemporaryDirectory() as tmp:
@@ -2386,6 +2468,37 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertIn("未完成/未验证", result or "")
         self.assertIn("完成验收", result or "")
         self.assertEqual(runtime._last_run_summary["termination_reason"], "forced_final_timeout_unverified")
+
+    def test_forced_final_hanging_provider_is_cut_off_by_outer_timeout_and_writes_summary(self) -> None:
+        _ForcedFinalHangingClient.timeouts = []
+        _ForcedFinalHangingClient.release = threading.Event()
+        _ForcedFinalHangingClient.calls = 0
+        with tempfile.TemporaryDirectory() as tmp:
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=Path(tmp).resolve(),
+                max_steps=0,
+                budget_seconds=None,
+                request_timeout=1,
+                approval_mode="yolo",
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _ForcedFinalHangingClient):
+                runtime = AgentRuntime(config, show_tool_logs=False)
+                with patch.object(
+                    runtime,
+                    "_decide_final_answer_steering",
+                    return_value=SteeringDecision(kind="completion_audit", message="rewrite", payload={}),
+                ):
+                    result = runtime.run("请给出最终答案。")
+        _ForcedFinalHangingClient.release.set()
+
+        self.assertIn("未完成/未验证", result)
+        self.assertEqual(runtime._last_run_summary["termination_reason"], "forced_final_timeout_unverified")
+        self.assertEqual(runtime._last_run_summary["finalization_attempts"], 1)
+        self.assertGreaterEqual(len(_ForcedFinalHangingClient.timeouts), 2)
 
     def test_source_evidence_false_negative_gate_does_not_preempt_implementation_repair(self) -> None:
         contract = generate_requirement_contract("请实现用户注册接口邮箱唯一性校验，并补充单元测试。")
