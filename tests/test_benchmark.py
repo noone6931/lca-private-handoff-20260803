@@ -19,7 +19,7 @@ class BenchmarkTests(unittest.TestCase):
         tasks = load_benchmark_tasks()
         identifiers = {task.identifier for task in tasks}
 
-        self.assertEqual(len(tasks), 9)
+        self.assertEqual(len(tasks), 10)
         self.assertEqual(
             identifiers,
             {
@@ -32,6 +32,7 @@ class BenchmarkTests(unittest.TestCase):
                 "small-code-test-failure-incomplete",
                 "session-evidence-followup",
                 "qualified-negative-observation",
+                "forced-final-protocol-artifact",
             },
         )
         self.assertTrue(DEFAULT_TASKS_DIR.is_dir())
@@ -43,15 +44,16 @@ class BenchmarkTests(unittest.TestCase):
             payload = json.loads((output_dir / "benchmark-report.json").read_text(encoding="utf-8"))
             markdown = (output_dir / "benchmark-report.md").read_text(encoding="utf-8")
 
-        self.assertEqual(len(results), 9)
+        self.assertEqual(len(results), 10)
         self.assertTrue(all(result.passed for result in results))
-        self.assertEqual(payload["passed"], 9)
+        self.assertEqual(payload["passed"], 10)
         self.assertEqual(payload["failed"], 0)
         self.assertIn("small-code-change-test-diff", markdown)
         self.assertIn("budget-exhausted-incomplete", markdown)
         self.assertIn("small-code-test-failure-incomplete", markdown)
         self.assertIn("session-evidence-followup", markdown)
         self.assertIn("qualified-negative-observation", markdown)
+        self.assertIn("forced-final-protocol-artifact", markdown)
 
     def test_mapping_acceptance_requires_explicit_metric_values(self) -> None:
         from local_agent.benchmark import _mapping_integer_values_match
