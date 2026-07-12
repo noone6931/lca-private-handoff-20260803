@@ -109,11 +109,16 @@ class RequirementContractTests(unittest.TestCase):
         self.assertTrue(all("repository-grounded" not in item for item in contract.acceptance_items))
 
     def test_primary_git_metadata_contract_has_a_dedicated_evidence_owner(self) -> None:
-        contract = generate_requirement_contract("当前 primary workspace 是不是 Git 仓库？")
-
-        self.assertEqual(contract.task_kind, "read-only")
-        self.assertEqual(contract.workspace_metadata_subject, "git_repository")
-        self.assertIn("git_status", contract.scope)
+        for prompt in (
+            "当前 primary workspace 是不是 Git 仓库？",
+            "确认当前 primary 是不是 Git 仓库",
+            "Is the current workspace a Git repository?",
+        ):
+            with self.subTest(prompt=prompt):
+                contract = generate_requirement_contract(prompt)
+                self.assertEqual(contract.task_kind, "read-only")
+                self.assertEqual(contract.workspace_metadata_subject, "git_repository")
+                self.assertIn("git_status", contract.scope)
 
     def test_git_metadata_contract_does_not_capture_implementation_design_or_explanation(self) -> None:
         cases = (
@@ -121,6 +126,11 @@ class RequirementContractTests(unittest.TestCase):
             ("请新增 Git repository 检测能力。", "code-implementation"),
             ("请设计 Git repository 检测方案。", "unclear"),
             ("解释 Git repository 的概念。", "read-only"),
+            ("当前目录的 Git 仓库检测函数如何实现？", "read-only"),
+            ("请分析当前 workspace 的 Git repository 检测逻辑如何实现？", "read-only"),
+            ("当前目录为何不是 Git 仓库？", "read-only"),
+            ("How should the current directory Git repository detection function be implemented?", "read-only"),
+            ("Why is the current workspace not a Git repository?", "read-only"),
         )
         for prompt, expected_kind in cases:
             with self.subTest(prompt=prompt):

@@ -452,18 +452,30 @@ def inspection_forbidden_repository_fact_request(user_prompt: str) -> bool:
 def _is_direct_primary_git_repository_question(lower_prompt: str) -> bool:
     if not _contains_any(lower_prompt, _GIT_METADATA_MARKERS):
         return False
-    scope = re.search(
-        r"(?:当前\s*(?:primary\s*)?(?:workspace|root|目录|工作区)|主工作区|"
-        r"\b(?:current|this|primary)\s+(?:workspace|root|directory)\b)",
+    chinese_scope = r"(?:当前\s*primary(?:\s*(?:workspace|root|目录|工作区))?|当前\s*(?:workspace|root|目录|工作区)|主工作区)"
+    english_scope = r"(?:the\s+)?(?:current|this|primary)\s+(?:workspace|root|directory)"
+    # A metadata owner only applies to a complete yes/no proposition. A bare
+    # question mark is intentionally insufficient: it also appears in requests
+    # for implementation, design, diagnostics, and causal explanation.
+    chinese_direct = re.search(
+        rf"{chinese_scope}\s*(?:是否|是不是)\s*(?:一个\s*)?git\s*(?:仓库|repo|repository)",
+        lower_prompt,
+        re.IGNORECASE,
+    ) or re.search(
+        rf"{chinese_scope}\s*(?:是|为)\s*(?:一个\s*)?git\s*(?:仓库|repo|repository)\s*(?:吗|？|\?)",
         lower_prompt,
         re.IGNORECASE,
     )
-    question = re.search(
-        r"(?:是否|是不是|是吗|有没有|\?|？|\bis\b.{0,32}\bgit\b|\bgit\b.{0,24}\?)",
+    english_direct = re.search(
+        rf"\bis\s+{english_scope}\s+(?:a\s+)?git\s+(?:repo|repository)\s*\?",
+        lower_prompt,
+        re.IGNORECASE,
+    ) or re.search(
+        rf"\b(?:confirm|check)\s+(?:whether\s+)?{english_scope}\s+is\s+(?:a\s+)?git\s+(?:repo|repository)\b",
         lower_prompt,
         re.IGNORECASE,
     )
-    return bool(scope and question)
+    return bool(chinese_direct or english_direct)
 
 
 def _strip_quoted_text(value: str) -> str:
