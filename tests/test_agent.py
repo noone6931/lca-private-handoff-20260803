@@ -84,6 +84,18 @@ class _FinalClient:
         return type("Response", (), {"message": {"content": "done"}})()
 
 
+class _QualifiedNegativeFinalClient:
+    def __init__(self, config: AgentConfig):
+        self.config = config
+
+    def chat(self, messages, tools, *, timeout=None):
+        return type(
+            "Response",
+            (),
+            {"message": {"content": "未发现 Java 源码，但这不等于证明 primary 无 Java。"}},
+        )()
+
+
 class _TimeoutRecordingClient:
     timeouts: list[float] = []
 
@@ -4962,6 +4974,27 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertEqual(result, "done")
         user_messages = [message for message in _MessageRecordingClient.messages if message.get("role") == "user"]
         self.assertNotIn("[Runtime workflow reminder]", user_messages[-1]["content"])
+
+    def test_qualified_negative_claim_is_observed_without_reopening_tools(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=Path(tmp).resolve(),
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _QualifiedNegativeFinalClient):
+                runtime = AgentRuntime(config, show_tool_logs=False)
+                result = runtime.run("只回答 OK")
+
+        self.assertIn("不等于证明", result)
+        self.assertEqual(runtime._last_run_summary["termination_reason"], "final")
+        self.assertNotIn("negative_existence", runtime._last_run_summary["steering_counts"])
+        self.assertGreaterEqual(runtime._last_run_summary["negative_evidence_claims"]["qualified_skips"], 1)
 
     def test_session_tool_policy_rejects_unknown_tool_name(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

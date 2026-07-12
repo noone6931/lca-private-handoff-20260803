@@ -2,33 +2,45 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Iterable
+from typing import Iterable, Mapping
 
 from .tool_choice_queue import ToolResultSummary
 
 
+ASSERTED_ABSENCE = "asserted_absence"
+OBSERVED_NO_MATCH = "observed_no_match"
+EPISTEMICALLY_QUALIFIED = "epistemically_qualified"
+QUOTED_OR_HYPOTHETICAL = "quoted_or_hypothetical"
+
+
 @dataclass(frozen=True)
 class NegativeExistenceClaim:
-    """A finite, path-oriented negative claim that needs matching tool evidence."""
+    """A clause-local negative claim with its epistemic stance and provenance."""
 
     kind: str
     subject: str
     claim: str
+    stance: str = ASSERTED_ABSENCE
+    scope: str = "unspecified"
+    root: str | None = None
+    support_requirement: str = "complete_discovery"
+    span_start: int = 0
+    span_end: int = 0
 
 
 _JAVA_CLAIM = re.compile(
-    r"(?:没有|未发现|未找到|不存在|无)\s*(?:任何)?\s*(?:\.?java|java)\s*(?:文件|源码|source|files?)"
-    r"|\bno\s+(?:\.java|java)\s+(?:files?|source)\b",
+    r"(?:没有|未发现|未找到|不存在|无)\s*(?:任何)?\s*(?:\.?java|java)(?:\s*(?:文件|源码|source|files?))?"
+    r"|\b(?:no\s+(?:\.java|java)\s+(?:files?|source)\s+(?:were|was)\s+found|no\s+(?:\.java|java)\s+(?:files?|source))\b",
     re.IGNORECASE,
 )
 _SOURCE_CLAIM = re.compile(
     r"(?:没有|未发现|未找到|不存在|无)\s*(?:源码|源代码|代码文件)"
-    r"|\bno\s+(?:source(?:\s+files?)?|codebase)\b",
+    r"|\b(?:no\s+(?:source(?:\s+files?)?|codebase)\s+(?:were|was)\s+found|no\s+(?:source(?:\s+files?)?|codebase))\b",
     re.IGNORECASE,
 )
 _EXACT_PATH_CLAIM = re.compile(
-    r"(?P<path>src(?:/main/java)?)(?:目录|文件夹|文件)?\s*(?:不存在|未发现|未找到|没有)"
-    r"|(?:不存在|未发现|未找到|没有)\s*(?P<reverse>src(?:/main/java)?)",
+    r"(?P<path>src(?:/main/java)?)(?:目录|文件夹|文件)?\s*(?P<verb>不存在|未发现|未找到|没有)"
+    r"|(?P<reverse_verb>不存在|未发现|未找到|没有)\s*(?P<reverse>src(?:/main/java)?)",
     re.IGNORECASE,
 )
 _GIT_CLAIM = re.compile(
@@ -36,62 +48,93 @@ _GIT_CLAIM = re.compile(
     r"is\s+not\s+(?:a\s+)?git\s+(?:repo|repository)",
     re.IGNORECASE,
 )
+_ENTITY_CLAIM = re.compile(
+    r"(?:不存在|没有|无)\s*(?P<subject>[A-Za-z_][A-Za-z0-9_.-]{1,})"
+    r"|\bno\s+(?P<english>[A-Za-z_][A-Za-z0-9_.-]{1,})\s+exists\b",
+    re.IGNORECASE,
+)
 
 _FENCED_CODE = re.compile(r"```.*?```", re.DOTALL)
 _INLINE_CODE = re.compile(r"`[^`]*`")
 _QUOTED_EXAMPLE = re.compile(r"(?:\"[^\"]*\"|'[^']*'|“[^”]*”|‘[^’]*’)")
-_CLAUSE_BOUNDARY = re.compile(r"(?<=[。！？!?；;])|\n+")
-_NON_ASSERTIVE_PREFIX = re.compile(
-    r"(?:(?:不能|无法|不可|不要)\s*(?:据此\s*)?(?:推导|断言|声称|陈述|认定|证明|说明|得出|判断)|"
+_CLAUSE_BREAK = re.compile(r"(?<=[。！？!?；;])|\n+|\b(?:but|however)\b|(?:但是|然而|但)", re.IGNORECASE)
+_QUALIFYING_PREFIX = re.compile(
+    r"(?:不能|无法|不可|不要)\s*(?:据此\s*)?(?:推导|断言|声称|陈述|认定|证明|说明|得出|判断)|"
     r"(?:未验证|尚未验证).{0,18}(?:推导|断言|声称|陈述|认定|证明|说明|得出|判断)|"
-    r"不足以证明|不等于|并非|仅引用|只是引用).{0,28}$"
-    r"|(?:cannot\s+(?:conclude|state|claim)|can't\s+(?:conclude|state|claim)|do\s+not\s+(?:conclude|state|claim)|"
-    r"don't\s+(?:conclude|state|claim)|should\s+not\s+(?:conclude|state|claim)|does\s+not\s+prove|"
-    r"doesn't\s+prove|not\s+enough\s+to\s+conclude).{0,28}$",
+    r"不足以证明|不等于|并非|仅引用|只是引用|"
+    r"cannot\s+(?:conclude|state|claim)|can't\s+(?:conclude|state|claim)|do\s+not\s+(?:conclude|state|claim)|"
+    r"don't\s+(?:conclude|state|claim)|should\s+not\s+(?:conclude|state|claim)|does\s+not\s+(?:prove|establish)|"
+    r"doesn't\s+(?:prove|establish)|not\s+enough\s+to\s+(?:conclude|establish)",
     re.IGNORECASE,
 )
-_NON_ASSERTIVE_SUFFIX = re.compile(
-    r"^\s*(?:[（(]\s*)?(?:未验证|尚未验证|不成立|仅作示例|只是引用|not\s+verified|unverified|"
-    r"only\s+(?:an\s+)?example|quoted\s+example)(?:\s*[）)])?",
+_QUALIFYING_SUFFIX = re.compile(
+    r"(?:不等于证明|不能据此(?:推导|断言|声称|陈述)|不足以证明|未验证|尚未验证|not\s+(?:proof|verified)|"
+    r"does\s+not\s+(?:prove|establish)|cannot\s+(?:conclude|state|claim)|unverified)",
     re.IGNORECASE,
 )
+_OBSERVED_MARKER = re.compile(r"(?:未发现|未找到|no\s+.+?\s+(?:was|were)\s+found|no\s+matches?)", re.IGNORECASE)
+_QUESTION_OR_HYPOTHETICAL = re.compile(
+    r"[?？]|(?:假设|如果|若|例如|比如)|\b(?:suppose|if|example)\b",
+    re.IGNORECASE,
+)
+_NEXT_CLAUSE_QUALIFIER = re.compile(
+    r"^\s*(?:(?:但|但是|然而)\s*)?(?:这\s*)?(?:不等于证明|不能据此(?:推导|断言|声称|陈述)|不足以证明)|"
+    r"^\s*(?:(?:but|however)\s+)?(?:this\s+)?(?:does\s+not\s+(?:prove|establish)|is\s+not\s+proof)",
+    re.IGNORECASE,
+)
+
+
+def parse_negative_evidence_claims(content: str) -> tuple[NegativeExistenceClaim, ...]:
+    """Parse finite path/source/Git negative claims without making evidence decisions."""
+    sanitized = _non_code_text(content)
+    claims: list[NegativeExistenceClaim] = []
+    spans = tuple(_clause_spans(sanitized))
+    for index, (start, end) in enumerate(spans):
+        clause = sanitized[start:end]
+        following_clause = sanitized[spans[index + 1][0] : spans[index + 1][1]] if index + 1 < len(spans) else ""
+        for kind, subject, matcher in (
+            ("extension", "java", _JAVA_CLAIM),
+            ("source_tree", "source", _SOURCE_CLAIM),
+            ("git_repository", "git", _GIT_CLAIM),
+        ):
+            for match in matcher.finditer(clause):
+                claims.append(_claim_from_match(kind, subject, match, clause, following_clause, start))
+        for match in _EXACT_PATH_CLAIM.finditer(clause):
+            subject = (match.group("path") or match.group("reverse") or "").lower()
+            if subject:
+                claims.append(_claim_from_match("exact_path", subject, match, clause, following_clause, start))
+        for match in _ENTITY_CLAIM.finditer(clause):
+            subject = match.group("subject") or match.group("english") or ""
+            if subject.lower() not in {"java", "source", "code", "git"}:
+                claims.append(_claim_from_match("entity", subject, match, clause, following_clause, start))
+    return tuple(_dedupe_claims(claims))
+
+
+def negative_existence_claims(content: str) -> tuple[NegativeExistenceClaim, ...]:
+    """Compatibility view: only asserted absences require exhaustive evidence."""
+    return tuple(claim for claim in parse_negative_evidence_claims(content) if claim.stance == ASSERTED_ABSENCE)
 
 
 def unsupported_negative_existence_claims(
     content: str,
     tool_results: Iterable[ToolResultSummary],
 ) -> tuple[NegativeExistenceClaim, ...]:
-    """Return definite path/source/Git absences that lack type-matched evidence.
-
-    Text or symbol search misses intentionally remain outside this function: those
-    are content claims and continue to be supported by ``search_code``.
-    """
-
     results = tuple(tool_results)
-    unsupported: list[NegativeExistenceClaim] = []
-    for claim in negative_existence_claims(content):
-        if not _claim_has_matching_evidence(claim, results):
-            unsupported.append(claim)
-    return tuple(unsupported)
+    return tuple(claim for claim in negative_existence_claims(content) if not _claim_has_matching_evidence(claim, results))
 
 
-def negative_existence_claims(content: str) -> tuple[NegativeExistenceClaim, ...]:
-    claims: list[NegativeExistenceClaim] = []
-    sanitized = _non_code_text(content)
-    for match in _JAVA_CLAIM.finditer(sanitized):
-        if _is_asserted_claim(sanitized, match):
-            claims.append(NegativeExistenceClaim("extension", "java", match.group(0)))
-    for match in _SOURCE_CLAIM.finditer(sanitized):
-        if _is_asserted_claim(sanitized, match):
-            claims.append(NegativeExistenceClaim("source_tree", "source", match.group(0)))
-    for match in _EXACT_PATH_CLAIM.finditer(sanitized):
-        subject = (match.group("path") or match.group("reverse") or "").lower()
-        if subject and _is_asserted_claim(sanitized, match):
-            claims.append(NegativeExistenceClaim("exact_path", subject, match.group(0)))
-    for match in _GIT_CLAIM.finditer(sanitized):
-        if _is_asserted_claim(sanitized, match):
-            claims.append(NegativeExistenceClaim("git_repository", "git", match.group(0)))
-    return tuple(claims)
+def negative_claim_metrics(content: str, tool_results: Iterable[ToolResultSummary]) -> dict[str, int]:
+    claims = parse_negative_evidence_claims(content)
+    results = tuple(tool_results)
+    asserted = [claim for claim in claims if claim.stance == ASSERTED_ABSENCE]
+    return {
+        "asserted_absence": len(asserted),
+        "observed_no_match": sum(claim.stance == OBSERVED_NO_MATCH for claim in claims),
+        "epistemically_qualified": sum(claim.stance == EPISTEMICALLY_QUALIFIED for claim in claims),
+        "quoted_or_hypothetical": sum(claim.stance == QUOTED_OR_HYPOTHETICAL for claim in claims),
+        "blocked_assertions": sum(not _claim_has_matching_evidence(claim, results) for claim in asserted),
+        "qualified_skips": sum(claim.stance == EPISTEMICALLY_QUALIFIED for claim in claims),
+    }
 
 
 def allowed_tools_for_negative_claims(claims: Iterable[NegativeExistenceClaim]) -> tuple[str, ...]:
@@ -106,18 +149,90 @@ def allowed_tools_for_negative_claims(claims: Iterable[NegativeExistenceClaim]) 
 
 def render_negative_existence_issues(claims: Iterable[NegativeExistenceClaim]) -> list[str]:
     return [
-        f"{claim.claim!r} is a {claim.kind} absence claim without matching discovery evidence"
+        f"{claim.claim!r} is a {claim.kind} asserted absence without matching {claim.support_requirement} evidence"
         for claim in claims
     ]
 
 
+def _claim_from_match(
+    kind: str,
+    subject: str,
+    match: re.Match[str],
+    clause: str,
+    following_clause: str,
+    clause_start: int,
+) -> NegativeExistenceClaim:
+    claim_text = match.group(0)
+    stance = _claim_stance(clause, claim_text, following_clause)
+    support = "complete_git_probe" if kind == "git_repository" else "complete_discovery"
+    return NegativeExistenceClaim(
+        kind=kind,
+        subject=subject,
+        claim=claim_text,
+        stance=stance,
+        scope=_claim_scope(clause),
+        support_requirement=support,
+        span_start=clause_start + match.start(),
+        span_end=clause_start + match.end(),
+    )
+
+
+def _claim_stance(clause: str, claim_text: str, following_clause: str) -> str:
+    if _QUESTION_OR_HYPOTHETICAL.search(clause):
+        return QUOTED_OR_HYPOTHETICAL
+    before = clause[: clause.lower().find(claim_text.lower())]
+    after = clause[clause.lower().find(claim_text.lower()) + len(claim_text) :]
+    if (
+        _QUALIFYING_PREFIX.search(before)
+        or _QUALIFYING_SUFFIX.search(after)
+        or _NEXT_CLAUSE_QUALIFIER.search(following_clause)
+    ):
+        return EPISTEMICALLY_QUALIFIED
+    if _OBSERVED_MARKER.search(claim_text):
+        return OBSERVED_NO_MATCH
+    return ASSERTED_ABSENCE
+
+
+def _claim_scope(clause: str) -> str:
+    lowered = clause.lower()
+    if any(value in lowered for value in ("all roots", "所有 root", "所有目录", "全部目录")):
+        return "multi_root"
+    if any(value in lowered for value in ("primary", "主工作区", "当前工作区")):
+        return "primary"
+    if any(value in lowered for value in ("root", "当前目录", "该目录", "这里", "this directory", "this root")):
+        return "root_local"
+    return "unspecified"
+
+
+def _clause_spans(content: str) -> Iterable[tuple[int, int]]:
+    start = 0
+    for match in _CLAUSE_BREAK.finditer(content):
+        end = match.start()
+        if content[start:end].strip():
+            yield start, end
+        start = match.end()
+    if content[start:].strip():
+        yield start, len(content)
+
+
+def _dedupe_claims(claims: Iterable[NegativeExistenceClaim]) -> list[NegativeExistenceClaim]:
+    seen: set[tuple[str, str, int, int]] = set()
+    output: list[NegativeExistenceClaim] = []
+    for claim in claims:
+        key = (claim.kind, claim.subject, claim.span_start, claim.span_end)
+        if key not in seen:
+            seen.add(key)
+            output.append(claim)
+    return output
+
+
 def _claim_has_matching_evidence(claim: NegativeExistenceClaim, results: tuple[ToolResultSummary, ...]) -> bool:
     if claim.kind == "exact_path":
-        return any(_is_exact_path_missing(result, claim.subject) for result in results)
+        return any(_result_supports_scope(claim, result) and _is_exact_path_missing(result, claim.subject) for result in results)
     if claim.kind == "extension":
-        return any(_is_complete_path_no_match(result, claim.subject) for result in results)
+        return any(_result_supports_scope(claim, result) and _is_complete_path_no_match(result, claim.subject) for result in results)
     if claim.kind == "source_tree":
-        return any(_is_complete_path_no_match(result, "source") for result in results)
+        return any(_result_supports_scope(claim, result) and _is_complete_path_no_match(result, "source") for result in results)
     if claim.kind == "git_repository":
         return any(
             not result.is_error
@@ -127,6 +242,18 @@ def _claim_has_matching_evidence(claim: NegativeExistenceClaim, results: tuple[T
             for result in results
         )
     return False
+
+
+def _result_supports_scope(claim: NegativeExistenceClaim, result: ToolResultSummary) -> bool:
+    """Keep root-local observations from silently becoming cross-root facts."""
+    metadata = result.metadata
+    label = str(metadata.get("evidence_root_label") or "")
+    if claim.scope == "primary" and label and label != "primary":
+        return False
+    if claim.scope != "multi_root":
+        return True
+    roots = metadata.get("searched_roots")
+    return isinstance(roots, (list, tuple)) and len({str(root) for root in roots if str(root).strip()}) >= 2
 
 
 def _is_exact_path_missing(result: ToolResultSummary, subject: str) -> bool:
@@ -152,33 +279,22 @@ def _is_complete_path_no_match(result: ToolResultSummary, subject: str) -> bool:
 
 
 def _non_code_text(content: str) -> str:
-    """Preserve offsets while preventing quoted/code examples from becoming claims."""
-
     def blank(match: re.Match[str]) -> str:
         return "".join("\n" if char == "\n" else " " for char in match.group(0))
 
     return _QUOTED_EXAMPLE.sub(blank, _INLINE_CODE.sub(blank, _FENCED_CODE.sub(blank, content or "")))
 
 
-def _is_asserted_claim(content: str, match: re.Match[str]) -> bool:
-    start = max(
-        (boundary.end() for boundary in _CLAUSE_BOUNDARY.finditer(content, 0, match.start())),
-        default=0,
-    )
-    next_boundary = _CLAUSE_BOUNDARY.search(content, match.end())
-    end = next_boundary.start() if next_boundary is not None else len(content)
-    prefix = content[start : match.start()]
-    suffix = content[match.end() : end]
-    # Only the governing prefix or an immediate qualifier can negate a claim.
-    # A later unrelated phrase such as "but that does not mean no docs" must
-    # not erase an earlier real assertion that this root has no source code.
-    return not bool(_NON_ASSERTIVE_PREFIX.search(prefix) or _NON_ASSERTIVE_SUFFIX.search(suffix))
-
-
 __all__ = [
+    "ASSERTED_ABSENCE",
+    "EPISTEMICALLY_QUALIFIED",
     "NegativeExistenceClaim",
+    "OBSERVED_NO_MATCH",
+    "QUOTED_OR_HYPOTHETICAL",
     "allowed_tools_for_negative_claims",
+    "negative_claim_metrics",
     "negative_existence_claims",
+    "parse_negative_evidence_claims",
     "render_negative_existence_issues",
     "unsupported_negative_existence_claims",
 ]

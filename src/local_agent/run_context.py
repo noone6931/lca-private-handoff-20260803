@@ -56,6 +56,7 @@ class RunContext:
     collector: RunCollector = field(default_factory=RunCollector)
     session_evidence_reuse: SessionEvidenceReuse = field(default_factory=SessionEvidenceReuse)
     user_facts_context: str = ""
+    negative_claim_metrics: dict[str, int] = field(default_factory=dict)
 
     # Compatibility views keep existing runtime tests and integrations stable while
     # EvidenceLedger becomes the single owner of the mutable evidence state.
@@ -163,6 +164,13 @@ class RunContext:
         self.tool_loop_steering.reset()
         self.session_evidence_reuse = SessionEvidenceReuse()
         self.user_facts_context = ""
+        self.negative_claim_metrics.clear()
+
+    def record_negative_claim_metrics(self, metrics: dict[str, int]) -> None:
+        """Accumulate taxonomy observations without making model text authoritative."""
+        for key, value in metrics.items():
+            if value:
+                self.negative_claim_metrics[key] = self.negative_claim_metrics.get(key, 0) + int(value)
 
     def update_tool_choice_read_scope(
         self,

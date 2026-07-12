@@ -45,6 +45,7 @@ from .llm import LlmError
 from .llm import LlmTimeoutError
 from .llm import OpenAICompatibleClient
 from .lsp.client import close_all_clients
+from .negative_evidence import negative_claim_metrics as _negative_claim_metrics
 from .patch.anchored import display_workspace_path
 from .patch.anchored import PatchError
 from .patch.anchored import resolve_workspace_path
@@ -1149,12 +1150,15 @@ class AgentRuntime:
                 "source_evidence_false_negative": self._run.final_answer_steers.get("source_evidence_false_negative", 0),
                 "tool_usage_evidence": self._run.final_answer_steers.get("tool_usage_evidence", 0),
                 "source_grounded_numeric": self._run.final_answer_steers.get("source_grounded_numeric", 0),
+                "negative_existence": self._run.final_answer_steers.get("negative_existence", 0),
                 "patch_reviewer": self._run.final_answer_steers.get("patch_reviewer", 0),
                 "completion_audit": self._run.final_answer_steers.get("completion_audit", 0),
                 "soft_tool_requirement": self._run.soft_tool_requirement.steers if self._run.soft_tool_requirement else 0,
             },
         )
         payload["finalization_attempts"] = self._run.finalization.aggregate_attempts
+        if self._run.negative_claim_metrics:
+            payload["negative_evidence_claims"] = dict(self._run.negative_claim_metrics)
         if self._run.verification_plan.active:
             payload["verification_plan"] = self._run.verification_plan.coverage(delivery_only=True)
             payload["business_acceptance"] = self._run.verification_plan.business_acceptance_summary()
@@ -2029,6 +2033,10 @@ class AgentRuntime:
         run_start_index: int,
     ) -> SteeringDecision | None:
         context = self._final_answer_context(content, run_start_index)
+        claim_metrics = _negative_claim_metrics(content, context.tool_results)
+        if any(claim_metrics.values()):
+            self._run.record_negative_claim_metrics(claim_metrics)
+            self._session.append("negative_evidence_claims", claim_metrics)
         for steerer in self._final_answer_steerers:
             decision = steerer.decide(context)
             if decision is not None:

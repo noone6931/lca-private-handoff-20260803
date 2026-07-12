@@ -10,6 +10,7 @@ from ..completion_audit import audit_completion
 from ..completion_audit import render_completion_audit_message
 from ..design_evidence import missing_design_evidence_roots
 from ..negative_evidence import allowed_tools_for_negative_claims
+from ..negative_evidence import negative_claim_metrics
 from ..negative_evidence import render_negative_existence_issues
 from ..negative_evidence import unsupported_negative_existence_claims
 from ..patch_reviewer import render_patch_review_message
@@ -652,6 +653,7 @@ class NegativeExistenceSteerer:
         issues = unsupported_negative_existence_claims(context.content, context.tool_results)
         if not issues:
             return None
+        claim_metrics = negative_claim_metrics(context.content, context.tool_results)
         allowed_tools = set(allowed_tools_for_negative_claims(issues))
         issue_lines = "\n".join(f"- {issue}" for issue in render_negative_existence_issues(issues))
         if allowed_tools:
@@ -661,7 +663,7 @@ class NegativeExistenceSteerer:
             )
         else:
             action = (
-                "Do not call tools: Git checks apply only to the primary workspace. Rewrite this as unconfirmed and "
+                "Do not call tools: rewrite this as unconfirmed. Git checks apply only to the primary workspace; "
                 "tell the user to use /move before making a Git-repository conclusion about an additional root."
             )
         steering = (
@@ -673,7 +675,11 @@ class NegativeExistenceSteerer:
         return SteeringDecision(
             kind=self.kind,
             message=steering,
-            payload={"issues": render_negative_existence_issues(issues)},
+            payload={
+                "issues": render_negative_existence_issues(issues),
+                "claim_metrics": claim_metrics,
+                "blocked_assertion_count": len(issues),
+            },
             force_final_answer_without_tools=not allowed_tools,
             temporary_tool_allowlist=allowed_tools or None,
         )
