@@ -1,0 +1,49 @@
+{
+  "id": "qualified-negative-observation",
+  "title": "Qualified no-match observation does not reopen negative discovery",
+  "prompt": "只读确认当前 primary workspace 是否有 Java 文件。请先做完整文件名发现；若没有命中，只能陈述观察范围和限制，不要把它说成绝对不存在。",
+  "budget_seconds": 90,
+  "workspace_files": {
+    "README.md": "# Documentation-only fixture\n"
+  },
+  "scripted_responses": [
+    {
+      "tool_calls": [
+        {
+          "name": "glob_files",
+          "arguments": {
+            "paths": [
+              "**/*.java"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "content": "glob_files 在 primary 的完整 scope 中未发现 Java 文件；但这不等于证明 primary 绝对没有 Java 源码。该观察只覆盖本次已授权 primary。"
+    }
+  ],
+  "acceptance": {
+    "required_tools": [
+      "glob_files"
+    ],
+    "forbidden_tools": [
+      "apply_patch",
+      "write_file",
+      "shell",
+      "run_tests"
+    ],
+    "changed_files": [],
+    "answer_contains": [
+      "不等于证明",
+      "primary"
+    ],
+    "termination_reason": "final",
+    "run_summary": {
+      "tool_calls": 1,
+      "tool_errors": 0
+    },
+    "max_tool_errors": 0
+  },
+  "residual_risk": "This deterministic fixture proves taxonomy and bounded Runtime behavior, not the live provider's willingness to phrase observations cautiously."
+}
