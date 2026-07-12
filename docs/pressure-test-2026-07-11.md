@@ -491,15 +491,15 @@ LCA 将 RequirementContract 的业务 acceptance 保留为 `unverified` 信息�
 
 | 旧行为 | T-145 改动 | 证据政策 |
 |---|---|---|
-| “没有/未发现/no”短语一律按缺失处理 | 结构化为 `asserted_absence`、`observed_no_match`、`epistemically_qualified`、`quoted_or_hypothetical`，保留 subject、scope、support requirement 与 clause span。 | 只有 `asserted_absence` 可触发 complete discovery/Git evidence gate。 |
+| “没有/未发现/no”短语一律按缺失处理 | 结构化为 `asserted_absence`、`observed_no_match`、`epistemically_qualified`、`quoted_or_hypothetical`，保留 subject、claim-local root/scope、support requirement 与 clause span。 | absolute 缺失触发 complete discovery/Git gate；observed no-match 不等于全局不存在，但也必须有本轮、同 root、匹配 query 的真实 observation。 |
 | “不能运行测试，但该 root 没有 Java”容易被前半句 modal 吞掉 | clause-local 支配关系保留后半句实际断言。 | 仍需完整、未截断、scope-matched 的 `glob_files`/Git evidence。 |
-| “未发现 Java，但不等于证明没有 Java”、引用或假设也会补搜 | 限定、引用、示例、问题和假设不会升级为 absolute claim。 | 可陈述本次观察与范围；不因此强迫额外工具调用。 |
-| 负向证据策略分散在 steerer/audit | `NegativeExistenceSteerer` 与 CompletionAudit 共享 parser；session/RunSummary 记录 stance、blocked assertions、qualified skips。 | cached positive search/LSP、content no-match、截断结果不能支持 absolute absence；multi-root claim 要完整覆盖多个 root。 |
+| “未发现 Java，但不等于证明没有 Java”、引用或假设也会补搜 | 限定、引用、示例、问题和假设不会升级为 absolute claim。 | qualified/quoted 不因此强迫额外工具调用；未限定的 observed no-match 仍需真实同 scope observation，不能由模型自行声称“检查过”。 |
+| 负向证据策略分散在 steerer/audit | `NegativeExistenceSteerer` 与 CompletionAudit 共享 parser；session/RunSummary 记录 stance、blocked assertions/observations、qualified skips。 | cached positive search/LSP、content no-match、截断结果不能支持 absolute absence；文件/源码 observed no-match 只能由 complete `glob_files` 支持；claim 绑定最近 root marker，multi-root claim 要完整覆盖多个 root。 |
 
 ## 验证
 
-- deterministic 回归：中文/英文限定语、引用/假设、无关 modal 后的真实断言、mixed claim、truncated/cached positive、multi-root scope 和 bounded steerer cap 均覆盖。
-- 全量 unittest：**510/510**；`compileall`、`git diff --check` 通过。
+- deterministic 回归：中文/英文限定语、引用/假设、无关 modal 后的真实断言、mixed claim、observed-without-tool、quoted connector、primary/additional 同句交叉 root、truncated/cached positive、multi-root scope 和 bounded steerer cap 均覆盖。
+- 全量 unittest：**519/519**；`compileall`、`git diff --check` 通过。
 - offline benchmark：**9/9**。新增 `qualified-negative-observation`：完整 `glob_files` 后的“未发现但不等于证明”自然结束，只有一次 discovery，不会触发 negative steerer。
 
 ## 百炼 live 合成压测
