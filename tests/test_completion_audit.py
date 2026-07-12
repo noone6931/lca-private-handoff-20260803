@@ -112,6 +112,110 @@ class CompletionAuditTests(unittest.TestCase):
 
         self.assertTrue(result.passed)
 
+    def test_git_metadata_conclusion_ignores_unresolved_other_root_questions(self) -> None:
+        request = "当前primary是不是Git仓库？"
+        result = audit_completion(
+            generate_requirement_contract(request),
+            request=request,
+            final_content=(
+                "已验证：**当前 primary 工作区 `/private/tmp/lca-gapfill/primary` 不是 Git 仓库**。\n"
+                "当前 primary 工作区 **不是Git仓库**；其他路径需要检查是否为 Git 仓库，本次未检查。"
+            ),
+            tool_results=[
+                ToolResultSummary(
+                    "git_status",
+                    "not a git repository",
+                    is_error=True,
+                    metadata={
+                        "git_repository": False,
+                        "git_probe_root": "/tmp/primary",
+                        "evidence_root_label": "primary",
+                    },
+                )
+            ],
+            source_paths=[],
+            open_todos=[],
+        )
+
+        self.assertTrue(result.passed)
+
+    def test_git_metadata_conclusion_requires_one_primary_declarative_polarity(self) -> None:
+        request = "当前primary是不是Git仓库？"
+        probe = ToolResultSummary(
+            "git_status",
+            "not a git repository",
+            is_error=True,
+            metadata={
+                "git_repository": False,
+                "git_probe_root": "/tmp/primary",
+                "evidence_root_label": "primary",
+            },
+        )
+
+        self.assertFalse(
+            audit_completion(
+                generate_requirement_contract(request),
+                request=request,
+                final_content="当前primary不是Git仓库；当前 primary 是 Git 仓库。",
+                tool_results=[probe],
+                source_paths=[],
+                open_todos=[],
+            ).passed
+        )
+        self.assertTrue(
+            audit_completion(
+                generate_requirement_contract(request),
+                request=request,
+                final_content="Verified: the current workspace is not a Git repository.",
+                tool_results=[probe],
+                source_paths=[],
+                open_todos=[],
+            ).passed
+        )
+
+    def test_git_metadata_conclusion_handles_inline_path_for_both_polarities(self) -> None:
+        request = "当前primary是不是Git仓库？"
+        primary_true = ToolResultSummary(
+            "git_status",
+            "clean",
+            metadata={
+                "git_repository": True,
+                "git_probe_root": "/tmp/primary",
+                "evidence_root_label": "primary",
+            },
+        )
+        primary_false = ToolResultSummary(
+            "git_status",
+            "not a git repository",
+            is_error=True,
+            metadata={
+                "git_repository": False,
+                "git_probe_root": "/tmp/primary",
+                "evidence_root_label": "primary",
+            },
+        )
+
+        self.assertTrue(
+            audit_completion(
+                generate_requirement_contract(request),
+                request=request,
+                final_content="**当前 primary 工作区 `/tmp/primary` 是 Git 仓库**。",
+                tool_results=[primary_true],
+                source_paths=[],
+                open_todos=[],
+            ).passed
+        )
+        self.assertFalse(
+            audit_completion(
+                generate_requirement_contract(request),
+                request=request,
+                final_content="**当前 primary 工作区 `/tmp/primary` 不是 Git 仓库**；当前primary是Git仓库。",
+                tool_results=[primary_false],
+                source_paths=[],
+                open_todos=[],
+            ).passed
+        )
+
     def test_git_metadata_probe_requires_primary_provenance_and_matching_conclusion(self) -> None:
         request = "当前 primary workspace 是不是 Git 仓库？"
         contract = generate_requirement_contract(request)

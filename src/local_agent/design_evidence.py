@@ -3,7 +3,6 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-import time
 
 
 # A cross-root investigation needs the same evidence matrix whether the user
@@ -47,10 +46,6 @@ _CODE_SOURCE_SUFFIXES = frozenset(
         ".cs",
     }
 )
-# Keep enough wall-clock budget for one direct final response after cross-root
-# evidence is complete. The runtime reuses this boundary before scheduling an
-# optional final-answer rewrite.
-FINAL_RESPONSE_RESERVE_SECONDS = 45.0
 _MAX_FOLLOWUP_TOOL_CALLS = 6
 
 
@@ -90,14 +85,13 @@ class DesignEvidenceCoverageSteerer:
         queue_requires_steering: bool,
         read_paths: Iterable[str | None],
         tool_count: int,
-        deadline: float | None,
+        reserve_required: bool,
         request_summary: str,
     ) -> DesignEvidenceCoverageDecision | None:
         if not self._roots or queue_requires_steering:
             return None
         if missing_design_evidence_roots(self._roots, read_paths):
             return None
-        reserve_required = deadline is not None and deadline - time.monotonic() <= FINAL_RESPONSE_RESERVE_SECONDS
         covered_event: tuple[str, dict[str, object]] | None = None
         if self._covered_at_tool_count is None:
             self._covered_at_tool_count = tool_count

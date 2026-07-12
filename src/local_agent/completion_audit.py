@@ -565,18 +565,58 @@ def _has_unverified_status(content: str) -> bool:
 
 
 def _git_repository_conclusion(content: str) -> bool | None:
-    lowered = (content or "").lower()
-    negative = bool(
-        re.search(r"(?:不是|非)\s*(?:一个\s*)?git\s*(?:仓库|repo|repository)", lowered)
-        or re.search(r"\b(?:is not|isn't|not a)\s+(?:a\s+)?git\s+(?:repo|repository)\b", lowered)
-    )
-    positive = bool(
-        re.search(r"(?<!不)(?<!非)(?:是|为)\s*(?:一个\s*)?git\s*(?:仓库|repo|repository)", lowered)
-        or re.search(r"\b(?:is|is an|is a)\s+(?:a\s+)?git\s+(?:repo|repository)\b", lowered)
-    )
-    if positive == negative:
+    conclusions: set[bool] = set()
+    for clause in _git_conclusion_clauses(content):
+        normalized_clause = _normalize_git_conclusion_clause(clause)
+        for match in _PRIMARY_GIT_NEGATIVE.finditer(normalized_clause):
+            if not _git_match_is_question_or_condition(normalized_clause, match.start()):
+                conclusions.add(False)
+        for match in _PRIMARY_GIT_POSITIVE.finditer(normalized_clause):
+            if not _git_match_is_question_or_condition(normalized_clause, match.start()):
+                conclusions.add(True)
+    if len(conclusions) != 1:
         return None
-    return positive
+    return conclusions.pop()
+
+
+_GIT_CONCLUSION_CLAUSE_BREAK = re.compile(r"[。！？!?；;\n]+")
+_PRIMARY_GIT_SUBJECT = (
+    r"(?:当前\s*primary(?:\s*(?:workspace|root|目录|工作区))?|"
+    r"primary(?:\s*(?:workspace|root|目录|工作区))?|主工作区|当前工作区|"
+    r"(?:the\s+)?(?:current|this|primary)\s+(?:workspace|root|directory))"
+)
+_PRIMARY_GIT_NEGATIVE = re.compile(
+    rf"{_PRIMARY_GIT_SUBJECT}\s*(?:不是|并非|非)\s*(?:一个\s*)?git\s*(?:仓库|repo|repository)"
+    rf"|{_PRIMARY_GIT_SUBJECT}\s+(?:is\s+not|isn't)\s+(?:a\s+)?git\s+(?:repo|repository)\b",
+    re.IGNORECASE,
+)
+_PRIMARY_GIT_POSITIVE = re.compile(
+    rf"{_PRIMARY_GIT_SUBJECT}\s*(?:是|为)\s*(?:一个\s*)?git\s*(?:仓库|repo|repository)"
+    rf"|{_PRIMARY_GIT_SUBJECT}\s+(?:is|is\s+an?|is\s+a)\s+(?:a\s+)?git\s+(?:repo|repository)\b",
+    re.IGNORECASE,
+)
+_GIT_QUESTION_OR_CONDITION = re.compile(
+    r"(?:是否|是不是|检查\s*是否|需要\s*检查|如果|若|\b(?:whether|if|check|verify)\b)",
+    re.IGNORECASE,
+)
+_GIT_INLINE_CODE = re.compile(r"`[^`\n]{0,512}`")
+
+
+def _git_conclusion_clauses(content: str) -> tuple[str, ...]:
+    return tuple(clause.strip() for clause in _GIT_CONCLUSION_CLAUSE_BREAK.split(content or "") if clause.strip())
+
+
+def _normalize_git_conclusion_clause(clause: str) -> str:
+    """Remove bounded Markdown presentation that cannot change claim ownership."""
+
+    without_inline_path = _GIT_INLINE_CODE.sub(" ", clause)
+    return without_inline_path.replace("**", "").replace("__", "")
+
+
+def _git_match_is_question_or_condition(clause: str, start: int) -> bool:
+    """Only a governing prefix can turn this specific declaration into a question."""
+
+    return bool(_GIT_QUESTION_OR_CONDITION.search(clause[max(0, start - 32) : start]))
 
 
 def _implementation_items(

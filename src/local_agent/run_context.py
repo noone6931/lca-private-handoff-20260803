@@ -196,13 +196,38 @@ class RunContext:
     def can_queue_forced_final_answer(self) -> bool:
         return self.finalization.can_queue()
 
+    def finalization_rewrite_skip_reason(self, *, now: float | None = None) -> str | None:
+        return self.finalization.rewrite_skip_reason(
+            deadline_monotonic=self.deadline_monotonic,
+            run_started_monotonic=self.started_monotonic,
+            now=now,
+        )
+
+    def finalization_reserve_required(self, *, now: float | None = None) -> bool:
+        return self.finalization_rewrite_skip_reason(now=now) == "deadline_reserve"
+
+    def queue_finalization_rewrite(
+        self,
+        *,
+        kind: str,
+        severity: str = FINAL_ANSWER_STEERING_HARD,
+        now: float | None = None,
+    ) -> bool:
+        return self.finalization.request(
+            kind=kind,
+            severity=severity,
+            deadline_monotonic=self.deadline_monotonic,
+            run_started_monotonic=self.started_monotonic,
+            now=now,
+        ).accepted
+
     def queue_forced_final_answer(
         self,
         *,
         kind: str = "runtime_forced_final",
         severity: str = FINAL_ANSWER_STEERING_HARD,
     ) -> bool:
-        return self.finalization.request(kind=kind, severity=severity).accepted
+        return self.queue_finalization_rewrite(kind=kind, severity=severity)
 
     def request_forced_final_answer(
         self,
@@ -212,7 +237,7 @@ class RunContext:
     ) -> bool:
         """Record why the next no-tool response is being forced."""
 
-        return self.finalization.request(kind=kind, severity=severity).accepted
+        return self.queue_finalization_rewrite(kind=kind, severity=severity)
 
     def clear_forced_final_answer_request(self) -> None:
         self.finalization.clear_pending_request()

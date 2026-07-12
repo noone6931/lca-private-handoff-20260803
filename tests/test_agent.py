@@ -205,6 +205,36 @@ class _ContradictoryPrimaryGitProbeClient:
         )()
 
 
+class _ShortBudgetGitCorrectionClient:
+    calls: list[dict] = []
+
+    def __init__(self, config: AgentConfig):
+        self.config = config
+
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
+        if len(type(self).calls) == 1:
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "call_git_status",
+                                "type": "function",
+                                "function": {"name": "git_status", "arguments": "{}"},
+                            }
+                        ],
+                    }
+                },
+            )()
+        if len(type(self).calls) == 2:
+            return type("Response", (), {"message": {"content": "已验证：当前primary是Git仓库。"}})()
+        return type("Response", (), {"message": {"content": "已验证：当前primary不是Git仓库。"}})()
+
+
 class _QualifiedNegativeFinalClient:
     def __init__(self, config: AgentConfig):
         self.config = config
@@ -2791,6 +2821,33 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertEqual(runtime._last_run_summary["termination_reason"], "final")
         self.assertEqual(runtime._last_run_summary["steering_counts"], {"completion_audit": 1})
 
+    def test_short_budget_allows_one_hard_git_rewrite_before_deadline_reserve(self) -> None:
+        _ShortBudgetGitCorrectionClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=Path(tmp).resolve(),
+                max_steps=0,
+                budget_seconds=25,
+                approval_mode="yolo",
+            )
+            with (
+                patch("local_agent.agent.OpenAICompatibleClient", _ShortBudgetGitCorrectionClient),
+                patch("local_agent.agent.time.monotonic", return_value=100.0),
+                patch("local_agent.finalization.time.monotonic", return_value=100.0),
+            ):
+                runtime = AgentRuntime(config, show_tool_logs=False)
+                result = runtime.run("当前primary是不是Git仓库？")
+
+        self.assertIn("当前primary不是Git仓库", result)
+        self.assertEqual(len(_ShortBudgetGitCorrectionClient.calls), 3)
+        self.assertEqual(_ShortBudgetGitCorrectionClient.calls[2]["tools"], [])
+        self.assertEqual(runtime._last_run_summary["termination_reason"], "final")
+        self.assertEqual(runtime._last_run_summary["steering_counts"], {"completion_audit": 1})
+
     def test_tool_usage_evidence_gate_keeps_unobserved_lsp_result_claim(self) -> None:
         claims = phantom_tool_evidence_claims(
             "根据 lsp_symbols 的结果，未提供匹配定义。",
@@ -3405,14 +3462,14 @@ class AgentRuntimeTests(unittest.TestCase):
             queue_requires_steering=False,
             read_paths=source_paths,
             tool_count=2,
-            deadline=None,
+            reserve_required=False,
             request_summary="",
         )
         final = steerer.observe(
             queue_requires_steering=False,
             read_paths=source_paths,
             tool_count=8,
-            deadline=None,
+            reserve_required=False,
             request_summary="",
         )
 
@@ -3434,7 +3491,7 @@ class AgentRuntimeTests(unittest.TestCase):
             queue_requires_steering=False,
             read_paths=[f"{backend}/src/App.java", f"{frontend}/src/views/List.vue"],
             tool_count=2,
-            deadline=time.monotonic() + 1,
+            reserve_required=True,
             request_summary="",
         )
 
@@ -4241,7 +4298,7 @@ class AgentRuntimeTests(unittest.TestCase):
             )
             with (
                 patch("local_agent.agent.OpenAICompatibleClient", _TimeoutRecordingClient),
-                patch("local_agent.agent.time.monotonic", side_effect=[100.0, 101.0, 102.0]),
+                patch("local_agent.agent.time.monotonic", side_effect=[100.0, 101.0, *([102.0] * 12)]),
             ):
                 runtime = AgentRuntime(config, show_tool_logs=False)
                 result = runtime.run("hello")

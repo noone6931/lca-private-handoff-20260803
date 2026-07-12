@@ -31,7 +31,6 @@ from .compaction import truncate_recent_tool_outputs as _truncate_recent_tool_ou
 from .chat_runtime import call_chat_with_timeout
 from .config import AgentConfig
 from .config import normalize_approval_mode
-from .design_evidence import FINAL_RESPONSE_RESERVE_SECONDS
 from .design_evidence import cross_root_design_evidence_roots
 from .delivery_report import render_delivery_report
 from .evidence import EvidenceRecord
@@ -40,7 +39,6 @@ from .evidence import first_search_result_paths
 from .evidence import evidence_root_for_path
 from .evidence import evidence_root_label
 from .finalization import FINAL_ANSWER_STEERING_HARD
-from .finalization import MAX_FINALIZATION_ATTEMPTS
 from .llm import LlmError
 from .llm import LlmTimeoutError
 from .llm import OpenAICompatibleClient
@@ -804,7 +802,7 @@ class AgentRuntime:
                 if result.name == "read_file" and not result.is_error
             ),
             tool_count=len(self._run.tool_choice_results),
-            deadline=deadline,
+            reserve_required=self._run.finalization_reserve_required(),
             request_summary=self._final_answer_request_summary(),
         )
         if coverage is not None:
@@ -1506,14 +1504,7 @@ class AgentRuntime:
         return True
 
     def _final_answer_rewrite_skip_reason(self) -> str | None:
-        deadline = self._run.deadline_monotonic
-        if deadline is not None and deadline - time.monotonic() <= FINAL_RESPONSE_RESERVE_SECONDS:
-            return "deadline_reserve"
-        if self._run.finalization.aggregate_attempts >= MAX_FINALIZATION_ATTEMPTS:
-            return "aggregate_limit"
-        if not self._run.can_queue_forced_final_answer():
-            return "continuation_limit"
-        return None
+        return self._run.finalization_rewrite_skip_reason()
 
     def _final_answer_steer_counts(self) -> dict[str, int]:
         return {
@@ -1803,13 +1794,10 @@ class AgentRuntime:
         kind: str,
         severity: str = FINAL_ANSWER_STEERING_HARD,
     ) -> bool:
-        outcome = self._run.finalization.request(
+        return self._run.queue_finalization_rewrite(
             kind=kind,
             severity=severity,
-            deadline_monotonic=self._run.deadline_monotonic,
-            reserve_seconds=FINAL_RESPONSE_RESERVE_SECONDS,
         )
-        return outcome.accepted
 
     def _append_synthetic_tool_results(self, tool_calls: list[dict[str, Any]], content: str) -> None:
         for tool_call in tool_calls:

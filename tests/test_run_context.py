@@ -91,6 +91,19 @@ class RunContextTests(unittest.TestCase):
         self.assertFalse(context.allows_forced_final_draft_fallback())
         self.assertEqual(context.forced_final_answer_kind, "runtime_forced_final")
 
+    def test_short_budget_scales_finalization_reserve_but_still_blocks_near_deadline(self) -> None:
+        context = RunContext(started_monotonic=100.0, deadline_monotonic=125.0)
+
+        self.assertEqual(context.finalization.effective_reserve_seconds(
+            deadline_monotonic=context.deadline_monotonic,
+            run_started_monotonic=context.started_monotonic,
+        ), 5.0)
+        self.assertTrue(context.queue_finalization_rewrite(kind="completion_audit", now=100.0))
+
+        near_deadline = RunContext(started_monotonic=100.0, deadline_monotonic=125.0)
+        self.assertEqual(near_deadline.finalization_rewrite_skip_reason(now=121.0), "deadline_reserve")
+        self.assertFalse(near_deadline.queue_finalization_rewrite(kind="completion_audit", now=121.0))
+
 
 def _duplicate_tool_signals():
     from local_agent.steering.tool_loop import ToolLoopSignals

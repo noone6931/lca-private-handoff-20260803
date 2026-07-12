@@ -6,6 +6,8 @@ import time
 
 MAX_FORCED_FINAL_ANSWER_CONTINUATIONS = 8
 MAX_FINALIZATION_ATTEMPTS = 8
+FINALIZATION_REWRITE_RESERVE_SECONDS = 45.0
+MIN_FINALIZATION_REWRITE_RESERVE_SECONDS = 1.0
 FINAL_ANSWER_STEERING_HARD = "hard"
 FINAL_ANSWER_STEERING_PRESENTATION = "presentation"
 
@@ -50,22 +52,64 @@ class FinalizationCoordinator:
     def can_queue(self) -> bool:
         return self.continuations < MAX_FORCED_FINAL_ANSWER_CONTINUATIONS
 
+    def effective_reserve_seconds(
+        self,
+        *,
+        deadline_monotonic: float | None,
+        run_started_monotonic: float | None,
+    ) -> float:
+        """Reserve time for a terminal rewrite without disabling short runs.
+
+        OMP checks the actual deadline at each turn boundary. LCA retains a
+        bounded correctness reserve, scaled down for short user budgets.
+        """
+
+        if deadline_monotonic is None or run_started_monotonic is None:
+            return FINALIZATION_REWRITE_RESERVE_SECONDS
+        total_budget = max(0.0, deadline_monotonic - run_started_monotonic)
+        if total_budget <= 0:
+            return FINALIZATION_REWRITE_RESERVE_SECONDS
+        return min(
+            FINALIZATION_REWRITE_RESERVE_SECONDS,
+            max(MIN_FINALIZATION_REWRITE_RESERVE_SECONDS, total_budget * 0.2),
+        )
+
+    def rewrite_skip_reason(
+        self,
+        *,
+        deadline_monotonic: float | None,
+        run_started_monotonic: float | None,
+        now: float | None = None,
+    ) -> str | None:
+        current = time.monotonic() if now is None else now
+        reserve = self.effective_reserve_seconds(
+            deadline_monotonic=deadline_monotonic,
+            run_started_monotonic=run_started_monotonic,
+        )
+        if deadline_monotonic is not None and deadline_monotonic - current <= reserve:
+            return "deadline_reserve"
+        if self.aggregate_attempts >= MAX_FINALIZATION_ATTEMPTS:
+            return "aggregate_limit"
+        if not self.can_queue():
+            return "continuation_limit"
+        return None
+
     def request(
         self,
         *,
         kind: str,
         severity: str = FINAL_ANSWER_STEERING_HARD,
         deadline_monotonic: float | None = None,
-        reserve_seconds: float = 0.0,
+        run_started_monotonic: float | None = None,
         now: float | None = None,
     ) -> FinalizationRequestOutcome:
-        current = time.monotonic() if now is None else now
-        if deadline_monotonic is not None and deadline_monotonic - current <= reserve_seconds:
-            return FinalizationRequestOutcome(False, "deadline_reserve")
-        if self.aggregate_attempts >= MAX_FINALIZATION_ATTEMPTS:
-            return FinalizationRequestOutcome(False, "aggregate_limit")
-        if not self.can_queue():
-            return FinalizationRequestOutcome(False, "continuation_limit")
+        reason = self.rewrite_skip_reason(
+            deadline_monotonic=deadline_monotonic,
+            run_started_monotonic=run_started_monotonic,
+            now=now,
+        )
+        if reason is not None:
+            return FinalizationRequestOutcome(False, reason)
         self.aggregate_attempts += 1
         self.continuations += 1
         self.pending_force_final = True
