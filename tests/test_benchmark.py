@@ -66,6 +66,7 @@ class BenchmarkTests(unittest.TestCase):
         tasks = {task.identifier: task for task in load_benchmark_tasks()}
         inventory = _acceptance_for_mode(tasks["multi-root-code-inventory"].acceptance, "live")
         negative = _acceptance_for_mode(tasks["scoped-negative-source-evidence"].acceptance, "live")
+        forced_final = _acceptance_for_mode(tasks["forced-final-protocol-artifact"].acceptance, "live")
 
         self.assertEqual(inventory["answer_contains"], [])
         self.assertTrue(_matches_answer_regex(inventory["answer_regex"][0], "Java/Maven 基础骨架项目"))
@@ -76,6 +77,8 @@ class BenchmarkTests(unittest.TestCase):
                 "当前 primary workspace 不存在 Java 源码，结论只覆盖当前 primary。",
             )
         )
+        self.assertNotIn("termination_reason", forced_final)
+        self.assertNotIn("run_summary", forced_final)
 
     def test_report_includes_bounded_diagnostics_and_run_identity(self) -> None:
         result = BenchmarkResult(

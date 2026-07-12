@@ -610,7 +610,11 @@ def _acceptance_for_mode(raw_acceptance: Mapping[str, Any], mode: str) -> dict[s
     acceptance = {key: value for key, value in raw_acceptance.items() if key not in {"deterministic", "live"}}
     mode_overrides = raw_acceptance.get(mode)
     if isinstance(mode_overrides, Mapping):
-        acceptance.update(mode_overrides)
+        for key, value in mode_overrides.items():
+            if value is None:
+                acceptance.pop(key, None)
+            else:
+                acceptance[key] = value
     return acceptance
 
 

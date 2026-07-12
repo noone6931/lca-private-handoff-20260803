@@ -36,21 +36,28 @@
       "run_tests"
     ],
     "changed_files": [],
-    "answer_contains": [
-      "未完成/未验证",
-      "未执行"
-    ],
     "answer_forbidden_regex": [
       "<tool_call>",
       "README\\.md</parameter>"
     ],
-    "termination_reason": "forced_final_protocol_violation",
-    "run_summary": {
-      "tool_calls": 1,
-      "tool_errors": 0,
-      "forced_final_protocol_violations": 1,
-      "provider_markup_artifacts": 1,
-      "suppressed_tool_executions": 0
+    "deterministic": {
+      "answer_contains": [
+        "未完成/未验证",
+        "未执行"
+      ],
+      "termination_reason": "forced_final_protocol_violation",
+      "run_summary": {
+        "tool_calls": 1,
+        "tool_errors": 0,
+        "forced_final_protocol_violations": 1,
+        "provider_markup_artifacts": 1,
+        "suppressed_tool_executions": 0
+      }
+    },
+    "live": {
+      "answer_contains": [],
+      "termination_reason": null,
+      "run_summary": null
     },
     "max_tool_errors": 0
   },
