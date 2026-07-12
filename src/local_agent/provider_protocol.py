@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -13,6 +14,7 @@ _FUNCTION_ENVELOPE = re.compile(
     re.DOTALL,
 )
 _PARAMETER = re.compile(r"<parameter=(?P<name>[A-Za-z_][A-Za-z0-9_]*)>.*?</parameter>", re.DOTALL)
+INVALID_TOOL_CALL_NAME = "__invalid_tool_call"
 
 
 @dataclass(frozen=True)
@@ -122,6 +124,66 @@ def protocol_violation_message(*, phase: str) -> str:
     )
 
 
+def provider_safe_assistant_message(message: dict[str, Any]) -> dict[str, Any]:
+    """Normalize provider tool-call shapes before they enter the conversation."""
+
+    tool_calls = message.get("tool_calls")
+    if not isinstance(tool_calls, list):
+        return message
+    safe_tool_calls = [_provider_safe_tool_call(tool_call, index) for index, tool_call in enumerate(tool_calls)]
+    return {**message, "tool_calls": safe_tool_calls}
+
+
+def _provider_safe_tool_call(tool_call: Any, index: int) -> dict[str, Any]:
+    if not isinstance(tool_call, dict):
+        return {
+            "id": f"invalid_tool_call_{index}",
+            "type": "function",
+            "function": {"name": INVALID_TOOL_CALL_NAME, "arguments": "{}"},
+        }
+    function = tool_call.get("function")
+    function = function if isinstance(function, dict) else {}
+    tool_call_id = tool_call.get("id")
+    if not isinstance(tool_call_id, str) or not tool_call_id.strip():
+        tool_call_id = f"invalid_tool_call_{index}"
+    return {
+        **tool_call,
+        "id": tool_call_id,
+        "type": tool_call.get("type") or "function",
+        "function": {
+            **function,
+            "name": _provider_safe_tool_name(function.get("name")),
+            "arguments": _provider_safe_tool_arguments(function.get("arguments")),
+        },
+    }
+
+
+def _provider_safe_tool_name(name: Any) -> str:
+    if not isinstance(name, str):
+        return INVALID_TOOL_CALL_NAME
+    normalized = name.strip()
+    if not normalized or not all(char.isalnum() or char == "_" for char in normalized):
+        return INVALID_TOOL_CALL_NAME
+    return normalized
+
+
+def _provider_safe_tool_arguments(arguments: Any) -> str:
+    if isinstance(arguments, dict):
+        return json.dumps(arguments, ensure_ascii=False, sort_keys=True)
+    if not isinstance(arguments, str):
+        return "{}"
+    stripped = arguments.strip()
+    if not stripped:
+        return "{}"
+    try:
+        parsed = json.loads(stripped)
+    except json.JSONDecodeError:
+        return json.dumps({"_invalid_arguments": stripped[:500]}, ensure_ascii=False, sort_keys=True)
+    if not isinstance(parsed, dict):
+        return json.dumps({"_invalid_arguments": parsed}, ensure_ascii=False, sort_keys=True, default=str)
+    return json.dumps(parsed, ensure_ascii=False, sort_keys=True)
+
+
 def _inside_fenced_code(content: str, position: int) -> bool:
     return content[:position].count("```") % 2 == 1
 
@@ -133,8 +195,10 @@ def _structural_preview(tool_name: str, parameter_names: tuple[str, ...]) -> str
 
 __all__ = [
     "ProviderProtocolArtifact",
+    "INVALID_TOOL_CALL_NAME",
     "bounded_tool_call_names",
     "classify_provider_content_artifact",
     "protocol_violation_message",
     "protocol_violation_payload",
+    "provider_safe_assistant_message",
 ]

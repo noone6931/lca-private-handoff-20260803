@@ -45,6 +45,7 @@ from .llm import LlmError
 from .llm import LlmTimeoutError
 from .llm import OpenAICompatibleClient
 from .provider_protocol import ProviderProtocolArtifact
+from .provider_protocol import provider_safe_assistant_message as _provider_safe_assistant_message
 from .provider_protocol import protocol_violation_message
 from .provider_protocol import protocol_violation_payload
 from .provider_protocol import classify_provider_content_artifact
@@ -177,7 +178,6 @@ MAX_COMPLETION_AUDIT_STEERS = 2
 MAX_PATCH_REVIEW_STEERS = 2
 MAX_TOOL_CHOICE_QUEUE_STEERS_PER_SIGNATURE = 1
 MAX_SESSION_EVIDENCE_TAGGED_PATHS = 32
-INVALID_TOOL_CALL_NAME = "__invalid_tool_call"
 WORKFLOW_NUDGE = (
     "For this coding task, infer the tool sequence yourself. "
     "Use local inspection and lsp_* code navigation before editing; use todo for multi-step work; use ask_user only when ambiguity affects the outcome; "
@@ -2652,63 +2652,6 @@ def _assistant_event_payload(message: dict[str, Any]) -> dict[str, Any]:
         "content": message.get("content") or "",
         "tool_calls": [_tool_call_event_payload(tool_call) for tool_call in tool_calls if isinstance(tool_call, dict)],
     }
-
-
-def _provider_safe_assistant_message(message: dict[str, Any]) -> dict[str, Any]:
-    tool_calls = message.get("tool_calls")
-    if not isinstance(tool_calls, list):
-        return message
-    safe_tool_calls = [_provider_safe_tool_call(tool_call, index) for index, tool_call in enumerate(tool_calls)]
-    return {**message, "tool_calls": safe_tool_calls}
-
-
-def _provider_safe_tool_call(tool_call: Any, index: int) -> dict[str, Any]:
-    if not isinstance(tool_call, dict):
-        return {
-            "id": f"invalid_tool_call_{index}",
-            "type": "function",
-            "function": {"name": INVALID_TOOL_CALL_NAME, "arguments": "{}"},
-        }
-    function = tool_call.get("function")
-    function = function if isinstance(function, dict) else {}
-    name = function.get("name")
-    name = _provider_safe_tool_name(name)
-    arguments = _provider_safe_tool_arguments(function.get("arguments"))
-    tool_call_id = tool_call.get("id")
-    if not isinstance(tool_call_id, str) or not tool_call_id.strip():
-        tool_call_id = f"invalid_tool_call_{index}"
-    return {
-        **tool_call,
-        "id": tool_call_id,
-        "type": tool_call.get("type") or "function",
-        "function": {**function, "name": name, "arguments": arguments},
-    }
-
-
-def _provider_safe_tool_name(name: Any) -> str:
-    if not isinstance(name, str):
-        return INVALID_TOOL_CALL_NAME
-    try:
-        return _validate_runtime_tool_name(name)
-    except ValueError:
-        return INVALID_TOOL_CALL_NAME
-
-
-def _provider_safe_tool_arguments(arguments: Any) -> str:
-    if isinstance(arguments, dict):
-        return json.dumps(arguments, ensure_ascii=False, sort_keys=True)
-    if not isinstance(arguments, str):
-        return "{}"
-    stripped = arguments.strip()
-    if not stripped:
-        return "{}"
-    try:
-        parsed = json.loads(stripped)
-    except json.JSONDecodeError:
-        return json.dumps({"_invalid_arguments": stripped[:500]}, ensure_ascii=False, sort_keys=True)
-    if not isinstance(parsed, dict):
-        return json.dumps({"_invalid_arguments": parsed}, ensure_ascii=False, sort_keys=True, default=str)
-    return json.dumps(parsed, ensure_ascii=False, sort_keys=True)
 
 
 def _tool_call_event_payload(tool_call: dict[str, Any]) -> dict[str, Any]:
