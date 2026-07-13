@@ -9,7 +9,7 @@ from .llm import LlmError
 from .llm import LlmTimeoutError
 from .provider_protocol import classify_provider_content_artifact
 from .provider_protocol import protocol_violation_payload
-from .read_only_reviewer import findings_are_exact_candidate_spans
+from .read_only_reviewer import candidate_claim_units
 from .read_only_reviewer import ReviewerPhaseOutcome
 from .read_only_reviewer import parse_reviewer_result
 from .read_only_reviewer import reviewer_messages
@@ -54,7 +54,7 @@ class ReadOnlyReviewPhase:
             return ReviewerPhaseOutcome("not_applicable")
         if state.attempted:
             if state.rewrite_requested and state.findings:
-                if not rewrite_complies_with_review(candidate, state.findings):
+                if not rewrite_complies_with_review(candidate, state.claim_units, state.findings):
                     return self._unverified("rewrite_noncompliant", "unsupported_claim_repeated")
             return ReviewerPhaseOutcome("pass")
         skip_reason = runtime._run.finalization_rewrite_skip_reason()
@@ -69,7 +69,11 @@ class ReadOnlyReviewPhase:
             records=runtime._run.evidence.records,
             tool_results=runtime._run.tool_choice_results,
         )
-        messages = reviewer_messages(handoff, candidate)
+        claim_units = candidate_claim_units(candidate)
+        if not claim_units:
+            return self._unverified("invalid_output", "candidate_has_no_addressable_claim_units")
+        state.claim_units = claim_units
+        messages = reviewer_messages(handoff, claim_units)
         timeout = self._review_timeout()
         runtime._run.collector.record_read_only_review_trigger()
         runtime._session.append(
@@ -101,7 +105,7 @@ class ReadOnlyReviewPhase:
         if artifact is not None:
             return self._protocol_unverified(artifact.kind, artifact=artifact)
         try:
-            result = parse_reviewer_result(message.get("content"))
+            result = parse_reviewer_result(message.get("content"), claim_units=claim_units)
         except (TypeError, ValueError) as exc:
             return self._unverified("invalid_output", str(exc))
         state.verdict = result.verdict
@@ -115,10 +119,6 @@ class ReadOnlyReviewPhase:
         )
         if result.verdict == "pass":
             return ReviewerPhaseOutcome("pass")
-        if result.verdict == "unverified":
-            return self._unverified("reviewer_unverified", result.reason, result=result)
-        if not findings_are_exact_candidate_spans(candidate, result.findings):
-            return self._unverified("invalid_output", "finding_claim_is_not_an_exact_candidate_span", result=result)
         if not runtime._run.queue_finalization_rewrite(kind="read_only_reviewer"):
             return self._unverified(
                 "rewrite_unavailable",

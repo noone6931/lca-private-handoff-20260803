@@ -10,6 +10,8 @@ from unittest.mock import patch
 from local_agent.agent import AgentRuntime
 from local_agent.config import AgentConfig
 from local_agent.explore_handoff import build_explore_handoff
+from local_agent.read_only_reviewer import candidate_claim_units
+from local_agent.read_only_reviewer import rewrite_complies_with_review
 from local_agent.read_only_reviewer import parse_reviewer_result
 from local_agent.read_only_reviewer import reviewer_messages
 from local_agent.read_only_reviewer import should_review_read_only_candidate
@@ -43,6 +45,7 @@ class _ReviewerFlowClient:
                                 "confidence": 0.96,
                                 "findings": [
                                     {
+                                        "claim_id": "c001",
                                         "claim": "已证实真实 owner 是 PayServiceImpl",
                                         "issue": "same-domain code is only analogous without a requested behavior binding",
                                         "action": "label it as a reusable candidate and keep the owner unlocated",
@@ -103,6 +106,7 @@ class _InventedDesignReviewerClient:
                                 "confidence": 0.99,
                                 "findings": [
                                     {
+                                        "claim_id": "c001",
                                         "claim": "现有 PayBillRecordInfoVo 使用 SF 前缀，并包含多级审批和退款复用",
                                         "issue": "invented repository types and numbering behavior",
                                         "action": "move them to proposal or pending confirmation",
@@ -135,6 +139,48 @@ class _InvalidReviewerClient:
         if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages):
             return type("Response", (), {"message": {"content": "not-json"}})()
         return type("Response", (), {"message": {"content": "PayServiceImpl is the verified owner."}})()
+
+
+class _ReviewerUnverifiedRewriteClient:
+    calls: list[dict] = []
+
+    def __init__(self, config: AgentConfig):
+        self.config = config
+        self.primary_calls = 0
+
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
+        if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages):
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                "verdict": "unverified",
+                                "confidence": 0.9,
+                                "findings": [
+                                    {
+                                        "claim_id": "c001",
+                                        "claim": "owner conclusion is unsupported",
+                                        "issue": "no direct behavior-to-owner binding exists",
+                                        "action": "report the owner as unlocated and the inspected code as analogous",
+                                    }
+                                ],
+                                "reason": "owner cannot be verified from the bounded evidence",
+                            }
+                        )
+                    }
+                },
+            )()
+        self.primary_calls += 1
+        content = (
+            "已证实真实 owner 是 PayServiceImpl。"
+            if self.primary_calls == 1
+            else "真实 owner 仍未定位；PayServiceImpl 仅是已读到的弱相关候选。"
+        )
+        return type("Response", (), {"message": {"content": content}})()
 
 
 class _ReviewerPassClient:
@@ -174,7 +220,7 @@ class _ParaphraseReviewerClient(_InvalidReviewerClient):
             return type(
                 "Response",
                 (),
-                {"message": {"content": '{"verdict":"revise","confidence":0.9,"findings":[{"claim":"PayServiceImpl is the verified owner","issue":"unsupported","action":"qualify"}],"reason":"missing binding"}'}},
+                {"message": {"content": '{"verdict":"revise","confidence":0.9,"findings":[{"claim_id":"c999","claim":"PayServiceImpl is the verified owner","issue":"unsupported","action":"qualify"}],"reason":"missing binding"}'}},
             )()
         return type("Response", (), {"message": {"content": "已证实真实 owner 是 PayServiceImpl。"}})()
 
@@ -230,7 +276,7 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertIn("observed_candidate", classifications)
         self.assertIn("direct_binding", handoff.to_dict()["review_categories"])
         self.assertIn("proposal", handoff.to_dict()["review_categories"])
-        messages = reviewer_messages(handoff, "PayServiceImpl is the owner")
+        messages = reviewer_messages(handoff, candidate_claim_units("PayServiceImpl is the owner"))
         self.assertEqual([message["role"] for message in messages], ["system", "user"])
         self.assertNotIn("class PayServiceImpl", messages[0]["content"])
 
@@ -280,14 +326,52 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertTrue(all(root in {item.root for item in handoff.items} for root in {"root-0", "root-1", "root-2"}))
 
     def test_reviewer_result_requires_typed_validated_json(self) -> None:
+        units = candidate_claim_units("owner")
         parsed = parse_reviewer_result(
-            '{"verdict":"revise","confidence":0.8,"findings":[{"claim":"owner","issue":"gap","action":"qualify"}],"reason":"missing binding"}'
+            '{"verdict":"revise","confidence":0.8,"findings":[{"claim_id":"c001","claim":"owner","issue":"gap","action":"qualify"}],"reason":"missing binding"}',
+            claim_units=units,
         )
         self.assertEqual(parsed.verdict, "revise")
         with self.assertRaises(ValueError):
-            parse_reviewer_result('{"verdict":"pass","confidence":1,"findings":[{"claim":"x","issue":"x","action":"x"}],"reason":"x"}')
+            parse_reviewer_result('{"verdict":"pass","confidence":1,"findings":[{"claim_id":"c001","claim":"x","issue":"x","action":"x"}],"reason":"x"}', claim_units=units)
         with self.assertRaises(ValueError):
-            parse_reviewer_result("review looks good")
+            parse_reviewer_result("review looks good", claim_units=units)
+
+    def test_claim_ids_address_markdown_units_without_reviewer_text_matching(self) -> None:
+        candidate = "| Scope | Owner |\n| --- | --- |\n| Frontend | **platformPayment** |\n\n**Conclusion:** platformPayment is the verified owner."
+        units = candidate_claim_units(candidate)
+        self.assertEqual([unit.claim_id for unit in units], ["c001", "c002", "c003"])
+        result = parse_reviewer_result(
+            '{"verdict":"revise","confidence":0.9,"findings":[{"claim_id":"c002","claim":"front-end ownership is overstated","issue":"no direct binding","action":"mark as analogous candidate"}],"reason":"unlocated owner"}',
+            claim_units=units,
+        )
+        rewritten = "| Scope | Owner |\n| --- | --- |\n| Frontend | analogous candidate |\n\n**Conclusion:** the true owner remains unlocated."
+        self.assertTrue(rewrite_complies_with_review(rewritten, units, result.findings))
+        self.assertFalse(rewrite_complies_with_review(candidate, units, result.findings))
+        with self.assertRaises(ValueError):
+            parse_reviewer_result(
+                '{"verdict":"revise","confidence":0.9,"findings":[{"claim_id":"c999","claim":"summary","issue":"gap","action":"qualify"}],"reason":"x"}',
+                claim_units=units,
+            )
+
+    def test_claim_unit_sampling_keeps_tail_conclusions_with_original_ids(self) -> None:
+        candidate = "\n".join(
+            [f"- observed item {index}" for index in range(1, 23)]
+            + ["| Area | Owner |", "| --- | --- |", "| Frontend | **platformPayment** is verified owner |", "Final conclusion: platformPayment is the true owner."]
+        )
+        units = candidate_claim_units(candidate)
+        ids = [unit.claim_id for unit in units]
+        self.assertEqual(ids[:2], ["c001", "c002"])
+        self.assertIn("c024", ids)
+        self.assertIn("c025", ids)
+        tail_unit = next(unit for unit in units if unit.claim_id == "c024")
+        result = parse_reviewer_result(
+            '{"verdict":"revise","confidence":0.9,"findings":[{"claim_id":"c024","claim":"owner claim","issue":"no binding","action":"mark unlocated"},{"claim_id":"c025","claim":"conclusion","issue":"no binding","action":"mark unlocated"}],"reason":"x"}',
+            claim_units=units,
+        )
+        self.assertIn("platformPayment", tail_unit.text)
+        rewritten = candidate.replace("**platformPayment** is verified owner", "analogous candidate").replace("platformPayment is the true owner", "the true owner is unlocated")
+        self.assertTrue(rewrite_complies_with_review(rewritten, units, result.findings))
 
     def test_trigger_policy_excludes_document_and_git_metadata(self) -> None:
         self.assertTrue(should_review_read_only_candidate(
@@ -342,6 +426,18 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertEqual(runtime._last_run_summary["termination_reason"], "read_only_reviewer_unverified")
         self.assertEqual(runtime._last_run_summary["read_only_reviewer"]["errors"], {"invalid_output": 1})
 
+    def test_valid_unverified_findings_request_one_truthful_rewrite(self) -> None:
+        _ReviewerUnverifiedRewriteClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch("local_agent.agent.OpenAICompatibleClient", _ReviewerUnverifiedRewriteClient):
+                runtime = AgentRuntime(_config(Path(tmp).resolve()), show_tool_logs=False)
+                answer = runtime.run("只读分析当前服务 owner 和影响范围，不要修改。")
+        self.assertIn("真实 owner 仍未定位", answer)
+        self.assertIn("弱相关候选", answer)
+        self.assertEqual(runtime._last_run_summary["termination_reason"], "final")
+        self.assertEqual(runtime._last_run_summary["read_only_reviewer"]["verdicts"], {"unverified": 1})
+        self.assertEqual(runtime._last_run_summary["read_only_reviewer"]["rewrites"], 1)
+
     def test_explicit_source_binding_can_pass_one_isolated_review(self) -> None:
         _ReviewerPassClient.calls = []
         with tempfile.TemporaryDirectory() as tmp:
@@ -371,7 +467,7 @@ class ReadOnlyReviewerTests(unittest.TestCase):
                 self.assertEqual(runtime._last_run_summary["read_only_reviewer"]["errors"], {expected: 1})
                 self.assertEqual(runtime._last_run_summary["provider_protocol_violations"], protocol_count)
 
-    def test_reviewer_paraphrase_finding_cannot_queue_a_rewrite(self) -> None:
+    def test_reviewer_unknown_claim_id_cannot_queue_a_rewrite(self) -> None:
         _ParaphraseReviewerClient.calls = []
         with tempfile.TemporaryDirectory() as tmp:
             with patch("local_agent.agent.OpenAICompatibleClient", _ParaphraseReviewerClient):

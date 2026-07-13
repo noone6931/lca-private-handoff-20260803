@@ -45,6 +45,7 @@ class RunStats:
     read_only_reviewer_triggers: int = 0
     read_only_reviewer_rewrites: int = 0
     read_only_reviewer_findings: int = 0
+    read_only_reviewer_reviewed_claims: int = 0
     read_only_reviewer_verdicts: dict[str, int] = field(default_factory=dict)
     read_only_reviewer_errors: dict[str, int] = field(default_factory=dict)
     tool_counts: dict[str, int] = field(default_factory=dict)
@@ -218,6 +219,7 @@ class RunCollector:
             return
         self._stats.read_only_reviewer_verdicts[verdict] = self._stats.read_only_reviewer_verdicts.get(verdict, 0) + 1
         self._stats.read_only_reviewer_findings += max(0, findings)
+        self._stats.read_only_reviewer_reviewed_claims += max(0, findings)
 
     def record_read_only_review_rewrite(self) -> None:
         if self._stats is not None:
@@ -287,6 +289,7 @@ class RunCollector:
                 "triggers": stats.read_only_reviewer_triggers,
                 "rewrites": stats.read_only_reviewer_rewrites,
                 "findings": stats.read_only_reviewer_findings,
+                "reviewed_claims": stats.read_only_reviewer_reviewed_claims,
                 "verdicts": dict(sorted(stats.read_only_reviewer_verdicts.items())),
                 "errors": dict(sorted(stats.read_only_reviewer_errors.items())),
             },

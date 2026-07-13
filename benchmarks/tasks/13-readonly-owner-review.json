@@ -10,7 +10,7 @@
   "scripted_responses": [
     {"tool_calls": [{"name": "read_file", "arguments": {"path": "src/PayServiceImpl.java"}}]},
     {"content": "已证实真实 owner 是 PayServiceImpl，平台 platformPayment.js 也证明了归属。"},
-    {"content": "{\"verdict\":\"revise\",\"confidence\":0.98,\"findings\":[{\"claim\":\"已证实真实 owner 是 PayServiceImpl\",\"issue\":\"nearby payment code has no explicit requested behavior binding\",\"action\":\"describe it only as an analogous or reusable candidate\"}],\"reason\":\"actual owner remains unlocated\"}"},
+    {"content": "{\"verdict\":\"unverified\",\"confidence\":0.98,\"findings\":[{\"claim_id\":\"c001\",\"claim\":\"前端主责模块为 platformPayment\",\"issue\":\"nearby payment code has no explicit requested behavior binding\",\"action\":\"describe it only as an analogous or reusable candidate\"}],\"reason\":\"actual owner remains unlocated\"}"},
     {"content": "PayServiceImpl 和 platformPayment.js 仅是已读到的类似/可复用候选；真实 owner、DDL、模板和 API 仍未定位，需要直接调用链或符号绑定证据。"}
   ],
   "acceptance": {

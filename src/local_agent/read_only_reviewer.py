@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Literal, Mapping
 
 from .explore_handoff import ExploreHandoff
@@ -13,16 +13,31 @@ from .task_contract import RequirementContract
 ReviewerVerdict = Literal["pass", "revise", "unverified"]
 MAX_REVIEWER_FINDINGS = 8
 MAX_REVIEWER_RESPONSE_CHARS = 9000
+MAX_CLAIM_UNITS = 20
+MAX_CLAIM_UNIT_CHARS = 500
+MAX_CLAIM_TOTAL_CHARS = 10000
+
+
+@dataclass(frozen=True)
+class CandidateClaimUnit:
+    """A stable, bounded addressable unit from the candidate Markdown."""
+
+    claim_id: str
+    text: str
+
+    def to_dict(self) -> dict[str, str]:
+        return {"claim_id": self.claim_id, "text": self.text}
 
 
 @dataclass(frozen=True)
 class ReviewerFinding:
-    claim: str
+    claim_id: str
     issue: str
     action: str
+    claim: str = ""
 
     def to_dict(self) -> dict[str, str]:
-        return {"claim": self.claim, "issue": self.issue, "action": self.action}
+        return {"claim_id": self.claim_id, "claim": self.claim, "issue": self.issue, "action": self.action}
 
 
 @dataclass(frozen=True)
@@ -48,6 +63,7 @@ class ReadOnlyReviewState:
     verdict: str | None = None
     reason: str | None = None
     findings: tuple[ReviewerFinding, ...] = ()
+    claim_units: tuple[CandidateClaimUnit, ...] = ()
 
     def reset(self) -> None:
         self.attempted = False
@@ -55,6 +71,7 @@ class ReadOnlyReviewState:
         self.verdict = None
         self.reason = None
         self.findings = ()
+        self.claim_units = ()
 
     def snapshot(self) -> dict[str, Any]:
         return {
@@ -62,7 +79,8 @@ class ReadOnlyReviewState:
             "rewrite_requested": self.rewrite_requested,
             "verdict": self.verdict,
             "reason": self.reason,
-            "findings": [item.to_dict() for item in self.findings],
+            "reviewed_claim_ids": [item.claim_id for item in self.findings],
+            "reviewed_claim_count": len({item.claim_id for item in self.findings}),
         }
 
 
@@ -84,7 +102,45 @@ def should_review_read_only_candidate(contract: RequirementContract | None, requ
     return contract.read_only_review_profile in {"owner_impact", "design"}
 
 
-def reviewer_messages(handoff: ExploreHandoff, candidate: str) -> list[dict[str, str]]:
+def candidate_claim_units(candidate: str) -> tuple[CandidateClaimUnit, ...]:
+    """Index Markdown claims, then deterministically sample both head and tail.
+
+    Structural lines are independent units. Ordinary paragraphs split on common
+    sentence boundaries and then on fixed-size chunks when one sentence is very
+    long. This is presentation-aware text segmentation, not semantic NLP.
+    """
+
+    indexed: list[CandidateClaimUnit] = []
+    paragraph: list[str] = []
+
+    def flush_paragraph() -> None:
+        if not paragraph:
+            paragraph.clear()
+            return
+        text = "\n".join(paragraph).strip()
+        paragraph.clear()
+        for sentence in _paragraph_units(text):
+            indexed.append(CandidateClaimUnit(f"c{len(indexed) + 1:03d}", sentence))
+
+    for raw_line in (candidate or "").splitlines():
+        line = raw_line.strip()
+        if not line:
+            flush_paragraph()
+            continue
+        structural = line.startswith(("#", "- ", "* ", "+ ", "> ")) or _is_table_row(line)
+        if structural:
+            flush_paragraph()
+            if not _is_table_separator(line):
+                indexed.append(CandidateClaimUnit(f"c{len(indexed) + 1:03d}", _clip_unit(line)))
+            continue
+        paragraph.append(raw_line)
+    flush_paragraph()
+    if not indexed and candidate.strip():
+        indexed.append(CandidateClaimUnit("c001", _clip_unit(candidate)))
+    return _sample_claim_units(indexed)
+
+
+def reviewer_messages(handoff: ExploreHandoff, claim_units: tuple[CandidateClaimUnit, ...]) -> list[dict[str, str]]:
     """Return an isolated reviewer transcript with no primary conversation history."""
 
     system = """You are the read-only evidence reviewer for a coding agent.
@@ -96,13 +152,15 @@ Review contract:
 - Missing or incomplete searches mean unlocated within their stated scope, not absent everywhere.
 - Requirement facts, repository facts, proposals, and open questions must remain distinct.
 - A proposal must not be worded as an existing table, class, endpoint, service, approval flow, numbering prefix, or integration unless the handoff explicitly supports it.
+- When the handoff has no explicit direct binding, do not say a main owner/module judgment is correct or mostly correct. Treat same-domain code as observed or analogous and leave the owner unlocated.
 
-Use schema: {"verdict":"pass|revise|unverified","confidence":0.0,"findings":[{"claim":"exact unsupported candidate excerpt","issue":"...","action":"..."}],"reason":"..."}.
+Use schema: {"verdict":"pass|revise|unverified","confidence":0.0,"findings":[{"claim_id":"c001","claim":"optional human-readable summary","issue":"...","action":"..."}],"reason":"..."}.
+For every finding, choose exactly one claim_id from candidate_claims. Never invent a claim_id. The optional claim field is for people, not an address.
 Choose revise when the candidate can be corrected using the handoff. Choose unverified when the candidate cannot safely make the requested factual conclusion."""
     payload = {
         "kind": "LCA_READ_ONLY_EVIDENCE_REVIEW",
         "handoff": handoff.to_dict(),
-        "candidate_draft": candidate,
+        "candidate_claims": [unit.to_dict() for unit in claim_units],
     }
     return [
         {"role": "system", "content": system},
@@ -110,7 +168,7 @@ Choose revise when the candidate can be corrected using the handoff. Choose unve
     ]
 
 
-def parse_reviewer_result(content: object) -> ReviewerResult:
+def parse_reviewer_result(content: object, *, claim_units: tuple[CandidateClaimUnit, ...]) -> ReviewerResult:
     if not isinstance(content, str) or not content.strip():
         raise ValueError("reviewer returned no JSON content")
     if len(content) > MAX_REVIEWER_RESPONSE_CHARS:
@@ -128,13 +186,20 @@ def parse_reviewer_result(content: object) -> ReviewerResult:
     if not isinstance(findings_value, list) or len(findings_value) > MAX_REVIEWER_FINDINGS:
         raise ValueError("reviewer findings must be a bounded list")
     findings: list[ReviewerFinding] = []
+    known_claim_ids = {unit.claim_id for unit in claim_units}
+    used_claim_ids: set[str] = set()
     for item in findings_value:
         if not isinstance(item, Mapping):
             raise ValueError("reviewer finding must be an object")
-        claim, issue, action = (item.get("claim"), item.get("issue"), item.get("action"))
-        if not all(isinstance(value, str) and value.strip() for value in (claim, issue, action)):
-            raise ValueError("reviewer finding requires claim, issue, and action")
-        findings.append(ReviewerFinding(_clip(claim), _clip(issue), _clip(action)))
+        claim_id, claim, issue, action = (item.get("claim_id"), item.get("claim"), item.get("issue"), item.get("action"))
+        if not isinstance(claim_id, str) or claim_id not in known_claim_ids or claim_id in used_claim_ids:
+            raise ValueError("reviewer finding claim_id must be a unique candidate claim address")
+        if not all(isinstance(value, str) and value.strip() for value in (issue, action)):
+            raise ValueError("reviewer finding requires issue and action")
+        if claim is not None and not isinstance(claim, str):
+            raise ValueError("reviewer finding claim must be text when present")
+        used_claim_ids.add(claim_id)
+        findings.append(ReviewerFinding(claim_id, _clip(issue), _clip(action), _clip(claim or "")))
     reason = raw.get("reason")
     if not isinstance(reason, str):
         raise ValueError("reviewer reason must be text")
@@ -148,36 +213,44 @@ def parse_reviewer_result(content: object) -> ReviewerResult:
 def reviewer_rewrite_message(result: ReviewerResult) -> str:
     """Render a bounded runtime instruction, not the reviewer's raw transcript."""
 
+    disposition = (
+        "The reviewer could not verify the disputed factual conclusion. Still answer the original request, but "
+        "state the owner or implementation as scoped and unlocated, and keep observed code only as analogous evidence."
+        if result.verdict == "unverified"
+        else "Apply every finding while preserving the supported parts of the answer."
+    )
     lines = [
         "[Read-only evidence review]",
         "Revise the candidate answer once, without calling tools. Preserve only claims supported by the existing handoff.",
+        disposition,
         "Do not call an analogous/reusable candidate the verified owner. Keep unlocated owner/DDL/template/API facts as unverified, and label new design as proposal.",
     ]
     for finding in result.findings:
-        lines.append(f"- Claim: {finding.claim}; issue: {finding.issue}; action: {finding.action}")
+        claim = f": {finding.claim}" if finding.claim else ""
+        lines.append(f"- Claim {finding.claim_id}{claim}; issue: {finding.issue}; action: {finding.action}")
     return "\n".join(lines)
 
 
-def findings_are_exact_candidate_spans(candidate: str, findings: tuple[ReviewerFinding, ...]) -> bool:
-    """Require revise findings to point at a non-empty exact candidate span."""
-
-    normalized_candidate = _normalize_span(candidate)
-    return bool(normalized_candidate) and all(
-        bool(_normalize_span(finding.claim)) and _normalize_span(finding.claim) in normalized_candidate
-        for finding in findings
-    )
-
-
-def rewrite_complies_with_review(candidate: str, findings: tuple[ReviewerFinding, ...]) -> bool:
+def rewrite_complies_with_review(
+    candidate: str,
+    claim_units: tuple[CandidateClaimUnit, ...],
+    findings: tuple[ReviewerFinding, ...],
+) -> bool:
     """Reject an unchanged unsupported claim after the one permitted rewrite.
 
-    This only compares exact spans supplied in the typed reviewer result.  It is
-    not a second natural-language classifier and cannot turn a nearby word into
-    a business-specific guard.
+    This compares the original addressed unit, Markdown-normalized, against the
+    rewritten candidate. It is not a fuzzy matcher or a business-specific
+    classifier.
     """
 
-    normalized_candidate = _normalize_span(candidate)
-    return all(_normalize_span(finding.claim) not in normalized_candidate for finding in findings)
+    normalized_candidate = _normalize_markdown(candidate)
+    addressed = {unit.claim_id: unit for unit in claim_units}
+    return all(
+        finding.claim_id in addressed
+        and bool(_normalize_markdown(addressed[finding.claim_id].text))
+        and _normalize_markdown(addressed[finding.claim_id].text) not in normalized_candidate
+        for finding in findings
+    )
 
 
 def _json_object(content: str) -> object:
@@ -194,3 +267,50 @@ def _clip(value: str, limit: int = 420) -> str:
 
 def _normalize_span(value: str) -> str:
     return re.sub(r"\s+", "", value or "").casefold()
+
+
+def _normalize_markdown(value: str) -> str:
+    without_presentation = re.sub(r"[`*_~#>]", "", value or "")
+    return _normalize_span(without_presentation.replace("|", " "))
+
+
+def _clip_unit(value: str) -> str:
+    text = value.strip()
+    return text if len(text) <= MAX_CLAIM_UNIT_CHARS else text[: MAX_CLAIM_UNIT_CHARS - 1].rstrip() + "..."
+
+
+def _paragraph_units(value: str) -> tuple[str, ...]:
+    sentences = [part.strip() for part in re.split(r"(?<=[.!?。！？])\s*", value) if part.strip()]
+    units: list[str] = []
+    for sentence in sentences or [value.strip()]:
+        if len(sentence) <= MAX_CLAIM_UNIT_CHARS:
+            units.append(sentence)
+            continue
+        for start in range(0, len(sentence), MAX_CLAIM_UNIT_CHARS):
+            units.append(sentence[start : start + MAX_CLAIM_UNIT_CHARS])
+    return tuple(units)
+
+
+def _sample_claim_units(indexed: list[CandidateClaimUnit]) -> tuple[CandidateClaimUnit, ...]:
+    if len(indexed) <= MAX_CLAIM_UNITS:
+        selected = indexed
+    else:
+        head = MAX_CLAIM_UNITS // 2
+        tail = MAX_CLAIM_UNITS - head
+        selected = [*indexed[:head], *indexed[-tail:]]
+    total = 0
+    bounded: list[CandidateClaimUnit] = []
+    for unit in selected:
+        if bounded and total + len(unit.text) > MAX_CLAIM_TOTAL_CHARS:
+            continue
+        bounded.append(unit)
+        total += len(unit.text)
+    return tuple(bounded)
+
+
+def _is_table_row(line: str) -> bool:
+    return line.count("|") >= 2
+
+
+def _is_table_separator(line: str) -> bool:
+    return bool(re.fullmatch(r"\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?", line))
