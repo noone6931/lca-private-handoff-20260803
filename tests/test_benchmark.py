@@ -19,7 +19,7 @@ class BenchmarkTests(unittest.TestCase):
         tasks = load_benchmark_tasks()
         identifiers = {task.identifier for task in tasks}
 
-        self.assertEqual(len(tasks), 12)
+        self.assertEqual(len(tasks), 14)
         self.assertEqual(
             identifiers,
             {
@@ -35,6 +35,8 @@ class BenchmarkTests(unittest.TestCase):
                 "forced-final-protocol-artifact",
                 "bare-observed-no-match",
                 "document-analysis-boundary",
+                "readonly-owner-review",
+                "readonly-design-review",
             },
         )
         self.assertTrue(DEFAULT_TASKS_DIR.is_dir())
@@ -46,9 +48,9 @@ class BenchmarkTests(unittest.TestCase):
             payload = json.loads((output_dir / "benchmark-report.json").read_text(encoding="utf-8"))
             markdown = (output_dir / "benchmark-report.md").read_text(encoding="utf-8")
 
-            self.assertEqual(len(results), 12)
+            self.assertEqual(len(results), 14)
         self.assertTrue(all(result.passed for result in results))
-        self.assertEqual(payload["passed"], 12)
+        self.assertEqual(payload["passed"], 14)
         self.assertEqual(payload["failed"], 0)
         self.assertIn("small-code-change-test-diff", markdown)
         self.assertIn("budget-exhausted-incomplete", markdown)
@@ -58,6 +60,8 @@ class BenchmarkTests(unittest.TestCase):
         self.assertIn("forced-final-protocol-artifact", markdown)
         self.assertIn("bare-observed-no-match", markdown)
         self.assertIn("document-analysis-boundary", markdown)
+        self.assertIn("readonly-owner-review", markdown)
+        self.assertIn("readonly-design-review", markdown)
 
     def test_mapping_acceptance_requires_explicit_metric_values(self) -> None:
         from local_agent.benchmark import _mapping_integer_values_match
