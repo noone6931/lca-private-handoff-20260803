@@ -6,6 +6,7 @@ import time
 
 MAX_FORCED_FINAL_ANSWER_CONTINUATIONS = 8
 MAX_FINALIZATION_ATTEMPTS = 8
+MAX_NON_SUBSTANTIVE_RESPONSE_RETRIES = 3
 FINALIZATION_REWRITE_RESERVE_SECONDS = 45.0
 MIN_FINALIZATION_REWRITE_RESERVE_SECONDS = 1.0
 FINAL_ANSWER_STEERING_HARD = "hard"
@@ -33,6 +34,15 @@ class ForcedFinalProtocolOutcome:
     suppressed_tool_calls: int
 
 
+@dataclass(frozen=True)
+class NonSubstantiveResponseOutcome:
+    retry: bool
+    attempt: int
+    max_attempts: int
+    forced_final: bool
+    kind: str
+
+
 class FinalizationCoordinator:
     """Own terminal-phase final-answer rewrite state for a single run."""
 
@@ -48,6 +58,9 @@ class FinalizationCoordinator:
         self.unresolved_gate: UnresolvedFinalAnswerGate | None = None
         self.terminal_phase_entered = False
         self.forced_final_protocol_violations = 0
+        self.non_substantive_response_retries = 0
+        self.non_substantive_response_exhausted = 0
+        self._consecutive_non_substantive_responses = 0
 
     def can_queue(self) -> bool:
         return self.continuations < MAX_FORCED_FINAL_ANSWER_CONTINUATIONS
@@ -154,3 +167,37 @@ class FinalizationCoordinator:
             artifact_kind=artifact_kind,
             suppressed_tool_calls=max(0, suppressed_tool_calls),
         )
+
+    def observe_non_substantive_response(self, *, forced_final: bool, kind: str) -> NonSubstantiveResponseOutcome:
+        """Bound retries for a provider response that cannot serve as an answer."""
+
+        self._consecutive_non_substantive_responses += 1
+        attempt = self._consecutive_non_substantive_responses
+        if attempt <= MAX_NON_SUBSTANTIVE_RESPONSE_RETRIES:
+            self.non_substantive_response_retries += 1
+            if forced_final:
+                self.pending_force_final = True
+            return NonSubstantiveResponseOutcome(
+                retry=True,
+                attempt=attempt,
+                max_attempts=MAX_NON_SUBSTANTIVE_RESPONSE_RETRIES,
+                forced_final=forced_final,
+                kind=kind,
+            )
+        self.non_substantive_response_exhausted += 1
+        return NonSubstantiveResponseOutcome(
+            retry=False,
+            attempt=attempt,
+            max_attempts=MAX_NON_SUBSTANTIVE_RESPONSE_RETRIES,
+            forced_final=forced_final,
+            kind=kind,
+        )
+
+    def observe_substantive_response(self) -> None:
+        self._consecutive_non_substantive_responses = 0
+
+    def terminal_response_snapshot(self) -> dict[str, int]:
+        return {
+            "non_substantive_retries": self.non_substantive_response_retries,
+            "non_substantive_exhausted": self.non_substantive_response_exhausted,
+        }

@@ -7,6 +7,9 @@ from typing import Any, Mapping, Protocol
 from .evidence import EvidenceRecord, evidence_root_for_path, evidence_root_label
 from .patch.anchored import PatchError, display_workspace_path, resolve_workspace_path
 from .patch_reviewer import review_input_metadata, review_input_summary
+from .session_evidence import MAX_SESSION_EVIDENCE_JOURNAL_EVENTS
+from .session_evidence import is_journal_safe_cached_evidence
+from .session_evidence import serialize_cached_evidence_entry
 from .test_planner import plan_narrow_test
 from .tool_choice_queue import session_evidence_reuse_directive
 from .tool_observation import ToolResultSummary
@@ -218,7 +221,7 @@ class EvidenceVerificationLifecycle:
                 ),
                 None,
             )
-        if runtime._session_evidence.capture(
+        cached_entry = runtime._session_evidence.capture(
             tool_result=tool_result,
             record=record,
             source_evidence=source,
@@ -226,8 +229,25 @@ class EvidenceVerificationLifecycle:
             workspace_revision=runtime._workspace_context.revision,
             request=runtime._run.current_user_request or "",
             run_id=runtime._run.run_id or "",
-        ):
-            self.record_session_evidence_event("captured", {"tool": tool_result.name, "path": tool_result.path})
+        )
+        if cached_entry is not None and is_journal_safe_cached_evidence(cached_entry):
+            self.record_session_evidence_event(
+                "captured",
+                {
+                    "tool": tool_result.name,
+                    "path": tool_result.path,
+                    "entry": serialize_cached_evidence_entry(cached_entry),
+                },
+            )
+
+    def restore_session_evidence_cache(self) -> None:
+        runtime = self._runtime
+        payloads = runtime._session.load_event_payloads(
+            "session_evidence_captured",
+            max_events=MAX_SESSION_EVIDENCE_JOURNAL_EVENTS,
+        )
+        entries = [payload["entry"] for payload in payloads if isinstance(payload.get("entry"), Mapping)]
+        runtime._session_evidence.restore_entries(entries)
 
     def hydrate_session_evidence(self, prompt: str) -> None:
         runtime = self._runtime

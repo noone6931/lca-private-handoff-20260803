@@ -131,6 +131,7 @@ from .runtime_evidence import EvidenceVerificationLifecycle
 from .runtime_memory import MemoryConsolidationLifecycle
 from .runtime_tool_directive import RuntimeToolDirectivePhase
 from .runtime_read_only_review import ReadOnlyReviewPhase
+from .runtime_provider_terminal import ProviderTerminalPhase
 from .runtime_workspace import WorkspaceLifecycle
 from .runtime_prompt import _assistant_event_payload
 from .runtime_prompt import _tool_call_event_payload
@@ -369,7 +370,9 @@ class AgentRuntime:
         self._memory_phase = MemoryConsolidationLifecycle(self)
         self._tool_directive_phase = RuntimeToolDirectivePhase(self)
         self._read_only_review_phase = ReadOnlyReviewPhase(self)
+        self._provider_terminal_phase = ProviderTerminalPhase(self)
         missing_roots = self._workspace_phase.restore_session_workspace_roots()
+        self._evidence_phase.restore_session_evidence_cache()
         self._path_rule_index = discover_path_scoped_rules(self._workspace_context.all_roots)
         system_prompt = self._workspace_phase.build_system_prompt()
         self._messages: list[dict[str, Any]] = [
@@ -587,6 +590,23 @@ class AgentRuntime:
                     artifact_kind=artifact.kind,
                     artifact=artifact,
                 )
+            if not raw_tool_calls:
+                terminal_outcome = self._provider_terminal_phase.handle_no_tool_response(
+                    raw_message.get("content"),
+                    forced_final=force_final_answer,
+                )
+                if terminal_outcome.action == "retry":
+                    step += 1
+                    continue
+                if terminal_outcome.action == "unverified":
+                    return self._finish_run(
+                        terminal_outcome.terminal_message,
+                        deadline,
+                        run_start_index,
+                        reason="provider_non_substantive_response",
+                        skip_memory_consolidation=True,
+                        preserve_terminal_content=True,
+                    )
             if force_final_answer:
                 self._session.append("runtime_steering", {"kind": "forced_final_answer", "step": step})
                 self._run.clear_forced_final_answer_request()
@@ -1109,6 +1129,7 @@ class AgentRuntime:
             },
         )
         payload["finalization_attempts"] = self._run.finalization.aggregate_attempts
+        payload["provider_terminal"] = self._run.finalization.terminal_response_snapshot()
         payload["temporary_tool_directive"] = self._run.temporary_tool_directive.snapshot()
         if self._run.negative_claim_metrics:
             payload["negative_evidence_claims"] = dict(self._run.negative_claim_metrics)

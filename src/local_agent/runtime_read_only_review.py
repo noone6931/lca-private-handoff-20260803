@@ -128,7 +128,10 @@ class ReadOnlyReviewPhase:
         state.rewrite_requested = True
         runtime._run.collector.record_read_only_review_rewrite()
         runtime._session.append("read_only_reviewer", {"event": "rewrite_queued", "verdict": result.verdict})
-        return ReviewerPhaseOutcome("rewrite", rewrite_message=reviewer_rewrite_message(result))
+        return ReviewerPhaseOutcome(
+            "rewrite",
+            rewrite_message=reviewer_rewrite_message(result, profile=contract.read_only_review_profile),
+        )
 
     def _protocol_unverified(self, artifact_kind: str, *, tool_calls: list[object] = (), artifact: Any = None) -> ReviewerPhaseOutcome:
         runtime = self._runtime

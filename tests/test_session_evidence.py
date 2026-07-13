@@ -8,6 +8,7 @@ from local_agent.agent import AgentRuntime
 from local_agent.config import AgentConfig
 from local_agent.evidence import EvidenceRecord
 from local_agent.session_evidence import SessionEvidenceCache
+from local_agent.session_evidence import serialize_cached_evidence_entry
 from local_agent.steering.final_answer import SourceEvidence
 from local_agent.tool_choice_queue import ToolResultSummary
 from local_agent.tools.base import ToolResult
@@ -15,6 +16,199 @@ from local_agent.user_facts import UserFactsLayer
 
 
 class SessionEvidenceCacheTests(unittest.TestCase):
+    def test_named_session_restores_fresh_requirement_evidence_across_runtime_processes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            requirement = root / "requirements.md"
+            requirement.write_text("# Requirement\nsettlement requires rollback\n", encoding="utf-8")
+            config = _config(root)
+            first = AgentRuntime(config, show_tool_logs=False)
+            first._run.run_id = "run-requirement"
+            first._run.current_user_request = "读取 requirements.md"
+            result = ToolResult(requirement.read_text(encoding="utf-8"))
+            first._evidence_phase.record_tool_choice_result("read_file", {"path": "requirements.md"}, result)
+            first._evidence_phase.record_read_file_evidence("read_file", {"path": "requirements.md"}, result)
+            first._evidence_phase.record_tool_evidence("read_file", {"path": "requirements.md"}, result)
+
+            resumed = AgentRuntime(config, show_tool_logs=False, session_id=first._session.session_id)
+            self.assertEqual(resumed._session_evidence.snapshot()["entries"], 1)
+            resumed._evidence_phase.hydrate_session_evidence("结合 requirements 的结算回退继续设计")
+
+        pinned = resumed._run.evidence.pinned_requirement_evidence
+        self.assertEqual(len(pinned), 1)
+        self.assertTrue(pinned[0].path.endswith("requirements.md"))
+        self.assertEqual(pinned[0].origin, "session_cached")
+
+    def test_serialized_entry_is_revalidated_after_restore(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            source = root / "src" / "app.py"
+            source.parent.mkdir()
+            source.write_text("VALUE = 1\n", encoding="utf-8")
+            cache = SessionEvidenceCache()
+            display = str(source.relative_to(root))
+            result = ToolResultSummary("read_file", source.read_text(encoding="utf-8"), path=display)
+            record = EvidenceRecord(
+                "read_file",
+                display,
+                "read app.py",
+                details={"evidence_root": str(root), "resolved_path": str(source)},
+            )
+            entry = cache.capture(
+                tool_result=result,
+                record=record,
+                source_evidence=SourceEvidence(display, result.content, root=str(root)),
+                requirement_evidence=None,
+                workspace_revision=0,
+                request="inspect app VALUE",
+                run_id="run-1",
+            )
+            self.assertIsNotNone(entry)
+            restored = SessionEvidenceCache()
+            self.assertEqual(restored.restore_entries([serialize_cached_evidence_entry(entry)]), 1)
+            source.write_text("VALUE = 2\n", encoding="utf-8")
+
+            reuse = restored.reuse_for_request(
+                prompt="inspect app VALUE",
+                workspace_revision=0,
+                authorized_roots=(root,),
+            )
+
+        self.assertEqual(reuse.hit_count, 0)
+        self.assertEqual(reuse.stale_count, 1)
+
+    def test_serialized_entry_cannot_tag_a_path_outside_its_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp).resolve()
+            root = base / "root"
+            root.mkdir()
+            source = root / "app.py"
+            outside = base / "outside.py"
+            source.write_text("VALUE = 1\n", encoding="utf-8")
+            outside.write_text("SECRET = 1\n", encoding="utf-8")
+            cache = SessionEvidenceCache()
+            display = source.name
+            result = ToolResultSummary("read_file", source.read_text(encoding="utf-8"), path=display)
+            record = EvidenceRecord(
+                "read_file",
+                display,
+                "read app.py",
+                details={"evidence_root": str(root), "resolved_path": str(source)},
+            )
+            entry = cache.capture(
+                tool_result=result,
+                record=record,
+                source_evidence=SourceEvidence(display, result.content, root=str(root)),
+                requirement_evidence=None,
+                workspace_revision=0,
+                request="inspect app",
+                run_id="run-1",
+            )
+            self.assertIsNotNone(entry)
+            payload = serialize_cached_evidence_entry(entry)
+            payload["content_tags"] = {str(outside): "0" * 64}
+
+            restored = SessionEvidenceCache()
+            self.assertEqual(restored.restore_entries([payload]), 0)
+
+    def test_journal_rebuilds_read_content_instead_of_trusting_serialized_text(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            requirement = root / "requirements.md"
+            requirement.write_text("actual requirement\n", encoding="utf-8")
+            cache = SessionEvidenceCache()
+            result = ToolResultSummary("read_file", requirement.read_text(encoding="utf-8"), path="requirements.md")
+            record = EvidenceRecord(
+                "read_file",
+                "requirements.md",
+                "read requirement",
+                details={"evidence_root": str(root), "resolved_path": str(requirement)},
+            )
+            entry = cache.capture(
+                tool_result=result,
+                record=record,
+                source_evidence=SourceEvidence("requirements.md", result.content, root=str(root)),
+                requirement_evidence=None,
+                workspace_revision=0,
+                request="read requirements",
+                run_id="run-1",
+            )
+            self.assertIsNotNone(entry)
+            payload = serialize_cached_evidence_entry(entry)
+            payload["tool_result"]["content"] = "tampered text"
+            payload["source_evidence"]["content"] = "tampered source"
+
+            restored = SessionEvidenceCache()
+            self.assertEqual(restored.restore_entries([payload]), 1)
+            reuse = restored.reuse_for_request(
+                prompt="requirements",
+                workspace_revision=0,
+                authorized_roots=(root,),
+            )
+
+        self.assertEqual(reuse.hit_count, 1)
+        self.assertEqual(reuse.entries[0].tool_result.content, "actual requirement\n")
+        self.assertEqual(reuse.entries[0].source_evidence.content, "actual requirement\n")
+
+    def test_journal_refuses_cross_process_search_output(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            source = root / "App.java"
+            source.write_text("class App {}\n", encoding="utf-8")
+            cache = SessionEvidenceCache()
+            result = ToolResultSummary(
+                "search_code",
+                "App.java:1: class App {}",
+                metadata={"evidence_root": str(root), "evidence_paths": ["App.java"]},
+            )
+            record = EvidenceRecord("search_code", "App", "matched App", details={"evidence_root": str(root)})
+            entry = cache.capture(
+                tool_result=result,
+                record=record,
+                source_evidence=None,
+                requirement_evidence=None,
+                workspace_revision=0,
+                request="find App",
+                run_id="run-1",
+            )
+            self.assertIsNotNone(entry)
+
+            restored = SessionEvidenceCache()
+            self.assertEqual(restored.restore_entries([serialize_cached_evidence_entry(entry)]), 0)
+
+    def test_restored_chinese_requirement_matches_a_related_followup(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            requirement = root / "requirements.md"
+            requirement.write_text("拓展服务费结算需要支持回退。\n", encoding="utf-8")
+            cache = SessionEvidenceCache()
+            result = ToolResultSummary("read_file", requirement.read_text(encoding="utf-8"), path="requirements.md")
+            record = EvidenceRecord(
+                "read_file",
+                "requirements.md",
+                "read requirement",
+                details={"evidence_root": str(root), "resolved_path": str(requirement)},
+            )
+            entry = cache.capture(
+                tool_result=result,
+                record=record,
+                source_evidence=SourceEvidence("requirements.md", result.content, root=str(root)),
+                requirement_evidence=None,
+                workspace_revision=0,
+                request="分析需求文档",
+                run_id="run-1",
+            )
+            self.assertIsNotNone(entry)
+            restored = SessionEvidenceCache()
+            self.assertEqual(restored.restore_entries([serialize_cached_evidence_entry(entry)]), 1)
+            reuse = restored.reuse_for_request(
+                prompt="定位拓展服务费结算的实现范围",
+                workspace_revision=0,
+                authorized_roots=(root,),
+            )
+
+        self.assertEqual(reuse.hit_count, 1)
+
     def test_search_and_lsp_without_source_evidence_are_reused_when_matched_file_is_fresh(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp).resolve()

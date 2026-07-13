@@ -96,6 +96,27 @@ class JsonlSessionStore:
                     latest = dict(payload)
         return latest
 
+    def load_event_payloads(self, event: str, *, max_events: int = 0) -> list[dict[str, Any]]:
+        """Load bounded typed event payloads without projecting them as chat messages."""
+
+        if not self.path.exists():
+            return []
+        payloads: list[dict[str, Any]] = []
+        with self.path.open("r", encoding="utf-8") as handle:
+            for line_number, line in enumerate(handle, start=1):
+                if not line.strip():
+                    continue
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError as exc:
+                    raise SessionError(f"Malformed JSONL at {self.path}:{line_number}") from exc
+                payload = record.get("payload")
+                if record.get("event") == event and isinstance(payload, dict):
+                    payloads.append(dict(payload))
+                    if max_events > 0 and len(payloads) > max_events:
+                        payloads = payloads[-max_events:]
+        return payloads
+
     def relocate(self, state_dir: Path) -> None:
         """Point this store at an already-migrated session file in a new state dir."""
 

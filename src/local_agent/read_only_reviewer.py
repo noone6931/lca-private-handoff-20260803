@@ -13,9 +13,9 @@ from .task_contract import RequirementContract
 ReviewerVerdict = Literal["pass", "revise", "unverified"]
 MAX_REVIEWER_FINDINGS = 8
 MAX_REVIEWER_RESPONSE_CHARS = 9000
-MAX_CLAIM_UNITS = 20
+MAX_CLAIM_UNITS = 80
 MAX_CLAIM_UNIT_CHARS = 500
-MAX_CLAIM_TOTAL_CHARS = 10000
+MAX_CLAIM_TOTAL_CHARS = 40000
 
 
 @dataclass(frozen=True)
@@ -210,7 +210,7 @@ def parse_reviewer_result(content: object, *, claim_units: tuple[CandidateClaimU
     return ReviewerResult(verdict=verdict, confidence=float(confidence), findings=tuple(findings), reason=_clip(reason))
 
 
-def reviewer_rewrite_message(result: ReviewerResult) -> str:
+def reviewer_rewrite_message(result: ReviewerResult, *, profile: str | None = None) -> str:
     """Render a bounded runtime instruction, not the reviewer's raw transcript."""
 
     disposition = (
@@ -225,6 +225,14 @@ def reviewer_rewrite_message(result: ReviewerResult) -> str:
         disposition,
         "Do not call an analogous/reusable candidate the verified owner. Keep unlocated owner/DDL/template/API facts as unverified, and label new design as proposal.",
     ]
+    if profile == "owner_impact":
+        lines.append(
+            "Do not introduce concrete class, table, path, service, endpoint, field, or numbering names that were not already supported by the handoff."
+        )
+    elif profile == "design":
+        lines.append(
+            "Design proposals may be conceptual, but every concrete repository name must remain an observed fact or be explicitly marked unverified."
+        )
     for finding in result.findings:
         claim = f": {finding.claim}" if finding.claim else ""
         lines.append(f"- Claim {finding.claim_id}{claim}; issue: {finding.issue}; action: {finding.action}")
@@ -295,9 +303,13 @@ def _sample_claim_units(indexed: list[CandidateClaimUnit]) -> tuple[CandidateCla
     if len(indexed) <= MAX_CLAIM_UNITS:
         selected = indexed
     else:
-        head = MAX_CLAIM_UNITS // 2
-        tail = MAX_CLAIM_UNITS - head
-        selected = [*indexed[:head], *indexed[-tail:]]
+        # Preserve the whole answer shape when an unusually long candidate
+        # exceeds the protocol cap.  Stable original IDs remain the address;
+        # evenly spaced selection avoids making middle sections invisible.
+        selected = [
+            indexed[round(position * (len(indexed) - 1) / (MAX_CLAIM_UNITS - 1))]
+            for position in range(MAX_CLAIM_UNITS)
+        ]
     total = 0
     bounded: list[CandidateClaimUnit] = []
     for unit in selected:

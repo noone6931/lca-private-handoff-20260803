@@ -72,6 +72,18 @@ class SessionStoreTests(unittest.TestCase):
             ],
         )
 
+    def test_load_event_payloads_is_typed_and_bounded(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            store = JsonlSessionStore(workspace)
+            for index in range(5):
+                store.append("session_evidence_captured", {"entry": {"index": index}})
+            store.append("assistant", {"content": "ignored"})
+
+            payloads = store.load_event_payloads("session_evidence_captured", max_events=2)
+
+        self.assertEqual([payload["entry"]["index"] for payload in payloads], [3, 4])
+
     def test_load_messages_adds_missing_assistant_role(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp).resolve()

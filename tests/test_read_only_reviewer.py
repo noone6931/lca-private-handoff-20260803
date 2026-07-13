@@ -354,19 +354,21 @@ class ReadOnlyReviewerTests(unittest.TestCase):
                 claim_units=units,
             )
 
-    def test_claim_unit_sampling_keeps_tail_conclusions_with_original_ids(self) -> None:
+    def test_claim_unit_sampling_covers_middle_and_tail_with_original_ids(self) -> None:
         candidate = "\n".join(
-            [f"- observed item {index}" for index in range(1, 23)]
+            [f"- observed item {index}" for index in range(1, 101)]
             + ["| Area | Owner |", "| --- | --- |", "| Frontend | **platformPayment** is verified owner |", "Final conclusion: platformPayment is the true owner."]
         )
         units = candidate_claim_units(candidate)
         ids = [unit.claim_id for unit in units]
-        self.assertEqual(ids[:2], ["c001", "c002"])
-        self.assertIn("c024", ids)
-        self.assertIn("c025", ids)
-        tail_unit = next(unit for unit in units if unit.claim_id == "c024")
+        self.assertEqual(len(units), 80)
+        self.assertEqual(ids[0], "c001")
+        self.assertTrue(any(45 <= int(claim_id[1:]) <= 60 for claim_id in ids))
+        self.assertIn("c102", ids)
+        self.assertIn("c103", ids)
+        tail_unit = next(unit for unit in units if unit.claim_id == "c102")
         result = parse_reviewer_result(
-            '{"verdict":"revise","confidence":0.9,"findings":[{"claim_id":"c024","claim":"owner claim","issue":"no binding","action":"mark unlocated"},{"claim_id":"c025","claim":"conclusion","issue":"no binding","action":"mark unlocated"}],"reason":"x"}',
+            '{"verdict":"revise","confidence":0.9,"findings":[{"claim_id":"c102","claim":"owner claim","issue":"no binding","action":"mark unlocated"},{"claim_id":"c103","claim":"conclusion","issue":"no binding","action":"mark unlocated"}],"reason":"x"}',
             claim_units=units,
         )
         self.assertIn("platformPayment", tail_unit.text)
