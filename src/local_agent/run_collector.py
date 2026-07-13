@@ -55,6 +55,9 @@ class RunStats:
     read_only_reviewer_protocol_failures: int = 0
     read_only_reviewer_verdicts: dict[str, int] = field(default_factory=dict)
     read_only_reviewer_errors: dict[str, int] = field(default_factory=dict)
+    pre_review_audit_rounds: int = 0
+    pre_review_audit_categories: dict[str, int] = field(default_factory=dict)
+    pre_review_audit_exhausted: int = 0
     tool_counts: dict[str, int] = field(default_factory=dict)
     guard_start: dict[str, int] = field(default_factory=dict)
     steer_start: dict[str, int] = field(default_factory=dict)
@@ -268,6 +271,17 @@ class RunCollector:
         if self._stats is not None:
             self._stats.read_only_reviewer_protocol_failures += 1
 
+    def record_pre_review_audit(self, *, categories: tuple[str, ...], exhausted: bool) -> None:
+        if self._stats is None:
+            return
+        self._stats.pre_review_audit_rounds += 1
+        if exhausted:
+            self._stats.pre_review_audit_exhausted += 1
+        for category in categories:
+            self._stats.pre_review_audit_categories[category] = (
+                self._stats.pre_review_audit_categories.get(category, 0) + 1
+            )
+
     def finish(
         self,
         reason: str,
@@ -338,6 +352,11 @@ class RunCollector:
                 "protocol_failures": stats.read_only_reviewer_protocol_failures,
                 "verdicts": dict(sorted(stats.read_only_reviewer_verdicts.items())),
                 "errors": dict(sorted(stats.read_only_reviewer_errors.items())),
+            },
+            "pre_review_audit": {
+                "rounds": stats.pre_review_audit_rounds,
+                "categories": dict(sorted(stats.pre_review_audit_categories.items())),
+                "exhausted": stats.pre_review_audit_exhausted,
             },
             "tool_counts": dict(sorted(stats.tool_counts.items())),
             "guard_hits": {key: value for key, value in guard_hits.items() if value},

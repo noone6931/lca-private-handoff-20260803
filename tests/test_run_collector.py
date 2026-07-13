@@ -104,3 +104,23 @@ class RunCollectorTests(unittest.TestCase):
         self.assertEqual(summary["zero_gain_compactions"], 3)
         self.assertEqual(summary["max_consecutive_zero_gain_compactions"], 2)
         self.assertEqual(summary["compaction_estimated_token_reduction"], 40)
+
+    def test_records_pre_review_audit_exhaustion(self) -> None:
+        collector = RunCollector()
+        collector.start("run-1", "review design", 1.0, guard_start={}, steer_start={})
+        collector.record_pre_review_audit(
+            categories=("completion_audit", "negative_existence"),
+            exhausted=False,
+        )
+        collector.record_pre_review_audit(
+            categories=("completion_audit",),
+            exhausted=True,
+        )
+
+        summary = collector.finish("pre_review_audit_unverified", guard_values={}, steering_values={})
+
+        self.assertEqual(summary["pre_review_audit"], {
+            "rounds": 2,
+            "categories": {"completion_audit": 2, "negative_existence": 1},
+            "exhausted": 1,
+        })

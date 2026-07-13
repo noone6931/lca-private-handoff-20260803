@@ -103,6 +103,8 @@ from .steering.final_answer import request_mentions_todo
 from .steering.final_answer import render_unverified_final_answer
 from .steering.final_answer import SourceGroundedNumericSteerer
 from .steering.final_answer import SteeringDecision
+from .steering.pre_review import PRE_REVIEW_AUDIT_KINDS
+from .steering.pre_review import should_aggregate_pre_review_audits
 from .steering.tool_loop import ToolLoopSignals
 from .steering.tool_loop import ToolLoopSteeringDecision
 from .steering.tool_loop import ToolLoopSteeringRegistry
@@ -638,6 +640,18 @@ class AgentRuntime:
                 content = message.get("content") or ""
                 steering = self._decide_final_answer_steering(content, run_start_index)
                 if steering is not None:
+                    if steering.terminal_message:
+                        if "pre_review_audit" in steering.payload:
+                            self._run.collector.record_pre_review_audit(
+                                categories=tuple(str(item) for item in steering.payload.get("categories", ())), exhausted=True
+                            )
+                        return self._finish_run(
+                            steering.terminal_message,
+                            deadline,
+                            run_start_index,
+                            reason="pre_review_audit_unverified",
+                            skip_memory_consolidation=True,
+                        )
                     if self._apply_final_answer_steering(steering):
                         step += 1
                         continue
@@ -1493,7 +1507,12 @@ class AgentRuntime:
         if any(claim_metrics.values()):
             self._run.record_negative_claim_metrics(claim_metrics)
             self._session.append("negative_evidence_claims", claim_metrics)
+        aggregate = self._run.pre_review_audit.decide(context, self._final_answer_steerers)
+        if aggregate is not None:
+            return aggregate
         for steerer in self._final_answer_steerers:
+            if steerer.kind in PRE_REVIEW_AUDIT_KINDS and should_aggregate_pre_review_audits(context):
+                continue
             decision = steerer.decide(context)
             if decision is not None:
                 return decision
@@ -1524,6 +1543,7 @@ class AgentRuntime:
             is_code_implementation_request=requires_no_edit_final_hygiene(self._run.requirement_contract),
             steer_counts=self._final_answer_steer_counts(),
             verification_plan=self._run.verification_plan,
+            read_only_explore_finalized=self._run.read_only_explore_finalized,
         )
 
     def _apply_final_answer_steering(self, decision: SteeringDecision) -> bool:
@@ -1570,12 +1590,22 @@ class AgentRuntime:
                         },
                     )
                 return False
-        steer_count = self._increment_final_answer_steer_count(decision.kind)
+        counted_kinds = decision.counted_kinds or (decision.kind,)
+        steer_counts = {
+            kind: self._increment_final_answer_steer_count(kind)
+            for kind in counted_kinds
+        }
+        if "pre_review_audit" in decision.payload:
+            self._run.collector.record_pre_review_audit(
+                categories=tuple(str(item) for item in decision.payload.get("categories", ())),
+                exhausted=bool(decision.payload["pre_review_audit"].get("exhausted")),
+            )
         self._messages.append({"role": "user", "content": decision.message})
         payload = {
             "kind": decision.kind,
             **decision.payload,
-            "steer_count": steer_count,
+            "steer_count": max(steer_counts.values(), default=0),
+            "steer_counts": steer_counts,
         }
         self._session.append("runtime_steering", payload)
         if decision.force_final_answer_without_tools:

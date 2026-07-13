@@ -579,6 +579,18 @@ def _evaluate_acceptance(
                 actual_reviewer,
             )
         )
+    expected_pre_review = acceptance.get("pre_review_audit")
+    if isinstance(expected_pre_review, Mapping):
+        actual_pre_review = (runtime._last_run_summary or {}).get("pre_review_audit") or {}
+        expected_counts = _integer_mapping(expected_pre_review)
+        checks.append(
+            _check(
+                "pre_review_audit",
+                _mapping_integer_values_match(actual_pre_review, expected_counts),
+                expected_counts,
+                actual_pre_review,
+            )
+        )
     schema_excludes = _string_list(acceptance.get("schema_excludes"))
     if schema_excludes:
         schemas = client.tool_schema_names

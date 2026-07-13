@@ -343,6 +343,7 @@ class FinalAnswerContext:
     required_design_evidence_roots: tuple[str, ...] = ()
     design_evidence_read_paths: list[str] = field(default_factory=list)
     verification_plan: VerificationPlan | None = None
+    read_only_explore_finalized: bool = False
 
 
 @dataclass(frozen=True)
@@ -353,6 +354,8 @@ class SteeringDecision:
     force_final_answer_without_tools: bool = True
     temporary_tool_allowlist: set[str] | None = None
     severity: FinalAnswerSteeringSeverity = FinalAnswerSteeringSeverity.HARD
+    counted_kinds: tuple[str, ...] = ()
+    terminal_message: str = ""
 
 
 class FinalAnswerSteerer(Protocol):

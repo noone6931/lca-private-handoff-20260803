@@ -55,6 +55,7 @@ class RuntimeReadOnlyExplorePhase:
             return decision
         if decision.action != "finalize":
             return None
+        runtime._run.read_only_explore_finalized = True
         runtime._session.append(
             "read_only_explore",
             {

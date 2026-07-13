@@ -1,0 +1,29 @@
+{
+  "id": "readonly-pre-review-audit",
+  "title": "Multiple hard evidence audits converge once before the typed reviewer",
+  "prompt": "只读分析当前服务 owner 和状态码，给出设计建议；不得把未验证的文件、接口或权限说成现有事实。",
+  "budget_seconds": 90,
+  "workspace_files": {
+    "src/Owner.java": "class Owner { static final int STATUS = 1; void handle() {} }\n"
+  },
+  "scripted_responses": [
+    {"tool_calls": [{"name": "search_code", "arguments": {"path": "src", "pattern": "Owner"}}]},
+    {"tool_calls": [{"name": "read_file", "arguments": {"path": "src/Owner.java"}}]},
+    {"content": "已证实 Owner 是真实 owner，状态码是 2，当前没有 Java 源码，并且现有 /owner 接口与权限已实现。"},
+    {"content": "已验证：src/Owner.java 包含 Owner 与 STATUS = 1。未验证：真实 owner、接口与权限未定位；设计建议需另行确认。"},
+    {"tool_calls": [{"name": "submit_read_only_review", "arguments": {"verdict": "pass", "confidence": 0.94, "findings": [], "reason": "the answer separates observed source from unlocated facts and proposals"}}]}
+  ],
+  "acceptance": {
+    "required_tools": ["search_code", "read_file"],
+    "forbidden_tools": ["apply_patch", "write_file", "shell", "run_tests", "glob_files"],
+    "changed_files": [],
+    "answer_all_of": ["STATUS = 1", "未定位", "设计建议"],
+    "answer_forbidden_regex": ["状态码是 2", "当前没有 Java 源码", "接口与权限已实现"],
+    "termination_reason": "final",
+    "run_summary": {"tool_calls": 2, "tool_errors": 0},
+    "pre_review_audit": {"rounds": 1, "exhausted": 0},
+    "read_only_reviewer": {"triggers": 1, "typed_submits": 1},
+    "max_tool_errors": 0
+  },
+  "residual_risk": "The aggregate audit proves bounded convergence before review; it does not treat same-domain code as an owner binding."
+}
