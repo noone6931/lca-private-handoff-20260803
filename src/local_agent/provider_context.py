@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import time
 from typing import Any, Protocol
@@ -64,6 +65,8 @@ class ProviderContextPhase:
 
     def __init__(self, runtime: ProviderRuntimePort) -> None:
         self._runtime = runtime
+        self._checkpoint_reuse_reported = False
+        self._unchanged_overbudget_checkpoint_signature: str | None = None
 
     def inspect_image(self, _path: Any, mime_type: str, raw: bytes, question: str) -> str:
         """Run a one-shot vision request; only its text observation leaves this phase."""
@@ -84,12 +87,21 @@ class ProviderContextPhase:
 
     def messages_for_model(self, deadline: float | None = None) -> list[dict[str, Any]]:
         runtime = self._runtime
+        if runtime._session.last_load_used_context_checkpoint and not self._checkpoint_reuse_reported:
+            runtime._run.collector.record_context_checkpoint_reused()
+            self._checkpoint_reuse_reported = True
         todo_summary = self.open_todo_summary()
         provider_context = _prune_context_tool_outputs(runtime._messages)
         if not self.context_budget_enabled():
             return self.provider_safe_runtime_messages(provider_context, todo_summary)
         thresholds = self.context_budget_thresholds()
         if not self.context_budget_exceeded(provider_context):
+            self._unchanged_overbudget_checkpoint_signature = None
+            return self.provider_safe_runtime_messages(provider_context, todo_summary)
+
+        source_signature = _context_signature(provider_context)
+        if source_signature == self._unchanged_overbudget_checkpoint_signature:
+            runtime._session.append("context_compaction_skipped", {"reason": "unchanged_overbudget_checkpoint"})
             return self.provider_safe_runtime_messages(provider_context, todo_summary)
 
         estimated_tokens_before = _estimate_message_tokens(provider_context)
@@ -140,9 +152,42 @@ class ProviderContextPhase:
                     estimated_tokens_before=estimated_tokens_before,
                     estimated_tokens_after=int(payload["estimated_tokens_after"]),
                 )
+                self._install_compaction_checkpoint(compacted, payload)
+                self._unchanged_overbudget_checkpoint_signature = (
+                    _context_signature(_prune_context_tool_outputs(runtime._messages))
+                    if still_exceeds_budget
+                    else None
+                )
                 return self.provider_safe_runtime_messages(compacted, todo_summary)
             recent_count = max(6, recent_count // 2)
         return self.provider_safe_runtime_messages(runtime._messages, todo_summary)
+
+    def _install_compaction_checkpoint(self, compacted: list[dict[str, Any]], payload: dict[str, Any]) -> None:
+        """Replace active provider history after a successful bounded compaction.
+
+        The JSONL transcript remains append-only.  The checkpoint stores only
+        non-system messages so a resumed Runtime still constructs its current
+        system policy locally instead of trusting persisted content as policy.
+        """
+
+        runtime = self._runtime
+        runtime._run.checkpoint_active_messages(runtime._messages, len(compacted))
+        runtime._messages = [dict(message) for message in compacted]
+        checkpoint_messages = [
+            dict(message)
+            for message in compacted
+            if message.get("role") != "system"
+        ]
+        runtime._session.append(
+            "context_checkpoint",
+            {
+                "version": 1,
+                "messages": checkpoint_messages,
+                "estimated_tokens": payload["estimated_tokens_after"],
+                "compaction_event": "context_compaction",
+            },
+        )
+        runtime._run.collector.record_context_checkpoint()
 
     def context_budget_enabled(self) -> bool:
         runtime = self._runtime
@@ -371,3 +416,8 @@ class ProviderContextPhase:
             return float(runtime._config.request_timeout)
         remaining = deadline - time.monotonic()
         return min(float(runtime._config.request_timeout), max(1.0, remaining))
+
+
+def _context_signature(messages: list[dict[str, Any]]) -> str:
+    encoded = json.dumps(messages, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()

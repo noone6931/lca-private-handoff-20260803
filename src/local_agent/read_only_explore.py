@@ -14,6 +14,10 @@ PRECISE_EVIDENCE_TOOLS = frozenset(
     {
         "read_file",
         "search_code",
+    }
+)
+CANDIDATE_EVIDENCE_TOOLS = PRECISE_EVIDENCE_TOOLS | frozenset(
+    {
         "lsp_definition",
         "lsp_references",
         "lsp_symbols",
@@ -21,7 +25,7 @@ PRECISE_EVIDENCE_TOOLS = frozenset(
         "lsp_workspace_symbols",
     }
 )
-OBSERVATION_TOOLS = PRECISE_EVIDENCE_TOOLS | {"glob_files", "list_files"}
+OBSERVATION_TOOLS = CANDIDATE_EVIDENCE_TOOLS | {"glob_files", "list_files"}
 MAX_OWNER_DESIGN_EXPLORE_CALLS = 12
 SOFT_EXPLORE_CALLS_PER_ROOT = 2
 HARD_EXPLORE_CALLS_PER_ROOT = 4
@@ -37,6 +41,7 @@ class ReadOnlyExploreDecision:
     soft_budget: int = 0
     hard_budget: int = 0
     read_candidates: tuple[str, ...] = ()
+    preferred_roots: tuple[str, ...] = ()
 
     @property
     def is_applicable(self) -> bool:
@@ -80,6 +85,8 @@ def evaluate_read_only_explore(
     covered = _covered_roots(results, roots)
     missing = tuple(root for root in roots if root not in covered)
     read_candidates = _read_candidates_for_missing_roots(results, missing)
+    root_attempts = _root_attempts(results, roots)
+    preferred_roots = _least_observed_roots(missing, root_attempts)
     if not missing:
         return ReadOnlyExploreDecision(
             "finalize",
@@ -89,6 +96,7 @@ def evaluate_read_only_explore(
             soft_budget=soft_budget,
             hard_budget=hard_budget,
             read_candidates=read_candidates,
+            preferred_roots=preferred_roots,
         )
     if observation_calls >= hard_budget:
         return ReadOnlyExploreDecision(
@@ -100,6 +108,7 @@ def evaluate_read_only_explore(
             soft_budget=soft_budget,
             hard_budget=hard_budget,
             read_candidates=read_candidates,
+            preferred_roots=preferred_roots,
         )
     return ReadOnlyExploreDecision(
         "precise",
@@ -110,6 +119,7 @@ def evaluate_read_only_explore(
         soft_budget=soft_budget,
         hard_budget=hard_budget,
         read_candidates=read_candidates,
+        preferred_roots=preferred_roots,
     )
 
 
@@ -164,7 +174,7 @@ def _read_candidates_for_missing_roots(
     seen: set[str] = set()
     per_root: dict[str, int] = {root: 0 for root in missing_roots}
     for result in results:
-        if result.name not in PRECISE_EVIDENCE_TOOLS - {"read_file"} or result.is_error:
+        if result.name not in CANDIDATE_EVIDENCE_TOOLS - {"read_file"} or result.is_error:
             continue
         metadata = result.metadata
         if metadata.get("evidence_paths_overflow"):
@@ -190,3 +200,21 @@ def _read_candidates_for_missing_roots(
                 per_root[root] += 1
                 candidates.append(rendered)
     return tuple(candidates)
+
+
+def _root_attempts(results: Iterable[ToolResultSummary], roots: tuple[str, ...]) -> dict[str, int]:
+    counts = {root: 0 for root in roots}
+    for result in results:
+        if result.name not in OBSERVATION_TOOLS or result.metadata.get("evidence_origin") == "session_cached":
+            continue
+        root = str(result.metadata.get("evidence_root") or "")
+        if root in counts:
+            counts[root] += 1
+    return counts
+
+
+def _least_observed_roots(missing_roots: tuple[str, ...], attempts: dict[str, int]) -> tuple[str, ...]:
+    if not missing_roots:
+        return ()
+    lowest = min(attempts.get(root, 0) for root in missing_roots)
+    return tuple(root for root in missing_roots if attempts.get(root, 0) == lowest)

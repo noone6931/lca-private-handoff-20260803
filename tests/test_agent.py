@@ -500,6 +500,32 @@ class _MessageRecordingClient:
         return type("Response", (), {"message": {"content": "done"}})()
 
 
+class _CompactingToolClient:
+    def __init__(self, config: AgentConfig):
+        self._calls = 0
+
+    def chat(self, messages, tools, *, timeout=None):
+        self._calls += 1
+        if self._calls == 1:
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "read-large",
+                                "type": "function",
+                                "function": {"name": "read_file", "arguments": '{"path":"large.txt"}'},
+                            }
+                        ],
+                    }
+                },
+            )()
+        return type("Response", (), {"message": {"content": "已读取 large.txt。"}})()
+
+
 class _InlineSummaryClient:
     def chat(self, messages, tools, *, timeout=None):
         return type("Response", (), {"message": {"content": "Retained earlier tool facts."}})()
@@ -5306,6 +5332,96 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertTrue(any("T1: Finish compaction" in m.get("content", "") for m in sent))
         self.assertFalse(any("T2: Already done" in m.get("content", "") for m in sent))
 
+    def test_compaction_checkpoint_replaces_active_history_and_reloads_once(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=workspace,
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+                context_char_budget=20000,
+                context_recent_messages=1,
+                summary_mode="local",
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _MessageRecordingClient):
+                runtime = AgentRuntime(config, show_tool_logs=False)
+                runtime._messages.extend(
+                    [
+                        {"role": "user", "content": "old request " + ("x" * 15000)},
+                        {"role": "assistant", "content": "old answer " + ("y" * 15000)},
+                        {"role": "user", "content": "latest request"},
+                    ]
+                )
+                runtime._provider_context_phase.messages_for_model()
+                records = [json.loads(line) for line in runtime._session.path.read_text(encoding="utf-8").splitlines()]
+                self.assertEqual(sum(record.get("event") == "context_compaction" for record in records), 1)
+                self.assertEqual(sum(record.get("event") == "context_checkpoint" for record in records), 1)
+
+                runtime._messages.extend(
+                    [
+                        {"role": "assistant", "content": "small answer"},
+                        {"role": "user", "content": "small follow-up"},
+                    ]
+                )
+                runtime._provider_context_phase.messages_for_model()
+                records = [json.loads(line) for line in runtime._session.path.read_text(encoding="utf-8").splitlines()]
+                self.assertEqual(sum(record.get("event") == "context_compaction" for record in records), 1)
+
+                resumed = AgentRuntime(
+                    config,
+                    show_tool_logs=False,
+                    session_id=runtime._session.session_id,
+                )
+                self.assertTrue(resumed._session.last_load_used_context_checkpoint)
+                self.assertTrue(any("[Local context compaction; attribution=runtime]" in str(message.get("content")) for message in resumed._messages))
+                checkpoints_before_resume = sum(record.get("event") == "context_checkpoint" for record in records)
+                resumed.run("brief follow-up")
+                self.assertEqual(resumed._last_run_summary["compaction_checkpoint_reused"], 1)
+                self.assertEqual(resumed._last_run_summary["compactions"], 0)
+                resumed_records = [json.loads(line) for line in resumed._session.path.read_text(encoding="utf-8").splitlines()]
+                self.assertEqual(sum(record.get("event") == "context_checkpoint" for record in resumed_records), checkpoints_before_resume)
+
+                resumed._messages.append({"role": "user", "content": "new growth " + ("z" * 30000)})
+                resumed._provider_context_phase.messages_for_model()
+                grown_records = [json.loads(line) for line in resumed._session.path.read_text(encoding="utf-8").splitlines()]
+                self.assertEqual(sum(record.get("event") == "context_checkpoint" for record in grown_records), checkpoints_before_resume + 1)
+                resumed._provider_context_phase.messages_for_model()
+                unchanged_records = [json.loads(line) for line in resumed._session.path.read_text(encoding="utf-8").splitlines()]
+                self.assertEqual(sum(record.get("event") == "context_checkpoint" for record in unchanged_records), checkpoints_before_resume + 1)
+                self.assertTrue(any(record.get("event") == "context_compaction_skipped" for record in unchanged_records))
+
+    def test_compaction_checkpoint_preserves_current_run_messages_for_terminal_memory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            (workspace / "large.txt").write_text("evidence " + ("x" * 30000), encoding="utf-8")
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=workspace,
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+                context_char_budget=20000,
+                context_recent_messages=1,
+                summary_mode="local",
+                memory_consolidation="auto",
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _CompactingToolClient):
+                runtime = AgentRuntime(config, show_tool_logs=False)
+                with patch.object(runtime._memory_phase, "consolidate_session_memory") as consolidate:
+                    runtime.run("只读查看 large.txt，报告已读取的文件，不要修改。")
+
+        run_messages = consolidate.call_args.args[0]
+        self.assertTrue(any(message.get("role") == "tool" and "evidence" in str(message.get("content")) for message in run_messages))
+        self.assertTrue(any(message.get("role") == "assistant" and "已读取" in str(message.get("content")) for message in run_messages))
+
     def test_compaction_keeps_latest_user_role_and_bounded_valid_tool_suffix(self) -> None:
         marker = "CURRENT_USER_MARKER service-b"
         prior_fact = "service-b 是 Python"
@@ -5490,7 +5606,7 @@ class AgentRuntimeTests(unittest.TestCase):
             )
         )
 
-    def test_context_compaction_truncates_large_recent_tool_outputs_for_model_only(self) -> None:
+    def test_context_compaction_truncates_large_recent_tool_outputs_in_active_checkpoint(self) -> None:
         large_tool_output = "tool-output-" + ("z" * 10000)
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp).resolve()
@@ -5539,7 +5655,10 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertEqual(len(sent_tool_messages), 1)
         self.assertIn("...<truncated", sent_tool_messages[0]["content"])
         self.assertLess(len(sent_tool_messages[0]["content"]), len(large_tool_output))
-        self.assertEqual(stored_tool_messages[0]["content"], large_tool_output)
+        # Durable compaction replaces active history, so later model turns do
+        # not repeatedly recompact the same oversized tool result.
+        self.assertEqual(stored_tool_messages[0]["content"], sent_tool_messages[0]["content"])
+        self.assertIn("...<truncated", stored_tool_messages[0]["content"])
 
     def test_context_pruning_elides_useless_and_superseded_tool_outputs_for_model_only(self) -> None:
         _MessageRecordingClient.messages = []

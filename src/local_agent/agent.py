@@ -1200,7 +1200,7 @@ class AgentRuntime:
                 run_start_index,
                 reason="forced_final_timeout_unverified",
             )
-        draft = _most_recent_terminal_assistant_content(self._messages[run_start_index:])
+        draft = _most_recent_terminal_assistant_content(self._run.current_run_messages(self._messages))
         if not draft:
             return None
         self._session.append(
@@ -1532,8 +1532,8 @@ class AgentRuntime:
         return FinalAnswerContext(
             request=self._run.current_user_request,
             content=content,
-            messages=self._messages,
-            run_start_index=run_start_index,
+            messages=self._run.current_run_messages(self._messages),
+            run_start_index=0,
             requirement_contract=self._run.requirement_contract,
             tool_results=list(self._run.tool_choice_results),
             read_file_evidence_paths=list(self._run.evidence.read_file_paths),
@@ -1731,7 +1731,7 @@ class AgentRuntime:
         if delivery_report:
             content = f"{content.rstrip()}\n\n{delivery_report}"
         self._session.append("final", {"content": content})
-        run_messages = self._messages[run_start_index:]
+        run_messages = self._run.current_run_messages(self._messages)
         if skip_memory_consolidation:
             self._session.append(
                 "memory_consolidation",

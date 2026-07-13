@@ -34,6 +34,7 @@ class RunContext:
     started_monotonic: float | None = None
     deadline_monotonic: float | None = None
     run_start_index: int = 0
+    _checkpointed_run_messages: list[dict[str, Any]] = field(default_factory=list)
     git_baseline: dict[str, Any] = field(default_factory=dict)
     current_user_request: str | None = None
     read_file_drift_guard_enabled: bool = False
@@ -149,6 +150,7 @@ class RunContext:
         self.started_monotonic = started_monotonic
         self.deadline_monotonic = deadline_monotonic
         self.run_start_index = run_start_index
+        self._checkpointed_run_messages.clear()
         self.git_baseline = dict(git_baseline)
         self.current_user_request = prompt
         self.read_file_drift_guard_enabled = False
@@ -177,6 +179,17 @@ class RunContext:
         self.read_only_review.reset()
         self.pre_review_audit.reset()
         self.read_only_explore_finalized = False
+
+    def checkpoint_active_messages(self, messages: list[dict[str, Any]], next_message_start: int) -> None:
+        """Preserve this run's pre-checkpoint suffix before history is replaced."""
+
+        self._checkpointed_run_messages.extend(dict(message) for message in messages[self.run_start_index :])
+        self.run_start_index = next_message_start
+
+    def current_run_messages(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Return the complete current run across any compaction checkpoints."""
+
+        return [*self._checkpointed_run_messages, *messages[self.run_start_index :]]
 
     def record_negative_claim_metrics(self, metrics: dict[str, int]) -> None:
         """Accumulate taxonomy observations without making model text authoritative."""

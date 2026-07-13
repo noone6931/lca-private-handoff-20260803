@@ -509,7 +509,14 @@ def evaluate_tool_choice_state(
             tool_call_hints=(
                 ("read_file candidates: " + ", ".join(explore_decision.read_candidates),)
                 if explore_decision.read_candidates
-                else ()
+                else (
+                    (
+                        "Cover the least-observed required root(s) before repeating discovery elsewhere: "
+                        + ", ".join(explore_decision.preferred_roots),
+                    )
+                    if explore_decision.preferred_roots
+                    else ()
+                )
             ),
             scoped_read_paths=explore_decision.read_candidates,
             scoped_read_budget=(len(explore_decision.read_candidates) if explore_decision.read_candidates else None),

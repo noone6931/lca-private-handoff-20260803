@@ -21,6 +21,8 @@ class RunStats:
     consecutive_zero_gain_compactions: int = 0
     max_consecutive_zero_gain_compactions: int = 0
     compaction_estimated_token_reduction: int = 0
+    compaction_checkpoints: int = 0
+    compaction_checkpoint_reused: int = 0
     llm_context_summaries: int = 0
     local_context_summaries: int = 0
     file_discovery_calls: int = 0
@@ -128,6 +130,14 @@ class RunCollector:
             elif self._pending_compaction_summary_mode == "local":
                 self._stats.local_context_summaries += 1
         self._pending_compaction_summary_mode = None
+
+    def record_context_checkpoint(self) -> None:
+        if self._stats is not None:
+            self._stats.compaction_checkpoints += 1
+
+    def record_context_checkpoint_reused(self) -> None:
+        if self._stats is not None:
+            self._stats.compaction_checkpoint_reused += 1
 
     def record_tool_started(self, name: str) -> None:
         if self._stats is None:
@@ -331,6 +341,8 @@ class RunCollector:
             "zero_gain_compactions": stats.zero_gain_compactions,
             "max_consecutive_zero_gain_compactions": stats.max_consecutive_zero_gain_compactions,
             "compaction_estimated_token_reduction": stats.compaction_estimated_token_reduction,
+            "compaction_checkpoints": stats.compaction_checkpoints,
+            "compaction_checkpoint_reused": stats.compaction_checkpoint_reused,
             "llm_context_summaries": stats.llm_context_summaries,
             "local_context_summaries": stats.local_context_summaries,
             "file_discovery_calls": stats.file_discovery_calls,

@@ -40,6 +40,77 @@ class ToolChoiceQueueTests(unittest.TestCase):
         self.assertEqual(decision.action, "precise")
         self.assertEqual(decision.read_candidates, (str(source),))
 
+    def test_owner_explore_uses_read_search_subset_and_prioritizes_least_observed_roots(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            first = root / "service-a"
+            second = root / "service-b"
+            first.mkdir()
+            second.mkdir()
+            initial = evaluate_tool_choice_state(
+                task_kind="read-only",
+                prompt="请分析服务 owner 和影响范围。",
+                tool_results=(),
+                workspace_roots=(str(first), str(second)),
+                read_only_review_profile="owner_impact",
+            )
+            after_first_root = evaluate_tool_choice_state(
+                task_kind="read-only",
+                prompt="请分析服务 owner 和影响范围。",
+                tool_results=(
+                    ToolResultSummary(
+                        "search_code",
+                        "No matches.",
+                        useless=True,
+                        metadata={
+                            "evidence_root": str(first),
+                            "negative_evidence_type": "content_no_match",
+                        },
+                    ),
+                ),
+                workspace_roots=(str(first), str(second)),
+                read_only_review_profile="owner_impact",
+            )
+            source = second / "src" / "Owner.java"
+            source.parent.mkdir()
+            source.write_text("class Owner {}\n", encoding="utf-8")
+            read_candidate = evaluate_tool_choice_state(
+                task_kind="read-only",
+                prompt="请分析服务 owner 和影响范围。",
+                tool_results=(
+                    ToolResultSummary(
+                        "search_code",
+                        f"{source}:1: class Owner",
+                        metadata={
+                            "evidence_root": str(second),
+                            "evidence_paths": [str(source)],
+                        },
+                    ),
+                ),
+                workspace_roots=(str(first), str(second)),
+                read_only_review_profile="owner_impact",
+            )
+
+        self.assertEqual(initial.allowed_tool_names, frozenset({"read_file", "search_code"}))
+        self.assertFalse(any(name.startswith("lsp_") for name in initial.allowed_tool_names))
+        self.assertIn(str(first), initial.tool_call_hints[0])
+        self.assertIn(str(second), initial.tool_call_hints[0])
+        self.assertIn(str(second), after_first_root.tool_call_hints[0])
+        self.assertNotIn(str(first), after_first_root.tool_call_hints[0])
+        self.assertEqual(read_candidate.allowed_tool_names, frozenset({"read_file"}))
+        self.assertIn(str(source), read_candidate.tool_call_hints[0])
+
+    def test_general_code_evidence_flow_still_exposes_lsp(self) -> None:
+        decision = evaluate_tool_choice_state(
+            task_kind="read-only",
+            prompt="只读分析当前代码并给出源码证据。",
+            tool_results=(),
+            workspace_roots=("/tmp/workspace",),
+        )
+
+        self.assertIn("lsp_symbols", decision.allowed_tool_names)
+        self.assertIn("lsp_definition", decision.allowed_tool_names)
+
     def test_suppressed_or_failed_observations_do_not_cover_a_root_or_count_as_success(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp).resolve()

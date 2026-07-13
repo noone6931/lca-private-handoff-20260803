@@ -34,6 +34,7 @@ class JsonlSessionStore:
             stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
             self.path = self.session_dir / f"{stamp}.jsonl"
         self.session_id = self.path.stem
+        self.last_load_used_context_checkpoint = False
 
     def append(self, event: str, payload: dict[str, Any]) -> None:
         record = {
@@ -48,6 +49,7 @@ class JsonlSessionStore:
         if not self.path.exists():
             return []
         messages: list[dict[str, Any]] = []
+        self.last_load_used_context_checkpoint = False
         with self.path.open("r", encoding="utf-8") as handle:
             for line_number, line in enumerate(handle, start=1):
                 if not line.strip():
@@ -60,7 +62,12 @@ class JsonlSessionStore:
                 payload = record.get("payload")
                 if not isinstance(payload, dict):
                     continue
-                if event == "user":
+                if event == "context_checkpoint":
+                    checkpoint = _checkpoint_messages(payload)
+                    if checkpoint is not None:
+                        messages = checkpoint
+                        self.last_load_used_context_checkpoint = True
+                elif event == "user":
                     messages.append({"role": "user", "content": payload.get("content", "")})
                 elif event == "assistant":
                     if payload.get("role") in {None, "assistant"}:
@@ -147,6 +154,22 @@ def _trim_recent_messages(messages: list[dict[str, Any]], max_messages: int) -> 
     while recent and recent[0].get("role") == "tool":
         recent = recent[1:]
     return _drop_trailing_unpaired_tool_calls(recent)
+
+
+def _checkpoint_messages(payload: dict[str, Any]) -> list[dict[str, Any]] | None:
+    """Accept only Runtime-shaped non-system messages from a checkpoint."""
+
+    if payload.get("version") != 1 or not isinstance(payload.get("messages"), list):
+        return None
+    restored: list[dict[str, Any]] = []
+    for message in payload["messages"]:
+        if not isinstance(message, dict):
+            return None
+        role = message.get("role")
+        if role not in {"user", "assistant", "tool"}:
+            return None
+        restored.append(dict(message))
+    return _drop_trailing_unpaired_tool_calls(restored)
 
 
 def _drop_trailing_unpaired_tool_calls(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
