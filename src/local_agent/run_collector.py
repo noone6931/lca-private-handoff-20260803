@@ -46,6 +46,11 @@ class RunStats:
     read_only_reviewer_rewrites: int = 0
     read_only_reviewer_findings: int = 0
     read_only_reviewer_reviewed_claims: int = 0
+    read_only_reviewer_attempts: int = 0
+    read_only_reviewer_schema_failures: int = 0
+    read_only_reviewer_repairs: int = 0
+    read_only_reviewer_repair_successes: int = 0
+    read_only_reviewer_repair_exhausted: int = 0
     read_only_reviewer_verdicts: dict[str, int] = field(default_factory=dict)
     read_only_reviewer_errors: dict[str, int] = field(default_factory=dict)
     tool_counts: dict[str, int] = field(default_factory=dict)
@@ -214,6 +219,10 @@ class RunCollector:
         if self._stats is not None:
             self._stats.read_only_reviewer_triggers += 1
 
+    def record_read_only_review_attempt(self) -> None:
+        if self._stats is not None:
+            self._stats.read_only_reviewer_attempts += 1
+
     def record_read_only_review_result(self, verdict: str, findings: int) -> None:
         if self._stats is None:
             return
@@ -228,6 +237,22 @@ class RunCollector:
     def record_read_only_review_error(self, reason: str) -> None:
         if self._stats is not None:
             self._stats.read_only_reviewer_errors[reason] = self._stats.read_only_reviewer_errors.get(reason, 0) + 1
+
+    def record_read_only_review_schema_failure(self) -> None:
+        if self._stats is not None:
+            self._stats.read_only_reviewer_schema_failures += 1
+
+    def record_read_only_review_repair(self) -> None:
+        if self._stats is not None:
+            self._stats.read_only_reviewer_repairs += 1
+
+    def record_read_only_review_repair_success(self) -> None:
+        if self._stats is not None:
+            self._stats.read_only_reviewer_repair_successes += 1
+
+    def record_read_only_review_repair_exhausted(self) -> None:
+        if self._stats is not None:
+            self._stats.read_only_reviewer_repair_exhausted += 1
 
     def finish(
         self,
@@ -290,6 +315,11 @@ class RunCollector:
                 "rewrites": stats.read_only_reviewer_rewrites,
                 "findings": stats.read_only_reviewer_findings,
                 "reviewed_claims": stats.read_only_reviewer_reviewed_claims,
+                "attempts": stats.read_only_reviewer_attempts,
+                "schema_failures": stats.read_only_reviewer_schema_failures,
+                "repairs": stats.read_only_reviewer_repairs,
+                "repair_successes": stats.read_only_reviewer_repair_successes,
+                "repair_exhausted": stats.read_only_reviewer_repair_exhausted,
                 "verdicts": dict(sorted(stats.read_only_reviewer_verdicts.items())),
                 "errors": dict(sorted(stats.read_only_reviewer_errors.items())),
             },

@@ -507,6 +507,50 @@ class ToolChoiceQueueTests(unittest.TestCase):
 
         self.assertFalse(after_frontend_read.steering_required)
 
+    def test_owner_profile_uses_precise_evidence_then_forces_bounded_candidate(self) -> None:
+        backend = "/workspace/backend"
+        frontend = "/workspace/frontend"
+        initial = evaluate_tool_choice_state(
+            task_kind="read-only",
+            prompt="unrelated wording must not drive this typed policy",
+            design_evidence_roots=(backend, frontend),
+            read_only_review_profile="owner_impact",
+        )
+        self.assertEqual(initial.rule_id, "read_only_profile_explore")
+        self.assertIn("read_file", initial.allowed_tool_names)
+        self.assertNotIn("glob_files", initial.allowed_tool_names)
+
+        noisy = [
+            ToolResultSummary("glob_files", f"result {index}", path=f"{backend}/src")
+            for index in range(8)
+        ]
+        exhausted = evaluate_tool_choice_state(
+            task_kind="read-only",
+            prompt="still unrelated",
+            tool_results=noisy,
+            design_evidence_roots=(backend, frontend),
+            read_only_review_profile="owner_impact",
+        )
+        self.assertTrue(exhausted.force_final_answer_without_tools)
+        self.assertEqual(exhausted.rule_id, "read_only_profile_explore_final")
+        self.assertIn(f"code_read:{backend}", exhausted.missing_requirements)
+
+    def test_design_profile_finalizes_after_one_read_per_required_root(self) -> None:
+        backend = "/workspace/backend"
+        frontend = "/workspace/frontend"
+        decision = evaluate_tool_choice_state(
+            task_kind="read-only",
+            prompt="arbitrary",
+            tool_results=[
+                ToolResultSummary("read_file", "class Service {}", path=f"{backend}/src/Service.java"),
+                ToolResultSummary("read_file", "export default {}", path=f"{frontend}/src/Page.vue"),
+            ],
+            design_evidence_roots=(backend, frontend),
+            read_only_review_profile="design",
+        )
+        self.assertTrue(decision.force_final_answer_without_tools)
+        self.assertEqual(decision.missing_requirements, ())
+
 
 if __name__ == "__main__":
     unittest.main()

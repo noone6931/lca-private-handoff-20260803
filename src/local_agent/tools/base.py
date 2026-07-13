@@ -89,6 +89,12 @@ class ToolRegistry:
     def tool_names(self) -> tuple[str, ...]:
         return tuple(sorted(self._tools))
 
+    def is_preapproved(self, name: str, context: ToolContext) -> bool:
+        """Return whether a tool can run without an interactive approval read."""
+
+        tool = self._tools.get(name)
+        return tool is not None and tool_is_preapproved(tool, context)
+
     def execute(self, name: str, raw_arguments: str | dict[str, Any], context: ToolContext) -> ToolResult:
         tool = self._tools.get(name)
         if tool is None:
@@ -274,6 +280,30 @@ def _approval_denial_reason(tool: Tool, context: ToolContext) -> str | None:
     if mode == "always-ask" and tool.tier in {"read", "state", "interaction"}:
         return None
     return _interactive_approval_denial_reason(tool, context)
+
+
+def tool_is_preapproved(tool: Tool, context: ToolContext) -> bool:
+    """Pure approval projection for background lifecycle owners.
+
+    Background restore paths must never open an approval prompt.  This mirrors
+    the non-interactive branches of ``_approval_denial_reason`` and returns
+    false whenever policy would require user input.
+    """
+
+    config_policy = (context.tool_approval or {}).get(tool.name)
+    session_policy = (context.session_tool_approval or {}).get(tool.name)
+    if config_policy in {"deny", "prompt"} or session_policy in {"reject_always", "prompt"}:
+        return False
+    if session_policy == "allow_always" or config_policy == "allow":
+        return True
+    if _approval_mode(context.approval_mode) == "yolo":
+        return True
+    if config_policy is None and tool.name in context.auto_approve_tools:
+        return True
+    mode = _approval_mode(context.approval_mode)
+    if mode == "write":
+        return tool.tier in {"read", "state", "interaction", "write"}
+    return mode == "always-ask" and tool.tier in {"read", "state", "interaction"}
 
 
 def _interactive_approval_denial_reason(

@@ -372,7 +372,6 @@ class AgentRuntime:
         self._read_only_review_phase = ReadOnlyReviewPhase(self)
         self._provider_terminal_phase = ProviderTerminalPhase(self)
         missing_roots = self._workspace_phase.restore_session_workspace_roots()
-        self._evidence_phase.restore_session_evidence_cache()
         self._path_rule_index = discover_path_scoped_rules(self._workspace_context.all_roots)
         system_prompt = self._workspace_phase.build_system_prompt()
         self._messages: list[dict[str, Any]] = [
@@ -391,6 +390,7 @@ class AgentRuntime:
             event_callback=self._emit_event,
             interaction_handler=interaction_handler,
         )
+        self._evidence_phase.restore_session_evidence_cache()
         self._events.emit(
             "SessionStarted",
             {
@@ -823,6 +823,7 @@ class AgentRuntime:
             design_evidence_roots=self._run.design_evidence_coverage.roots,
             workspace_roots=tuple(str(root) for root in self._workspace_context.all_roots),
             evidence_domain=contract.evidence_domain,
+            read_only_review_profile=contract.read_only_review_profile,
         )
         self._run.tool_choice_allowed_tool_names = set(decision.allowed_tool_names)
         self._run.update_tool_choice_read_scope(decision.scoped_read_paths, decision.scoped_read_budget)

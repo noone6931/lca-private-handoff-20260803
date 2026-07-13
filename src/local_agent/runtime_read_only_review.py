@@ -10,9 +10,12 @@ from .llm import LlmTimeoutError
 from .provider_protocol import classify_provider_content_artifact
 from .provider_protocol import protocol_violation_payload
 from .read_only_reviewer import candidate_claim_units
+from .read_only_reviewer import MAX_REVIEWER_PROVIDER_CALLS
 from .read_only_reviewer import ReviewerPhaseOutcome
+from .read_only_reviewer import ReviewerValidationError
 from .read_only_reviewer import parse_reviewer_result
 from .read_only_reviewer import reviewer_messages
+from .read_only_reviewer import reviewer_repair_messages
 from .read_only_reviewer import reviewer_rewrite_message
 from .read_only_reviewer import rewrite_complies_with_review
 from .read_only_reviewer import should_review_read_only_candidate
@@ -73,7 +76,6 @@ class ReadOnlyReviewPhase:
         if not claim_units:
             return self._unverified("invalid_output", "candidate_has_no_addressable_claim_units")
         state.claim_units = claim_units
-        messages = reviewer_messages(handoff, claim_units)
         timeout = self._review_timeout()
         runtime._run.collector.record_read_only_review_trigger()
         runtime._session.append(
@@ -89,25 +91,64 @@ class ReadOnlyReviewPhase:
             "ContextUpdated",
             {"kind": "read_only_reviewer_triggered", "items": len(handoff.items)},
         )
-        try:
-            response = call_chat_with_timeout(runtime._client, messages, [], timeout=timeout)
-        except LlmError as exc:
-            return self._unverified("timeout" if isinstance(exc, LlmTimeoutError) else "provider_error", type(exc).__name__)
-        message = getattr(response, "message", None)
-        if not isinstance(message, dict):
-            return self._unverified("protocol_error", "missing_message")
-        tool_calls = message.get("tool_calls")
-        if isinstance(tool_calls, list) and tool_calls:
-            return self._protocol_unverified("structured_tool_calls", tool_calls=tool_calls)
-        artifact = getattr(response, "protocol_artifact", None)
-        if artifact is None:
-            artifact = classify_provider_content_artifact(runtime._config.provider, message.get("content"))
-        if artifact is not None:
-            return self._protocol_unverified(artifact.kind, artifact=artifact)
-        try:
-            result = parse_reviewer_result(message.get("content"), claim_units=claim_units)
-        except (TypeError, ValueError) as exc:
-            return self._unverified("invalid_output", str(exc))
+        messages = reviewer_messages(handoff, claim_units)
+        result = None
+        for attempt in range(1, MAX_REVIEWER_PROVIDER_CALLS + 1):
+            state.provider_attempts = attempt
+            runtime._run.collector.record_read_only_review_attempt()
+            try:
+                response = call_chat_with_timeout(runtime._client, messages, [], timeout=timeout)
+            except LlmError as exc:
+                return self._unverified(
+                    "timeout" if isinstance(exc, LlmTimeoutError) else "provider_error",
+                    type(exc).__name__,
+                )
+            message = getattr(response, "message", None)
+            if not isinstance(message, dict):
+                return self._unverified("protocol_error", "missing_message")
+            tool_calls = message.get("tool_calls")
+            if isinstance(tool_calls, list) and tool_calls:
+                return self._protocol_unverified("structured_tool_calls", tool_calls=tool_calls)
+            artifact = getattr(response, "protocol_artifact", None)
+            if artifact is None:
+                artifact = classify_provider_content_artifact(runtime._config.provider, message.get("content"))
+            if artifact is not None:
+                return self._protocol_unverified(artifact.kind, artifact=artifact)
+            try:
+                result = parse_reviewer_result(message.get("content"), claim_units=claim_units)
+            except ReviewerValidationError as exc:
+                state.schema_failures += 1
+                runtime._run.collector.record_read_only_review_schema_failure()
+                diagnostic = exc.diagnostics
+                if attempt >= MAX_REVIEWER_PROVIDER_CALLS:
+                    state.repair_exhausted = True
+                    runtime._run.collector.record_read_only_review_repair_exhausted()
+                    runtime._session.append(
+                        "read_only_reviewer",
+                        {"event": "schema_repair_exhausted", "attempts": attempt, "diagnostic": diagnostic},
+                    )
+                    return self._unverified("invalid_output", exc.code)
+                if not self._has_reviewer_time_for_repair():
+                    return self._unverified("deadline_or_finalization_budget", "reviewer_repair_timeout")
+                state.repairs += 1
+                runtime._run.collector.record_read_only_review_repair()
+                runtime._session.append(
+                    "read_only_reviewer",
+                    {"event": "schema_repair_requested", "attempt": attempt, "diagnostic": diagnostic},
+                )
+                runtime._events.emit(
+                    "ContextUpdated",
+                    {"kind": "read_only_reviewer_schema_repair", "attempt": attempt, "error_code": exc.code},
+                )
+                messages = reviewer_repair_messages(handoff, claim_units, diagnostic)
+                timeout = self._review_timeout()
+                continue
+            break
+        if result is None:
+            return self._unverified("invalid_output", "schema_repair_exhausted")
+        if state.repairs:
+            state.repair_success = True
+            runtime._run.collector.record_read_only_review_repair_success()
         state.verdict = result.verdict
         state.reason = result.reason
         state.findings = result.findings
@@ -155,6 +196,10 @@ class ReadOnlyReviewPhase:
         if remaining is None:
             return MAX_REVIEWER_TIMEOUT_SECONDS
         return max(0.1, min(MAX_REVIEWER_TIMEOUT_SECONDS, remaining))
+
+    def _has_reviewer_time_for_repair(self) -> bool:
+        remaining = self._runtime._provider_context_phase.remaining_timeout(self._runtime._run.deadline_monotonic)
+        return remaining is None or remaining > 0.1
 
     def _unverified(self, reason: str, detail: str, *, result: Any = None) -> ReviewerPhaseOutcome:
         runtime = self._runtime

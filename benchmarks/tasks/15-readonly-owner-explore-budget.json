@@ -1,0 +1,30 @@
+{
+  "id": "readonly-owner-explore-budget",
+  "title": "High-risk owner exploration reaches the reviewer after a bounded set of precise searches",
+  "prompt": "只读分析当前服务 owner、调用链和影响范围，不要修改文件。",
+  "budget_seconds": 90,
+  "workspace_files": {
+    "src/PayServiceImpl.java": "class PayServiceImpl { void pay() {} }\n"
+  },
+  "scripted_responses": [
+    {"tool_calls": [{"name": "search_code", "arguments": {"path": "src", "pattern": "fee"}}]},
+    {"tool_calls": [{"name": "search_code", "arguments": {"path": "src", "pattern": "settlement"}}]},
+    {"tool_calls": [{"name": "search_code", "arguments": {"path": "src", "pattern": "order"}}]},
+    {"tool_calls": [{"name": "search_code", "arguments": {"path": "src", "pattern": "payment"}}]},
+    {"content": "PayServiceImpl is the verified owner."},
+    {"content": "{\"verdict\":\"unverified\",\"confidence\":0.95,\"findings\":[{\"claim_id\":\"c001\",\"claim\":\"owner conclusion\",\"issue\":\"no direct behavior binding\",\"action\":\"keep the owner unlocated\"}],\"reason\":\"only searches were observed\"}"},
+    {"content": "PayServiceImpl is only an analogous candidate; the real owner remains unlocated until a direct binding is read."}
+  ],
+  "acceptance": {
+    "required_tools": ["search_code"],
+    "forbidden_tools": ["apply_patch", "write_file", "shell", "run_tests", "glob_files"],
+    "changed_files": [],
+    "answer_all_of": ["analogous candidate", "unlocated"],
+    "answer_forbidden_regex": ["PayServiceImpl is the verified owner"],
+    "termination_reason": "final",
+    "run_summary": {"tool_calls": 4, "tool_errors": 0},
+    "read_only_reviewer": {"triggers": 1, "rewrites": 1},
+    "max_tool_errors": 0
+  },
+  "residual_risk": "The bounded policy guarantees a truthful candidate after a finite explore budget; it does not turn no-match searches into owner evidence."
+}

@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
+from unittest.mock import patch
 
 from local_agent.agent import AgentRuntime
 from local_agent.config import AgentConfig
@@ -38,6 +40,31 @@ class SessionEvidenceCacheTests(unittest.TestCase):
         self.assertEqual(len(pinned), 1)
         self.assertTrue(pinned[0].path.endswith("requirements.md"))
         self.assertEqual(pinned[0].origin, "session_cached")
+
+    def test_journal_restore_obeys_current_read_file_preapproval(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            requirement = root / "requirements.md"
+            requirement.write_text("requirement\n", encoding="utf-8")
+            first = AgentRuntime(_config(root), show_tool_logs=False)
+            first._run.run_id = "run-journal"
+            first._run.current_user_request = "read requirement"
+            result = ToolResult(requirement.read_text(encoding="utf-8"))
+            first._evidence_phase.record_tool_choice_result("read_file", {"path": "requirements.md"}, result)
+            first._evidence_phase.record_read_file_evidence("read_file", {"path": "requirements.md"}, result)
+            first._evidence_phase.record_tool_evidence("read_file", {"path": "requirements.md"}, result)
+            session_id = first._session.session_id
+
+            for approval_mode, policy in (("always-ask", "deny"), ("always-ask", "prompt")):
+                config = replace(_config(root), approval_mode=approval_mode, tool_approval={"read_file": policy})
+                with patch("local_agent.session_evidence._read_journal_file_content") as read_file:
+                    resumed = AgentRuntime(config, show_tool_logs=False, session_id=session_id)
+                self.assertEqual(read_file.call_count, 0)
+                self.assertEqual(resumed._session_evidence.snapshot()["entries"], 0)
+
+            allowed = replace(_config(root), approval_mode="always-ask", tool_approval={"read_file": "allow"})
+            resumed = AgentRuntime(allowed, show_tool_logs=False, session_id=session_id)
+            self.assertEqual(resumed._session_evidence.snapshot()["entries"], 1)
 
     def test_serialized_entry_is_revalidated_after_restore(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

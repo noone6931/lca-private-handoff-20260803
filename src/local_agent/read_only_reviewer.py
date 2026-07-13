@@ -13,6 +13,7 @@ from .task_contract import RequirementContract
 ReviewerVerdict = Literal["pass", "revise", "unverified"]
 MAX_REVIEWER_FINDINGS = 8
 MAX_REVIEWER_RESPONSE_CHARS = 9000
+MAX_REVIEWER_PROVIDER_CALLS = 3
 MAX_CLAIM_UNITS = 80
 MAX_CLAIM_UNIT_CHARS = 500
 MAX_CLAIM_TOTAL_CHARS = 40000
@@ -56,6 +57,15 @@ class ReviewerResult:
         }
 
 
+class ReviewerValidationError(ValueError):
+    """A typed, redacted schema failure suitable for one repair request."""
+
+    def __init__(self, code: str, diagnostics: Mapping[str, Any] | None = None) -> None:
+        self.code = code
+        self.diagnostics = {"error_code": code, **dict(diagnostics or {})}
+        super().__init__(code)
+
+
 @dataclass
 class ReadOnlyReviewState:
     attempted: bool = False
@@ -64,6 +74,11 @@ class ReadOnlyReviewState:
     reason: str | None = None
     findings: tuple[ReviewerFinding, ...] = ()
     claim_units: tuple[CandidateClaimUnit, ...] = ()
+    provider_attempts: int = 0
+    schema_failures: int = 0
+    repairs: int = 0
+    repair_success: bool = False
+    repair_exhausted: bool = False
 
     def reset(self) -> None:
         self.attempted = False
@@ -72,6 +87,11 @@ class ReadOnlyReviewState:
         self.reason = None
         self.findings = ()
         self.claim_units = ()
+        self.provider_attempts = 0
+        self.schema_failures = 0
+        self.repairs = 0
+        self.repair_success = False
+        self.repair_exhausted = False
 
     def snapshot(self) -> dict[str, Any]:
         return {
@@ -81,6 +101,11 @@ class ReadOnlyReviewState:
             "reason": self.reason,
             "reviewed_claim_ids": [item.claim_id for item in self.findings],
             "reviewed_claim_count": len({item.claim_id for item in self.findings}),
+            "provider_attempts": self.provider_attempts,
+            "schema_failures": self.schema_failures,
+            "repairs": self.repairs,
+            "repair_success": self.repair_success,
+            "repair_exhausted": self.repair_exhausted,
         }
 
 
@@ -168,45 +193,81 @@ Choose revise when the candidate can be corrected using the handoff. Choose unve
     ]
 
 
+def reviewer_repair_messages(
+    handoff: ExploreHandoff,
+    claim_units: tuple[CandidateClaimUnit, ...],
+    diagnostics: Mapping[str, Any],
+) -> list[dict[str, str]]:
+    """Repeat the isolated review with sanitized schema-only feedback."""
+
+    messages = reviewer_messages(handoff, claim_units)
+    messages.append(
+        {
+            "role": "user",
+            "content": json.dumps(
+                {
+                    "kind": "LCA_READ_ONLY_EVIDENCE_REVIEW_SCHEMA_REPAIR",
+                    "validation": _sanitize_diagnostics(diagnostics),
+                    "instruction": (
+                        "Return a complete JSON object that exactly follows the original schema. "
+                        "Use only candidate claim IDs supplied in the original payload."
+                    ),
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+        }
+    )
+    return messages
+
+
 def parse_reviewer_result(content: object, *, claim_units: tuple[CandidateClaimUnit, ...]) -> ReviewerResult:
     if not isinstance(content, str) or not content.strip():
-        raise ValueError("reviewer returned no JSON content")
+        raise ReviewerValidationError("missing_json")
     if len(content) > MAX_REVIEWER_RESPONSE_CHARS:
-        raise ValueError("reviewer response exceeded the bounded output limit")
-    raw = _json_object(content)
+        raise ReviewerValidationError("response_too_large", {"response_chars": len(content)})
+    try:
+        raw = _json_object(content)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        raise ReviewerValidationError("malformed_json") from None
     if not isinstance(raw, Mapping):
-        raise ValueError("reviewer response must be a JSON object")
+        raise ReviewerValidationError("top_level_not_object", {"top_level_type": type(raw).__name__})
+    diagnostics = _shape_diagnostics(raw)
     verdict = raw.get("verdict")
     if verdict not in {"pass", "revise", "unverified"}:
-        raise ValueError("reviewer verdict must be pass, revise, or unverified")
+        raise ReviewerValidationError("verdict_invalid", diagnostics)
     confidence = raw.get("confidence")
     if not isinstance(confidence, (int, float)) or isinstance(confidence, bool) or not 0 <= float(confidence) <= 1:
-        raise ValueError("reviewer confidence must be a number between 0 and 1")
+        raise ReviewerValidationError("confidence_invalid", diagnostics)
     findings_value = raw.get("findings")
-    if not isinstance(findings_value, list) or len(findings_value) > MAX_REVIEWER_FINDINGS:
-        raise ValueError("reviewer findings must be a bounded list")
+    if not isinstance(findings_value, list):
+        raise ReviewerValidationError("findings_not_list", diagnostics)
+    if len(findings_value) > MAX_REVIEWER_FINDINGS:
+        raise ReviewerValidationError("findings_too_many", diagnostics)
     findings: list[ReviewerFinding] = []
     known_claim_ids = {unit.claim_id for unit in claim_units}
     used_claim_ids: set[str] = set()
     for item in findings_value:
         if not isinstance(item, Mapping):
-            raise ValueError("reviewer finding must be an object")
+            raise ReviewerValidationError("finding_not_object", diagnostics)
         claim_id, claim, issue, action = (item.get("claim_id"), item.get("claim"), item.get("issue"), item.get("action"))
-        if not isinstance(claim_id, str) or claim_id not in known_claim_ids or claim_id in used_claim_ids:
-            raise ValueError("reviewer finding claim_id must be a unique candidate claim address")
+        if not isinstance(claim_id, str) or claim_id not in known_claim_ids:
+            raise ReviewerValidationError("claim_id_unknown", {**diagnostics, "unknown_claim_id_count": 1})
+        if claim_id in used_claim_ids:
+            raise ReviewerValidationError("claim_id_duplicate", {**diagnostics, "duplicate_claim_id_count": 1})
         if not all(isinstance(value, str) and value.strip() for value in (issue, action)):
-            raise ValueError("reviewer finding requires issue and action")
+            raise ReviewerValidationError("finding_fields_invalid", diagnostics)
         if claim is not None and not isinstance(claim, str):
-            raise ValueError("reviewer finding claim must be text when present")
+            raise ReviewerValidationError("finding_claim_invalid", diagnostics)
         used_claim_ids.add(claim_id)
         findings.append(ReviewerFinding(claim_id, _clip(issue), _clip(action), _clip(claim or "")))
     reason = raw.get("reason")
     if not isinstance(reason, str):
-        raise ValueError("reviewer reason must be text")
+        raise ReviewerValidationError("reason_invalid", diagnostics)
     if verdict == "pass" and findings:
-        raise ValueError("a passing reviewer result must not contain blocking findings")
+        raise ReviewerValidationError("pass_with_findings", diagnostics)
     if verdict in {"revise", "unverified"} and not findings:
-        raise ValueError("a non-passing reviewer result needs at least one finding")
+        raise ReviewerValidationError("nonpassing_without_findings", diagnostics)
     return ReviewerResult(verdict=verdict, confidence=float(confidence), findings=tuple(findings), reason=_clip(reason))
 
 
@@ -266,6 +327,32 @@ def _json_object(content: str) -> object:
     if stripped.startswith("```"):
         stripped = re.sub(r"^```(?:json)?\s*|\s*```$", "", stripped, flags=re.IGNORECASE)
     return json.loads(stripped)
+
+
+def _shape_diagnostics(raw: Mapping[str, Any]) -> dict[str, Any]:
+    findings = raw.get("findings")
+    verdict = raw.get("verdict")
+    return {
+        "top_level_keys": sorted(str(key)[:64] for key in raw)[:16],
+        "verdict": verdict if verdict in {"pass", "revise", "unverified"} else "invalid",
+        "findings_type": type(findings).__name__,
+        "findings_count": len(findings) if isinstance(findings, list) else None,
+    }
+
+
+def _sanitize_diagnostics(diagnostics: Mapping[str, Any]) -> dict[str, Any]:
+    allowed = {
+        "error_code",
+        "top_level_keys",
+        "verdict",
+        "findings_type",
+        "findings_count",
+        "unknown_claim_id_count",
+        "duplicate_claim_id_count",
+        "response_chars",
+        "top_level_type",
+    }
+    return {key: diagnostics[key] for key in allowed if key in diagnostics}
 
 
 def _clip(value: str, limit: int = 420) -> str:

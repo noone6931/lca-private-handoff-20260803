@@ -26,10 +26,12 @@ class EvidenceRuntimePort(Protocol):
     """Explicit evidence/verification dependencies supplied by AgentRuntime."""
 
     _events: Any
+    _registry: Any
     _messages: list[dict[str, Any]]
     _run: Any
     _session: Any
     _session_evidence: Any
+    _tool_context: Any
     _workspace_context: Any
 
     def _tool_choice_result_metadata(
@@ -242,6 +244,13 @@ class EvidenceVerificationLifecycle:
 
     def restore_session_evidence_cache(self) -> None:
         runtime = self._runtime
+        preapproval = getattr(runtime._registry, "is_preapproved", None)
+        if not callable(preapproval):
+            self.record_session_evidence_event("restore_skipped", {"reason": "read_policy_unknown"})
+            return
+        if not preapproval("read_file", runtime._tool_context):
+            self.record_session_evidence_event("restore_skipped", {"reason": "read_policy_not_preapproved"})
+            return
         payloads = runtime._session.load_event_payloads(
             "session_evidence_captured",
             max_events=MAX_SESSION_EVIDENCE_JOURNAL_EVENTS,

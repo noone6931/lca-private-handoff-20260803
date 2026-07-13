@@ -416,6 +416,36 @@ while True:
 
 
 class ToolTests(unittest.TestCase):
+    def test_registry_preapproval_projection_never_requires_background_prompt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            registry = create_default_registry()
+            workspace = Path(tmp).resolve()
+            self.assertTrue(registry.is_preapproved("read_file", ToolContext(workspace=workspace, approval_mode="yolo")))
+            self.assertTrue(registry.is_preapproved("read_file", ToolContext(workspace=workspace, approval_mode="always-ask")))
+            self.assertTrue(registry.is_preapproved("read_file", ToolContext(workspace=workspace, approval_mode="write")))
+            self.assertTrue(
+                registry.is_preapproved(
+                    "read_file", ToolContext(workspace=workspace, approval_mode="always-ask", tool_approval={"read_file": "allow"})
+                )
+            )
+            self.assertTrue(
+                registry.is_preapproved(
+                    "read_file",
+                    ToolContext(workspace=workspace, approval_mode="always-ask", session_tool_approval={"read_file": "allow_always"}),
+                )
+            )
+            for policy, session in (("deny", None), ("prompt", None), (None, "reject_always")):
+                self.assertFalse(
+                    registry.is_preapproved(
+                        "read_file",
+                        ToolContext(
+                            workspace=workspace,
+                            approval_mode="always-ask",
+                            tool_approval={"read_file": policy} if policy else None,
+                            session_tool_approval={"read_file": session} if session else None,
+                        ),
+                    )
+                )
     def test_registry_rejects_provider_tool_outside_runtime_allowlist(self) -> None:
         calls: list[str] = []
 

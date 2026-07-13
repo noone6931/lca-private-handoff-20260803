@@ -8,6 +8,7 @@ from typing import Any
 
 from .design_evidence import missing_design_evidence_roots
 from .negative_evidence import allowed_tools_for_negative_claims, parse_negative_evidence_claims, unsupported_negative_existence_claims
+from .read_only_explore import PRECISE_EVIDENCE_TOOLS, evaluate_read_only_explore
 from .task_contract import is_inspection_forbidden
 from .tool_observation import ToolResultSummary
 from .verification_timeline import last_workspace_write_index
@@ -357,6 +358,7 @@ class RequiredToolGate:
         design_evidence_roots: Iterable[str] | None = None,
         workspace_roots: Iterable[str] | None = None,
         evidence_domain: str | None = None,
+        read_only_review_profile: str | None = None,
     ) -> ToolChoiceDecision:
         return evaluate_tool_choice_state(
             task_kind=task_kind,
@@ -367,6 +369,7 @@ class RequiredToolGate:
             design_evidence_roots=design_evidence_roots,
             workspace_roots=workspace_roots,
             evidence_domain=evidence_domain,
+            read_only_review_profile=read_only_review_profile,
         )
 
 
@@ -384,6 +387,7 @@ def evaluate_tool_choice_state(
     design_evidence_roots: Iterable[str] | None = None,
     workspace_roots: Iterable[str] | None = None,
     evidence_domain: str | None = None,
+    read_only_review_profile: str | None = None,
 ) -> ToolChoiceDecision:
     if is_inspection_forbidden(prompt):
         return ToolChoiceDecision(
@@ -437,6 +441,44 @@ def evaluate_tool_choice_state(
             rule_id="requirement_document_read",
             missing_requirements=("requirement_document_read",),
             preferred_tool_names=("read_file",),
+        )
+
+    explore_decision = evaluate_read_only_explore(
+        profile=read_only_review_profile,
+        tool_results=results,
+        code_roots=tuple(design_evidence_roots or workspace_roots or ()),
+    )
+    if explore_decision.is_applicable:
+        missing = explore_decision.missing_roots
+        if explore_decision.action == "finalize":
+            coverage = "all required code roots have one bounded read" if not missing else "some required code roots remain unread"
+            return ToolChoiceDecision(
+                steering_required=True,
+                allowed_tool_names=frozenset(),
+                reason=(
+                    "read_only_profile_explore budget reached: stop broad exploration and produce a scoped candidate "
+                    f"from the evidence collected ({coverage}; observations={explore_decision.observation_calls}/"
+                    f"{explore_decision.hard_budget})."
+                ),
+                rule_id="read_only_profile_explore_final",
+                missing_requirements=tuple(f"code_read:{root}" for root in missing),
+                force_final_answer_without_tools=True,
+            )
+        return ToolChoiceDecision(
+            steering_required=True,
+            allowed_tool_names=_allowed_subset(PRECISE_EVIDENCE_TOOLS, allowed_tools),
+            reason=(
+                "read_only_profile_explore active: use only precise source evidence to cover each remaining code root; "
+                "do not continue broad directory inventory. "
+                f"observations={explore_decision.observation_calls}/{explore_decision.hard_budget}."
+            ),
+            rule_id=(
+                "read_only_profile_explore_soft"
+                if explore_decision.observation_calls >= explore_decision.soft_budget
+                else "read_only_profile_explore"
+            ),
+            missing_requirements=tuple(f"code_read:{root}" for root in missing),
+            preferred_tool_names=("search_code", "read_file"),
         )
 
     evidence_preferred = _preferred_evidence_tools(results)
