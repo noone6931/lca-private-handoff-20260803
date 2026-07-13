@@ -509,6 +509,32 @@ class _SpoofedDocumentConsistencyClient:
         )()
 
 
+class _DocumentConsistencySourceGapReviewerClient:
+    def __init__(self, config: AgentConfig):
+        self.config = config
+
+    def chat(self, messages, tools, *, timeout=None):
+        return _review_submit(
+            {
+                "verdict": "revise",
+                "confidence": 0.91,
+                "findings": [
+                    {
+                        "claim_id": "c001",
+                        "issue": "source materials still need confirmation",
+                        "action": "ask the document owner to decide the final artifact wording",
+                    }
+                ],
+                "reason": "source conflict remains",
+                "document_consistency": {
+                    "stance": "reported_unresolved",
+                    "conflict_evidence_ids": ["e001", "e002"],
+                    "supporting_evidence_ids": [],
+                },
+            }
+        )
+
+
 def _config(workspace: Path, *, provider: str = "openai-compatible") -> AgentConfig:
     return AgentConfig(
         provider=provider,
@@ -639,6 +665,53 @@ class ReadOnlyReviewerTests(unittest.TestCase):
             self.assertIn("未消解的资料冲突", matching_report)
             self.assertIn("requirements.md", matching_report)
             self.assertIn("prototype.html", matching_report)
+
+    def test_document_consistency_source_gap_nonpass_can_release_unresolved_candidate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch("local_agent.agent.OpenAICompatibleClient", _DocumentConsistencySourceGapReviewerClient):
+                runtime = AgentRuntime(_config(Path(tmp).resolve()), show_tool_logs=False)
+                contract = generate_requirement_contract(
+                    "只根据需求 Markdown、原型 HTML 和示例图分析资料一致性，不要检查代码。"
+                )
+                runtime._run.begin(
+                    run_id="document-source-gap",
+                    started_monotonic=time.monotonic(),
+                    deadline_monotonic=None,
+                    run_start_index=0,
+                    git_baseline={},
+                    prompt="只根据需求 Markdown、原型 HTML 和示例图分析资料一致性，不要检查代码。",
+                    requirement_contract=contract,
+                    requirement_contract_context="",
+                    design_evidence_roots=(),
+                )
+                runtime._run.tool_choice_results.extend(
+                    [
+                        ToolResultSummary(
+                            "read_file",
+                            "Requirement says blank.",
+                            path="requirements.md",
+                            metadata={"evidence_root": "/workspace/root", "resolved_path": "/workspace/root/requirements.md"},
+                        ),
+                        ToolResultSummary(
+                            "inspect_image",
+                            "Image shows a value.",
+                            path="example.png",
+                            metadata={
+                                "evidence_root": "/workspace/root",
+                                "resolved_path": "/workspace/root/example.png",
+                                "image_observation": True,
+                            },
+                        ),
+                    ]
+                )
+
+                outcome = runtime._read_only_review_phase.review_candidate(
+                    "The document and image are not consistent; artifact role remains unresolved."
+                )
+
+        self.assertEqual(outcome.kind, "pass")
+        self.assertEqual(runtime._run.read_only_review.verdict, "pass")
+        self.assertIn("source-material gaps", runtime._run.read_only_review.reason)
 
     def test_handoff_is_bounded_and_conservative_about_source_reads(self) -> None:
         contract = generate_requirement_contract("只读分析服务 owner 和影响范围，不要修改。")
