@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 
 from local_agent.explore_handoff import ClaimEvidenceItem, ExploreHandoff
+from local_agent.document_consistency import DocumentConsistencyAssessment
 from local_agent.read_only_reviewer import ReviewerFinding
 from local_agent.safe_partial_report import build_safe_partial_report
 from local_agent.explore_handoff import build_explore_handoff
@@ -138,6 +139,29 @@ class SafePartialReportTests(unittest.TestCase):
         self.assertIn("有界运行提前终止", report.content)
         self.assertIn("termination=llm_timeout", report.content)
         self.assertNotIn("候选草稿未通过独立证据审查", report.content)
+
+    def test_document_partial_keeps_model_generated_visual_observation(self) -> None:
+        contract = generate_requirement_contract("只根据 Markdown 和示例图分析资料一致性，不要检查代码。")
+        handoff = ExploreHandoff(
+            request="compare artifacts",
+            contract=contract,
+            items=(
+                ClaimEvidenceItem("requirement_fact", "read_file", "policy.md", "primary", "root_local", "ok", "Field must remain blank."),
+                ClaimEvidenceItem("visual_observation", "inspect_image", "example.png", "primary", "root_local", "ok", "Model observed a visible value."),
+            ),
+        )
+        report = build_safe_partial_report(
+            handoff,
+            reason="second_review_nonpass",
+            document_consistency=DocumentConsistencyAssessment("asserted_reconciled", ("e001", "e002")),
+        )
+
+        self.assertIn("policy.md", report.content)
+        self.assertIn("example.png", report.content)
+        self.assertIn("视觉模型观察", report.content)
+        self.assertIn("OCR/识别不确定性", report.content)
+        self.assertIn("未消解的资料冲突", report.content)
+        self.assertEqual(report.observation_count, 2)
 
 
 if __name__ == "__main__":

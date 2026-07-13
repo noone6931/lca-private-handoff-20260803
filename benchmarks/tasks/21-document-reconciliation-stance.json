@@ -1,0 +1,31 @@
+{
+  "id": "document-reconciliation-stance",
+  "title": "Document reconciliation requires explicit lifecycle or precedence evidence",
+  "prompt": "只根据 Markdown 和 HTML 分析资料一致性，不要检查代码。资料角色不明确时保留待确认项。",
+  "budget_seconds": 90,
+  "workspace_files": {
+    "policy.md": "# Policy\nField must remain blank.\n",
+    "prototype.html": "<p>Field is visible.</p>\n"
+  },
+  "scripted_responses": [
+    {"tool_calls": [
+      {"name": "read_file", "arguments": {"path": "policy.md"}},
+      {"name": "read_file", "arguments": {"path": "prototype.html"}}
+    ]},
+    {"content": "policy.md states the field must remain blank; prototype.html shows it visible. The prototype is the completed state, so no conflict exists."},
+    {"tool_calls": [{"name": "submit_read_only_review", "arguments": {"verdict": "revise", "confidence": 0.9, "findings": [{"claim_id": "c001", "issue": "the candidate asserts a lifecycle reconciliation without direct support", "action": "retain the conflict as unresolved"}], "reason": "artifact role is not established", "document_consistency": {"stance": "asserted_reconciled", "conflict_evidence_ids": ["e001", "e002"], "supporting_evidence_ids": []}}}]},
+    {"content": "policy.md states the field must remain blank; prototype.html shows it visible. If the prototype were a completed state they might coexist, but the artifact role is not specified, so the conflict remains unresolved."},
+    {"tool_calls": [{"name": "submit_read_only_review", "arguments": {"verdict": "pass", "confidence": 0.9, "findings": [], "reason": "the candidate reports both observations and preserves the unresolved boundary", "document_consistency": {"stance": "conditional_reconciliation", "conflict_evidence_ids": ["e001", "e002"], "supporting_evidence_ids": []}}}]}
+  ],
+  "acceptance": {
+    "required_tools": ["read_file"],
+    "forbidden_tools": ["apply_patch", "write_file", "shell", "run_tests", "search_code", "inspect_image"],
+    "changed_files": [],
+    "answer_all_of": ["policy.md", "prototype.html", "not specified", "unresolved"],
+    "answer_forbidden_regex": ["so no conflict exists"],
+    "termination_reason": "final",
+    "read_only_reviewer": {"triggers": 1, "rewrites": 1, "typed_submits": 2},
+    "max_tool_errors": 0
+  },
+  "residual_risk": "The fixture proves a bounded typed reconciliation flow, not the actual lifecycle of any external artifact."
+}

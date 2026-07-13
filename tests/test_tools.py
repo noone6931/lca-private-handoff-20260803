@@ -437,7 +437,10 @@ class ToolTests(unittest.TestCase):
         self.assertIn("inspect_image", metadata.content)
         self.assertFalse(observation.is_error)
         self.assertIn("settlement example", observation.content)
+        self.assertIn("model-generated visual observation", observation.content)
         self.assertNotIn("visible-image-bytes", observation.content)
+        self.assertEqual(observation.metadata["observation_origin"], "vision_model")
+        self.assertEqual(observation.metadata["observation_reliability"], "visible_content_only")
         self.assertEqual(seen[0][1], "image/png")
         self.assertEqual(seen[0][2], raw)
 

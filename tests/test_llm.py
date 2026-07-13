@@ -119,7 +119,11 @@ class LlmClientTests(unittest.TestCase):
         self.assertEqual(observation, "A visible example.")
         self.assertEqual(captured_payload["model"], "qwen-vl-max")
         self.assertNotIn("tools", captured_payload)
-        content = captured_payload["messages"][0]["content"]
+        self.assertEqual(captured_payload["messages"][0]["role"], "system")
+        self.assertIn("Separate direct observations from inferences", captured_payload["messages"][0]["content"])
+        self.assertNotIn("Describe this image.", captured_payload["messages"][0]["content"])
+        self.assertEqual(captured_payload["messages"][1]["role"], "user")
+        content = captured_payload["messages"][1]["content"]
         self.assertEqual(content[0]["text"], "Describe this image.")
         self.assertEqual(content[1]["image_url"]["url"], "data:image/png;base64,cGl4ZWxz")
 

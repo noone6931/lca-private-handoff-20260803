@@ -25,7 +25,12 @@
             "verdict": "pass",
             "confidence": 0.9,
             "findings": [],
-            "reason": "The answer reports the supplied document facts and retains the image boundary without inventing a reconciliation."
+            "reason": "The answer reports the supplied document facts and retains the image boundary without inventing a reconciliation.",
+            "document_consistency": {
+              "stance": "reported_unresolved",
+              "conflict_evidence_ids": [],
+              "supporting_evidence_ids": []
+            }
           }
         }
       ]

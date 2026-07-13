@@ -6,6 +6,9 @@ import re
 from dataclasses import dataclass
 from typing import Any, Literal, Mapping
 
+from .document_consistency import DocumentConsistencyAssessment
+from .document_consistency import DocumentConsistencyValidationError
+from .document_consistency import parse_document_consistency_assessment
 from .explore_handoff import ExploreHandoff
 from .task_contract import RequirementContract
 
@@ -49,6 +52,7 @@ class ReviewerResult:
     confidence: float
     findings: tuple[ReviewerFinding, ...] = ()
     reason: str = ""
+    document_consistency: DocumentConsistencyAssessment | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -56,6 +60,7 @@ class ReviewerResult:
             "confidence": self.confidence,
             "findings": [finding.to_dict() for finding in self.findings],
             "reason": self.reason,
+            "document_consistency": self.document_consistency.to_dict() if self.document_consistency else None,
         }
 
 
@@ -76,6 +81,7 @@ class ReadOnlyReviewState:
     reason: str | None = None
     findings: tuple[ReviewerFinding, ...] = ()
     claim_units: tuple[CandidateClaimUnit, ...] = ()
+    document_consistency: DocumentConsistencyAssessment | None = None
     provider_attempts: int = 0
     schema_failures: int = 0
     repairs: int = 0
@@ -93,6 +99,7 @@ class ReadOnlyReviewState:
         self.reason = None
         self.findings = ()
         self.claim_units = ()
+        self.document_consistency = None
         self.provider_attempts = 0
         self.schema_failures = 0
         self.repairs = 0
@@ -111,6 +118,7 @@ class ReadOnlyReviewState:
             "reason": self.reason,
             "reviewed_claim_ids": [item.claim_id for item in self.findings],
             "reviewed_claim_count": len({item.claim_id for item in self.findings}),
+            "document_consistency_stance": self.document_consistency.stance if self.document_consistency else None,
             "provider_attempts": self.provider_attempts,
             "schema_failures": self.schema_failures,
             "repairs": self.repairs,
@@ -198,6 +206,17 @@ Review contract:
 
 The output tool arguments use verdict, confidence, findings, and reason. The complete submission must be shorter than 9000 characters. `findings` must contain at most 8 items. A `pass` verdict requires exactly 0 findings; `revise` and `unverified` require 1 to 8 findings. Every finding must have one unique, known claim_id plus non-empty issue and action. For every finding, choose exactly one claim_id from candidate_claims. Never invent or repeat a claim_id. The optional claim field is for people, not an address. Report only the highest-risk blocking findings when there are more than 8.
 Choose revise when the candidate can be corrected using the handoff. Choose unverified when the candidate cannot safely make the requested factual conclusion."""
+    if _is_document_consistency_review(handoff):
+        system += (
+            "\n\nDocument-consistency output requirement:\n"
+            "- Submit document_consistency for every verdict. conflict_evidence_ids must reference the supplied artifact observations. "
+            "reported_unresolved means no reconciliation is asserted; conditional_reconciliation may offer a conditional "
+            "explanation but must retain that artifact role/lifecycle is unresolved. asserted_reconciled identifies an "
+            "unsupported candidate reconciliation and therefore cannot justify pass. explicitly_supported_reconciliation "
+            "is allowed only when supporting_evidence_ids cite non-visual document observations that explicitly state "
+            "lifecycle or precedence. A visual observation can show displayed values, but never establishes author intent, "
+            "a typo, lifecycle, actor, or precedence."
+        )
     payload = {
         "kind": "LCA_READ_ONLY_EVIDENCE_REVIEW",
         "handoff": handoff.to_dict(),
@@ -209,7 +228,12 @@ Choose revise when the candidate can be corrected using the handoff. Choose unve
     ]
 
 
-def reviewer_output_tool_schema(claim_units: tuple[CandidateClaimUnit, ...]) -> dict[str, Any]:
+def reviewer_output_tool_schema(
+    claim_units: tuple[CandidateClaimUnit, ...],
+    *,
+    document_consistency: bool = False,
+    evidence_ids: tuple[str, ...] = (),
+) -> dict[str, Any]:
     """Return the isolated reviewer yield schema, never a workspace tool."""
 
     known_ids = [unit.claim_id for unit in claim_units]
@@ -224,6 +248,34 @@ def reviewer_output_tool_schema(claim_units: tuple[CandidateClaimUnit, ...]) -> 
         },
         "required": ["claim_id", "issue", "action"],
     }
+    properties: dict[str, Any] = {
+        "verdict": {"type": "string", "enum": ["pass", "revise", "unverified"]},
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+        "findings": {"type": "array", "maxItems": MAX_REVIEWER_FINDINGS, "items": finding},
+        "reason": {"type": "string", "maxLength": 1600},
+    }
+    required = ["verdict", "confidence", "findings", "reason"]
+    if document_consistency:
+        evidence_id = {"type": "string", "enum": list(evidence_ids)}
+        properties["document_consistency"] = {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "stance": {
+                    "type": "string",
+                    "enum": [
+                        "reported_unresolved",
+                        "conditional_reconciliation",
+                        "asserted_reconciled",
+                        "explicitly_supported_reconciliation",
+                    ],
+                },
+                "conflict_evidence_ids": {"type": "array", "maxItems": 8, "items": evidence_id},
+                "supporting_evidence_ids": {"type": "array", "maxItems": 8, "items": evidence_id},
+            },
+            "required": ["stance", "conflict_evidence_ids", "supporting_evidence_ids"],
+        }
+        required.append("document_consistency")
     return {
         "type": "function",
         "function": {
@@ -232,13 +284,8 @@ def reviewer_output_tool_schema(claim_units: tuple[CandidateClaimUnit, ...]) -> 
             "parameters": {
                 "type": "object",
                 "additionalProperties": False,
-                "properties": {
-                    "verdict": {"type": "string", "enum": ["pass", "revise", "unverified"]},
-                    "confidence": {"type": "number", "minimum": 0, "maximum": 1},
-                    "findings": {"type": "array", "maxItems": MAX_REVIEWER_FINDINGS, "items": finding},
-                    "reason": {"type": "string", "maxLength": 1600},
-                },
-                "required": ["verdict", "confidence", "findings", "reason"],
+                "properties": properties,
+                "required": required,
             },
         },
     }
@@ -273,7 +320,13 @@ def reviewer_repair_messages(
     return messages
 
 
-def parse_reviewer_result(content: object, *, claim_units: tuple[CandidateClaimUnit, ...]) -> ReviewerResult:
+def parse_reviewer_result(
+    content: object,
+    *,
+    claim_units: tuple[CandidateClaimUnit, ...],
+    document_consistency: bool = False,
+    evidence_ids: tuple[str, ...] = (),
+) -> ReviewerResult:
     if not isinstance(content, str) or not content.strip():
         raise ReviewerValidationError("missing_json")
     if len(content) > MAX_REVIEWER_RESPONSE_CHARS:
@@ -282,10 +335,21 @@ def parse_reviewer_result(content: object, *, claim_units: tuple[CandidateClaimU
         raw = _json_object(content)
     except (TypeError, ValueError, json.JSONDecodeError):
         raise ReviewerValidationError("malformed_json") from None
-    return parse_reviewer_payload(raw, claim_units=claim_units)
+    return parse_reviewer_payload(
+        raw,
+        claim_units=claim_units,
+        document_consistency=document_consistency,
+        evidence_ids=evidence_ids,
+    )
 
 
-def parse_reviewer_payload(raw: object, *, claim_units: tuple[CandidateClaimUnit, ...]) -> ReviewerResult:
+def parse_reviewer_payload(
+    raw: object,
+    *,
+    claim_units: tuple[CandidateClaimUnit, ...],
+    document_consistency: bool = False,
+    evidence_ids: tuple[str, ...] = (),
+) -> ReviewerResult:
     if not isinstance(raw, Mapping):
         raise ReviewerValidationError("top_level_not_object", {"top_level_type": type(raw).__name__})
     try:
@@ -296,6 +360,8 @@ def parse_reviewer_payload(raw: object, *, claim_units: tuple[CandidateClaimUnit
         raise ReviewerValidationError("response_too_large", {"response_chars": rendered_size})
     diagnostics = _shape_diagnostics(raw)
     allowed_keys = {"verdict", "confidence", "findings", "reason"}
+    if document_consistency:
+        allowed_keys.add("document_consistency")
     if set(raw) != allowed_keys:
         raise ReviewerValidationError("top_level_keys_invalid", diagnostics)
     verdict = raw.get("verdict")
@@ -341,7 +407,22 @@ def parse_reviewer_payload(raw: object, *, claim_units: tuple[CandidateClaimUnit
         raise ReviewerValidationError("pass_with_findings", diagnostics)
     if verdict in {"revise", "unverified"} and not findings:
         raise ReviewerValidationError("nonpassing_without_findings", diagnostics)
-    return ReviewerResult(verdict=verdict, confidence=float(confidence), findings=tuple(findings), reason=_clip(reason))
+    assessment = None
+    if document_consistency:
+        try:
+            assessment = parse_document_consistency_assessment(
+                raw.get("document_consistency"),
+                evidence_ids=evidence_ids,
+            )
+        except DocumentConsistencyValidationError as exc:
+            raise ReviewerValidationError(exc.code, diagnostics) from None
+    return ReviewerResult(
+        verdict=verdict,
+        confidence=float(confidence),
+        findings=tuple(findings),
+        reason=_clip(reason),
+        document_consistency=assessment,
+    )
 
 
 def reviewer_rewrite_message(result: ReviewerResult, *, profile: str | None = None) -> str:
@@ -366,6 +447,11 @@ def reviewer_rewrite_message(result: ReviewerResult, *, profile: str | None = No
     elif profile == "design":
         lines.append(
             "Design proposals may be conceptual, but every concrete repository name must remain an observed fact or be explicitly marked unverified."
+        )
+    elif profile == "document_consistency":
+        lines.append(
+            "Do not call conflicting artifact observations consistent, completed, or a later state unless the handoff explicitly "
+            "establishes their lifecycle, role, or precedence. Conditional explanations must keep the conflict unresolved."
         )
     for finding in result.findings:
         claim = f": {finding.claim}" if finding.claim else ""
@@ -456,6 +542,10 @@ def _normalize_span(value: str) -> str:
 def _normalize_markdown(value: str) -> str:
     without_presentation = re.sub(r"[`*_~#>]", "", value or "")
     return _normalize_span(without_presentation.replace("|", " "))
+
+
+def _is_document_consistency_review(handoff: ExploreHandoff) -> bool:
+    return handoff.contract.evidence_domain == "requirement_documents" and handoff.contract.read_only_review_profile == "document_consistency"
 
 
 def _clip_unit(value: str) -> str:

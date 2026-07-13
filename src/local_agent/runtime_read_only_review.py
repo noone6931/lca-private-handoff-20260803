@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 from typing import Any, Protocol
 
+from .document_consistency import validate_document_consistency_assessment
 from .chat_runtime import call_chat_with_timeout
 from .explore_handoff import build_explore_handoff
 from .llm import LlmError
@@ -112,7 +113,12 @@ class ReadOnlyReviewPhase:
             {"kind": "read_only_reviewer_triggered", "items": len(handoff.items)},
         )
         messages = reviewer_messages(handoff, claim_units)
-        output_schema = reviewer_output_tool_schema(claim_units)
+        document_consistency = contract.evidence_domain == "requirement_documents" and contract.read_only_review_profile == "document_consistency"
+        output_schema = reviewer_output_tool_schema(
+            claim_units,
+            document_consistency=document_consistency,
+            evidence_ids=handoff.evidence_ids,
+        )
         result = None
         saw_protocol_failure = False
         repaired_this_round = False
@@ -130,7 +136,14 @@ class ReadOnlyReviewPhase:
             if not isinstance(message, dict):
                 return self._unverified("protocol_error", "missing_message")
             try:
-                result, typed_submit = self._parse_reviewer_response(response, message, claim_units)
+                result, typed_submit = self._parse_reviewer_response(
+                    response,
+                    message,
+                    claim_units,
+                    document_consistency=document_consistency,
+                    handoff=handoff,
+                    candidate=candidate,
+                )
             except ReviewerValidationError as exc:
                 if exc.code.startswith("output_tool_") or exc.code == "provider_markup_artifact":
                     saw_protocol_failure = True
@@ -175,6 +188,7 @@ class ReadOnlyReviewPhase:
         state.verdict = result.verdict
         state.reason = result.reason
         state.findings = result.findings
+        state.document_consistency = result.document_consistency
         runtime._run.collector.record_read_only_review_result(result.verdict, len(result.findings))
         runtime._session.append("read_only_reviewer", {"event": "result", **result.to_dict()})
         runtime._events.emit(
@@ -210,6 +224,10 @@ class ReadOnlyReviewPhase:
         response: Any,
         message: dict[str, Any],
         claim_units: tuple[Any, ...],
+        *,
+        document_consistency: bool,
+        handoff: Any,
+        candidate: str,
     ) -> tuple[Any, bool]:
         tool_calls = message.get("tool_calls")
         if isinstance(tool_calls, list) and tool_calls:
@@ -227,7 +245,14 @@ class ReadOnlyReviewPhase:
                 payload = json.loads(arguments)
             except json.JSONDecodeError:
                 raise ReviewerValidationError("output_tool_arguments_invalid") from None
-            return parse_reviewer_payload(payload, claim_units=claim_units), True
+            result = parse_reviewer_payload(
+                payload,
+                claim_units=claim_units,
+                document_consistency=document_consistency,
+                evidence_ids=handoff.evidence_ids,
+            )
+            self._validate_document_consistency(result, handoff, candidate)
+            return result, True
         artifact = getattr(response, "protocol_artifact", None)
         if artifact is None:
             artifact = classify_provider_content_artifact(self._runtime._config.provider, message.get("content"))
@@ -235,7 +260,27 @@ class ReadOnlyReviewPhase:
             raise ReviewerValidationError("provider_markup_artifact", {"artifact_kind": artifact.kind})
         # Compatibility path for providers that cannot emit a structured output
         # call. It remains strict and is deliberately not the preferred schema.
-        return parse_reviewer_result(message.get("content"), claim_units=claim_units), False
+        result = parse_reviewer_result(
+            message.get("content"),
+            claim_units=claim_units,
+            document_consistency=document_consistency,
+            evidence_ids=handoff.evidence_ids,
+        )
+        self._validate_document_consistency(result, handoff, candidate)
+        return result, False
+
+    def _validate_document_consistency(self, result: Any, handoff: Any, candidate: str) -> None:
+        if result.document_consistency is None:
+            return
+        code = validate_document_consistency_assessment(
+            result.document_consistency,
+            handoff,
+            candidate=candidate,
+            verdict=result.verdict,
+        )
+        if code is not None:
+            self._runtime._run.read_only_review.document_consistency = result.document_consistency
+            raise ReviewerValidationError(code)
 
     def _review_timeout(self) -> float | None:
         remaining = self._runtime._provider_context_phase.remaining_timeout(self._runtime._run.deadline_monotonic)
@@ -294,7 +339,12 @@ class ReadOnlyReviewPhase:
         state = runtime._run.read_only_review
         if state.safe_partial_emitted:
             return ""
-        partial = build_safe_partial_report(handoff, state.findings, reason=reason)
+        partial = build_safe_partial_report(
+            handoff,
+            state.findings,
+            reason=reason,
+            document_consistency=state.document_consistency,
+        )
         state.safe_partial_emitted = True
         runtime._run.collector.record_safe_partial_report(
             observations=partial.observation_count,

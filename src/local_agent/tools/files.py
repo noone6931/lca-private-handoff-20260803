@@ -256,9 +256,11 @@ def inspect_image(args: dict[str, Any], context: ToolContext) -> ToolResult:
     rel = display_workspace_path(context.workspace, path, context.allowed_dirs)
     digest = hashlib.sha256(raw).hexdigest()
     return ToolResult(
-        f"[image observation: {rel}#{digest[:16]}]\n{observation}",
+        f"[model-generated visual observation: {rel}#{digest[:16]}]\n{observation}",
         metadata={
             "image_observation": True,
+            "observation_origin": "vision_model",
+            "observation_reliability": "visible_content_only",
             "mime_type": mime_type,
             "size_bytes": size,
             "path": rel,

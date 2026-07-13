@@ -12,6 +12,12 @@ from .provider_protocol import ProviderProtocolArtifact
 from .provider_protocol import classify_provider_content_artifact
 
 
+VISION_OBSERVATION_SYSTEM_PROMPT = """You are an evidence-first visual observation assistant.
+Report only directly visible text, layout, marks, and clearly readable fields. Separate direct observations from inferences.
+Do not infer author intent, business role, workflow stage, lifecycle, precedence, legitimacy, or OCR corrections from appearance alone.
+When text or a mark is unclear, say it is unclear rather than guessing. Structure the response as: Answer, Key evidence, Caveats."""
+
+
 class LlmError(RuntimeError):
     """Raised when the LLM API request fails."""
 
@@ -53,6 +59,7 @@ class OpenAICompatibleClient:
             raise LlmError("No explicit vision model is configured for inspect_image. Set AI_VISION_MODEL to a vision-capable model.")
         response = self._complete(
             [
+                {"role": "system", "content": VISION_OBSERVATION_SYSTEM_PROMPT},
                 {
                     "role": "user",
                     "content": [

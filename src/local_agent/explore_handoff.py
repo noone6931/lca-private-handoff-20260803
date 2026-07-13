@@ -6,10 +6,11 @@ matrix that another model call can inspect without receiving the transcript.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Iterable
 
+from .document_consistency import explicit_reconciliation_excerpt
 from .evidence import EvidenceRecord
 from .requirement_evidence import RequirementEvidence
 from .steering.final_answer import SourceEvidence
@@ -19,6 +20,7 @@ from .tool_observation import ToolResultSummary
 
 MAX_HANDOFF_ITEMS = 18
 MAX_HANDOFF_CONTENT_CHARS = 700
+MAX_VISUAL_OBSERVATION_CHARS = 2400
 MAX_REQUIREMENT_ITEMS = 4
 MAX_SOURCE_ITEMS_PER_ROOT = 1
 MAX_RECORD_ITEMS_PER_ROOT = 1
@@ -38,6 +40,7 @@ class ClaimEvidenceItem:
     outcome: str
     summary: str
     count: int = 1
+    evidence_id: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -49,6 +52,7 @@ class ClaimEvidenceItem:
             "outcome": self.outcome,
             "summary": self.summary,
             "count": self.count,
+            "evidence_id": self.evidence_id,
         }
 
 
@@ -59,6 +63,18 @@ class ExploreHandoff:
     request: str
     contract: RequirementContract
     items: tuple[ClaimEvidenceItem, ...]
+
+    def __post_init__(self) -> None:
+        # IDs address only this bounded handoff. They are not filesystem or
+        # session identifiers and never expose additional source content.
+        object.__setattr__(
+            self,
+            "items",
+            tuple(
+                replace(item, evidence_id=item.evidence_id or f"e{index:03d}")
+                for index, item in enumerate(self.items, start=1)
+            ),
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -83,8 +99,13 @@ class ExploreHandoff:
                 "The matrix is a bounded handoff, not a complete repository inventory.",
                 "A path or similarly named capability is not a direct owner unless evidence explicitly binds the requested behavior to a symbol, path, or call chain.",
                 "Requirement facts, repository observations, proposals, and unlocated questions must remain distinct.",
+                "Visual observations describe what is shown, not an artifact author's intent, lifecycle, precedence, or role.",
             ],
         }
+
+    @property
+    def evidence_ids(self) -> tuple[str, ...]:
+        return tuple(item.evidence_id for item in self.items)
 
 
 def build_explore_handoff(
@@ -106,9 +127,10 @@ def build_explore_handoff(
     """
 
     results = tuple(tool_results)
+    requirement_entries = tuple(requirement_evidence)
     requirements = [
         ClaimEvidenceItem("requirement_fact", "read_file", item.path, item.root or "(unknown)", item.scope or "root_local", "ok", _clip(item.content))
-        for item in list(requirement_evidence)[-MAX_REQUIREMENT_ITEMS:]
+        for item in requirement_entries[-MAX_REQUIREMENT_ITEMS:]
     ]
     source_items = _bounded_per_root(
         (
@@ -122,13 +144,13 @@ def build_explore_handoff(
     )
     document_items = [
         ClaimEvidenceItem(
-            "requirement_fact" if item.name == "read_file" else "observed_candidate",
+            "requirement_fact" if item.name == "read_file" else "visual_observation",
             item.name,
             item.path or "(none)",
             str(item.metadata.get("evidence_root") or item.metadata.get("evidence_root_label") or "(unknown)"),
             str(item.metadata.get("evidence_scope") or "root_local"),
             "error" if item.is_error else "ok",
-            _clip(item.content),
+            _clip(item.content, limit=MAX_VISUAL_OBSERVATION_CHARS) if item.name == "inspect_image" else _clip(item.content),
         )
         for item in results
         if item.name == "inspect_image"
@@ -137,6 +159,10 @@ def build_explore_handoff(
             and str(item.path or "").lower().endswith((".md", ".markdown", ".html", ".htm"))
         )
     ][-MAX_DOCUMENT_ARTIFACT_ITEMS:]
+    reconciliation_support_items = _document_reconciliation_support_items(
+        requirements=requirement_entries,
+        tool_results=results,
+    )
     incomplete_root_items = [
         ClaimEvidenceItem(
             "unlocated",
@@ -199,16 +225,25 @@ def build_explore_handoff(
     # dedupe pass then keeps one provenance fact per tool/path/outcome and
     # aggregates repeated failures by root/category.
     items = _dedupe_items(
-        [*document_items, *precise_results, *source_items, *requirements, *incomplete_root_items, *error_results, *record_items]
+        [
+            *reconciliation_support_items,
+            *document_items,
+            *precise_results,
+            *source_items,
+            *requirements,
+            *incomplete_root_items,
+            *error_results,
+            *record_items,
+        ]
     )
     return ExploreHandoff(request=request, contract=contract, items=tuple(items[:MAX_HANDOFF_ITEMS]))
 
 
-def _clip(value: str) -> str:
+def _clip(value: str, *, limit: int = MAX_HANDOFF_CONTENT_CHARS) -> str:
     compact = " ".join((value or "").split())
-    if len(compact) <= MAX_HANDOFF_CONTENT_CHARS:
+    if len(compact) <= limit:
         return compact
-    return compact[: MAX_HANDOFF_CONTENT_CHARS - 1].rstrip() + "..."
+    return compact[: limit - 1].rstrip() + "..."
 
 
 def _head_tail(value: str) -> str:
@@ -228,6 +263,47 @@ def _bounded_per_root(items: Iterable[ClaimEvidenceItem], limit: int) -> list[Cl
         elif item.classification == "direct_binding":
             bucket[-1] = item
     return [item for root in sorted(buckets) for item in buckets[root]]
+
+
+def _document_reconciliation_support_items(
+    *,
+    requirements: Iterable[RequirementEvidence],
+    tool_results: Iterable[ToolResultSummary],
+) -> list[ClaimEvidenceItem]:
+    """Preserve an explicit support excerpt even when the file header is generic."""
+
+    items: list[ClaimEvidenceItem] = []
+    for item in requirements:
+        excerpt = explicit_reconciliation_excerpt(item.content)
+        if excerpt:
+            items.append(
+                ClaimEvidenceItem(
+                    "document_reconciliation_support",
+                    "read_file",
+                    item.path,
+                    item.root or "(unknown)",
+                    item.scope or "root_local",
+                    "ok",
+                    excerpt,
+                )
+            )
+    for item in tool_results:
+        if item.name != "read_file" or item.is_error or not str(item.path or "").lower().endswith((".md", ".markdown", ".html", ".htm")):
+            continue
+        excerpt = explicit_reconciliation_excerpt(item.content)
+        if excerpt:
+            items.append(
+                ClaimEvidenceItem(
+                    "document_reconciliation_support",
+                    "read_file",
+                    item.path or "(none)",
+                    str(item.metadata.get("evidence_root") or item.metadata.get("evidence_root_label") or "(unknown)"),
+                    str(item.metadata.get("evidence_scope") or "root_local"),
+                    "ok",
+                    excerpt,
+                )
+            )
+    return items[:MAX_REQUIREMENT_ITEMS]
 
 
 def _dedupe_items(items: Iterable[ClaimEvidenceItem]) -> list[ClaimEvidenceItem]:
@@ -259,6 +335,8 @@ def _handoff_item_identity(item: ClaimEvidenceItem) -> tuple[str, ...]:
     if item.classification == "inspection_failure":
         return ("failure", item.classification, _root_identity(item.root), item.outcome)
     if item.tool in {"read_file", "inspect_image"} and item.outcome == "ok":
+        if item.classification == "document_reconciliation_support":
+            return ("document_support", _root_identity(item.root), _artifact_name(item.path), item.summary)
         return ("artifact", item.tool, _root_identity(item.root), _artifact_name(item.path))
     return ("item", item.tool, item.path, item.outcome)
 

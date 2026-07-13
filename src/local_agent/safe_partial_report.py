@@ -4,6 +4,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable
 
+from .document_consistency import DocumentConsistencyAssessment
+from .document_consistency import unresolved_document_conflict_items
 from .explore_handoff import ClaimEvidenceItem, ExploreHandoff
 from .read_only_reviewer import ReviewerFinding
 
@@ -21,6 +23,7 @@ def build_safe_partial_report(
     findings: Iterable[ReviewerFinding] = (),
     *,
     reason: str,
+    document_consistency: DocumentConsistencyAssessment | None = None,
 ) -> SafePartialReport:
     """Render only runtime observations, never the rejected candidate draft."""
 
@@ -29,10 +32,11 @@ def build_safe_partial_report(
         for item in handoff.items
         if item.tool != "workspace"
         and item.outcome == "ok"
-        and item.classification in {"requirement_fact", "observed_candidate", "direct_binding"}
+        and item.classification in {"requirement_fact", "observed_candidate", "direct_binding", "visual_observation"}
     ]
     missing = [item for item in handoff.items if item.classification == "unlocated"]
     limitations = [item for item in handoff.items if item.classification == "inspection_failure"]
+    unresolved_conflicts = unresolved_document_conflict_items(handoff, document_consistency)
     categories = tuple(sorted({_finding_category(finding) for finding in findings if _finding_category(finding)}))
     reviewer_rejected = reason in {"second_review_nonpass", "rewrite_noncompliant"}
     title = "候选草稿未通过独立证据审查" if reviewer_rejected else "有界运行提前终止"
@@ -47,7 +51,7 @@ def build_safe_partial_report(
         introduction,
         f"- termination={reason}",
         "",
-        "### 已验证工具观察（不是 Owner/现有实现结论）",
+        "### 已记录工具观察 / 证据（不是 Owner/现有实现结论）",
     ]
     if observations:
         lines.extend(_render_observation(item) for item in observations)
@@ -63,6 +67,12 @@ def build_safe_partial_report(
         lines.extend(_render_limitation(item) for item in limitations)
     else:
         lines.append("- 本轮没有额外的工具失败观察。")
+    if unresolved_conflicts:
+        lines.extend(["", "### 未消解的资料冲突"])
+        lines.extend(
+            f"- `{item.path}` [evidence={item.evidence_id}; tool={item.tool}]：资料角色、生命周期或优先级没有被当前可见证据明确说明。"
+            for item in unresolved_conflicts
+        )
     lines.extend(["", "### 被审查拒绝的候选类别" if reviewer_rejected else "### 终止边界"])
     if reviewer_rejected and categories:
         lines.extend(f"- {category}" for category in categories)
@@ -88,7 +98,8 @@ def build_safe_partial_report(
 
 
 def _render_observation(item: ClaimEvidenceItem) -> str:
-    return f"- `{item.path}` [root={item.root}; scope={item.scope}; tool={item.tool}]：{_brief(item.summary)}"
+    label = "视觉模型观察（可能含 OCR/识别不确定性）" if item.classification == "visual_observation" else "工具观察"
+    return f"- `{item.path}` [{label}; root={item.root}; scope={item.scope}; tool={item.tool}]：{_brief(item.summary)}"
 
 
 def _render_missing(item: ClaimEvidenceItem) -> str:

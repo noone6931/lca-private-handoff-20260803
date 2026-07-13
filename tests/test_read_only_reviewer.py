@@ -457,6 +457,53 @@ class _OneShotDeterministicRewrite:
         )
 
 
+class _SpoofedDocumentConsistencyClient:
+    """A reviewer that falsely labels a direct reconciliation as unresolved."""
+
+    calls: list[dict] = []
+
+    def __init__(self, config: AgentConfig):
+        self._primary_calls = 0
+
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
+        reviewer = any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages)
+        if reviewer:
+            return _review_submit(
+                {
+                    "verdict": "pass",
+                    "confidence": 0.99,
+                    "findings": [],
+                    "reason": "claimed unresolved",
+                    "document_consistency": {
+                        "stance": "reported_unresolved",
+                        "conflict_evidence_ids": ["e001", "e002"],
+                        "supporting_evidence_ids": [],
+                    },
+                }
+            )
+        self._primary_calls += 1
+        if self._primary_calls == 1:
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {"id": "read-policy", "type": "function", "function": {"name": "read_file", "arguments": '{"path":"policy.md"}'}},
+                            {"id": "read-prototype", "type": "function", "function": {"name": "read_file", "arguments": '{"path":"prototype.html"}'}},
+                        ],
+                    }
+                },
+            )()
+        return type(
+            "Response",
+            (),
+            {"message": {"content": "policy.md 要求字段留空；prototype.html 显示有值。两份资料没有冲突，因为 prototype 是完成态。 FORGED_RECONCILIATION"}},
+        )()
+
+
 def _config(workspace: Path, *, provider: str = "openai-compatible") -> AgentConfig:
     return AgentConfig(
         provider=provider,
@@ -471,6 +518,24 @@ def _config(workspace: Path, *, provider: str = "openai-compatible") -> AgentCon
 
 
 class ReadOnlyReviewerTests(unittest.TestCase):
+    def test_document_consistency_spoofed_unresolved_pass_becomes_safe_partial(self) -> None:
+        _SpoofedDocumentConsistencyClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            (workspace / "policy.md").write_text("Field must remain blank.\n", encoding="utf-8")
+            (workspace / "prototype.html").write_text("<p>Field has a value.</p>\n", encoding="utf-8")
+            with patch("local_agent.agent.OpenAICompatibleClient", _SpoofedDocumentConsistencyClient):
+                runtime = AgentRuntime(_config(workspace), show_tool_logs=False)
+                answer = runtime.run("只根据 Markdown 和 HTML 分析资料一致性，不要检查代码。")
+
+        self.assertIn("安全部分交付", answer)
+        self.assertIn("未消解的资料冲突", answer)
+        self.assertIn("policy.md", answer)
+        self.assertIn("prototype.html", answer)
+        self.assertNotIn("FORGED_RECONCILIATION", answer)
+        self.assertEqual(runtime._last_run_summary["termination_reason"], "read_only_reviewer_unverified")
+        self.assertEqual(runtime._last_run_summary["read_only_reviewer"]["errors"], {"invalid_output": 1})
+
     def test_handoff_is_bounded_and_conservative_about_source_reads(self) -> None:
         contract = generate_requirement_contract("只读分析服务 owner 和影响范围，不要修改。")
         handoff = build_explore_handoff(
