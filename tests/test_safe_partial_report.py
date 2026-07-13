@@ -6,6 +6,7 @@ from local_agent.explore_handoff import ClaimEvidenceItem, ExploreHandoff
 from local_agent.read_only_reviewer import ReviewerFinding
 from local_agent.safe_partial_report import build_safe_partial_report
 from local_agent.explore_handoff import build_explore_handoff
+from local_agent.requirement_evidence import RequirementEvidence
 from local_agent.task_contract import generate_requirement_contract
 from local_agent.tool_choice_queue import ToolResultSummary
 from local_agent.steering.models import SourceEvidence
@@ -36,6 +37,29 @@ def _handoff() -> ExploreHandoff:
 
 
 class SafePartialReportTests(unittest.TestCase):
+    def test_handoff_dedupes_relative_requirement_and_absolute_current_read(self) -> None:
+        workspace = "/tmp/lca-doc-root"
+        handoff = build_explore_handoff(
+            request="compare documents",
+            contract=generate_requirement_contract("只根据 Markdown、HTML 和示例图分析需求，不要检查代码。"),
+            requirement_evidence=(RequirementEvidence("requirements.md", "Document requirement", root=workspace),),
+            source_evidence=(SourceEvidence("requirements.md", "Document requirement", root=workspace),),
+            records=(),
+            tool_results=(
+                ToolResultSummary(
+                    "read_file",
+                    "Document requirement",
+                    path=f"{workspace}/requirements.md",
+                    metadata={"evidence_root": workspace, "evidence_root_label": "primary"},
+                ),
+            ),
+        )
+
+        report = build_safe_partial_report(handoff, reason="llm_timeout")
+
+        self.assertEqual(report.observation_count, 1)
+        self.assertEqual(report.content.count("requirements.md"), 1)
+
     def test_multi_root_incomplete_handoff_keeps_observation_and_missing_root_once(self) -> None:
         contract = generate_requirement_contract("只读分析服务 owner 和影响范围，不要修改。")
         handoff = build_explore_handoff(

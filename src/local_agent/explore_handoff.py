@@ -7,6 +7,7 @@ matrix that another model call can inspect without receiving the transcript.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Iterable
 
 from .evidence import EvidenceRecord
@@ -124,7 +125,7 @@ def build_explore_handoff(
             "requirement_fact" if item.name == "read_file" else "observed_candidate",
             item.name,
             item.path or "(none)",
-            str(item.metadata.get("evidence_root_label") or "(unknown)"),
+            str(item.metadata.get("evidence_root") or item.metadata.get("evidence_root_label") or "(unknown)"),
             str(item.metadata.get("evidence_scope") or "root_local"),
             "error" if item.is_error else "ok",
             _clip(item.content),
@@ -234,11 +235,7 @@ def _dedupe_items(items: Iterable[ClaimEvidenceItem]) -> list[ClaimEvidenceItem]
 
     deduped: dict[tuple[str, ...], ClaimEvidenceItem] = {}
     for item in items:
-        key = (
-            ("failure", item.classification, item.root, item.outcome)
-            if item.classification == "inspection_failure"
-            else ("item", item.tool, item.path, item.outcome)
-        )
+        key = _handoff_item_identity(item)
         prior = deduped.get(key)
         if prior is None:
             deduped[key] = item
@@ -254,3 +251,27 @@ def _dedupe_items(items: Iterable[ClaimEvidenceItem]) -> list[ClaimEvidenceItem]
             count=prior.count + item.count,
         )
     return list(deduped.values())
+
+
+def _handoff_item_identity(item: ClaimEvidenceItem) -> tuple[str, ...]:
+    """Use artifact identity rather than display spelling for document reads."""
+
+    if item.classification == "inspection_failure":
+        return ("failure", item.classification, _root_identity(item.root), item.outcome)
+    if item.tool in {"read_file", "inspect_image"} and item.outcome == "ok":
+        return ("artifact", item.tool, _root_identity(item.root), _artifact_name(item.path))
+    return ("item", item.tool, item.path, item.outcome)
+
+
+def _root_identity(root: str) -> str:
+    value = (root or "").strip()
+    if value.startswith("/"):
+        try:
+            return str(Path(value).resolve())
+        except OSError:
+            return value
+    return value.lower()
+
+
+def _artifact_name(path: str) -> str:
+    return Path(path or "").name.lower() or (path or "").lower()

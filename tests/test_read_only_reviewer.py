@@ -590,6 +590,29 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertIn("no more than 8 highest-risk findings", repair[-1]["content"])
         self.assertIn("original output tool", repair[-1]["content"])
 
+    def test_document_consistency_contract_passes_an_explicit_unresolved_conflict(self) -> None:
+        contract = generate_requirement_contract(
+            "只根据需求 Markdown、原型 HTML 和示例图分析需求，不要检查代码。"
+        )
+        handoff = build_explore_handoff(
+            request="compare the requested documents",
+            contract=contract,
+            requirement_evidence=(),
+            source_evidence=(),
+            records=(),
+            tool_results=(),
+        )
+        prompt = reviewer_messages(
+            handoff,
+            candidate_claim_units(
+                "文档 A 要求字段留空；图片观察到字段有值。两份资料的冲突尚未解决，"
+                "可由资料维护方确认以图或文档为准。"
+            ),
+        )[0]["content"]
+        self.assertIn("submit `pass` with no findings", prompt)
+        self.assertIn("source materials disagreeing by itself is not a candidate defect", prompt)
+        self.assertIn("unsupported reconciliation", prompt)
+
     def test_claim_ids_address_markdown_units_without_reviewer_text_matching(self) -> None:
         candidate = "| Scope | Owner |\n| --- | --- |\n| Frontend | **platformPayment** |\n\n**Conclusion:** platformPayment is the verified owner."
         units = candidate_claim_units(candidate)
