@@ -42,6 +42,7 @@ class ArchitectureBoundaryTests(unittest.TestCase):
             "self._evidence_phase.hydrate_session_evidence(",
             "self._evidence_phase.append_session_evidence_reuse_directive(",
             "self._memory_phase.consolidate_session_memory(",
+            "self._read_only_review_phase.review_candidate(",
         ):
             self.assertIn(call, content)
 

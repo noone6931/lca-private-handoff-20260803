@@ -130,6 +130,7 @@ from .provider_context import ProviderContextPhase
 from .runtime_evidence import EvidenceVerificationLifecycle
 from .runtime_memory import MemoryConsolidationLifecycle
 from .runtime_tool_directive import RuntimeToolDirectivePhase
+from .runtime_read_only_review import ReadOnlyReviewPhase
 from .runtime_workspace import WorkspaceLifecycle
 from .runtime_prompt import _assistant_event_payload
 from .runtime_prompt import _tool_call_event_payload
@@ -367,6 +368,7 @@ class AgentRuntime:
         self._evidence_phase = EvidenceVerificationLifecycle(self)
         self._memory_phase = MemoryConsolidationLifecycle(self)
         self._tool_directive_phase = RuntimeToolDirectivePhase(self)
+        self._read_only_review_phase = ReadOnlyReviewPhase(self)
         missing_roots = self._workspace_phase.restore_session_workspace_roots()
         self._path_rule_index = discover_path_scoped_rules(self._workspace_context.all_roots)
         system_prompt = self._workspace_phase.build_system_prompt()
@@ -453,6 +455,7 @@ class AgentRuntime:
             design_evidence_roots=design_evidence_roots,
         )
         self._tool_directive_phase.begin_run()
+        self._read_only_review_phase.begin_run()
         self._start_run_collector(run_id, prompt, started_monotonic)
         self._user_facts.begin_run(prompt, run_id)
         self._run.user_facts_context = self._user_facts.render_for(prompt)
@@ -611,6 +614,21 @@ class AgentRuntime:
                         reason="soft_tool_requirement",
                     )
                 content = message.get("content") or ""
+                review_outcome = self._read_only_review_phase.review_candidate(content)
+                if review_outcome.kind == "unverified":
+                    return self._finish_run(
+                        review_outcome.terminal_message,
+                        deadline,
+                        run_start_index,
+                        reason="read_only_reviewer_unverified",
+                        skip_memory_consolidation=True,
+                    )
+                if review_outcome.kind == "rewrite":
+                    self._messages.append({"role": "user", "content": review_outcome.rewrite_message})
+                    self._session.append("runtime_steering", {"kind": "read_only_reviewer", "action": "rewrite"})
+                    self._run.force_final_answer_without_tools = True
+                    step += 1
+                    continue
                 steering = self._decide_final_answer_steering(content, run_start_index)
                 if steering is not None:
                     if self._apply_final_answer_steering(steering):

@@ -22,6 +22,7 @@ from .test_planner import TestPlan
 from .session_evidence import SessionEvidenceReuse
 from .temporary_tool_directive import DirectiveTransition
 from .temporary_tool_directive import TemporaryToolDirectiveOwner
+from .read_only_reviewer import ReadOnlyReviewState
 
 
 @dataclass
@@ -60,6 +61,7 @@ class RunContext:
     session_evidence_directive_emitted: bool = False
     user_facts_context: str = ""
     negative_claim_metrics: dict[str, int] = field(default_factory=dict)
+    read_only_review: ReadOnlyReviewState = field(default_factory=ReadOnlyReviewState)
 
     # Compatibility views keep existing runtime tests and integrations stable while
     # EvidenceLedger becomes the single owner of the mutable evidence state.
@@ -169,6 +171,7 @@ class RunContext:
         self.session_evidence_directive_emitted = False
         self.user_facts_context = ""
         self.negative_claim_metrics.clear()
+        self.read_only_review.reset()
 
     def record_negative_claim_metrics(self, metrics: dict[str, int]) -> None:
         """Accumulate taxonomy observations without making model text authoritative."""

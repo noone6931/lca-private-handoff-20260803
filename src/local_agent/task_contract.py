@@ -7,6 +7,7 @@ from typing import Literal
 
 TaskKind = Literal["read-only", "code-implementation", "unclear"]
 EvidenceDomain = Literal["repository_code", "requirement_documents", "workspace_metadata", "semantic"]
+ReadOnlyReviewProfile = Literal["none", "owner_impact", "design"]
 
 
 @dataclass(frozen=True)
@@ -24,6 +25,7 @@ class RequirementContract:
     inspection_forbidden: bool = False
     inspection_repository_facts_requested: bool = False
     workspace_metadata_subject: str | None = None
+    read_only_review_profile: ReadOnlyReviewProfile = "none"
 
 
 _READ_ONLY_MARKERS = (
@@ -266,6 +268,13 @@ _DOCUMENT_ONLY_ANALYSIS_MARKERS = (
     "document-only",
 )
 
+_READ_ONLY_OWNER_IMPACT_MARKERS = (
+    "owner", "ownership", "impact", "调用链", "归属", "影响范围", "调用方", "call chain",
+)
+_READ_ONLY_DESIGN_REVIEW_MARKERS = (
+    "data model", "state transition", "endpoint", "implementation design", "设计草案", "数据模型", "状态流转", "实施设计", "改造方案",
+)
+
 def generate_requirement_contract(user_prompt: str) -> RequirementContract:
     """Generate a local deterministic contract without calling an LLM."""
 
@@ -276,6 +285,7 @@ def generate_requirement_contract(user_prompt: str) -> RequirementContract:
     inspection_repository_facts_requested = inspection_forbidden_repository_fact_request(prompt)
     metadata_subject = workspace_metadata_subject(prompt) if task_kind == "read-only" else None
     evidence_domain = _evidence_domain(prompt, inspection_forbidden, metadata_subject)
+    review_profile = _read_only_review_profile(prompt, task_kind, evidence_domain, inspection_forbidden, metadata_subject)
 
     if inspection_forbidden:
         return RequirementContract(
@@ -302,6 +312,7 @@ def generate_requirement_contract(user_prompt: str) -> RequirementContract:
             inspection_forbidden=True,
             inspection_repository_facts_requested=inspection_repository_facts_requested,
             workspace_metadata_subject=None,
+            read_only_review_profile="none",
         )
 
     if metadata_subject == "git_repository":
@@ -327,6 +338,7 @@ def generate_requirement_contract(user_prompt: str) -> RequirementContract:
             task_kind="read-only",
             evidence_domain="workspace_metadata",
             workspace_metadata_subject=metadata_subject,
+            read_only_review_profile="none",
         )
 
     if task_kind == "read-only" and evidence_domain == "requirement_documents":
@@ -352,6 +364,7 @@ def generate_requirement_contract(user_prompt: str) -> RequirementContract:
             ],
             task_kind="read-only",
             evidence_domain="requirement_documents",
+            read_only_review_profile="none",
         )
 
     if task_kind == "read-only":
@@ -380,6 +393,7 @@ def generate_requirement_contract(user_prompt: str) -> RequirementContract:
             ],
             task_kind=task_kind,
             evidence_domain="repository_code",
+            read_only_review_profile=review_profile,
         )
 
     if task_kind == "code-implementation":
@@ -408,6 +422,7 @@ def generate_requirement_contract(user_prompt: str) -> RequirementContract:
             ],
             task_kind=task_kind,
             evidence_domain="repository_code",
+            read_only_review_profile="none",
         )
 
     return RequirementContract(
@@ -419,6 +434,7 @@ def generate_requirement_contract(user_prompt: str) -> RequirementContract:
         risk_notes=_unclear_risk_notes(prompt),
         task_kind=task_kind,
         evidence_domain="repository_code",
+        read_only_review_profile=review_profile,
     )
 
 
@@ -464,6 +480,8 @@ def render_contract_context(contract: RequirementContract) -> str:
     ]
     lines = ["Requirement Contract", f"Task kind: {contract.task_kind}"]
     lines.append(f"Evidence domain: {contract.evidence_domain}")
+    if contract.read_only_review_profile != "none":
+        lines.append(f"Read-only review profile: {contract.read_only_review_profile}")
     if contract.inspection_forbidden:
         lines.append("Inspection policy: repository inspection is forbidden for this task.")
     if contract.workspace_metadata_subject:
@@ -491,6 +509,31 @@ def _evidence_domain(
     if _contains_any(lower, _REQUIREMENT_DOCUMENT_MARKERS) and _contains_any(lower, _DOCUMENT_ONLY_ANALYSIS_MARKERS):
         return "requirement_documents"
     return "repository_code"
+
+
+def _read_only_review_profile(
+    prompt: str,
+    task_kind: TaskKind,
+    evidence_domain: EvidenceDomain,
+    inspection_forbidden: bool,
+    metadata_subject: str | None,
+) -> ReadOnlyReviewProfile:
+    """Assign one typed high-risk profile at contract creation time.
+
+    This keeps natural-language intent recognition in the task owner. Runtime
+    reviewer policy consumes the typed value and does not repeat request regex.
+    """
+
+    if inspection_forbidden or metadata_subject is not None or evidence_domain != "repository_code":
+        return "none"
+    if task_kind not in {"read-only", "unclear"}:
+        return "none"
+    lower = prompt.lower()
+    if _contains_any(lower, _READ_ONLY_DESIGN_REVIEW_MARKERS):
+        return "design"
+    if _contains_any(lower, _READ_ONLY_OWNER_IMPACT_MARKERS):
+        return "owner_impact"
+    return "none"
 
 
 def is_inspection_forbidden(user_prompt: str) -> bool:
@@ -706,6 +749,7 @@ def _truncate(text: str, max_length: int) -> str:
 
 __all__ = [
     "RequirementContract",
+    "ReadOnlyReviewProfile",
     "TaskKind",
     "classify_task_kind",
     "generate_requirement_contract",

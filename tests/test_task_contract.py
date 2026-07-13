@@ -118,6 +118,20 @@ class RequirementContractTests(unittest.TestCase):
         self.assertIn("Document-only", contract.scope)
         self.assertTrue(any("document path" in item for item in contract.evidence_requirements))
 
+    def test_read_only_reviewer_profile_is_typed_by_contract_owner(self) -> None:
+        self.assertEqual(
+            generate_requirement_contract("只读分析当前服务 owner、调用链和影响范围，不要修改。").read_only_review_profile,
+            "owner_impact",
+        )
+        self.assertEqual(
+            generate_requirement_contract("基于源码给出数据模型和状态流转的实施设计草案。").read_only_review_profile,
+            "design",
+        )
+        self.assertEqual(
+            generate_requirement_contract("只根据需求文档 Markdown 分析需求，不要检查代码。").read_only_review_profile,
+            "none",
+        )
+
     def test_primary_git_metadata_contract_has_a_dedicated_evidence_owner(self) -> None:
         for prompt in (
             "当前 primary workspace 是不是 Git 仓库？",

@@ -567,6 +567,18 @@ def _evaluate_acceptance(
                 actual_session_evidence,
             )
         )
+    expected_reviewer = acceptance.get("read_only_reviewer")
+    if isinstance(expected_reviewer, Mapping):
+        actual_reviewer = (runtime._last_run_summary or {}).get("read_only_reviewer") or {}
+        expected_counts = _integer_mapping(expected_reviewer)
+        checks.append(
+            _check(
+                "read_only_reviewer",
+                _mapping_integer_values_match(actual_reviewer, expected_counts),
+                expected_counts,
+                actual_reviewer,
+            )
+        )
     schema_excludes = _string_list(acceptance.get("schema_excludes"))
     if schema_excludes:
         schemas = client.tool_schema_names
