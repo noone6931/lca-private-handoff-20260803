@@ -158,7 +158,17 @@ def reviewer_rewrite_message(result: ReviewerResult) -> str:
     return "\n".join(lines)
 
 
-def rewrite_complies_with_review(candidate: str, result: ReviewerResult) -> bool:
+def findings_are_exact_candidate_spans(candidate: str, findings: tuple[ReviewerFinding, ...]) -> bool:
+    """Require revise findings to point at a non-empty exact candidate span."""
+
+    normalized_candidate = _normalize_span(candidate)
+    return bool(normalized_candidate) and all(
+        bool(_normalize_span(finding.claim)) and _normalize_span(finding.claim) in normalized_candidate
+        for finding in findings
+    )
+
+
+def rewrite_complies_with_review(candidate: str, findings: tuple[ReviewerFinding, ...]) -> bool:
     """Reject an unchanged unsupported claim after the one permitted rewrite.
 
     This only compares exact spans supplied in the typed reviewer result.  It is
@@ -167,7 +177,7 @@ def rewrite_complies_with_review(candidate: str, result: ReviewerResult) -> bool
     """
 
     normalized_candidate = _normalize_span(candidate)
-    return all(_normalize_span(finding.claim) not in normalized_candidate for finding in result.findings)
+    return all(_normalize_span(finding.claim) not in normalized_candidate for finding in findings)
 
 
 def _json_object(content: str) -> object:

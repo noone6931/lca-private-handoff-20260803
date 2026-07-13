@@ -103,7 +103,7 @@ class _InventedDesignReviewerClient:
                                 "confidence": 0.99,
                                 "findings": [
                                     {
-                                        "claim": "PayBillRecordInfoVo and SF prefix already exist",
+                                        "claim": "现有 PayBillRecordInfoVo 使用 SF 前缀，并包含多级审批和退款复用",
                                         "issue": "invented repository types and numbering behavior",
                                         "action": "move them to proposal or pending confirmation",
                                     }
@@ -168,6 +168,28 @@ class _ReviewerTimeoutClient(_InvalidReviewerClient):
         return super().chat(messages, tools, timeout=timeout)
 
 
+class _ParaphraseReviewerClient(_InvalidReviewerClient):
+    def chat(self, messages, tools, *, timeout=None):
+        if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages):
+            return type(
+                "Response",
+                (),
+                {"message": {"content": '{"verdict":"revise","confidence":0.9,"findings":[{"claim":"PayServiceImpl is the verified owner","issue":"unsupported","action":"qualify"}],"reason":"missing binding"}'}},
+            )()
+        return type("Response", (), {"message": {"content": "已证实真实 owner 是 PayServiceImpl。"}})()
+
+
+class _ReviewerXmlArtifactClient(_InvalidReviewerClient):
+    def chat(self, messages, tools, *, timeout=None):
+        if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages):
+            return type(
+                "Response",
+                (),
+                {"message": {"content": "<tool_call><function=read_file><parameter=path>secret</parameter></function></tool_call>"}},
+            )()
+        return super().chat(messages, tools, timeout=timeout)
+
+
 class _NoncompliantRewriteClient(_ReviewerFlowClient):
     def chat(self, messages, tools, *, timeout=None):
         is_reviewer = any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages)
@@ -180,9 +202,9 @@ class _NoncompliantRewriteClient(_ReviewerFlowClient):
         return type("Response", (), {"message": {"content": "已证实真实 owner 是 PayServiceImpl。"}})()
 
 
-def _config(workspace: Path) -> AgentConfig:
+def _config(workspace: Path, *, provider: str = "openai-compatible") -> AgentConfig:
     return AgentConfig(
-        provider="openai-compatible",
+        provider=provider,
         api_base_url="https://example.invalid/v1",
         api_key="token",
         model="model",
@@ -333,15 +355,31 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertEqual(runtime._last_run_summary["read_only_reviewer"]["verdicts"], {"pass": 1})
         self.assertEqual(runtime._last_run_summary["read_only_reviewer"]["rewrites"], 0)
 
-    def test_reviewer_protocol_and_timeout_are_unverified_terminal_outcomes(self) -> None:
-        for client, expected in ((_ReviewerProtocolClient, "protocol_error"), (_ReviewerTimeoutClient, "provider_error")):
+    def test_reviewer_protocol_timeout_and_markup_are_auditable_unverified_outcomes(self) -> None:
+        cases = (
+            (_ReviewerProtocolClient, "openai-compatible", "protocol_error", 1),
+            (_ReviewerTimeoutClient, "openai-compatible", "timeout", 0),
+            (_ReviewerXmlArtifactClient, "bailian", "protocol_error", 1),
+        )
+        for client, provider, expected, protocol_count in cases:
             with self.subTest(client=client.__name__), tempfile.TemporaryDirectory() as tmp:
                 client.calls = []
                 with patch("local_agent.agent.OpenAICompatibleClient", client):
-                    runtime = AgentRuntime(_config(Path(tmp).resolve()), show_tool_logs=False)
+                    runtime = AgentRuntime(_config(Path(tmp).resolve(), provider=provider), show_tool_logs=False)
                     answer = runtime.run("只读分析当前服务 owner 和影响范围，不要修改。")
                 self.assertIn("未完成/未验证", answer)
                 self.assertEqual(runtime._last_run_summary["read_only_reviewer"]["errors"], {expected: 1})
+                self.assertEqual(runtime._last_run_summary["provider_protocol_violations"], protocol_count)
+
+    def test_reviewer_paraphrase_finding_cannot_queue_a_rewrite(self) -> None:
+        _ParaphraseReviewerClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch("local_agent.agent.OpenAICompatibleClient", _ParaphraseReviewerClient):
+                runtime = AgentRuntime(_config(Path(tmp).resolve()), show_tool_logs=False)
+                answer = runtime.run("只读分析当前服务 owner 和影响范围，不要修改。")
+        self.assertIn("未完成/未验证", answer)
+        self.assertEqual(runtime._last_run_summary["read_only_reviewer"]["rewrites"], 0)
+        self.assertEqual(runtime._last_run_summary["read_only_reviewer"]["errors"], {"invalid_output": 1})
 
     def test_deadline_reserve_skips_reviewer_without_returning_unreviewed_draft(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

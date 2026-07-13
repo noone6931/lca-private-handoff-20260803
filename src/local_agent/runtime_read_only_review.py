@@ -6,7 +6,10 @@ from typing import Any, Protocol
 from .chat_runtime import call_chat_with_timeout
 from .explore_handoff import build_explore_handoff
 from .llm import LlmError
+from .llm import LlmTimeoutError
 from .provider_protocol import classify_provider_content_artifact
+from .provider_protocol import protocol_violation_payload
+from .read_only_reviewer import findings_are_exact_candidate_spans
 from .read_only_reviewer import ReviewerPhaseOutcome
 from .read_only_reviewer import parse_reviewer_result
 from .read_only_reviewer import reviewer_messages
@@ -51,8 +54,7 @@ class ReadOnlyReviewPhase:
             return ReviewerPhaseOutcome("not_applicable")
         if state.attempted:
             if state.rewrite_requested and state.findings:
-                prior = type("ReviewerResultView", (), {"findings": state.findings})()
-                if not rewrite_complies_with_review(candidate, prior):
+                if not rewrite_complies_with_review(candidate, state.findings):
                     return self._unverified("rewrite_noncompliant", "unsupported_claim_repeated")
             return ReviewerPhaseOutcome("pass")
         skip_reason = runtime._run.finalization_rewrite_skip_reason()
@@ -86,18 +88,18 @@ class ReadOnlyReviewPhase:
         try:
             response = call_chat_with_timeout(runtime._client, messages, [], timeout=timeout)
         except LlmError as exc:
-            return self._unverified("provider_error", type(exc).__name__)
+            return self._unverified("timeout" if isinstance(exc, LlmTimeoutError) else "provider_error", type(exc).__name__)
         message = getattr(response, "message", None)
         if not isinstance(message, dict):
             return self._unverified("protocol_error", "missing_message")
         tool_calls = message.get("tool_calls")
         if isinstance(tool_calls, list) and tool_calls:
-            return self._unverified("protocol_error", "structured_tool_calls")
+            return self._protocol_unverified("structured_tool_calls", tool_calls=tool_calls)
         artifact = getattr(response, "protocol_artifact", None)
         if artifact is None:
             artifact = classify_provider_content_artifact(runtime._config.provider, message.get("content"))
         if artifact is not None:
-            return self._unverified("protocol_error", "provider_markup_artifact")
+            return self._protocol_unverified(artifact.kind, artifact=artifact)
         try:
             result = parse_reviewer_result(message.get("content"))
         except (TypeError, ValueError) as exc:
@@ -115,6 +117,8 @@ class ReadOnlyReviewPhase:
             return ReviewerPhaseOutcome("pass")
         if result.verdict == "unverified":
             return self._unverified("reviewer_unverified", result.reason, result=result)
+        if not findings_are_exact_candidate_spans(candidate, result.findings):
+            return self._unverified("invalid_output", "finding_claim_is_not_an_exact_candidate_span", result=result)
         if not runtime._run.queue_finalization_rewrite(kind="read_only_reviewer"):
             return self._unverified(
                 "rewrite_unavailable",
@@ -125,6 +129,23 @@ class ReadOnlyReviewPhase:
         runtime._run.collector.record_read_only_review_rewrite()
         runtime._session.append("read_only_reviewer", {"event": "rewrite_queued", "verdict": result.verdict})
         return ReviewerPhaseOutcome("rewrite", rewrite_message=reviewer_rewrite_message(result))
+
+    def _protocol_unverified(self, artifact_kind: str, *, tool_calls: list[object] = (), artifact: Any = None) -> ReviewerPhaseOutcome:
+        runtime = self._runtime
+        runtime._run.collector.record_provider_protocol_violation(
+            phase="read_only_reviewer",
+            artifact_kind=artifact_kind,
+            suppressed_tool_calls=len(tool_calls),
+        )
+        payload = protocol_violation_payload(
+            phase="read_only_reviewer",
+            artifact_kind=artifact_kind,
+            tool_calls=tool_calls,
+            artifact=artifact,
+        )
+        runtime._session.append("read_only_reviewer_protocol_violation", payload)
+        runtime._events.emit("ErrorEvent", {"kind": "read_only_reviewer_protocol_violation", **payload})
+        return self._unverified("protocol_error", artifact_kind)
 
     def _review_timeout(self) -> float | None:
         remaining = self._runtime._provider_context_phase.remaining_timeout(self._runtime._run.deadline_monotonic)
