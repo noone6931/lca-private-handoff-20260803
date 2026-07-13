@@ -56,6 +56,27 @@ class ToolChoiceQueueTests(unittest.TestCase):
         self.assertEqual(decision.successful_observations, 0)
         self.assertEqual(decision.missing_roots, (str(root),))
 
+    def test_typed_no_match_counts_as_progress_but_not_direct_root_coverage(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            results = (
+                ToolResultSummary(
+                    "search_code",
+                    "No matches.",
+                    useless=True,
+                    metadata={"negative_evidence_type": "content_no_match"},
+                ),
+                ToolResultSummary("lsp_symbols", "No symbols.", useless=True),
+                ToolResultSummary("read_file", "Tool call was not executed", is_error=True, path=str(root / "App.java")),
+            )
+            decision = evaluate_read_only_explore(
+                profile="owner_impact", tool_results=results, code_roots=(str(root),)
+            )
+
+        self.assertEqual(decision.observation_calls, 3)
+        self.assertEqual(decision.successful_observations, 1)
+        self.assertEqual(decision.missing_roots, (str(root),))
+
     def test_owner_explore_projects_typed_search_candidates_as_read_only_schema(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp).resolve()

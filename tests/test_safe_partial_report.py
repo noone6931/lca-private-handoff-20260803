@@ -108,6 +108,13 @@ class SafePartialReportTests(unittest.TestCase):
         self.assertIn("未完成/未验证", report.content)
         self.assertEqual(report.observation_count, 0)
 
+    def test_timeout_partial_is_not_mislabelled_as_a_reviewer_rejection(self) -> None:
+        report = build_safe_partial_report(_handoff(), reason="llm_timeout")
+
+        self.assertIn("有界运行提前终止", report.content)
+        self.assertIn("termination=llm_timeout", report.content)
+        self.assertNotIn("候选草稿未通过独立证据审查", report.content)
+
 
 if __name__ == "__main__":
     unittest.main()

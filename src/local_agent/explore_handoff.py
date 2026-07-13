@@ -38,7 +38,7 @@ class ClaimEvidenceItem:
     summary: str
     count: int = 1
 
-    def to_dict(self) -> dict[str, str]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "classification": self.classification,
             "tool": self.tool,

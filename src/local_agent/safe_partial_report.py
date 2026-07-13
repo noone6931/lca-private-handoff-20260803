@@ -34,10 +34,18 @@ def build_safe_partial_report(
     missing = [item for item in handoff.items if item.classification == "unlocated"]
     limitations = [item for item in handoff.items if item.classification == "inspection_failure"]
     categories = tuple(sorted({_finding_category(finding) for finding in findings if _finding_category(finding)}))
+    reviewer_rejected = reason in {"second_review_nonpass", "rewrite_noncompliant"}
+    title = "候选草稿未通过独立证据审查" if reviewer_rejected else "有界运行提前终止"
+    introduction = (
+        "以下内容仅来自本轮 Runtime 已记录的工具观察；未返回被拒绝草稿中的新增表名、接口、字段、Owner 或数值推断。"
+        if reviewer_rejected
+        else "以下内容仅来自本轮 Runtime 已记录的工具观察；运行在形成或审查候选前提前终止，未返回任何未审查候选草稿。"
+    )
     lines = [
-        "## 安全部分交付（候选草稿未通过独立证据审查）",
+        f"## 安全部分交付（{title}）",
         "",
-        "以下内容仅来自本轮 Runtime 已记录的工具观察；未返回被拒绝草稿中的新增表名、接口、字段、Owner 或数值推断。",
+        introduction,
+        f"- termination={reason}",
         "",
         "### 已验证工具观察（不是 Owner/现有实现结论）",
     ]
@@ -55,11 +63,13 @@ def build_safe_partial_report(
         lines.extend(_render_limitation(item) for item in limitations)
     else:
         lines.append("- 本轮没有额外的工具失败观察。")
-    lines.extend(["", "### 被审查拒绝的候选类别"])
-    if categories:
+    lines.extend(["", "### 被审查拒绝的候选类别" if reviewer_rejected else "### 终止边界"])
+    if reviewer_rejected and categories:
         lines.extend(f"- {category}" for category in categories)
-    else:
+    elif reviewer_rejected:
         lines.append("- 独立审查未形成可安全释放的结论，原因已记录为：" + reason + "。")
+    else:
+        lines.append("- Runtime 未把提前终止前的候选草稿作为最终结论释放。")
     lines.extend(
         [
             "",

@@ -59,8 +59,10 @@ def evaluate_read_only_explore(
     results = tuple(tool_results)
     # Attempts intentionally include errors and synthetic/schema-rejected
     # observations: they consume the hard budget so a provider cannot loop by
-    # varying invalid calls. Successful observations are reported separately
-    # and are the only facts that can support a coverage conclusion.
+    # varying invalid calls. Progress is reported separately: it accepts a
+    # real successful observation or a typed no-match, never an error or a
+    # suppressed/not-executed result. Direct root coverage remains stricter
+    # and only accepts a successful read below that root.
     observation_calls = sum(
         1
         for result in results
@@ -70,9 +72,8 @@ def evaluate_read_only_explore(
         1
         for result in results
         if result.name in OBSERVATION_TOOLS
-        and not result.is_error
-        and not result.useless
         and result.metadata.get("evidence_origin") != "session_cached"
+        and _is_typed_explore_progress(result)
     )
     soft_budget = max(2, len(roots) * SOFT_EXPLORE_CALLS_PER_ROOT)
     hard_budget = min(MAX_OWNER_DESIGN_EXPLORE_CALLS, max(4, len(roots) * HARD_EXPLORE_CALLS_PER_ROOT))
@@ -110,6 +111,20 @@ def evaluate_read_only_explore(
         hard_budget=hard_budget,
         read_candidates=read_candidates,
     )
+
+
+def _is_typed_explore_progress(result: ToolResultSummary) -> bool:
+    if result.is_error:
+        return False
+    if result.metadata.get("suppressed") or "tool call was not executed" in result.content.lower():
+        return False
+    if not result.useless:
+        return True
+    return result.metadata.get("negative_evidence_type") in {
+        "content_no_match",
+        "path_no_match",
+        "exact_path_missing",
+    }
 
 
 def _covered_roots(results: Iterable[ToolResultSummary], roots: tuple[str, ...]) -> set[str]:
