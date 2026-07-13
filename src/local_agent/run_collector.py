@@ -58,6 +58,10 @@ class RunStats:
     pre_review_audit_rounds: int = 0
     pre_review_audit_categories: dict[str, int] = field(default_factory=dict)
     pre_review_audit_exhausted: int = 0
+    safe_partial_reports: int = 0
+    safe_partial_observations: int = 0
+    safe_partial_missing: int = 0
+    safe_partial_rejected_categories: dict[str, int] = field(default_factory=dict)
     tool_counts: dict[str, int] = field(default_factory=dict)
     guard_start: dict[str, int] = field(default_factory=dict)
     steer_start: dict[str, int] = field(default_factory=dict)
@@ -282,6 +286,17 @@ class RunCollector:
                 self._stats.pre_review_audit_categories.get(category, 0) + 1
             )
 
+    def record_safe_partial_report(self, *, observations: int, missing: int, rejected_categories: tuple[str, ...]) -> None:
+        if self._stats is None:
+            return
+        self._stats.safe_partial_reports += 1
+        self._stats.safe_partial_observations += observations
+        self._stats.safe_partial_missing += missing
+        for category in rejected_categories:
+            self._stats.safe_partial_rejected_categories[category] = (
+                self._stats.safe_partial_rejected_categories.get(category, 0) + 1
+            )
+
     def finish(
         self,
         reason: str,
@@ -357,6 +372,12 @@ class RunCollector:
                 "rounds": stats.pre_review_audit_rounds,
                 "categories": dict(sorted(stats.pre_review_audit_categories.items())),
                 "exhausted": stats.pre_review_audit_exhausted,
+            },
+            "safe_partial_report": {
+                "emitted": stats.safe_partial_reports,
+                "observations": stats.safe_partial_observations,
+                "missing": stats.safe_partial_missing,
+                "rejected_categories": dict(sorted(stats.safe_partial_rejected_categories.items())),
             },
             "tool_counts": dict(sorted(stats.tool_counts.items())),
             "guard_hits": {key: value for key, value in guard_hits.items() if value},

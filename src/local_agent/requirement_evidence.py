@@ -21,6 +21,15 @@ class RequirementEvidence:
     origin: str = "current_run"
 
 
+@dataclass(frozen=True)
+class DocumentLocator:
+    """A path-bound locator into a human-authored document."""
+
+    path: str
+    kind: str
+    value: str
+
+
 def is_requirement_source_path(path: str, candidate_paths: tuple[Path, ...] = ()) -> bool:
     if path in {str(candidate) for candidate in candidate_paths}:
         return True
@@ -59,7 +68,7 @@ def render_pinned_requirement_evidence(evidence: list[RequirementEvidence]) -> s
         "A root_local requirement or rule constrains only its source root. Do not infer that sibling roots must delete, "
         "modify, or omit code unless the user explicitly requested cross-root synthesis.",
         "Do not turn later-planning items into current scope. For every requirement fact in the final answer, cite "
-        "the real requirement path and line number in the form `path:line`; label new design proposals as 推断/建议.",
+        "the real requirement path plus a line number or document locator (heading/section); label new design proposals as 推断/建议.",
     ]
     for item in evidence:
         root = item.root or "(unknown root)"
@@ -82,5 +91,30 @@ def _mentions_requirement_facts(content: str) -> bool:
 
 
 def _has_line_citation(content: str, path: str) -> bool:
-    name = re.escape(Path(path).name)
-    return re.search(rf"{name}(?::|#L)\d+", content, flags=re.IGNORECASE) is not None
+    return bool(parse_document_locators(content, path))
+
+
+def parse_document_locators(content: str, path: str) -> tuple[DocumentLocator, ...]:
+    """Find locators that are explicitly bound to one cited document path.
+
+    A bare ``P49`` or heading is not a citation: callers must name the source
+    file beside the locator so a document-only answer stays auditable.
+    """
+
+    filename = Path(path).name
+    if not filename:
+        return ()
+    prefix = rf"`?{re.escape(filename)}`?\s*"
+    patterns = (
+        ("line", prefix + r"(?:#L|:)\s*(\d+)"),
+        ("page", prefix + r"(?:P|page|页)\s*(\d+)"),
+        ("section", prefix + r"(?:#|§|章节|章|节|section|heading)\s*([^\n`，,。;；:：]+)"),
+        ("heading", prefix + r"(?:标题|title)\s*[:：]?\s*([^\n`，,。;；:：]+)"),
+    )
+    found: list[DocumentLocator] = []
+    for kind, pattern in patterns:
+        for match in re.finditer(pattern, content, flags=re.IGNORECASE):
+            value = match.group(1).strip()
+            if value:
+                found.append(DocumentLocator(filename, kind, value))
+    return tuple(found)

@@ -75,6 +75,7 @@ class ToolChoiceQueueTests(unittest.TestCase):
         self.assertEqual(decision.allowed_tool_names, DOCUMENT_ONLY_TOOL_NAMES)
         self.assertFalse(decision.steering_required)
         self.assertNotIn("search_code", decision.allowed_tool_names)
+        self.assertIn("inspect_image", decision.allowed_tool_names)
 
     def test_observed_negative_prompt_requires_glob_when_available(self) -> None:
         decision = evaluate_tool_choice_state(
@@ -473,7 +474,9 @@ class ToolChoiceQueueTests(unittest.TestCase):
         self.assertEqual(before_read.rule_id, "requirement_document_read")
         self.assertEqual(before_read.missing_requirements, ("requirement_document_read",))
         self.assertIn("read_file", before_read.allowed_tool_names)
+        self.assertIn("inspect_image", before_read.allowed_tool_names)
         self.assertNotIn("apply_patch", before_read.allowed_tool_names)
+        self.assertTrue(any("inspect_image" in hint and '"path"' in hint for hint in before_read.tool_call_hints))
 
         after_read = evaluate_tool_choice_state(
             task_kind="allowed_dir",

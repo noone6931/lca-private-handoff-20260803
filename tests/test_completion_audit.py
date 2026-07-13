@@ -67,6 +67,47 @@ class CompletionAuditTests(unittest.TestCase):
         self.assertFalse(result.passed)
         self.assertTrue(any("repository/code inspection" in item.reason for item in result.missing_items))
 
+    def test_image_metadata_read_does_not_count_as_a_visual_observation(self) -> None:
+        request = "只根据需求文档和示例图分析需求；不要检查代码。"
+        result = audit_completion(
+            generate_requirement_contract(request),
+            request=request,
+            final_content="示例图展示了结算字段（example.png:1）。",
+            tool_results=[
+                ToolResultSummary(
+                    "read_file",
+                    "Image file metadata: example.png (image/png, 1024 bytes). Use inspect_image.",
+                    path="example.png",
+                    metadata={"image_metadata": True},
+                )
+            ],
+            source_paths=["example.png"],
+            open_todos=[],
+        )
+
+        self.assertFalse(result.passed)
+        self.assertTrue(any("Markdown/HTML" in item.reason for item in result.missing_items))
+
+    def test_successful_image_inspection_is_a_document_domain_observation(self) -> None:
+        request = "只根据需求文档和示例图分析需求；不要检查代码。"
+        result = audit_completion(
+            generate_requirement_contract(request),
+            request=request,
+            final_content="图片观察：example.png 显示结算字段；本结论不判断系统归属。",
+            tool_results=[
+                ToolResultSummary(
+                    "inspect_image",
+                    "[image observation: example.png#tag] Visible settlement fields.",
+                    path="example.png",
+                    metadata={"image_observation": True},
+                )
+            ],
+            source_paths=["example.png"],
+            open_todos=[],
+        )
+
+        self.assertTrue(result.passed)
+
     def test_read_only_answer_requires_traceable_evidence_and_status_labels(self) -> None:
         contract = generate_requirement_contract("只读代码，请根据源码证据说明登录密码在哪里校验。不要修改文件。")
 

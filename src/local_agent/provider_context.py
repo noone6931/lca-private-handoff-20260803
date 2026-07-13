@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import time
 from typing import Any, Protocol
@@ -31,7 +32,7 @@ from .path_rules import candidate_paths_for_path_rules, matching_path_rule_conte
 from .planner import render_planner_explore_context
 from .requirement_evidence import render_pinned_requirement_evidence
 from .runtime_prompt import _latest_user_content, _messages_with_runtime_context
-from .tools.base import tool_state_dir
+from .tools.base import VisionInspectionUnavailableError, tool_state_dir
 
 
 class ProviderRuntimePort(Protocol):
@@ -63,6 +64,23 @@ class ProviderContextPhase:
 
     def __init__(self, runtime: ProviderRuntimePort) -> None:
         self._runtime = runtime
+
+    def inspect_image(self, _path: Any, mime_type: str, raw: bytes, question: str) -> str:
+        """Run a one-shot vision request; only its text observation leaves this phase."""
+
+        if not str(self._runtime._config.vision_model or "").strip():
+            raise VisionInspectionUnavailableError(
+                "AI_VISION_MODEL is not configured; the active text model is not assumed to accept images."
+            )
+        inspector = getattr(self._runtime._client, "inspect_image", None)
+        if not callable(inspector):
+            raise VisionInspectionUnavailableError("the active provider client has no inspect_image capability")
+        return inspector(
+            image_base64=base64.b64encode(raw).decode("ascii"),
+            mime_type=mime_type,
+            question=question,
+            timeout=self.remaining_timeout(self._runtime._run.deadline_monotonic),
+        )
 
     def messages_for_model(self, deadline: float | None = None) -> list[dict[str, Any]]:
         runtime = self._runtime

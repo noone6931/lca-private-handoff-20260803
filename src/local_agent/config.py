@@ -48,6 +48,7 @@ class AgentConfig:
     summary_mode: str = "auto"
     memory_consolidation: str = "off"
     memory_scope: str = "state"
+    vision_model: str = ""
 
 
 def load_config(
@@ -105,6 +106,9 @@ def load_config(
         or provider_defaults.get("model")
         or ""
     )
+    resolved_vision_model = str(
+        file_config.get("vision_model") or os.environ.get("AI_VISION_MODEL") or ""
+    ).strip()
     tools_config = _tools_config(file_config)
     raw_approval_mode = (
         approval_mode
@@ -231,6 +235,7 @@ def load_config(
         summary_mode=resolved_summary_mode,
         memory_consolidation=resolved_memory_consolidation,
         memory_scope=resolved_memory_scope,
+        vision_model=resolved_vision_model,
     )
 
 

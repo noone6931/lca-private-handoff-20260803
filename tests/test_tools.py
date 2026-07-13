@@ -14,8 +14,8 @@ from local_agent.lsp.client import close_all_clients
 from local_agent.lsp.config import LspServerConfig
 from local_agent.patch.anchored import hash_text
 from local_agent.tools import create_default_registry
-from local_agent.tools.base import Tool, ToolContext, ToolRegistry, ToolResult
-from local_agent.tools.files import file_tools, patch_file, read_file, rollback_patch, write_file
+from local_agent.tools.base import Tool, ToolContext, ToolRegistry, ToolResult, VisionInspectionUnavailableError
+from local_agent.tools.files import file_tools, inspect_image, patch_file, read_file, rollback_patch, write_file
 from local_agent.tools.git import capture_git_baseline, git_diff, git_status
 from local_agent.tools.interaction import ask_user
 from local_agent.tools.lsp import lsp_definition, lsp_diagnostics, lsp_references, lsp_status, lsp_symbols, lsp_tools
@@ -416,6 +416,124 @@ while True:
 
 
 class ToolTests(unittest.TestCase):
+    def test_image_read_returns_metadata_then_inspection_keeps_bytes_out_of_result(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            image = workspace / "example.png"
+            raw = b"\x89PNG\r\n\x1a\n" + b"visible-image-bytes"
+            image.write_bytes(raw)
+            seen: list[tuple[str, str, bytes, str]] = []
+
+            def inspect(path: Path, mime: str, data: bytes, question: str) -> str:
+                seen.append((str(path), mime, data, question))
+                return "The image contains a settlement example."
+
+            context = ToolContext(workspace=workspace, approval_mode="yolo", vision_inspector=inspect)
+            metadata = read_file({"path": "example.png"}, context)
+            observation = inspect_image({"path": "example.png", "question": "What is visible?"}, context)
+
+        self.assertFalse(metadata.is_error)
+        self.assertTrue(metadata.metadata["image_metadata"])
+        self.assertIn("inspect_image", metadata.content)
+        self.assertFalse(observation.is_error)
+        self.assertIn("settlement example", observation.content)
+        self.assertNotIn("visible-image-bytes", observation.content)
+        self.assertEqual(seen[0][1], "image/png")
+        self.assertEqual(seen[0][2], raw)
+
+    def test_image_inspection_rejects_escape_oversize_and_unavailable_vision(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            outside = Path(tmp).parent / "outside.png"
+            try:
+                outside.write_bytes(b"\x89PNG\r\n\x1a\n")
+                unavailable = inspect_image({"path": str(outside)}, ToolContext(workspace=workspace, approval_mode="yolo"))
+                self.assertTrue(unavailable.is_error)
+                self.assertIn("outside", unavailable.content)
+            finally:
+                outside.unlink(missing_ok=True)
+
+            image = workspace / "large.png"
+            image.write_bytes(b"\x89PNG\r\n\x1a\n" + b"x" * (8 * 1024 * 1024))
+            too_large = inspect_image({"path": "large.png"}, ToolContext(workspace=workspace, approval_mode="yolo"))
+            self.assertTrue(too_large.is_error)
+            self.assertIn("too large", too_large.content)
+
+            small = workspace / "small.png"
+            small.write_bytes(b"\x89PNG\r\n\x1a\n")
+            no_vision = inspect_image({"path": "small.png"}, ToolContext(workspace=workspace, approval_mode="yolo"))
+            self.assertTrue(no_vision.is_error)
+            self.assertTrue(no_vision.metadata["image_inspection_unavailable"])
+
+    def test_registry_applies_read_approval_to_image_inspection(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            (workspace / "example.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+            invoked: list[str] = []
+            registry = ToolRegistry(file_tools())
+            result = registry.execute(
+                "inspect_image",
+                {"path": "example.png"},
+                ToolContext(
+                    workspace=workspace,
+                    approval_mode="yolo",
+                    tool_approval={"inspect_image": "deny"},
+                    vision_inspector=lambda *_args: invoked.append("vision") or "unexpected",
+                ),
+            )
+
+        self.assertTrue(result.is_error)
+        self.assertEqual(result.metadata["denial_kind"], "approval")
+        self.assertEqual(invoked, [])
+
+    def test_large_image_read_still_returns_metadata_before_text_limit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            image = workspace / "large.png"
+            image.write_bytes(b"\x89PNG\r\n\x1a\n" + b"x" * (300 * 1024))
+
+            result = read_file({"path": "large.png"}, ToolContext(workspace=workspace, approval_mode="yolo"))
+
+        self.assertFalse(result.is_error)
+        self.assertTrue(result.metadata["image_metadata"])
+        self.assertEqual(result.metadata["size_bytes"], 300 * 1024 + 8)
+
+    def test_oversize_image_metadata_does_not_hash_or_read_the_whole_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            image = workspace / "oversize.png"
+            image.write_bytes(b"\x89PNG\r\n\x1a\n" + b"x" * (8 * 1024 * 1024 + 1))
+            with patch("local_agent.tools.files._sha256_file") as digest:
+                result = read_file({"path": "oversize.png"}, ToolContext(workspace=workspace, approval_mode="yolo"))
+
+        self.assertFalse(result.is_error)
+        self.assertTrue(result.metadata["image_metadata"])
+        self.assertFalse(result.metadata["inspect_image_available"])
+        self.assertFalse(result.metadata["sha256_computed"])
+        self.assertNotIn("sha256", result.metadata)
+        self.assertIn("exceeds", result.content)
+        digest.assert_not_called()
+
+    def test_vision_capability_failure_is_typed_for_tool_results(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            (workspace / "example.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+            calls: list[str] = []
+
+            def unavailable(*_args: object) -> str:
+                calls.append("provider")
+                raise VisionInspectionUnavailableError("AI_VISION_MODEL is not configured")
+
+            result = inspect_image(
+                {"path": "example.png"},
+                ToolContext(workspace=workspace, approval_mode="yolo", vision_inspector=unavailable),
+            )
+
+        self.assertTrue(result.is_error)
+        self.assertTrue(result.metadata["image_inspection_unavailable"])
+        self.assertIn("AI_VISION_MODEL", result.content)
+        self.assertEqual(calls, ["provider"])
+
     def test_registry_preapproval_projection_never_requires_background_prompt(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             registry = create_default_registry()

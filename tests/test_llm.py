@@ -91,6 +91,70 @@ class LlmClientTests(unittest.TestCase):
         self.assertNotIn("tools", captured_payload)
         self.assertNotIn("tool_choice", captured_payload)
 
+    def test_inspect_image_uses_a_vision_model_and_keeps_image_payload_in_provider_request(self) -> None:
+        captured_payload: dict = {}
+
+        def fake_urlopen(request, timeout):
+            captured_payload.update(json.loads(request.data.decode("utf-8")))
+            body = json.dumps({"choices": [{"message": {"content": "A visible example."}}]}).encode("utf-8")
+            return _FakeResponse(body)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="text-model",
+                vision_model="qwen-vl-max",
+                workspace=Path(tmp).resolve(),
+            )
+            client = OpenAICompatibleClient(config)
+            with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+                observation = client.inspect_image(
+                    image_base64="cGl4ZWxz",
+                    mime_type="image/png",
+                    question="Describe this image.",
+                )
+
+        self.assertEqual(observation, "A visible example.")
+        self.assertEqual(captured_payload["model"], "qwen-vl-max")
+        self.assertNotIn("tools", captured_payload)
+        content = captured_payload["messages"][0]["content"]
+        self.assertEqual(content[0]["text"], "Describe this image.")
+        self.assertEqual(content[1]["image_url"]["url"], "data:image/png;base64,cGl4ZWxz")
+
+    def test_inspect_image_requires_a_vision_capability(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="text-model",
+                workspace=Path(tmp).resolve(),
+            )
+            with self.assertRaisesRegex(LlmError, "vision-capable"):
+                OpenAICompatibleClient(config).inspect_image(
+                    image_base64="cGl4ZWxz",
+                    mime_type="image/png",
+                    question="Describe this image.",
+                )
+
+    def test_inspect_image_does_not_infer_vision_capability_from_the_text_model_name(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="qwen-vl-max",
+                workspace=Path(tmp).resolve(),
+            )
+            with self.assertRaisesRegex(LlmError, "explicit vision model"):
+                OpenAICompatibleClient(config).inspect_image(
+                    image_base64="cGl4ZWxz",
+                    mime_type="image/png",
+                    question="Describe this image.",
+                )
+
     def test_bailian_response_exposes_known_text_tool_envelope_as_artifact(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             config = AgentConfig(

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import difflib
+import hashlib
 import json
 from datetime import datetime, timezone
 from pathlib import Path
@@ -12,10 +13,11 @@ from local_agent.patch.anchored import hash_text
 from local_agent.patch.anchored import PatchError
 from local_agent.patch.anchored import resolve_workspace_path
 
-from .base import Tool, ToolContext, ToolResult, tool_state_dir
+from .base import Tool, ToolContext, ToolResult, VisionInspectionUnavailableError, tool_state_dir
 
 MAX_READ_BYTES = 256 * 1024
 MAX_READ_LINES = 400
+MAX_INSPECT_IMAGE_BYTES = 8 * 1024 * 1024
 
 
 def file_tools() -> list[Tool]:
@@ -38,6 +40,21 @@ def file_tools() -> list[Tool]:
                 "additionalProperties": False,
             },
             handler=read_file,
+        ),
+        Tool(
+            name="inspect_image",
+            description=(
+                "Inspect a PNG, JPEG, GIF, or WEBP image inside the workspace or an explicitly allowed directory. "
+                "It returns a text observation with path/hash metadata."
+            ),
+            tier="read",
+            input_schema={
+                "type": "object",
+                "properties": {"path": {"type": "string"}, "question": {"type": "string"}},
+                "required": ["path"],
+                "additionalProperties": False,
+            },
+            handler=inspect_image,
         ),
         Tool(
             name="apply_patch",
@@ -130,6 +147,33 @@ def read_file(args: dict[str, Any], context: ToolContext) -> ToolResult:
             },
         )
     file_size = path.stat().st_size
+    # Detect image content from a bounded header before applying the text-file
+    # limit. Images may be inspectable up to the separate vision-read limit.
+    with path.open("rb") as handle:
+        header = handle.read(16)
+    image_mime = detect_image_mime(header)
+    if image_mime is not None:
+        rel = display_workspace_path(context.workspace, path, context.allowed_dirs)
+        inspectable = file_size <= MAX_INSPECT_IMAGE_BYTES
+        metadata: dict[str, Any] = {
+            "image_metadata": True,
+            "mime_type": image_mime,
+            "size_bytes": file_size,
+            "path": rel,
+            "inspect_image_available": inspectable,
+            "sha256_computed": inspectable,
+        }
+        if inspectable:
+            metadata["sha256"] = _sha256_file(path)
+        inspection_hint = (
+            "Use inspect_image with this path to obtain a visual observation."
+            if inspectable
+            else f"inspect_image is unavailable because the file exceeds its {MAX_INSPECT_IMAGE_BYTES} byte limit."
+        )
+        return ToolResult(
+            f"Image file metadata: {rel} ({image_mime}, {file_size} bytes). {inspection_hint}",
+            metadata=metadata,
+        )
     if file_size > MAX_READ_BYTES:
         return ToolResult(
             f"File too large to read safely: {args['path']} is {file_size} bytes, limit is {MAX_READ_BYTES} bytes.",
@@ -166,6 +210,76 @@ def read_file(args: dict[str, Any], context: ToolContext) -> ToolResult:
         )
     rendered = "\n".join(rendered)
     return ToolResult(rendered)
+
+
+def inspect_image(args: dict[str, Any], context: ToolContext) -> ToolResult:
+    """Send one approved image read to a configured vision capability."""
+
+    try:
+        path = resolve_workspace_path(context.workspace, args["path"], context.allowed_dirs)
+    except PatchError as exc:
+        return ToolResult(str(exc), is_error=True)
+    if not path.exists() or not path.is_file():
+        return ToolResult(f"Image file not found: {args['path']}", is_error=True)
+    size = path.stat().st_size
+    if size > MAX_INSPECT_IMAGE_BYTES:
+        return ToolResult(
+            f"Image is too large to inspect safely: {args['path']} is {size} bytes, limit is {MAX_INSPECT_IMAGE_BYTES} bytes.",
+            is_error=True,
+        )
+    raw = path.read_bytes()
+    mime_type = detect_image_mime(raw)
+    if mime_type is None:
+        return ToolResult("inspect_image supports PNG, JPEG, GIF, and WEBP files detected from file content.", is_error=True)
+    if context.vision_inspector is None:
+        return ToolResult(
+            "Image inspection is unavailable: configure AI_VISION_MODEL with an explicit vision-capable model.",
+            is_error=True,
+            metadata={"image_inspection_unavailable": True, "mime_type": mime_type},
+        )
+    question = str(args.get("question") or "Describe relevant visible content and constraints without inventing unseen details.")
+    try:
+        observation = context.vision_inspector(path, mime_type, raw, question)
+    except VisionInspectionUnavailableError as exc:
+        return ToolResult(
+            f"Image inspection is unavailable: {exc}",
+            is_error=True,
+            metadata={"image_inspection_unavailable": True, "mime_type": mime_type},
+        )
+    except Exception as exc:  # noqa: BLE001 - provider failures remain tool observations.
+        return ToolResult(f"inspect_image unavailable: {type(exc).__name__}: {exc}", is_error=True)
+    rel = display_workspace_path(context.workspace, path, context.allowed_dirs)
+    digest = hashlib.sha256(raw).hexdigest()
+    return ToolResult(
+        f"[image observation: {rel}#{digest[:16]}]\n{observation}",
+        metadata={
+            "image_observation": True,
+            "mime_type": mime_type,
+            "size_bytes": size,
+            "path": rel,
+            "sha256": digest,
+        },
+    )
+
+
+def detect_image_mime(raw: bytes) -> str | None:
+    if raw.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if raw.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if raw.startswith((b"GIF87a", b"GIF89a")):
+        return "image/gif"
+    if len(raw) >= 12 and raw[:4] == b"RIFF" and raw[8:12] == b"WEBP":
+        return "image/webp"
+    return None
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        while chunk := handle.read(64 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def patch_file(args: dict[str, Any], context: ToolContext) -> ToolResult:

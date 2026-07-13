@@ -126,6 +126,7 @@ class ReviewerPhaseOutcome:
     rewrite_message: str = ""
     terminal_message: str = ""
     reason: str = ""
+    safe_partial_report: str = ""
 
 
 def should_review_read_only_candidate(contract: RequirementContract | None, request: str | None) -> bool:

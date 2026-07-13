@@ -173,6 +173,29 @@ class EvidenceLedgerTests(unittest.TestCase):
         self.assertEqual(ledger.source_evidence[0].root, str(additional.resolve()))
         self.assertIn("root-local", summary)
 
+    def test_image_observation_is_root_local_evidence_without_raw_image_bytes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            image = workspace / "requirements" / "example.png"
+            image.parent.mkdir()
+            image.write_bytes(b"\x89PNG\r\n\x1a\nnot-for-ledger")
+            ledger = EvidenceLedger()
+            record = ledger.record_tool(
+                name="inspect_image",
+                arguments={"path": "requirements/example.png"},
+                result=ToolResult(
+                    "[image observation: requirements/example.png#tag]\nVisible settlement fields.",
+                    metadata={"image_observation": True, "sha256": "digest"},
+                ),
+                workspace=workspace,
+                allowed_dirs=(),
+            )
+
+        self.assertIsNotNone(record)
+        self.assertEqual(record.tool, "inspect_image")
+        self.assertEqual(record.details["evidence_scope"], "root_local")
+        self.assertNotIn("not-for-ledger", record.summary)
+
     def test_lsp_and_search_evidence_keep_full_root_provenance(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             host = Path(tmp).resolve()

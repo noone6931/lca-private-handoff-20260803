@@ -468,9 +468,12 @@ def _document_requirement_items(
     document_reads = [
         result
         for result in tool_results
-        if result.name == "read_file"
+        if result.name in {"read_file", "inspect_image"}
         and not result.is_error
-        and str(result.path or "").lower().endswith((".md", ".html", ".htm"))
+        and (
+            result.name == "inspect_image"
+            or str(result.path or "").lower().endswith((".md", ".html", ".htm"))
+        )
     ]
     no_edits = not workspace_write_happened(tool_results)
     items: list[CompletionAuditItem] = []
@@ -679,7 +682,13 @@ def _has_unverified_status(content: str) -> bool:
 
 def _mentions_unread_artifact(content: str) -> bool:
     lowered = (content or "").lower()
-    return any(marker in lowered for marker in ("图片", "图像", "image", "artifact", "不可读", "无法读取", "cannot read", "unread"))
+    if any(marker in lowered for marker in ("不可读", "无法读取", "cannot read", "unread")):
+        return True
+    return re.search(
+        r"(?:图片|图像|image|artifact).{0,16}(?:未读|未读取|无法|cannot|unread)",
+        lowered,
+        flags=re.IGNORECASE,
+    ) is not None
 
 
 def _git_repository_conclusion(content: str) -> bool | None:

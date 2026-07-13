@@ -18,6 +18,35 @@ from local_agent.user_facts import UserFactsLayer
 
 
 class SessionEvidenceCacheTests(unittest.TestCase):
+    def test_image_observation_is_not_cached_or_serialized_as_session_source_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            image = root / "example.png"
+            image.write_bytes(b"\x89PNG\r\n\x1a\nsecret-pixels")
+            cache = SessionEvidenceCache()
+            entry = cache.capture(
+                tool_result=ToolResultSummary(
+                    "inspect_image",
+                    "[image observation: example.png#tag] visible fields",
+                    path="example.png",
+                    metadata={"image_observation": True},
+                ),
+                record=EvidenceRecord(
+                    "inspect_image",
+                    "example.png",
+                    "Image observation: visible fields.",
+                    details={"evidence_root": str(root), "resolved_path": str(image)},
+                ),
+                source_evidence=None,
+                requirement_evidence=None,
+                workspace_revision=0,
+                request="inspect image",
+                run_id="run-image",
+            )
+
+        self.assertIsNone(entry)
+        self.assertEqual(cache.snapshot()["entries"], 0)
+
     def test_named_session_restores_fresh_requirement_evidence_across_runtime_processes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp).resolve()

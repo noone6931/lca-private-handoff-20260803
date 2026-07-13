@@ -3000,7 +3000,10 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertIn("requirements.md:1", result)
         self.assertEqual(len(_DocumentOnlyRequirementClient.calls), 2)
         for call in _DocumentOnlyRequirementClient.calls:
-            self.assertEqual(_tool_names_from_schema_call(call["tools"]), {"ask_user", "list_files", "read_file"})
+            self.assertEqual(
+                _tool_names_from_schema_call(call["tools"]),
+                {"ask_user", "inspect_image", "list_files", "read_file"},
+            )
         self.assertEqual(runtime._last_run_summary["tool_counts"], {"read_file": 1})
         self.assertNotIn("read_only_evidence", runtime._last_run_summary["steering_counts"])
         self.assertNotIn("negative_existence", runtime._last_run_summary["steering_counts"])

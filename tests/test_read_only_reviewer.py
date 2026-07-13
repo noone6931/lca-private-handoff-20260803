@@ -854,9 +854,16 @@ class ReadOnlyReviewerTests(unittest.TestCase):
             with patch("local_agent.agent.OpenAICompatibleClient", _NoncompliantRewriteClient):
                 runtime = AgentRuntime(_config(Path(tmp).resolve()), show_tool_logs=False)
                 answer = runtime.run("只读分析当前服务 owner 和影响范围，不要修改。")
+                safe_events = runtime._session.load_event_payloads("safe_partial_report")
+        self.assertIn("安全部分交付", answer)
         self.assertIn("未完成/未验证", answer)
+        self.assertNotIn("PayServiceImpl 是已证实", answer)
         self.assertEqual(runtime._last_run_summary["termination_reason"], "read_only_reviewer_unverified")
         self.assertEqual(runtime._last_run_summary["read_only_reviewer"]["errors"], {"second_review_nonpass": 1})
+        self.assertEqual(runtime._last_run_summary["safe_partial_report"]["emitted"], 1)
+        self.assertNotIn("PayServiceImpl", str(runtime._last_run_summary["safe_partial_report"]))
+        self.assertEqual(len(safe_events), 1)
+        self.assertNotIn("PayServiceImpl", str(safe_events[0]))
 
     def test_deterministic_rewrite_after_first_review_must_pass_a_second_last_gate(self) -> None:
         _ReviewerLastGateClient.calls = []

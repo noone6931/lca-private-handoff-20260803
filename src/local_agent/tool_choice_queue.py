@@ -25,6 +25,7 @@ DEFAULT_TOOL_NAMES = frozenset(
         "git_diff",
         "git_status",
         "glob_files",
+        "inspect_image",
         "learn",
         "list_files",
         "lsp_definition",
@@ -63,8 +64,8 @@ CODE_EVIDENCE_ALLOWED_TOOL_NAMES = frozenset({"glob_files", "list_files", *CODE_
 # A document-only contract is narrower than a requirement document used as an
 # input to a code investigation. The former must not quietly widen into source
 # discovery after the first Markdown read.
-DOCUMENT_ONLY_TOOL_NAMES = frozenset({"ask_user", "list_files", "read_file"})
-REQUIREMENT_DOC_TOOL_NAMES = frozenset({"ask_user", "list_files", "read_file", "search_code"})
+DOCUMENT_ONLY_TOOL_NAMES = frozenset({"ask_user", "list_files", "read_file", "inspect_image"})
+REQUIREMENT_DOC_TOOL_NAMES = frozenset({"ask_user", "inspect_image", "list_files", "read_file", "search_code"})
 WORKSPACE_INVENTORY_TOOL_NAMES = frozenset({"glob_files", "list_files", "read_file"})
 WORKSPACE_INVENTORY_DISCOVERY_TOOL_NAMES = frozenset({"glob_files"})
 MAX_WORKSPACE_INVENTORY_DISCOVERY_CALLS_PER_ROOT = 2
@@ -414,6 +415,7 @@ def evaluate_tool_choice_state(
             rule_id="document_only_requirement_analysis",
             missing_requirements=() if has_document_read else ("requirement_document_read",),
             preferred_tool_names=("read_file",),
+            tool_call_hints=_document_read_tool_hints(),
         )
 
     negative_discovery = _negative_discovery_decision(prompt, results, allowed_tools)
@@ -441,6 +443,7 @@ def evaluate_tool_choice_state(
             rule_id="requirement_document_read",
             missing_requirements=("requirement_document_read",),
             preferred_tool_names=("read_file",),
+            tool_call_hints=_document_read_tool_hints(),
         )
 
     explore_decision = evaluate_read_only_explore(
@@ -787,6 +790,13 @@ def _workspace_inventory_decision(
 
 def _allowed_subset(candidates: Iterable[str], allowed_tools: frozenset[str]) -> frozenset[str]:
     return frozenset(name for name in candidates if name in allowed_tools)
+
+
+def _document_read_tool_hints() -> tuple[str, ...]:
+    return (
+        'Use read_file with {"path":"<authorized document path>"}.',
+        'For a listed image, use inspect_image with {"path":"<authorized image path>","question":"<focused question>"}; do not pass a directory or image bytes.',
+    )
 
 
 def _tool_name_set(tool_names: Iterable[str] | None, results: tuple[ToolResultSummary, ...]) -> set[str]:

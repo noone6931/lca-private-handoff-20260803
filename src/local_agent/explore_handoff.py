@@ -117,7 +117,7 @@ def build_explore_handoff(
     record_items = _bounded_per_root(
         (
             ClaimEvidenceItem(
-                "unlocated" if item.status in {"content_no_match", "path_no_match", "exact_path_missing", "no_match", "incomplete"} else "observed_candidate",
+                "unlocated" if item.status in {"content_no_match", "path_no_match", "exact_path_missing", "no_match", "incomplete"} else "inspection_failure" if item.status == "error" else "observed_candidate",
                 item.tool, item.subject,
                 str(item.details.get("evidence_root_label") or item.details.get("evidence_root") or "(unknown)"),
                 str(item.details.get("evidence_scope") or "(unknown)"), item.status, _clip(item.summary),
@@ -130,7 +130,9 @@ def build_explore_handoff(
         ClaimEvidenceItem(
             (
                 "unlocated"
-                if item.useless or item.is_error
+                if item.useless
+                else "inspection_failure"
+                if item.is_error
                 else "direct_binding"
                 if item.name in {"lsp_definition", "lsp_references"}
                 and bool(item.metadata.get("evidence_paths"))

@@ -22,6 +22,7 @@ from .read_only_reviewer import reviewer_output_tool_schema
 from .read_only_reviewer import reviewer_repair_messages
 from .read_only_reviewer import reviewer_rewrite_message
 from .read_only_reviewer import should_review_read_only_candidate
+from .safe_partial_report import build_safe_partial_report
 
 
 MAX_REVIEWER_TIMEOUT_SECONDS = 20.0
@@ -183,12 +184,13 @@ class ReadOnlyReviewPhase:
         if result.verdict == "pass":
             return ReviewerPhaseOutcome("pass")
         if rewrite_round:
-            return self._unverified("second_review_nonpass", result.verdict, result=result)
+            return self._unverified("second_review_nonpass", result.verdict, result=result, handoff=handoff)
         if not runtime._run.queue_finalization_rewrite(kind="read_only_reviewer"):
             return self._unverified(
                 "rewrite_unavailable",
                 runtime._run.finalization_rewrite_skip_reason() or "finalization_limit",
                 result=result,
+                handoff=handoff,
             )
         state.rewrite_requested = True
         runtime._run.collector.record_read_only_review_rewrite()
@@ -240,7 +242,14 @@ class ReadOnlyReviewPhase:
         remaining = self._runtime._provider_context_phase.remaining_timeout(self._runtime._run.deadline_monotonic)
         return remaining is None or remaining > 0.1
 
-    def _unverified(self, reason: str, detail: str, *, result: Any = None) -> ReviewerPhaseOutcome:
+    def _unverified(
+        self,
+        reason: str,
+        detail: str,
+        *,
+        result: Any = None,
+        handoff: Any = None,
+    ) -> ReviewerPhaseOutcome:
         runtime = self._runtime
         state = runtime._run.read_only_review
         state.verdict = "unverified"
@@ -253,11 +262,34 @@ class ReadOnlyReviewPhase:
             {"event": "unverified", "reason": reason, "detail": detail},
         )
         runtime._events.emit("ErrorEvent", {"kind": "read_only_reviewer", "reason": reason})
+        safe_partial_report = ""
+        if handoff is not None:
+            partial = build_safe_partial_report(
+                handoff,
+                state.findings,
+                reason=reason,
+            )
+            safe_partial_report = partial.content
+            runtime._run.collector.record_safe_partial_report(
+                observations=partial.observation_count,
+                missing=partial.missing_count,
+                rejected_categories=partial.rejected_categories,
+            )
+            runtime._session.append(
+                "safe_partial_report",
+                {
+                    "reason": reason,
+                    "observations": partial.observation_count,
+                    "missing": partial.missing_count,
+                    "rejected_categories": list(partial.rejected_categories),
+                },
+            )
         return ReviewerPhaseOutcome(
             "unverified",
-            terminal_message=(
+            terminal_message=safe_partial_report or (
                 "未完成/未验证：独立只读证据审查未能确认该候选答复。"
                 f"原因：{reason}（{detail}）。未将未经审查的草稿作为最终结论返回。"
             ),
             reason=reason,
+            safe_partial_report=safe_partial_report,
         )

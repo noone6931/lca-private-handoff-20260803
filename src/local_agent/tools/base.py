@@ -44,6 +44,7 @@ class ToolContext:
     runtime_read_file_paths: frozenset[str] | None = None
     runtime_read_file_remaining: int | None = None
     runtime_glob_required_roots: frozenset[str] | None = None
+    vision_inspector: Callable[[Path, str, bytes, str], str] | None = None
 
 
 def tool_state_dir(context: ToolContext) -> Path:
@@ -52,6 +53,10 @@ def tool_state_dir(context: ToolContext) -> Path:
 
 class ToolValidationError(RuntimeError):
     """Raised when tool arguments do not match the tool schema."""
+
+
+class VisionInspectionUnavailableError(RuntimeError):
+    """Image bytes are authorized, but no explicit vision capability is configured."""
 
 
 ToolHandler = Callable[[dict[str, Any], ToolContext], ToolResult]

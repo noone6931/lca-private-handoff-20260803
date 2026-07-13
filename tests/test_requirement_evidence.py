@@ -58,3 +58,29 @@ class RequirementEvidenceTests(unittest.TestCase):
                 evidence,
             )
         )
+
+    def test_requirement_facts_accept_path_plus_generic_heading_locator_but_not_locator_without_path(self) -> None:
+        evidence = [RequirementEvidence("docs/requirements.md", "# 流程\n支持回退。")]
+
+        self.assertFalse(
+            requirement_fact_citation_issues(
+                "需求事实：requirements.md# 流程说明支持回退。",
+                evidence,
+            )
+        )
+        self.assertTrue(
+            requirement_fact_citation_issues(
+                "需求事实：在流程章节中支持回退。",
+                evidence,
+            )
+        )
+
+    def test_requirement_facts_accept_path_bound_page_locator(self) -> None:
+        evidence = [RequirementEvidence("需求文档-拓展服务费结算V1.3.md", "x")]
+
+        self.assertFalse(
+            requirement_fact_citation_issues(
+                "需求事实：需求文档-拓展服务费结算V1.3.md P49",
+                evidence,
+            )
+        )

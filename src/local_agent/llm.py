@@ -38,9 +38,49 @@ class OpenAICompatibleClient:
         *,
         timeout: float | None = None,
     ) -> ChatResponse:
+        return self._complete(messages, tools, timeout=timeout)
+
+    def inspect_image(
+        self,
+        *,
+        image_base64: str,
+        mime_type: str,
+        question: str,
+        timeout: float | None = None,
+    ) -> str:
+        model = self._config.vision_model.strip()
+        if not model:
+            raise LlmError("No explicit vision model is configured for inspect_image. Set AI_VISION_MODEL to a vision-capable model.")
+        response = self._complete(
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": question},
+                        {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{image_base64}"}},
+                    ],
+                }
+            ],
+            [],
+            timeout=timeout,
+            model=model,
+        )
+        content = response.message.get("content")
+        if not isinstance(content, str) or not content.strip():
+            raise LlmError("Vision model returned no text observation.")
+        return content.strip()
+
+    def _complete(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        *,
+        timeout: float | None = None,
+        model: str | None = None,
+    ) -> ChatResponse:
         url = f"{self._config.api_base_url}/chat/completions"
         payload = {
-            "model": self._config.model,
+            "model": model or self._config.model,
             "messages": messages,
         }
         if tools:

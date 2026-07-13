@@ -393,6 +393,7 @@ class AgentRuntime:
             session_tool_approval=self._session_tool_approval,
             event_callback=self._emit_event,
             interaction_handler=interaction_handler,
+            vision_inspector=self._provider_context_phase.inspect_image,
         )
         self._evidence_phase.restore_session_evidence_cache()
         self._events.emit(

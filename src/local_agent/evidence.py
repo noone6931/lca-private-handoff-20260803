@@ -418,6 +418,30 @@ def build_tool_evidence_record(
                 "resolved_path": str(resolved_path) if resolved_path is not None else "",
             },
         )
+    if name == "inspect_image" and not result.is_error:
+        raw_path = parsed.get("path")
+        if not isinstance(raw_path, str) or not raw_path.strip():
+            return None
+        try:
+            resolved_path = resolve_workspace_path(workspace, raw_path.strip(), allowed_dirs)
+            root_path = evidence_root_for_path(resolved_path, workspace, allowed_dirs)
+            root_label = evidence_root_label(root_path, workspace, allowed_dirs)
+        except PatchError:
+            resolved_path = None
+            root_path = None
+            root_label = "(unknown)"
+        return EvidenceRecord(
+            tool="inspect_image",
+            subject=display_read_file_path(workspace, raw_path.strip(), allowed_dirs),
+            summary=f"Image observation: {one_line(first_nonempty_line(result.content), max_chars=220)}; root: {root_label}.",
+            details={
+                **metadata,
+                "evidence_root": str(root_path) if root_path is not None else "",
+                "evidence_root_label": root_label,
+                "evidence_scope": "root_local",
+                "resolved_path": str(resolved_path) if resolved_path is not None else "",
+            },
+        )
     if name == "search_code" and not result.is_error:
         pattern = str(parsed.get("pattern") or "").strip()
         if not pattern:

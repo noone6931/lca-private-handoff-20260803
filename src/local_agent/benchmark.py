@@ -591,6 +591,18 @@ def _evaluate_acceptance(
                 actual_pre_review,
             )
         )
+    expected_safe_partial = acceptance.get("safe_partial_report")
+    if isinstance(expected_safe_partial, Mapping):
+        actual_safe_partial = (runtime._last_run_summary or {}).get("safe_partial_report") or {}
+        expected_counts = _integer_mapping(expected_safe_partial)
+        checks.append(
+            _check(
+                "safe_partial_report",
+                _mapping_integer_values_match(actual_safe_partial, expected_counts),
+                expected_counts,
+                actual_safe_partial,
+            )
+        )
     schema_excludes = _string_list(acceptance.get("schema_excludes"))
     if schema_excludes:
         schemas = client.tool_schema_names
