@@ -120,8 +120,60 @@ class RequirementContractTests(unittest.TestCase):
 
         self.assertEqual(contract.task_kind, "read-only")
         self.assertEqual(contract.evidence_domain, "requirement_documents")
+        self.assertEqual(contract.read_only_review_profile, "document_consistency")
+        self.assertEqual(
+            tuple(item.kind for item in contract.document_artifacts),
+            ("markdown", "html", "image"),
+        )
         self.assertIn("Document-only", contract.scope)
         self.assertTrue(any("document path" in item for item in contract.evidence_requirements))
+
+    def test_single_markdown_document_does_not_require_unrequested_artifacts(self) -> None:
+        contract = generate_requirement_contract("只根据 `requirements.md` 分析需求；不要检查代码。")
+
+        self.assertEqual(contract.evidence_domain, "requirement_documents")
+        self.assertEqual(contract.read_only_review_profile, "none")
+        self.assertEqual([(item.kind, item.reference, item.exact) for item in contract.document_artifacts], [("markdown", "requirements.md", True)])
+
+    def test_natural_language_artifact_mentions_use_modal_coverage_not_greedy_filename_matching(self) -> None:
+        contract = generate_requirement_contract(
+            "只读完成母需求 S1：分析当前目录中的需求文档-拓展服务费结算V1.3.md、对应 HTML 和结算单示例.png。必须实际检查示例图"
+        )
+
+        self.assertEqual(
+            [(item.kind, item.reference, item.exact) for item in contract.document_artifacts],
+            [("markdown", "markdown", False), ("html", "html", False), ("image", "image", False)],
+        )
+
+    def test_unread_image_boundary_does_not_request_image_inspection(self) -> None:
+        contract = generate_requirement_contract(
+            "只根据需求文档 Markdown 和原型 HTML 分析需求；请区分未读取图片的边界，不要检查代码。"
+        )
+
+        self.assertEqual(
+            tuple(item.kind for item in contract.document_artifacts),
+            ("markdown", "html"),
+        )
+
+    def test_code_inspection_boundary_does_not_cancel_requested_document_artifacts(self) -> None:
+        contract = generate_requirement_contract(
+            "只根据 Markdown、HTML 和示例图分析需求，不要检查代码。"
+        )
+
+        self.assertEqual(
+            tuple(item.kind for item in contract.document_artifacts),
+            ("markdown", "html", "image"),
+        )
+
+    def test_quoted_or_pathlike_artifacts_remain_exact_without_cross_binding(self) -> None:
+        contract = generate_requirement_contract(
+            "只根据 `spec-a.md`、./prototypes/spec-b.html 和 `image-c.png` 分析；不要检查代码。"
+        )
+
+        self.assertEqual(
+            [(item.kind, item.reference, item.exact) for item in contract.document_artifacts],
+            [("markdown", "spec-a.md", True), ("html", "spec-b.html", True), ("image", "image-c.png", True)],
+        )
 
     def test_read_only_reviewer_profile_is_typed_by_contract_owner(self) -> None:
         self.assertEqual(

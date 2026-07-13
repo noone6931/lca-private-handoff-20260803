@@ -168,11 +168,12 @@ class RunCollector:
         if metadata.get("provider_schema_violation"):
             self._stats.provider_schema_violations += 1
 
-    def record_synthetic_tool_result(self) -> None:
+    def record_synthetic_tool_result(self, *, is_error: bool = True) -> None:
         if self._stats is None:
             return
         self._stats.synthetic_tool_results += 1
-        self._stats.tool_errors += 1
+        if is_error:
+            self._stats.tool_errors += 1
 
     def record_suppressed_tool_executions(self, count: int) -> None:
         if self._stats is not None:

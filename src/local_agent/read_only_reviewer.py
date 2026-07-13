@@ -84,6 +84,7 @@ class ReadOnlyReviewState:
     review_round: int = 0
     typed_submits: int = 0
     protocol_failures: int = 0
+    safe_partial_emitted: bool = False
 
     def reset(self) -> None:
         self.attempted = False
@@ -100,6 +101,7 @@ class ReadOnlyReviewState:
         self.review_round = 0
         self.typed_submits = 0
         self.protocol_failures = 0
+        self.safe_partial_emitted = False
 
     def snapshot(self) -> dict[str, Any]:
         return {
@@ -132,11 +134,13 @@ class ReviewerPhaseOutcome:
 def should_review_read_only_candidate(contract: RequirementContract | None, request: str | None) -> bool:
     """Consume the typed task-owner profile; never reclassify natural language."""
 
-    if contract is None or contract.evidence_domain != "repository_code":
+    if contract is None:
         return False
     if contract.inspection_forbidden or contract.workspace_metadata_subject:
         return False
-    return contract.read_only_review_profile in {"owner_impact", "design"}
+    if contract.evidence_domain == "repository_code":
+        return contract.read_only_review_profile in {"owner_impact", "design"}
+    return contract.evidence_domain == "requirement_documents" and contract.read_only_review_profile == "document_consistency"
 
 
 def candidate_claim_units(candidate: str) -> tuple[CandidateClaimUnit, ...]:
@@ -190,6 +194,7 @@ Review contract:
 - Requirement facts, repository facts, proposals, and open questions must remain distinct.
 - A proposal must not be worded as an existing table, class, endpoint, service, approval flow, numbering prefix, or integration unless the handoff explicitly supports it.
 - When the handoff has no explicit direct binding, do not say a main owner/module judgment is correct or mostly correct. Treat same-domain code as observed or analogous and leave the owner unlocated.
+- For a document-consistency review, do not resolve conflicting document or image observations with an invented workflow, scope, actor, or precedence rule. Preserve the conflict as unresolved unless the handoff explicitly reconciles it.
 
 The output tool arguments use verdict, confidence, findings, and reason. The complete submission must be shorter than 9000 characters. `findings` must contain at most 8 items. A `pass` verdict requires exactly 0 findings; `revise` and `unverified` require 1 to 8 findings. Every finding must have one unique, known claim_id plus non-empty issue and action. For every finding, choose exactly one claim_id from candidate_claims. Never invent or repeat a claim_id. The optional claim field is for people, not an address. Report only the highest-risk blocking findings when there are more than 8.
 Choose revise when the candidate can be corrected using the handoff. Choose unverified when the candidate cannot safely make the requested factual conclusion."""

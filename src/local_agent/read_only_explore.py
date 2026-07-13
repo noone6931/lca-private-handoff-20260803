@@ -33,6 +33,7 @@ class ReadOnlyExploreDecision:
     roots: tuple[str, ...] = ()
     missing_roots: tuple[str, ...] = ()
     observation_calls: int = 0
+    successful_observations: int = 0
     soft_budget: int = 0
     hard_budget: int = 0
     read_candidates: tuple[str, ...] = ()
@@ -56,10 +57,22 @@ def evaluate_read_only_explore(
     if not roots:
         return ReadOnlyExploreDecision("none")
     results = tuple(tool_results)
+    # Attempts intentionally include errors and synthetic/schema-rejected
+    # observations: they consume the hard budget so a provider cannot loop by
+    # varying invalid calls. Successful observations are reported separately
+    # and are the only facts that can support a coverage conclusion.
     observation_calls = sum(
         1
         for result in results
         if result.name in OBSERVATION_TOOLS and result.metadata.get("evidence_origin") != "session_cached"
+    )
+    successful_observations = sum(
+        1
+        for result in results
+        if result.name in OBSERVATION_TOOLS
+        and not result.is_error
+        and not result.useless
+        and result.metadata.get("evidence_origin") != "session_cached"
     )
     soft_budget = max(2, len(roots) * SOFT_EXPLORE_CALLS_PER_ROOT)
     hard_budget = min(MAX_OWNER_DESIGN_EXPLORE_CALLS, max(4, len(roots) * HARD_EXPLORE_CALLS_PER_ROOT))
@@ -71,6 +84,7 @@ def evaluate_read_only_explore(
             "finalize",
             roots=roots,
             observation_calls=observation_calls,
+            successful_observations=successful_observations,
             soft_budget=soft_budget,
             hard_budget=hard_budget,
             read_candidates=read_candidates,
@@ -81,6 +95,7 @@ def evaluate_read_only_explore(
             roots=roots,
             missing_roots=missing,
             observation_calls=observation_calls,
+            successful_observations=successful_observations,
             soft_budget=soft_budget,
             hard_budget=hard_budget,
             read_candidates=read_candidates,
@@ -90,6 +105,7 @@ def evaluate_read_only_explore(
         roots=roots,
         missing_roots=missing,
         observation_calls=observation_calls,
+        successful_observations=successful_observations,
         soft_budget=soft_budget,
         hard_budget=hard_budget,
         read_candidates=read_candidates,

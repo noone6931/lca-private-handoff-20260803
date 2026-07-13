@@ -67,6 +67,18 @@ class ReadOnlyReviewPhase:
             return ReviewerPhaseOutcome("pass")
         return self._review(candidate, rewrite_round=False)
 
+    def safe_partial_for_terminal(self, reason: str) -> str:
+        """Return trusted observations for a bounded non-final stop, if applicable."""
+
+        runtime = self._runtime
+        contract = runtime._run.requirement_contract
+        if not should_review_read_only_candidate(contract, runtime._run.current_user_request):
+            return ""
+        handoff = self._handoff()
+        if not handoff.items:
+            return ""
+        return self._emit_safe_partial(handoff, reason)
+
     def _review(self, candidate: str, *, rewrite_round: bool) -> ReviewerPhaseOutcome:
         runtime = self._runtime
         state = runtime._run.read_only_review
@@ -74,14 +86,7 @@ class ReadOnlyReviewPhase:
         skip_reason = runtime._run.finalization_rewrite_skip_reason()
         if skip_reason is not None:
             return self._unverified("deadline_or_finalization_budget", skip_reason)
-        handoff = build_explore_handoff(
-            request=runtime._run.current_user_request or "",
-            contract=contract,
-            requirement_evidence=runtime._run.evidence.pinned_requirement_evidence,
-            source_evidence=runtime._run.evidence.source_evidence,
-            records=runtime._run.evidence.records,
-            tool_results=runtime._run.tool_choice_results,
-        )
+        handoff = self._handoff()
         claim_units = candidate_claim_units(candidate)
         if not claim_units:
             return self._unverified("invalid_output", "candidate_has_no_addressable_claim_units")
@@ -262,28 +267,7 @@ class ReadOnlyReviewPhase:
             {"event": "unverified", "reason": reason, "detail": detail},
         )
         runtime._events.emit("ErrorEvent", {"kind": "read_only_reviewer", "reason": reason})
-        safe_partial_report = ""
-        if handoff is not None:
-            partial = build_safe_partial_report(
-                handoff,
-                state.findings,
-                reason=reason,
-            )
-            safe_partial_report = partial.content
-            runtime._run.collector.record_safe_partial_report(
-                observations=partial.observation_count,
-                missing=partial.missing_count,
-                rejected_categories=partial.rejected_categories,
-            )
-            runtime._session.append(
-                "safe_partial_report",
-                {
-                    "reason": reason,
-                    "observations": partial.observation_count,
-                    "missing": partial.missing_count,
-                    "rejected_categories": list(partial.rejected_categories),
-                },
-            )
+        safe_partial_report = self._emit_safe_partial(handoff, reason) if handoff is not None else ""
         return ReviewerPhaseOutcome(
             "unverified",
             terminal_message=safe_partial_report or (
@@ -293,3 +277,37 @@ class ReadOnlyReviewPhase:
             reason=reason,
             safe_partial_report=safe_partial_report,
         )
+
+    def _handoff(self):
+        runtime = self._runtime
+        return build_explore_handoff(
+            request=runtime._run.current_user_request or "",
+            contract=runtime._run.requirement_contract,
+            requirement_evidence=runtime._run.evidence.pinned_requirement_evidence,
+            source_evidence=runtime._run.evidence.source_evidence,
+            records=runtime._run.evidence.records,
+            tool_results=runtime._run.tool_choice_results,
+        )
+
+    def _emit_safe_partial(self, handoff: Any, reason: str) -> str:
+        runtime = self._runtime
+        state = runtime._run.read_only_review
+        if state.safe_partial_emitted:
+            return ""
+        partial = build_safe_partial_report(handoff, state.findings, reason=reason)
+        state.safe_partial_emitted = True
+        runtime._run.collector.record_safe_partial_report(
+            observations=partial.observation_count,
+            missing=partial.missing_count,
+            rejected_categories=partial.rejected_categories,
+        )
+        runtime._session.append(
+            "safe_partial_report",
+            {
+                "reason": reason,
+                "observations": partial.observation_count,
+                "missing": partial.missing_count,
+                "rejected_categories": list(partial.rejected_categories),
+            },
+        )
+        return partial.content

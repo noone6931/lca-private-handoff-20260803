@@ -5,6 +5,10 @@ import unittest
 from local_agent.explore_handoff import ClaimEvidenceItem, ExploreHandoff
 from local_agent.read_only_reviewer import ReviewerFinding
 from local_agent.safe_partial_report import build_safe_partial_report
+from local_agent.explore_handoff import build_explore_handoff
+from local_agent.task_contract import generate_requirement_contract
+from local_agent.tool_choice_queue import ToolResultSummary
+from local_agent.steering.models import SourceEvidence
 from local_agent.task_contract import RequirementContract
 
 
@@ -32,6 +36,48 @@ def _handoff() -> ExploreHandoff:
 
 
 class SafePartialReportTests(unittest.TestCase):
+    def test_multi_root_incomplete_handoff_keeps_observation_and_missing_root_once(self) -> None:
+        contract = generate_requirement_contract("只读分析服务 owner 和影响范围，不要修改。")
+        handoff = build_explore_handoff(
+            request="只读分析服务 owner 和影响范围，不要修改。",
+            contract=contract,
+            requirement_evidence=(),
+            source_evidence=(SourceEvidence("/workspace/service-a/App.java", "class Observed {}", root="/workspace/service-a"),),
+            records=(),
+            tool_results=(
+                ToolResultSummary("read_file", "class Observed {}", path="/workspace/service-a/App.java"),
+                ToolResultSummary(
+                    "read_only_explore",
+                    "No successful direct read covered this root before the bounded exploration phase ended.",
+                    useless=True,
+                    path="/workspace/service-b",
+                    metadata={"read_only_explore_incomplete": True, "evidence_root": "/workspace/service-b"},
+                ),
+                ToolResultSummary(
+                    "search_code",
+                    "runtime tool restriction",
+                    is_error=True,
+                    path="/workspace/service-b",
+                    metadata={"evidence_root": "/workspace/service-b"},
+                ),
+                ToolResultSummary(
+                    "glob_files",
+                    "runtime tool restriction again",
+                    is_error=True,
+                    path="/workspace/service-b",
+                    metadata={"evidence_root": "/workspace/service-b"},
+                ),
+            ),
+        )
+
+        report = build_safe_partial_report(handoff, reason="second_review_nonpass")
+
+        self.assertIn("/workspace/service-a/App.java", report.content)
+        self.assertIn("/workspace/service-b", report.content)
+        self.assertNotIn("没有额外的缺失", report.content)
+        self.assertEqual(report.content.count("检查限制 / 失败"), 1)
+        self.assertIn("同类限制 2 次", report.content)
+
     def test_second_nonpass_keeps_observations_without_leaking_candidate_inventions(self) -> None:
         report = build_safe_partial_report(
             _handoff(),

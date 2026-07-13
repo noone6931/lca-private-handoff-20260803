@@ -105,6 +105,13 @@ class DesignEvidenceSteerer:
             return None
         if context.requirement_contract is not None and context.requirement_contract.inspection_forbidden:
             return None
+        # The typed read-only exploration owner already recorded any uncovered
+        # roots as incomplete observations and requested a no-tool candidate.
+        # Reopening this legacy per-root steerer here would create a second,
+        # competing finalization loop instead of allowing the reviewer/partial
+        # report owners to state that boundary honestly.
+        if context.read_only_explore_finalized:
+            return None
         missing_roots = missing_design_evidence_roots(
             context.required_design_evidence_roots,
             context.design_evidence_read_paths,

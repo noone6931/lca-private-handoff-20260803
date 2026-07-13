@@ -10,16 +10,25 @@
   "scripted_responses": [
     {
       "tool_calls": [
-        {
-          "name": "read_file",
-          "arguments": {
-            "path": "requirements.md"
-          }
-        }
+        {"name": "read_file", "arguments": {"path": "requirements.md"}},
+        {"name": "read_file", "arguments": {"path": "prototype.html"}}
       ]
     },
     {
       "content": "直接需求事实：有效结算单是未回退的结算单（requirements.md:3）。示例图未读取，因此图中规则未验证。系统直接 owner 未在文档中指定；任何类似能力只能作为候选，不能当作已证实 owner。"
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "submit_read_only_review",
+          "arguments": {
+            "verdict": "pass",
+            "confidence": 0.9,
+            "findings": [],
+            "reason": "The answer reports the supplied document facts and retains the image boundary without inventing a reconciliation."
+          }
+        }
+      ]
     }
   ],
   "acceptance": {
@@ -44,7 +53,7 @@
     ],
     "termination_reason": "final",
     "run_summary": {
-      "tool_calls": 1,
+      "tool_calls": 2,
       "tool_errors": 0
     },
     "max_tool_errors": 0

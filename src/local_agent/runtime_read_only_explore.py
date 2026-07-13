@@ -6,6 +6,7 @@ from typing import Any, Protocol
 from .read_only_explore import OBSERVATION_TOOLS
 from .read_only_explore import ReadOnlyExploreDecision
 from .read_only_explore import evaluate_read_only_explore
+from .tool_observation import ToolResultSummary
 
 
 class ReadOnlyExploreRuntimePort(Protocol):
@@ -29,6 +30,8 @@ class RuntimeReadOnlyExplorePhase:
         if tool_name not in OBSERVATION_TOOLS:
             return None
         runtime = self._runtime
+        if runtime._run.read_only_explore_finalized:
+            return None
         contract = runtime._run.requirement_contract
         if contract is None:
             return None
@@ -47,6 +50,7 @@ class RuntimeReadOnlyExplorePhase:
                 {
                     "event": "direct_read_transition",
                     "observations": decision.observation_calls,
+                    "successful_observations": decision.successful_observations,
                     "soft_budget": decision.soft_budget,
                     "missing_roots": list(decision.missing_roots),
                     "read_candidates": list(decision.read_candidates),
@@ -56,11 +60,13 @@ class RuntimeReadOnlyExplorePhase:
         if decision.action != "finalize":
             return None
         runtime._run.read_only_explore_finalized = True
+        self._record_missing_root_observations(decision)
         runtime._session.append(
             "read_only_explore",
             {
                 "event": "hard_budget_reached",
                 "observations": decision.observation_calls,
+                "successful_observations": decision.successful_observations,
                 "hard_budget": decision.hard_budget,
                 "missing_roots": list(decision.missing_roots),
             },
@@ -78,6 +84,7 @@ class RuntimeReadOnlyExplorePhase:
                 "event": "batch_calls_suppressed",
                 "count": count,
                 "observations": decision.observation_calls,
+                "successful_observations": decision.successful_observations,
                 "hard_budget": decision.hard_budget,
                 "transition": "direct_read" if decision.action == "precise" else "finalize",
             },
@@ -87,3 +94,29 @@ class RuntimeReadOnlyExplorePhase:
         if decision.action == "precise":
             return "Skipped because typed search/LSP evidence identified bounded direct-read candidates; read those candidates before further discovery."
         return "Skipped because the bounded read-only exploration budget was reached; produce a scoped candidate final answer."
+
+    def _record_missing_root_observations(self, decision: ReadOnlyExploreDecision) -> None:
+        """Keep an explicit incomplete coverage fact for the reviewer/report owner."""
+
+        runtime = self._runtime
+        for root in decision.missing_roots:
+            runtime._run.tool_choice_results.append(
+                ToolResultSummary(
+                    "read_only_explore",
+                    (
+                        "No successful direct read covered this root before the bounded exploration phase ended; "
+                        "the target remains unlocated in this root."
+                    ),
+                    useless=True,
+                    path=root,
+                    metadata={
+                        "read_only_explore_incomplete": True,
+                        "evidence_root": root,
+                        "evidence_root_label": root,
+                        "evidence_scope": "root_local",
+                        "attempts": decision.observation_calls,
+                        "successful_observations": decision.successful_observations,
+                        "hard_budget": decision.hard_budget,
+                    },
+                )
+            )

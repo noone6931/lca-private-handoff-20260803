@@ -141,7 +141,7 @@ class _DocumentOnlyRequirementClient:
                 "message": {
                     "content": (
                         "需求事实：有效结算单为未回退的结算单（requirements.md:1）。"
-                        "示例图未读取，因此不据此补充规则；本结论不判断系统归属。"
+                        "示例图未读取，图片规则未验证，因此不据此补充规则；本结论不判断系统归属。"
                     )
                 }
             },
@@ -157,7 +157,7 @@ class _DocumentOnlyAnalysisWithNoEditLanguageClient(_DocumentOnlyRequirementClie
             response.message["content"] = (
                 "范围：本次仅分析需求文档，未修改文件。\n"
                 "流程：有效结算单为未回退的结算单（requirements.md:1），据此进入结算处理。\n"
-                "边界：示例图未读取，因此不据此补充规则，也不判断系统归属。\n"
+                "边界：示例图未读取，图片规则未验证，因此不据此补充规则，也不判断系统归属。\n"
                 "待确认项：图片中的字段、页面交互和现有实现归属需另行验证。"
             )
         return response
@@ -2994,7 +2994,7 @@ class AgentRuntimeTests(unittest.TestCase):
             with patch("local_agent.agent.OpenAICompatibleClient", _DocumentOnlyRequirementClient):
                 runtime = AgentRuntime(config, show_tool_logs=False)
                 result = runtime.run(
-                    "只根据需求文档 Markdown、原型 HTML 和示例图分析需求；不要检查代码，也不要推测系统归属。"
+                    "只根据 `requirements.md` 分析需求；不要检查代码，也不要推测系统归属。"
                 )
 
         self.assertIn("requirements.md:1", result)
@@ -3027,7 +3027,7 @@ class AgentRuntimeTests(unittest.TestCase):
             with patch("local_agent.agent.OpenAICompatibleClient", _DocumentOnlyAnalysisWithNoEditLanguageClient):
                 runtime = AgentRuntime(config, show_tool_logs=False)
                 result = runtime.run(
-                    "只根据需求文档 Markdown、原型 HTML 和示例图分析需求；不要检查代码，也不要修改文件。"
+                    "只根据 `requirements.md` 分析需求；不要检查代码，也不要修改文件。"
                 )
 
         self.assertIn("范围：", result)
@@ -3054,6 +3054,11 @@ class AgentRuntimeTests(unittest.TestCase):
                     show_tool_logs=False,
                 )
                 result = runtime.run("只读分析当前服务 owner 和影响范围，不要修改。")
+                session_records = [
+                    json.loads(line)
+                    for line in runtime._session.path.read_text(encoding="utf-8").splitlines()
+                    if line.strip()
+                ]
 
         summary = runtime._last_run_summary
         self.assertIn("owner", result)
@@ -3061,6 +3066,18 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertEqual(summary["suppressed_tool_executions"], 8)
         self.assertEqual(summary["read_only_reviewer"]["triggers"], 1)
         self.assertEqual(summary["read_only_reviewer"]["attempts"], 1)
+        suppressed = [
+            record["payload"]
+            for record in session_records
+            if record.get("event") == "tool_result"
+            and "Tool call was not executed" in str(record.get("payload", {}).get("content") or "")
+        ]
+        self.assertEqual(len(suppressed), 8)
+        self.assertTrue(all(message.get("is_error") is True for message in suppressed))
+        self.assertEqual(
+            sum(1 for item in runtime._run.tool_choice_results if item.name in {"search_code", "read_file"} and not item.is_error),
+            4,
+        )
 
     def test_owner_explore_switches_the_same_batch_to_scoped_direct_read(self) -> None:
         _OwnerExploreDirectReadClient.calls = []

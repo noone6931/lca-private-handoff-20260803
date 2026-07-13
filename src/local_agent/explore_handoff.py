@@ -22,6 +22,7 @@ MAX_REQUIREMENT_ITEMS = 4
 MAX_SOURCE_ITEMS_PER_ROOT = 1
 MAX_RECORD_ITEMS_PER_ROOT = 1
 MAX_RESULT_ITEMS = 4
+MAX_DOCUMENT_ARTIFACT_ITEMS = 6
 
 
 @dataclass(frozen=True)
@@ -35,6 +36,7 @@ class ClaimEvidenceItem:
     scope: str
     outcome: str
     summary: str
+    count: int = 1
 
     def to_dict(self) -> dict[str, str]:
         return {
@@ -45,6 +47,7 @@ class ClaimEvidenceItem:
             "scope": self.scope,
             "outcome": self.outcome,
             "summary": self.summary,
+            "count": self.count,
         }
 
 
@@ -62,6 +65,7 @@ class ExploreHandoff:
             "contract": {
                 "task_kind": self.contract.task_kind,
                 "evidence_domain": self.contract.evidence_domain,
+                "read_only_review_profile": self.contract.read_only_review_profile,
                 "scope": self.contract.scope,
                 "acceptance": self.contract.acceptance_items[:4],
                 "evidence_requirements": self.contract.evidence_requirements[:4],
@@ -100,6 +104,7 @@ def build_explore_handoff(
     the evidence itself.
     """
 
+    results = tuple(tool_results)
     requirements = [
         ClaimEvidenceItem("requirement_fact", "read_file", item.path, item.root or "(unknown)", item.scope or "root_local", "ok", _clip(item.content))
         for item in list(requirement_evidence)[-MAX_REQUIREMENT_ITEMS:]
@@ -114,6 +119,36 @@ def build_explore_handoff(
         ),
         MAX_SOURCE_ITEMS_PER_ROOT,
     )
+    document_items = [
+        ClaimEvidenceItem(
+            "requirement_fact" if item.name == "read_file" else "observed_candidate",
+            item.name,
+            item.path or "(none)",
+            str(item.metadata.get("evidence_root_label") or "(unknown)"),
+            str(item.metadata.get("evidence_scope") or "root_local"),
+            "error" if item.is_error else "ok",
+            _clip(item.content),
+        )
+        for item in results
+        if item.name == "inspect_image"
+        or (
+            item.name == "read_file"
+            and str(item.path or "").lower().endswith((".md", ".markdown", ".html", ".htm"))
+        )
+    ][-MAX_DOCUMENT_ARTIFACT_ITEMS:]
+    incomplete_root_items = [
+        ClaimEvidenceItem(
+            "unlocated",
+            "read_only_explore",
+            item.path or "(unknown root)",
+            str(item.metadata.get("evidence_root_label") or item.metadata.get("evidence_root") or item.path or "(unknown)"),
+            str(item.metadata.get("evidence_scope") or "root_local"),
+            "incomplete",
+            _clip(item.content),
+        )
+        for item in results
+        if item.name == "read_only_explore" and item.metadata.get("read_only_explore_incomplete")
+    ]
     record_items = _bounded_per_root(
         (
             ClaimEvidenceItem(
@@ -139,16 +174,32 @@ def build_explore_handoff(
                 else "observed_candidate"
             ),
             item.name, item.path or "(none)",
-            str(item.metadata.get("evidence_root_label") or "(unknown)"),
+            str(item.metadata.get("evidence_root_label") or item.metadata.get("evidence_root") or "(unknown)"),
             str(item.metadata.get("evidence_scope") or "(unknown)"),
             "error" if item.is_error else "no_match" if item.useless else "ok", _clip(item.content),
         )
-        for item in tool_results
+        for item in results
         if item.name.startswith("lsp_") or item.name == "search_code"
     ][-MAX_RESULT_ITEMS:]
-    # Requirements and exact navigation/search observations have priority.  A
-    # busy generic tool timeline may consume the remainder, never these facts.
-    items = [*requirements, *precise_results, *source_items, *record_items]
+    error_results = [
+        ClaimEvidenceItem(
+            "inspection_failure",
+            item.name,
+            item.path or "(none)",
+            str(item.metadata.get("evidence_root_label") or item.metadata.get("evidence_root") or "(unknown)"),
+            str(item.metadata.get("evidence_scope") or "(unknown)"),
+            "error",
+            _clip(item.content),
+        )
+        for item in results
+        if item.is_error and not (item.name.startswith("lsp_") or item.name == "search_code")
+    ]
+    # Direct current-run observations win over session-restored records.  A
+    # dedupe pass then keeps one provenance fact per tool/path/outcome and
+    # aggregates repeated failures by root/category.
+    items = _dedupe_items(
+        [*document_items, *precise_results, *source_items, *requirements, *incomplete_root_items, *error_results, *record_items]
+    )
     return ExploreHandoff(request=request, contract=contract, items=tuple(items[:MAX_HANDOFF_ITEMS]))
 
 
@@ -176,3 +227,30 @@ def _bounded_per_root(items: Iterable[ClaimEvidenceItem], limit: int) -> list[Cl
         elif item.classification == "direct_binding":
             bucket[-1] = item
     return [item for root in sorted(buckets) for item in buckets[root]]
+
+
+def _dedupe_items(items: Iterable[ClaimEvidenceItem]) -> list[ClaimEvidenceItem]:
+    """Prefer early direct evidence and aggregate repeated failure provenance."""
+
+    deduped: dict[tuple[str, ...], ClaimEvidenceItem] = {}
+    for item in items:
+        key = (
+            ("failure", item.classification, item.root, item.outcome)
+            if item.classification == "inspection_failure"
+            else ("item", item.tool, item.path, item.outcome)
+        )
+        prior = deduped.get(key)
+        if prior is None:
+            deduped[key] = item
+            continue
+        deduped[key] = ClaimEvidenceItem(
+            prior.classification,
+            prior.tool,
+            prior.path,
+            prior.root,
+            prior.scope,
+            prior.outcome,
+            prior.summary,
+            count=prior.count + item.count,
+        )
+    return list(deduped.values())

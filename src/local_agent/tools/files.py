@@ -226,11 +226,16 @@ def inspect_image(args: dict[str, Any], context: ToolContext) -> ToolResult:
         return ToolResult(
             f"Image is too large to inspect safely: {args['path']} is {size} bytes, limit is {MAX_INSPECT_IMAGE_BYTES} bytes.",
             is_error=True,
+            metadata={"image_inspection_unavailable": True, "reason": "too_large", "size_bytes": size},
         )
     raw = path.read_bytes()
     mime_type = detect_image_mime(raw)
     if mime_type is None:
-        return ToolResult("inspect_image supports PNG, JPEG, GIF, and WEBP files detected from file content.", is_error=True)
+        return ToolResult(
+            "inspect_image supports PNG, JPEG, GIF, and WEBP files detected from file content.",
+            is_error=True,
+            metadata={"image_inspection_unavailable": True, "reason": "unsupported_mime"},
+        )
     if context.vision_inspector is None:
         return ToolResult(
             "Image inspection is unavailable: configure AI_VISION_MODEL with an explicit vision-capable model.",

@@ -125,7 +125,6 @@ from .tools.relevance import path_matches_any
 from .tools.relevance import request_mentions_config_or_path
 from .tool_choice_queue import ToolChoiceDecision
 from .tool_observation import ToolResultSummary
-from .tool_choice_queue import session_evidence_reuse_directive
 from .verification_timeline import workspace_write_happened
 from .user_facts import UserFactsLayer
 from .provider_context import ProviderContextPhase
@@ -728,6 +727,7 @@ class AgentRuntime:
                     self._append_synthetic_tool_results(
                         remaining_calls,
                         self._read_only_explore_phase.suppression_message(explore_budget),
+                        count_as_error=False,
                     )
                     break
                 if name == "git_diff" and not result.is_error:
@@ -850,6 +850,7 @@ class AgentRuntime:
             workspace_roots=tuple(str(root) for root in self._workspace_context.all_roots),
             evidence_domain=contract.evidence_domain,
             read_only_review_profile=contract.read_only_review_profile,
+            document_artifacts=contract.document_artifacts,
         )
         self._run.tool_choice_allowed_tool_names = set(decision.allowed_tool_names)
         self._run.update_tool_choice_read_scope(decision.scoped_read_paths, decision.scoped_read_budget)
@@ -1117,8 +1118,8 @@ class AgentRuntime:
             metadata=metadata or {},
         )
 
-    def _record_synthetic_tool_result_for_run(self) -> None:
-        self._run.collector.record_synthetic_tool_result()
+    def _record_synthetic_tool_result_for_run(self, *, count_as_error: bool = True) -> None:
+        self._run.collector.record_synthetic_tool_result(is_error=count_as_error)
 
     def _record_provider_protocol_violation_for_run(
         self,
@@ -1718,6 +1719,10 @@ class AgentRuntime:
                 reason = "unverified_final_gate"
         elif reason == "final" and workspace_write_happened(self._run.tool_choice_results):
             incomplete_delivery = self._run.verification_plan.render_incomplete_terminal()
+        if reason != "final" and not preserve_terminal_content:
+            safe_partial = self._read_only_review_phase.safe_partial_for_terminal(reason)
+            if safe_partial:
+                content = safe_partial
         self._session_evidence.remember_request(self._run.current_user_request or "", self._run.run_id)
         if incomplete_delivery:
             content = incomplete_delivery
@@ -1915,13 +1920,15 @@ class AgentRuntime:
             severity=severity,
         )
 
-    def _append_synthetic_tool_results(self, tool_calls: list[dict[str, Any]], content: str) -> None:
+    def _append_synthetic_tool_results(self, tool_calls: list[dict[str, Any]], content: str, *, is_error: bool = True, count_as_error: bool | None = None) -> None:
+        if count_as_error is None:
+            count_as_error = is_error
         for tool_call in tool_calls:
             function = tool_call.get("function") or {}
             name = function.get("name") or ""
             result = f"Tool call was not executed because {content}"
-            self._record_synthetic_tool_result_for_run()
-            self._append_tool_result(tool_call, name, result, is_error=True)
+            self._record_synthetic_tool_result_for_run(count_as_error=count_as_error)
+            self._append_tool_result(tool_call, name, result, is_error=is_error)
 
     def _log_tool_start(self, name: str, arguments: Any) -> None:
         self._record_tool_started_for_run(name)

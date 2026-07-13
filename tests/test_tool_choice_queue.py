@@ -21,6 +21,7 @@ from local_agent.tool_choice_queue import ToolResultSummary
 from local_agent.tool_choice_queue import evaluate_tool_choice_state
 from local_agent.tool_choice_queue import session_evidence_reuse_directive
 from local_agent.read_only_explore import evaluate_read_only_explore
+from local_agent.document_artifacts import DocumentArtifactRequirement
 
 
 class ToolChoiceQueueTests(unittest.TestCase):
@@ -38,6 +39,22 @@ class ToolChoiceQueueTests(unittest.TestCase):
             )
         self.assertEqual(decision.action, "precise")
         self.assertEqual(decision.read_candidates, (str(source),))
+
+    def test_suppressed_or_failed_observations_do_not_cover_a_root_or_count_as_success(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            results = (
+                ToolResultSummary("search_code", "Tool call was not executed", is_error=True, path=str(root / "A.java")),
+                ToolResultSummary("read_file", "Tool call was not executed", is_error=True, path=str(root / "B.java")),
+                ToolResultSummary("glob_files", "Tool call was not executed", is_error=True, path=str(root)),
+            )
+            decision = evaluate_read_only_explore(
+                profile="owner_impact", tool_results=results, code_roots=(str(root),)
+            )
+
+        self.assertEqual(decision.observation_calls, 3)
+        self.assertEqual(decision.successful_observations, 0)
+        self.assertEqual(decision.missing_roots, (str(root),))
 
     def test_owner_explore_projects_typed_search_candidates_as_read_only_schema(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -76,6 +93,41 @@ class ToolChoiceQueueTests(unittest.TestCase):
         self.assertFalse(decision.steering_required)
         self.assertNotIn("search_code", decision.allowed_tool_names)
         self.assertIn("inspect_image", decision.allowed_tool_names)
+
+    def test_document_artifact_coverage_requires_each_explicit_modality(self) -> None:
+        artifacts = (
+            DocumentArtifactRequirement("markdown", "markdown"),
+            DocumentArtifactRequirement("html", "html"),
+            DocumentArtifactRequirement("image", "image"),
+        )
+        partial = evaluate_tool_choice_state(
+            task_kind="read-only",
+            prompt="只根据 Markdown、HTML 和图片分析需求；不要检查代码。",
+            tool_results=[
+                ToolResultSummary("read_file", "spec", path="requirements.md"),
+                ToolResultSummary("inspect_image", "image observation", path="example.png", metadata={"image_observation": True}),
+            ],
+            evidence_domain="requirement_documents",
+            document_artifacts=artifacts,
+        )
+
+        self.assertTrue(partial.steering_required)
+        self.assertEqual(partial.missing_requirements, ("document_artifact:html",))
+        self.assertEqual(partial.preferred_tool_names, ("read_file",))
+        self.assertIn("html", partial.tool_call_hints[0])
+
+        complete = evaluate_tool_choice_state(
+            task_kind="read-only",
+            prompt="只根据 Markdown、HTML 和图片分析需求；不要检查代码。",
+            tool_results=[
+                ToolResultSummary("read_file", "spec", path="requirements.md"),
+                ToolResultSummary("read_file", "prototype", path="prototype.html"),
+                ToolResultSummary("inspect_image", "image observation", path="example.png", metadata={"image_observation": True}),
+            ],
+            evidence_domain="requirement_documents",
+            document_artifacts=artifacts,
+        )
+        self.assertFalse(complete.steering_required)
 
     def test_observed_negative_prompt_requires_glob_when_available(self) -> None:
         decision = evaluate_tool_choice_state(

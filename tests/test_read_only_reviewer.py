@@ -628,7 +628,7 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         rewritten = candidate.replace("**platformPayment** is verified owner", "analogous candidate").replace("platformPayment is the true owner", "the true owner is unlocated")
         self.assertTrue(rewrite_complies_with_review(rewritten, units, result.findings))
 
-    def test_trigger_policy_excludes_document_and_git_metadata(self) -> None:
+    def test_trigger_policy_scopes_document_consistency_and_excludes_single_document_and_git_metadata(self) -> None:
         self.assertTrue(should_review_read_only_candidate(
             generate_requirement_contract("只读分析当前服务 owner、调用链和影响范围，不要修改。"),
             "只读分析当前服务 owner、调用链和影响范围，不要修改。",
@@ -636,6 +636,10 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertFalse(should_review_read_only_candidate(
             generate_requirement_contract("只根据需求文档 Markdown 分析需求，不要检查代码。"),
             "只根据需求文档 Markdown 分析需求，不要检查代码。",
+        ))
+        self.assertTrue(should_review_read_only_candidate(
+            generate_requirement_contract("只根据需求文档 Markdown、原型 HTML 和示例图分析需求，不要检查代码。"),
+            "只根据需求文档 Markdown、原型 HTML 和示例图分析需求，不要检查代码。",
         ))
         self.assertFalse(should_review_read_only_candidate(
             generate_requirement_contract("当前primary是不是Git仓库？"),

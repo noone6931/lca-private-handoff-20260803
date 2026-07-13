@@ -78,15 +78,21 @@ def build_safe_partial_report(
 
 
 def _render_observation(item: ClaimEvidenceItem) -> str:
-    return f"- `{item.path}` [root={item.root}; scope={item.scope}; tool={item.tool}]：{item.summary}"
+    return f"- `{item.path}` [root={item.root}; scope={item.scope}; tool={item.tool}]：{_brief(item.summary)}"
 
 
 def _render_missing(item: ClaimEvidenceItem) -> str:
-    return f"- `{item.path}` [root={item.root}; scope={item.scope}; tool={item.tool}; outcome={item.outcome}]：{item.summary}"
+    return f"- `{item.path}` [root={item.root}; scope={item.scope}; tool={item.tool}; outcome={item.outcome}]：{_brief(item.summary)}"
 
 
 def _render_limitation(item: ClaimEvidenceItem) -> str:
-    return f"- `{item.path}` [root={item.root}; scope={item.scope}; tool={item.tool}; outcome={item.outcome}]：{item.summary}"
+    count = f" (同类限制 {item.count} 次)" if item.count > 1 else ""
+    return f"- `{item.path}` [root={item.root}; scope={item.scope}; tool={item.tool}; outcome={item.outcome}]{count}：{_brief(item.summary)}"
+
+
+def _brief(value: str, limit: int = 320) -> str:
+    compact = " ".join((value or "").split())
+    return compact if len(compact) <= limit else compact[: limit - 1].rstrip() + "..."
 
 
 def _finding_category(finding: ReviewerFinding) -> str:

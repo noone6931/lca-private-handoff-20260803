@@ -4,6 +4,9 @@ import re
 from dataclasses import dataclass
 from typing import Literal
 
+from .document_artifacts import document_artifact_coverage
+from .document_artifacts import missing_document_artifacts
+from .document_artifacts import unavailable_document_artifacts
 from .negative_evidence import allowed_tools_for_negative_claims
 from .negative_evidence import render_negative_existence_issues
 from .negative_evidence import unsupported_negative_existence_claims
@@ -476,6 +479,9 @@ def _document_requirement_items(
         )
     ]
     no_edits = not workspace_write_happened(tool_results)
+    artifact_coverage = document_artifact_coverage(contract.document_artifacts, tool_results)
+    missing_artifacts = missing_document_artifacts(artifact_coverage)
+    unavailable_artifacts = unavailable_document_artifacts(artifact_coverage)
     items: list[CompletionAuditItem] = []
     direct_requirement = _requirement_at(
         contract.acceptance_items,
@@ -504,6 +510,26 @@ def _document_requirement_items(
     else:
         items.append(_passed("acceptance", direct_requirement, "document evidence is available"))
 
+    if missing_artifacts:
+        labels = ", ".join(item.label for item in missing_artifacts)
+        allowed_tools = tuple(dict.fromkeys("inspect_image" if item.kind == "image" else "read_file" for item in missing_artifacts))
+        items.append(
+            _missing(
+                "acceptance",
+                "Observe every explicitly requested document artifact before resolving the analysis.",
+                "requested document artifacts lack a successful observation: " + labels,
+                allowed_tools,
+            )
+        )
+    elif contract.document_artifacts:
+        items.append(
+            _passed(
+                "acceptance",
+                "Observe every explicitly requested document artifact before resolving the analysis.",
+                "all requested document artifacts have an observation or a typed unavailable boundary",
+            )
+        )
+
     evidence_requirement = _requirement_at(
         contract.evidence_requirements,
         0,
@@ -526,8 +552,20 @@ def _document_requirement_items(
     # This is a conditional requirement: when the answer mentions an unread
     # artifact, it must say so plainly. Direct document facts need no fake
     # inference label merely because repository code was intentionally out of scope.
-    if _mentions_unread_artifact(content) and not _has_unverified_status(content):
+    if (
+        _mentions_unread_artifact(content)
+        and not _has_unverified_status(content)
+        and not _has_artifact_unavailable_boundary(content, unavailable_artifacts)
+    ):
         items.append(_missing("evidence", boundary_requirement, "unread artifact is not labelled unverified"))
+    elif unavailable_artifacts and not _has_artifact_unavailable_boundary(content, unavailable_artifacts):
+        items.append(
+            _missing(
+                "evidence",
+                boundary_requirement,
+                "a requested artifact is typed unavailable but the answer does not label that boundary unverified",
+            )
+        )
     else:
         items.append(_passed("evidence", boundary_requirement, "artifact boundary is explicit when needed"))
 
@@ -689,6 +727,34 @@ def _mentions_unread_artifact(content: str) -> bool:
         lowered,
         flags=re.IGNORECASE,
     ) is not None
+
+
+def _has_artifact_unavailable_boundary(content: str, unavailable_artifacts: list[object]) -> bool:
+    """Require each typed unavailable artifact to be named with its boundary.
+
+    This is intentionally narrower than a global "unverified" marker.  A
+    document answer may truthfully say "the image is unavailable" without
+    having to downgrade every document fact to unverified.
+    """
+
+    lowered = (content or "").lower()
+    unavailable = r"(?:不可用|无法(?:检查|读取|查看)?|未验证|cannot\s+(?:inspect|read|verify)|unavailable|not\s+verified)"
+    for coverage in unavailable_artifacts:
+        requirement = getattr(coverage, "requirement", None)
+        if requirement is None:
+            return False
+        reference = str(getattr(requirement, "reference", "")).lower()
+        kind = str(getattr(requirement, "kind", ""))
+        labels = [reference] if reference else []
+        if kind == "image":
+            labels.extend(("图片", "图像", "示例图", "image"))
+        elif kind == "html":
+            labels.extend(("html", "原型"))
+        elif kind == "markdown":
+            labels.extend(("markdown", "md", "文档"))
+        if not any(re.search(re.escape(label) + r".{0,36}" + unavailable, lowered, re.IGNORECASE) for label in labels if label):
+            return False
+    return True
 
 
 def _git_repository_conclusion(content: str) -> bool | None:

@@ -7,6 +7,9 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .design_evidence import missing_design_evidence_roots
+from .document_artifacts import DocumentArtifactRequirement
+from .document_artifacts import document_artifact_coverage
+from .document_artifacts import missing_document_artifacts
 from .negative_evidence import allowed_tools_for_negative_claims, parse_negative_evidence_claims, unsupported_negative_existence_claims
 from .read_only_explore import PRECISE_EVIDENCE_TOOLS, evaluate_read_only_explore
 from .task_contract import is_inspection_forbidden
@@ -360,6 +363,7 @@ class RequiredToolGate:
         workspace_roots: Iterable[str] | None = None,
         evidence_domain: str | None = None,
         read_only_review_profile: str | None = None,
+        document_artifacts: Iterable[DocumentArtifactRequirement] = (),
     ) -> ToolChoiceDecision:
         return evaluate_tool_choice_state(
             task_kind=task_kind,
@@ -371,6 +375,7 @@ class RequiredToolGate:
             workspace_roots=workspace_roots,
             evidence_domain=evidence_domain,
             read_only_review_profile=read_only_review_profile,
+            document_artifacts=document_artifacts,
         )
 
 
@@ -389,6 +394,7 @@ def evaluate_tool_choice_state(
     workspace_roots: Iterable[str] | None = None,
     evidence_domain: str | None = None,
     read_only_review_profile: str | None = None,
+    document_artifacts: Iterable[DocumentArtifactRequirement] = (),
 ) -> ToolChoiceDecision:
     if is_inspection_forbidden(prompt):
         return ToolChoiceDecision(
@@ -404,18 +410,28 @@ def evaluate_tool_choice_state(
     allowed_tools = all_tools - READ_ONLY_FORBIDDEN_TOOL_NAMES if read_only else all_tools
 
     if evidence_domain == "requirement_documents":
+        artifacts = tuple(document_artifacts)
+        coverage = document_artifact_coverage(artifacts, results)
+        missing = missing_document_artifacts(coverage)
         has_document_read = _has_requirement_doc_read(prompt, results)
+        complete = not missing and (bool(artifacts) or has_document_read)
         return ToolChoiceDecision(
-            steering_required=not has_document_read,
+            steering_required=not complete,
             allowed_tool_names=_allowed_subset(DOCUMENT_ONLY_TOOL_NAMES, allowed_tools),
             reason=(
                 "document_only contract: expose only document browsing/reading and clarification tools; "
                 "repository code discovery remains out of scope."
             ),
             rule_id="document_only_requirement_analysis",
-            missing_requirements=() if has_document_read else ("requirement_document_read",),
-            preferred_tool_names=("read_file",),
-            tool_call_hints=_document_read_tool_hints(),
+            missing_requirements=(
+                tuple(f"document_artifact:{item.label}" for item in missing)
+                if missing
+                else () if complete else ("requirement_document_read",)
+            ),
+            preferred_tool_names=tuple(
+                dict.fromkeys("inspect_image" if item.kind == "image" else "read_file" for item in missing)
+            ) or ("read_file",),
+            tool_call_hints=_document_read_tool_hints(missing),
         )
 
     negative_discovery = _negative_discovery_decision(prompt, results, allowed_tools)
@@ -792,8 +808,15 @@ def _allowed_subset(candidates: Iterable[str], allowed_tools: frozenset[str]) ->
     return frozenset(name for name in candidates if name in allowed_tools)
 
 
-def _document_read_tool_hints() -> tuple[str, ...]:
+def _document_read_tool_hints(missing: Iterable[DocumentArtifactRequirement] = ()) -> tuple[str, ...]:
+    labels = tuple(item.label for item in missing)
+    coverage_hint = (
+        "Complete every requested artifact before finalizing: " + ", ".join(labels) + "."
+        if labels
+        else "Complete each explicitly requested document artifact before finalizing."
+    )
     return (
+        coverage_hint,
         'Use read_file with {"path":"<authorized document path>"}.',
         'For a listed image, use inspect_image with {"path":"<authorized image path>","question":"<focused question>"}; do not pass a directory or image bytes.',
     )

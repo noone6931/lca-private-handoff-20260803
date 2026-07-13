@@ -4,10 +4,12 @@ from dataclasses import dataclass
 import re
 from typing import Literal
 
+from .document_artifacts import DocumentArtifactRequirement
+from .document_artifacts import extract_document_artifact_requirements
 
 TaskKind = Literal["read-only", "code-implementation", "unclear"]
 EvidenceDomain = Literal["repository_code", "requirement_documents", "workspace_metadata", "semantic"]
-ReadOnlyReviewProfile = Literal["none", "owner_impact", "design"]
+ReadOnlyReviewProfile = Literal["none", "owner_impact", "design", "document_consistency"]
 
 
 @dataclass(frozen=True)
@@ -26,6 +28,7 @@ class RequirementContract:
     inspection_repository_facts_requested: bool = False
     workspace_metadata_subject: str | None = None
     read_only_review_profile: ReadOnlyReviewProfile = "none"
+    document_artifacts: tuple[DocumentArtifactRequirement, ...] = ()
 
 
 def requires_no_edit_final_hygiene(contract: RequirementContract | None) -> bool:
@@ -291,7 +294,10 @@ def generate_requirement_contract(user_prompt: str) -> RequirementContract:
     inspection_repository_facts_requested = inspection_forbidden_repository_fact_request(prompt)
     metadata_subject = workspace_metadata_subject(prompt) if task_kind == "read-only" else None
     evidence_domain = _evidence_domain(prompt, inspection_forbidden, metadata_subject)
-    review_profile = _read_only_review_profile(prompt, task_kind, evidence_domain, inspection_forbidden, metadata_subject)
+    document_artifacts = extract_document_artifact_requirements(user_prompt) if evidence_domain == "requirement_documents" else ()
+    review_profile = _read_only_review_profile(
+        prompt, task_kind, evidence_domain, inspection_forbidden, metadata_subject, document_artifacts
+    )
 
     if inspection_forbidden:
         return RequirementContract(
@@ -370,7 +376,8 @@ def generate_requirement_contract(user_prompt: str) -> RequirementContract:
             ],
             task_kind="read-only",
             evidence_domain="requirement_documents",
-            read_only_review_profile="none",
+            read_only_review_profile=review_profile,
+            document_artifacts=document_artifacts,
         )
 
     if task_kind == "read-only":
@@ -488,6 +495,8 @@ def render_contract_context(contract: RequirementContract) -> str:
     lines.append(f"Evidence domain: {contract.evidence_domain}")
     if contract.read_only_review_profile != "none":
         lines.append(f"Read-only review profile: {contract.read_only_review_profile}")
+    if contract.document_artifacts:
+        lines.append("Requested document artifacts: " + ", ".join(item.label for item in contract.document_artifacts))
     if contract.inspection_forbidden:
         lines.append("Inspection policy: repository inspection is forbidden for this task.")
     if contract.workspace_metadata_subject:
@@ -512,7 +521,12 @@ def _evidence_domain(
     if metadata_subject is not None:
         return "workspace_metadata"
     lower = prompt.lower()
-    if _contains_any(lower, _REQUIREMENT_DOCUMENT_MARKERS) and _contains_any(lower, _DOCUMENT_ONLY_ANALYSIS_MARKERS):
+    has_document_reference = _contains_any(lower, _REQUIREMENT_DOCUMENT_MARKERS) or any(
+        suffix in lower for suffix in (".md", ".markdown", ".html", ".htm", ".png", ".jpg", ".jpeg", ".gif", ".webp")
+    )
+    document_only = _contains_any(lower, _DOCUMENT_ONLY_ANALYSIS_MARKERS)
+    read_only_artifacts = _contains_any(lower, _READ_ONLY_MARKERS) and not _contains_any(lower, _CODE_EVIDENCE_MARKERS)
+    if has_document_reference and (document_only or read_only_artifacts):
         return "requirement_documents"
     return "repository_code"
 
@@ -523,6 +537,7 @@ def _read_only_review_profile(
     evidence_domain: EvidenceDomain,
     inspection_forbidden: bool,
     metadata_subject: str | None,
+    document_artifacts: tuple[DocumentArtifactRequirement, ...] = (),
 ) -> ReadOnlyReviewProfile:
     """Assign one typed high-risk profile at contract creation time.
 
@@ -530,7 +545,11 @@ def _read_only_review_profile(
     reviewer policy consumes the typed value and does not repeat request regex.
     """
 
-    if inspection_forbidden or metadata_subject is not None or evidence_domain != "repository_code":
+    if inspection_forbidden or metadata_subject is not None:
+        return "none"
+    if evidence_domain == "requirement_documents":
+        return "document_consistency" if len(document_artifacts) >= 2 else "none"
+    if evidence_domain != "repository_code":
         return "none"
     if task_kind not in {"read-only", "unclear"}:
         return "none"

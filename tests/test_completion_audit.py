@@ -12,7 +12,7 @@ from local_agent.verification_plan import VerificationPlan
 
 class CompletionAuditTests(unittest.TestCase):
     def test_document_only_requirement_analysis_accepts_document_facts_without_code_inference_labels(self) -> None:
-        request = "只根据需求文档 Markdown、原型 HTML 和示例图分析需求；不要检查代码，也不要推测系统归属。"
+        request = "只根据需求文档 Markdown 分析需求；不要检查代码，也不要推测系统归属。"
         requirement = RequirementEvidence(
             path="requirements.md",
             content="第 12 行：有效结算单为未回退的结算单。",
@@ -23,7 +23,7 @@ class CompletionAuditTests(unittest.TestCase):
             request=request,
             final_content=(
                 "需求事实：有效结算单定义为未回退的结算单（requirements.md:12）。"
-                "示例图未读取，因此不据此补充规则；本结论不判断当前系统归属。"
+                "本结论不判断当前系统归属。"
             ),
             tool_results=[ToolResultSummary("read_file", "有效结算单", path="requirements.md")],
             source_paths=["requirements.md"],
@@ -107,6 +107,92 @@ class CompletionAuditTests(unittest.TestCase):
         )
 
         self.assertTrue(result.passed)
+
+    def test_document_artifact_coverage_requires_html_when_requested_alongside_markdown_and_image(self) -> None:
+        request = "只根据 Markdown、HTML 和示例图分析需求；不要检查代码，也不要推测系统归属。"
+        contract = generate_requirement_contract(request)
+        partial = audit_completion(
+            contract,
+            request=request,
+            final_content="需求事实：requirements.md:1 说明状态规则；example.png 已观察；不判断系统归属。",
+            tool_results=[
+                ToolResultSummary("read_file", "状态规则", path="requirements.md"),
+                ToolResultSummary("inspect_image", "[image observation]", path="example.png", metadata={"image_observation": True}),
+            ],
+            source_paths=["requirements.md", "example.png"],
+            open_todos=[],
+            requirement_evidence=[RequirementEvidence(path="requirements.md", content="状态规则")],
+        )
+
+        self.assertFalse(partial.passed)
+        self.assertTrue(any("html" in item.reason for item in partial.missing_items))
+        self.assertIn("read_file", partial.allowed_tool_names())
+
+        complete = audit_completion(
+            contract,
+            request=request,
+            final_content="需求事实：requirements.md:1 说明状态规则；prototype.html:1 展示原型；example.png 已观察；不判断系统归属。",
+            tool_results=[
+                ToolResultSummary("read_file", "状态规则", path="requirements.md"),
+                ToolResultSummary("read_file", "原型", path="prototype.html"),
+                ToolResultSummary("inspect_image", "[image observation]", path="example.png", metadata={"image_observation": True}),
+            ],
+            source_paths=["requirements.md", "prototype.html", "example.png"],
+            open_todos=[],
+            requirement_evidence=[RequirementEvidence(path="requirements.md", content="状态规则")],
+        )
+        self.assertTrue(complete.passed)
+
+    def test_typed_unavailable_image_accepts_artifact_bound_unavailable_status(self) -> None:
+        request = "只根据 Markdown、HTML 和示例图分析需求；不要检查代码。"
+        result = audit_completion(
+            generate_requirement_contract(request),
+            request=request,
+            final_content="requirements.md:1 是需求事实；prototype.html:1 是原型观察；图片当前不可用，无法检查其中内容。",
+            tool_results=[
+                ToolResultSummary("read_file", "规则", path="requirements.md"),
+                ToolResultSummary("read_file", "原型", path="prototype.html"),
+                ToolResultSummary(
+                    "inspect_image",
+                    "image inspection unavailable",
+                    path="example.png",
+                    is_error=True,
+                    metadata={"image_inspection_unavailable": True},
+                ),
+            ],
+            source_paths=["requirements.md", "prototype.html"],
+            open_todos=[],
+            requirement_evidence=[RequirementEvidence(path="requirements.md", content="规则")],
+        )
+
+        self.assertTrue(result.passed)
+
+    def test_suppressed_tool_errors_do_not_satisfy_code_evidence(self) -> None:
+        request = "只读代码，请根据源码说明登录校验位置。不要修改文件。"
+        result = audit_completion(
+            generate_requirement_contract(request),
+            request=request,
+            final_content="登录校验在后端。",
+            tool_results=[
+                ToolResultSummary(
+                    "read_file",
+                    "Tool call was not executed because the bounded exploration phase ended.",
+                    is_error=True,
+                    path="src/LoginController.java",
+                ),
+                ToolResultSummary(
+                    "search_code",
+                    "Tool call was not executed because the bounded exploration phase ended.",
+                    is_error=True,
+                    path="src/LoginController.java",
+                ),
+            ],
+            source_paths=["src/LoginController.java"],
+            open_todos=[],
+        )
+
+        self.assertFalse(result.passed)
+        self.assertTrue(any("no successful" in item.reason for item in result.missing_items))
 
     def test_read_only_answer_requires_traceable_evidence_and_status_labels(self) -> None:
         contract = generate_requirement_contract("只读代码，请根据源码证据说明登录密码在哪里校验。不要修改文件。")
