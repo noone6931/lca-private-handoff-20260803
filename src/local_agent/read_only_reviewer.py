@@ -82,6 +82,7 @@ class ReadOnlyReviewState:
     findings: tuple[ReviewerFinding, ...] = ()
     claim_units: tuple[CandidateClaimUnit, ...] = ()
     document_consistency: DocumentConsistencyAssessment | None = None
+    document_consistency_handoff_signature: tuple[tuple[str, ...], ...] = ()
     provider_attempts: int = 0
     schema_failures: int = 0
     repairs: int = 0
@@ -100,6 +101,7 @@ class ReadOnlyReviewState:
         self.findings = ()
         self.claim_units = ()
         self.document_consistency = None
+        self.document_consistency_handoff_signature = ()
         self.provider_attempts = 0
         self.schema_failures = 0
         self.repairs = 0
@@ -210,12 +212,15 @@ Choose revise when the candidate can be corrected using the handoff. Choose unve
         system += (
             "\n\nDocument-consistency output requirement:\n"
             "- Submit document_consistency for every verdict. conflict_evidence_ids must reference the supplied artifact observations. "
+            "conflict_evidence_ids and supporting_evidence_ids must never overlap. "
             "reported_unresolved means no reconciliation is asserted; conditional_reconciliation may offer a conditional "
             "explanation but must retain that artifact role/lifecycle is unresolved. asserted_reconciled identifies an "
-            "unsupported candidate reconciliation and therefore cannot justify pass. explicitly_supported_reconciliation "
-            "is allowed only when supporting_evidence_ids cite non-visual document observations that explicitly state "
-            "lifecycle or precedence. A visual observation can show displayed values, but never establishes author intent, "
-            "a typo, lifecycle, actor, or precedence."
+            "unsupported candidate reconciliation and therefore cannot justify pass. For reported_unresolved, "
+            "conditional_reconciliation, and asserted_reconciled, set supporting_evidence_ids to []. "
+            "explicitly_supported_reconciliation is the only stance that may use non-empty supporting_evidence_ids, "
+            "and only when those ids cite independent non-visual read_file observations that explicitly state lifecycle "
+            "or precedence. A visual observation can show displayed values, but never establishes author intent, a typo, "
+            "lifecycle, actor, or precedence."
         )
     payload = {
         "kind": "LCA_READ_ONLY_EVIDENCE_REVIEW",
@@ -271,7 +276,15 @@ def reviewer_output_tool_schema(
                     ],
                 },
                 "conflict_evidence_ids": {"type": "array", "maxItems": 8, "items": evidence_id},
-                "supporting_evidence_ids": {"type": "array", "maxItems": 8, "items": evidence_id},
+                "supporting_evidence_ids": {
+                    "type": "array",
+                    "maxItems": 8,
+                    "items": evidence_id,
+                    "description": (
+                        "Must be empty unless stance is explicitly_supported_reconciliation; never overlap with "
+                        "conflict_evidence_ids; cite only independent non-visual read_file lifecycle/precedence support."
+                    ),
+                },
             },
             "required": ["stance", "conflict_evidence_ids", "supporting_evidence_ids"],
         }
@@ -453,6 +466,18 @@ def reviewer_rewrite_message(result: ReviewerResult, *, profile: str | None = No
             "Do not call conflicting artifact observations consistent, completed, or a later state unless the handoff explicitly "
             "establishes their lifecycle, role, or precedence. Conditional explanations must keep the conflict unresolved."
         )
+        stance = result.document_consistency.stance if result.document_consistency else "unknown"
+        lines.append(
+            "Document-consistency rewrite policy: preserve both sides of the artifact observations, state that lifecycle/role/"
+            "precedence is not established when no supporting evidence id exists, and present any reconciliation only as a "
+            f"conditional option. Reviewer stance={stance}. Do not apply reviewer action text as an authoritative source."
+        )
+        for finding in result.findings:
+            claim = f": {finding.claim}" if finding.claim else ""
+            lines.append(
+                f"- Address claim {finding.claim_id}{claim}; remove unsupported reconciliation or restate it as unresolved/conditional."
+            )
+        return "\n".join(lines)
     for finding in result.findings:
         claim = f": {finding.claim}" if finding.claim else ""
         lines.append(f"- Claim {finding.claim_id}{claim}; issue: {finding.issue}; action: {finding.action}")
@@ -527,6 +552,33 @@ def _repair_shape_instruction(diagnostics: Mapping[str, Any]) -> str:
         return "A pass verdict must have an empty findings list; otherwise choose revise or unverified with 1 to 8 findings. " + common
     if code == "nonpassing_without_findings":
         return "A revise or unverified verdict needs 1 to 8 findings. " + common
+    if code == "document_consistency_evidence_roles_overlap":
+        return (
+            "For document_consistency, conflict_evidence_ids and supporting_evidence_ids must be disjoint. "
+            "For reported_unresolved, conditional_reconciliation, or asserted_reconciled, set supporting_evidence_ids to []. "
+            "Only explicitly_supported_reconciliation may use non-empty supporting_evidence_ids, and only for independent "
+            "non-visual read_file lifecycle or precedence support. "
+            + common
+        )
+    if code == "document_consistency_support_requires_explicit_stance":
+        return (
+            "For document_consistency, set supporting_evidence_ids to [] unless stance is explicitly_supported_reconciliation. "
+            "reported_unresolved, conditional_reconciliation, and asserted_reconciled must not include support ids. "
+            + common
+        )
+    if code == "document_conflict_evidence_insufficient":
+        return (
+            "For document_consistency, when the candidate reports, conditions, or reconciles a conflict, "
+            "conflict_evidence_ids must cite at least two known document or image observations that form the comparison. "
+            "Do not cite only one side of the conflict. "
+            + common
+        )
+    if code in {"document_supporting_evidence_invalid", "document_supporting_evidence_unknown", "document_supporting_evidence_duplicate"}:
+        return (
+            "For document_consistency, keep supporting_evidence_ids empty unless the stance is explicitly_supported_reconciliation "
+            "and the ids cite independent non-visual read_file lifecycle or precedence support. "
+            + common
+        )
     return "Use a JSON findings list with at most 8 items and the verdict/finding cardinality from the original schema. " + common
 
 

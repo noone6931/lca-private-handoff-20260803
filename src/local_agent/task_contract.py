@@ -365,7 +365,7 @@ def generate_requirement_contract(user_prompt: str) -> RequirementContract:
                 "Keep direct requirement text distinct from any explicit inference or unread artifact boundary.",
             ],
             evidence_requirements=[
-                "Cite the requirement document path and line or section for direct requirement facts.",
+                "Cite the requirement document path and line or section for direct requirement facts, e.g. path:211, path#L211, or path:#L211.",
                 "State when an artifact could not be read instead of treating it as document evidence.",
             ],
             verification_requirements=[

@@ -1,8 +1,13 @@
 """Runtime facade for typed, bounded read-only exploration."""
 from __future__ import annotations
 
+import json
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Protocol
 
+from .patch.anchored import PatchError
+from .patch.anchored import resolve_workspace_path
 from .read_only_explore import OBSERVATION_TOOLS
 from .read_only_explore import ReadOnlyExploreDecision
 from .read_only_explore import evaluate_read_only_explore
@@ -13,6 +18,14 @@ class ReadOnlyExploreRuntimePort(Protocol):
     _run: Any
     _session: Any
     _workspace_context: Any
+
+
+@dataclass(frozen=True)
+class ExploreBatchPlan:
+    """Same-assistant-turn execution plan after a typed explore transition."""
+
+    suppress_calls: tuple[dict[str, Any], ...] = ()
+    continue_batch: bool = False
 
 
 class RuntimeReadOnlyExplorePhase:
@@ -90,6 +103,54 @@ class RuntimeReadOnlyExplorePhase:
             },
         )
 
+    def plan_remaining_batch(
+        self,
+        decision: ReadOnlyExploreDecision,
+        remaining_calls: list[dict[str, Any]],
+    ) -> ExploreBatchPlan:
+        """Suppress detours while preserving one root-fair precision call.
+
+        The agent loop can only advance to the next tool call in order, so the
+        plan returns any calls to pair with synthetic results before the next
+        executable call.  This keeps provider transcript pairing intact while
+        preventing a duplicate call for one root from hiding a later call for a
+        still-uncovered root in the same assistant batch.
+        """
+
+        if decision.action == "finalize":
+            return ExploreBatchPlan(tuple(remaining_calls), continue_batch=False)
+        if decision.action != "precise" or not decision.read_candidates or not remaining_calls:
+            return ExploreBatchPlan()
+        candidate_roots = self._candidate_roots(decision.read_candidates, decision.missing_roots)
+        suppress: list[dict[str, Any]] = []
+        kept_roots: set[str] = set()
+        for tool_call in remaining_calls:
+            function = tool_call.get("function") if isinstance(tool_call, dict) else None
+            name = function.get("name") if isinstance(function, dict) else ""
+            root = self._tool_call_root(function.get("arguments") if isinstance(function, dict) else "{}", decision.missing_roots)
+            if name == "read_file":
+                if root is not None and root in candidate_roots and root not in kept_roots:
+                    self._runtime._session.append(
+                        "read_only_explore",
+                        {"event": "batch_root_fair_defer", "tool": name, "root": root},
+                    )
+                    kept_roots.add(root)
+                    return ExploreBatchPlan(tuple(suppress), continue_batch=True)
+                suppress.append(tool_call)
+                continue
+            if name not in OBSERVATION_TOOLS:
+                suppress.append(tool_call)
+                continue
+            if root is not None and root not in candidate_roots and root not in kept_roots:
+                self._runtime._session.append(
+                    "read_only_explore",
+                    {"event": "batch_root_fair_defer", "tool": name, "root": root},
+                )
+                kept_roots.add(root)
+                return ExploreBatchPlan(tuple(suppress), continue_batch=True)
+            suppress.append(tool_call)
+        return ExploreBatchPlan(tuple(suppress), continue_batch=False)
+
     def suppression_message(self, decision: ReadOnlyExploreDecision) -> str:
         if decision.action == "precise":
             return "Skipped because typed search/LSP evidence identified bounded direct-read candidates; read those candidates before further discovery."
@@ -120,3 +181,35 @@ class RuntimeReadOnlyExplorePhase:
                     },
                 )
             )
+
+    @staticmethod
+    def _candidate_roots(paths: tuple[str, ...], roots: tuple[str, ...]) -> set[str]:
+        covered: set[str] = set()
+        for raw in paths:
+            try:
+                path = str(Path(raw).resolve())
+            except OSError:
+                path = raw
+            for root in roots:
+                if path == root or path.startswith(root + "/"):
+                    covered.add(root)
+        return covered
+
+    def _tool_call_root(self, raw_arguments: Any, roots: tuple[str, ...]) -> str | None:
+        try:
+            arguments = raw_arguments if isinstance(raw_arguments, dict) else json.loads(raw_arguments or "{}")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return None
+        raw_path = arguments.get("path") if isinstance(arguments, dict) else None
+        if not isinstance(raw_path, str) or not raw_path.strip():
+            return None
+        try:
+            resolved = resolve_workspace_path(
+                self._runtime._workspace_context.primary,
+                raw_path,
+                self._runtime._workspace_context.additional_roots,
+            )
+        except PatchError:
+            return None
+        rendered = str(resolved)
+        return next((root for root in roots if rendered == root or rendered.startswith(root + "/")), None)

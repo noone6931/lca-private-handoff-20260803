@@ -14,9 +14,9 @@
       {"name": "read_file", "arguments": {"path": "prototype.html"}},
       {"name": "inspect_image", "arguments": {"path": "example.png", "question": "Describe visible fields."}}
     ]},
-    {"content": "requirements.md:2 要求状态留空；prototype.html:1 出现审核状态。图片当前不可用。这些资料没有矛盾，因为审核状态是后续流程。"},
+    {"content": "需求事实：requirements.md:2 要求状态留空；prototype.html:1 出现审核状态。待确认：图片当前不可用。这些资料没有矛盾，因为审核状态是后续流程。"},
     {"tool_calls": [{"name": "submit_read_only_review", "arguments": {"verdict": "revise", "confidence": 0.9, "findings": [{"claim_id": "c001", "issue": "the candidate invents a reconciliation for conflicting artifact observations", "action": "state the conflict as unresolved"}], "reason": "document observations do not establish a reconciliation", "document_consistency": {"stance": "asserted_reconciled", "conflict_evidence_ids": ["e001", "e002"], "supporting_evidence_ids": []}}}]},
-    {"content": "requirements.md:2 要求状态留空；prototype.html:1 出现审核状态。图片当前不可用。这些资料没有矛盾，因为审核状态是后续流程。"},
+    {"content": "需求事实：requirements.md:2 要求状态留空；prototype.html:1 出现审核状态。待确认：图片当前不可用。这些资料没有矛盾，因为审核状态是后续流程。"},
     {"tool_calls": [{"name": "submit_read_only_review", "arguments": {"verdict": "revise", "confidence": 0.9, "findings": [{"claim_id": "c001", "issue": "invented reconciliation remains", "action": "do not release the candidate"}], "reason": "conflict remains unresolved", "document_consistency": {"stance": "asserted_reconciled", "conflict_evidence_ids": ["e001", "e002"], "supporting_evidence_ids": []}}}]}
   ],
   "acceptance": {

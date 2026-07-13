@@ -4,6 +4,8 @@ import unittest
 
 from local_agent.document_consistency import DocumentConsistencyAssessment
 from local_agent.document_consistency import candidate_reconciliation_stance
+from local_agent.document_consistency import DocumentConsistencyValidationError
+from local_agent.document_consistency import parse_document_consistency_assessment
 from local_agent.document_consistency import validate_document_consistency_assessment
 from local_agent.explore_handoff import ClaimEvidenceItem, ExploreHandoff, build_explore_handoff
 from local_agent.requirement_evidence import RequirementEvidence
@@ -77,6 +79,187 @@ class DocumentConsistencyTests(unittest.TestCase):
             )
         )
 
+    def test_conflict_candidate_requires_two_document_observation_ids(self) -> None:
+        handoff = _handoff()
+        one_sided = DocumentConsistencyAssessment("reported_unresolved", ("e002",), ())
+        self.assertEqual(
+            validate_document_consistency_assessment(
+                one_sided,
+                handoff,
+                candidate="A and B are not consistent; artifact role remains unresolved.",
+                verdict="unverified",
+            ),
+            "document_conflict_evidence_insufficient",
+        )
+        self.assertIsNone(
+            validate_document_consistency_assessment(
+                one_sided,
+                handoff,
+                candidate="This answer lists visual observations without making a reconciliation claim.",
+                verdict="unverified",
+            )
+        )
+        two_sided = DocumentConsistencyAssessment("reported_unresolved", ("e001", "e002"), ())
+        self.assertIsNone(
+            validate_document_consistency_assessment(
+                two_sided,
+                handoff,
+                candidate="A and B are not consistent; artifact role remains unresolved.",
+                verdict="unverified",
+            )
+        )
+
+    def test_conflict_evidence_requires_two_distinct_artifacts_not_two_locators(self) -> None:
+        handoff = ExploreHandoff(
+            request="compare artifacts",
+            contract=_contract(),
+            items=(
+                ClaimEvidenceItem(
+                    "requirement_locator",
+                    "read_file",
+                    "docs/policy.md",
+                    "/workspace/root",
+                    "root_local",
+                    "ok",
+                    "line 211 says blank",
+                    identity_path="/workspace/root/docs/policy.md",
+                ),
+                ClaimEvidenceItem(
+                    "requirement_locator",
+                    "read_file",
+                    "docs/policy.md",
+                    "/workspace/root",
+                    "root_local",
+                    "ok",
+                    "line 212 says no seal",
+                    identity_path="/workspace/root/docs/policy.md",
+                ),
+                ClaimEvidenceItem(
+                    "visual_observation",
+                    "inspect_image",
+                    "example.png",
+                    "/workspace/root",
+                    "root_local",
+                    "ok",
+                    "image shows value",
+                    identity_path="/workspace/root/example.png",
+                ),
+            ),
+        )
+        same_artifact = DocumentConsistencyAssessment("reported_unresolved", ("e001", "e002"), ())
+        self.assertEqual(
+            validate_document_consistency_assessment(
+                same_artifact,
+                handoff,
+                candidate="The document and image are not consistent; the role is unresolved.",
+                verdict="unverified",
+            ),
+            "document_conflict_evidence_insufficient",
+        )
+        document_and_image = DocumentConsistencyAssessment("reported_unresolved", ("e001", "e003"), ())
+        self.assertIsNone(
+            validate_document_consistency_assessment(
+                document_and_image,
+                handoff,
+                candidate="The document and image are not consistent; the role is unresolved.",
+                verdict="unverified",
+            )
+        )
+
+    def test_real_handoff_shape_treats_relative_locator_and_absolute_read_as_one_artifact_side(self) -> None:
+        content = "210: before\n211: Field must remain blank.\n212: Seal must remain blank.\n"
+        handoff = build_explore_handoff(
+            request="compare artifacts",
+            contract=_contract(),
+            requirement_evidence=(RequirementEvidence("docs/policy.md", content, root="/workspace/root"),),
+            source_evidence=(),
+            records=(),
+            tool_results=(
+                ToolResultSummary(
+                    "read_file",
+                    content,
+                    path="/workspace/root/docs/policy.md",
+                    metadata={
+                        "evidence_root": "/workspace/root",
+                        "resolved_path": "/workspace/root/docs/policy.md",
+                    },
+                ),
+                ToolResultSummary(
+                    "inspect_image",
+                    "Image shows a visible field value.",
+                    path="/workspace/root/example.png",
+                    metadata={
+                        "evidence_root": "/workspace/root",
+                        "resolved_path": "/workspace/root/example.png",
+                        "image_observation": True,
+                    },
+                ),
+            ),
+            candidate="需求事实：docs/policy.md:#L211 要求留空；docs/policy.md:#L212 要求签章留空。图片显示有值，当前未消解。",
+        )
+        md_ids = tuple(
+            item.evidence_id
+            for item in handoff.items
+            if item.tool == "read_file" and item.path.endswith("policy.md")
+        )
+        image_id = next(item.evidence_id for item in handoff.items if item.tool == "inspect_image")
+        self.assertGreaterEqual(len(md_ids), 2)
+
+        same_artifact = DocumentConsistencyAssessment("reported_unresolved", md_ids[:2], ())
+        self.assertEqual(
+            validate_document_consistency_assessment(
+                same_artifact,
+                handoff,
+                candidate="The policy and image are not consistent; the role is unresolved.",
+                verdict="unverified",
+            ),
+            "document_conflict_evidence_insufficient",
+        )
+        two_artifacts = DocumentConsistencyAssessment("reported_unresolved", (md_ids[0], image_id), ())
+        self.assertIsNone(
+            validate_document_consistency_assessment(
+                two_artifacts,
+                handoff,
+                candidate="The policy and image are not consistent; the role is unresolved.",
+                verdict="unverified",
+            )
+        )
+
+    def test_candidate_locator_sources_include_read_html_and_are_artifact_fair(self) -> None:
+        md_content = "\n".join(f"{number}: MD line {number}" for number in range(1, 10))
+        html_content = "238: before\n239: HTML target requirement\n240: after\n"
+        candidate = (
+            "需求事实：requirements.md:1、requirements.md:2、requirements.md:3、requirements.md:4、"
+            "requirements.md:5、requirements.md:6、requirements.md:7、prototype.html:239。"
+            "missing.html:10 不应投影。"
+        )
+
+        handoff = build_explore_handoff(
+            request="compare artifacts",
+            contract=_contract(),
+            requirement_evidence=(RequirementEvidence("requirements.md", md_content, root="/workspace/root"),),
+            source_evidence=(),
+            records=(),
+            tool_results=(
+                ToolResultSummary(
+                    "read_file",
+                    html_content,
+                    path="prototype.html",
+                    metadata={
+                        "evidence_root": "/workspace/root",
+                        "resolved_path": "/workspace/root/prototype.html",
+                    },
+                ),
+            ),
+            candidate=candidate,
+        )
+
+        locators = [item for item in handoff.items if item.classification == "requirement_locator"]
+        self.assertLessEqual(len(locators), 6)
+        self.assertTrue(any(item.path == "requirements.md" and "1: MD line 1" in item.summary for item in locators))
+        self.assertTrue(any(item.path == "prototype.html" and "239: HTML target requirement" in item.summary for item in locators))
+        self.assertFalse(any(item.path == "missing.html" for item in locators))
+
     def test_bad_candidate_can_be_revised_without_being_a_schema_failure(self) -> None:
         handoff = _handoff()
         assessment = DocumentConsistencyAssessment("asserted_reconciled", ("e001", "e002"))
@@ -97,6 +280,57 @@ class DocumentConsistencyTests(unittest.TestCase):
             ),
             "document_reconciliation_unsupported",
         )
+
+    def test_conflict_and_support_roles_must_not_overlap_for_any_stance(self) -> None:
+        handoff = _handoff()
+        for stance in (
+            "reported_unresolved",
+            "conditional_reconciliation",
+            "asserted_reconciled",
+            "explicitly_supported_reconciliation",
+        ):
+            with self.subTest(stance=stance), self.assertRaises(DocumentConsistencyValidationError):
+                parse_document_consistency_assessment(
+                    {
+                        "stance": stance,
+                        "conflict_evidence_ids": ["e001", "e002"],
+                        "supporting_evidence_ids": ["e001"],
+                    },
+                    evidence_ids=handoff.evidence_ids,
+                )
+
+    def test_unresolved_and_conditional_accept_empty_support_ids_after_repair(self) -> None:
+        handoff = _handoff()
+        for stance in ("reported_unresolved", "conditional_reconciliation", "asserted_reconciled"):
+            assessment = parse_document_consistency_assessment(
+                {
+                    "stance": stance,
+                    "conflict_evidence_ids": ["e001", "e002"],
+                    "supporting_evidence_ids": [],
+                },
+                evidence_ids=handoff.evidence_ids,
+            )
+            self.assertEqual(assessment.stance, stance)
+
+            with self.subTest(stance=stance), self.assertRaises(DocumentConsistencyValidationError):
+                parse_document_consistency_assessment(
+                    {
+                        "stance": stance,
+                        "conflict_evidence_ids": ["e001"],
+                        "supporting_evidence_ids": ["e002"],
+                    },
+                    evidence_ids=handoff.evidence_ids,
+                )
+
+        with self.assertRaises(DocumentConsistencyValidationError):
+            parse_document_consistency_assessment(
+                {
+                    "stance": "explicitly_supported_reconciliation",
+                    "conflict_evidence_ids": ["e001", "e002"],
+                    "supporting_evidence_ids": ["e001"],
+                },
+                evidence_ids=handoff.evidence_ids,
+            )
 
     def test_only_visible_late_support_excerpt_can_authorize_reconciliation(self) -> None:
         long_content = "Header. " + ("filler " * 200) + "This screenshot is captured after manual completion."
@@ -158,6 +392,103 @@ class DocumentConsistencyTests(unittest.TestCase):
         image = next(item for item in handoff.items if item.classification == "visual_observation")
         self.assertIn("Reviewer field is visibly populated", image.summary)
         self.assertLessEqual(len(image.summary), 2400)
+
+    def test_candidate_cited_locator_excerpt_does_not_evict_conflict_artifacts(self) -> None:
+        content = "1: intro\n210: previous\n211: Field must remain blank.\n212: next\n"
+        handoff = build_explore_handoff(
+            request="compare artifacts",
+            contract=_contract(),
+            requirement_evidence=(RequirementEvidence("policy.md", content, root="/workspace"),),
+            source_evidence=(),
+            records=(),
+            tool_results=(
+                ToolResultSummary("read_file", content, path="policy.md"),
+                ToolResultSummary("inspect_image", "Visible field has a value.", path="example.png"),
+            ),
+            candidate="需求事实：policy.md:211 要求留空；图中显示有值，当前未消解。",
+        )
+
+        classes = {item.classification for item in handoff.items}
+        self.assertIn("requirement_locator", classes)
+        self.assertIn("requirement_fact", classes)
+        self.assertIn("visual_observation", classes)
+        locator = next(item for item in handoff.items if item.classification == "requirement_locator")
+        self.assertIn("211: Field must remain blank", locator.summary)
+
+    def test_handoff_dedupes_live_label_and_canonical_root_shape(self) -> None:
+        handoff = build_explore_handoff(
+            request="compare artifacts",
+            contract=_contract(),
+            requirement_evidence=(RequirementEvidence("requirements.md", "Field must remain blank.", root="/workspace/root"),),
+            source_evidence=(),
+            records=(),
+            tool_results=(
+                ToolResultSummary(
+                    "read_file",
+                    "Field must remain blank.",
+                    path="/workspace/root/requirements.md",
+                    metadata={
+                        "evidence_root_label": "primary",
+                        "evidence_root": "/workspace/root",
+                        "resolved_path": "/workspace/root/requirements.md",
+                    },
+                ),
+            ),
+        )
+
+        requirement_facts = [
+            item for item in handoff.items
+            if item.classification == "requirement_fact" and item.tool == "read_file"
+        ]
+        self.assertEqual(len(requirement_facts), 1)
+        self.assertEqual(requirement_facts[0].count, 2)
+
+    def test_handoff_keeps_same_basename_in_different_paths_or_roots(self) -> None:
+        same_root = build_explore_handoff(
+            request="compare artifacts",
+            contract=_contract(),
+            requirement_evidence=(),
+            source_evidence=(),
+            records=(),
+            tool_results=(
+                ToolResultSummary(
+                    "read_file",
+                    "A",
+                    path="docs/a.md",
+                    metadata={"evidence_root": "/workspace/root", "resolved_path": "/workspace/root/docs/a.md"},
+                ),
+                ToolResultSummary(
+                    "read_file",
+                    "B",
+                    path="other/a.md",
+                    metadata={"evidence_root": "/workspace/root", "resolved_path": "/workspace/root/other/a.md"},
+                ),
+            ),
+        )
+        different_roots = build_explore_handoff(
+            request="compare artifacts",
+            contract=_contract(),
+            requirement_evidence=(),
+            source_evidence=(),
+            records=(),
+            tool_results=(
+                ToolResultSummary(
+                    "read_file",
+                    "A",
+                    path="docs/a.md",
+                    metadata={"evidence_root": "/workspace/root-a", "resolved_path": "/workspace/root-a/docs/a.md"},
+                ),
+                ToolResultSummary(
+                    "read_file",
+                    "B",
+                    path="docs/a.md",
+                    metadata={"evidence_root": "/workspace/root-b", "resolved_path": "/workspace/root-b/docs/a.md"},
+                ),
+            ),
+        )
+
+        self.assertEqual(len([item for item in same_root.items if item.classification == "requirement_fact"]), 2)
+        self.assertEqual(len([item for item in different_roots.items if item.classification == "requirement_fact"]), 2)
 
 
 if __name__ == "__main__":

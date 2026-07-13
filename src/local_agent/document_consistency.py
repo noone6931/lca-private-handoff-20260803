@@ -5,6 +5,8 @@ import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Iterable, Literal, Mapping
 
+from .document_identity import document_artifact_identity
+
 if TYPE_CHECKING:
     from .explore_handoff import ClaimEvidenceItem, ExploreHandoff
 
@@ -64,6 +66,8 @@ def parse_document_consistency_assessment(
     supports = _unique_known_ids(raw.get("supporting_evidence_ids"), known, "document_supporting_evidence")
     if set(conflicts) & set(supports):
         raise DocumentConsistencyValidationError("document_consistency_evidence_roles_overlap")
+    if stance != "explicitly_supported_reconciliation" and supports:
+        raise DocumentConsistencyValidationError("document_consistency_support_requires_explicit_stance")
     return DocumentConsistencyAssessment(stance, conflicts, supports)
 
 
@@ -86,10 +90,12 @@ def validate_document_consistency_assessment(
     conflicts = tuple(by_id[item_id] for item_id in assessment.conflict_evidence_ids)
     if any(not _is_document_observation(item) for item in conflicts):
         return "document_conflict_evidence_not_observation"
-    if assessment.stance in {"conditional_reconciliation", "asserted_reconciled", "explicitly_supported_reconciliation"}:
-        if len(conflicts) < 2:
-            return "document_conflict_evidence_insufficient"
     candidate_stance = candidate_reconciliation_stance(candidate)
+    if candidate_stance is not None and _distinct_artifact_count(conflicts) < 2:
+        return "document_conflict_evidence_insufficient"
+    if assessment.stance in {"conditional_reconciliation", "asserted_reconciled", "explicitly_supported_reconciliation"}:
+        if _distinct_artifact_count(conflicts) < 2:
+            return "document_conflict_evidence_insufficient"
     if verdict == "pass" and assessment.stance in {"reported_unresolved", "conditional_reconciliation"} and candidate_stance == "asserted_reconciled":
         return "document_consistency_stance_mismatch"
     if verdict == "pass" and assessment.stance == "asserted_reconciled":
@@ -167,6 +173,14 @@ def _unique_known_ids(value: object, known: set[str], prefix: str) -> tuple[str,
 
 def _is_document_observation(item: ClaimEvidenceItem) -> bool:
     return item.outcome == "ok" and item.tool in {"read_file", "inspect_image"}
+
+
+def _distinct_artifact_count(items: tuple[ClaimEvidenceItem, ...]) -> int:
+    return len({_document_artifact_identity(item) for item in items})
+
+
+def _document_artifact_identity(item: ClaimEvidenceItem) -> tuple[str, str]:
+    return document_artifact_identity(root=item.root, path=item.path, identity_path=item.identity_path)
 
 
 def _is_explicit_reconciliation_support(item: ClaimEvidenceItem) -> bool:

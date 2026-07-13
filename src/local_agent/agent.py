@@ -123,7 +123,6 @@ from .tools.relevance import is_analysis_only_request
 from .task_contract import requires_no_edit_final_hygiene
 from .tools.relevance import path_matches_any
 from .tools.relevance import request_mentions_config_or_path
-from .tool_choice_queue import ToolChoiceDecision
 from .tool_observation import ToolResultSummary
 from .verification_timeline import workspace_write_happened
 from .user_facts import UserFactsLayer
@@ -131,6 +130,8 @@ from .provider_context import ProviderContextPhase
 from .runtime_evidence import EvidenceVerificationLifecycle
 from .runtime_memory import MemoryConsolidationLifecycle
 from .runtime_tool_directive import RuntimeToolDirectivePhase
+from .runtime_tool_choice_directive import RuntimeToolChoiceDirectivePhase
+from .runtime_tool_choice_queue import RuntimeToolChoiceQueuePhase
 from .runtime_read_only_review import ReadOnlyReviewPhase
 from .runtime_read_only_explore import RuntimeReadOnlyExplorePhase
 from .runtime_provider_terminal import ProviderTerminalPhase
@@ -167,9 +168,6 @@ from .memory_consolidation import _memory_item_digest
 from .memory_consolidation import _normalized_memory_item_key
 from .tool_gateway import _tool_call_signature
 from .tool_gateway import _intersect_optional_tool_allowlist
-from .tool_gateway import _tool_choice_steering_signature
-from .tool_gateway import _tool_choice_signature_count
-from .tool_gateway import _tool_choice_steering_message
 from .tool_gateway import _tool_choice_result_path
 from .tool_gateway import _tool_call_uses_dry_run
 from .tool_gateway import _source_evidence_matches_path
@@ -371,6 +369,8 @@ class AgentRuntime:
         self._evidence_phase = EvidenceVerificationLifecycle(self)
         self._memory_phase = MemoryConsolidationLifecycle(self)
         self._tool_directive_phase = RuntimeToolDirectivePhase(self)
+        self._tool_choice_directive_phase = RuntimeToolChoiceDirectivePhase(self)
+        self._tool_choice_queue_phase = RuntimeToolChoiceQueuePhase(self)
         self._read_only_explore_phase = RuntimeReadOnlyExplorePhase(self)
         self._read_only_review_phase = ReadOnlyReviewPhase(self)
         self._provider_terminal_phase = ProviderTerminalPhase(self)
@@ -515,7 +515,7 @@ class AgentRuntime:
             if self._deadline_exceeded(deadline):
                 return self._stop_for_budget(deadline, run_start_index)
 
-            tool_choice_stop_message = self._apply_tool_choice_queue_if_needed(deadline)
+            tool_choice_stop_message = self._tool_choice_queue_phase.apply_if_needed(deadline)
             if tool_choice_stop_message is not None:
                 return self._finish_run(
                     tool_choice_stop_message,
@@ -532,6 +532,7 @@ class AgentRuntime:
                 continue
             messages_for_model = self._provider_context_phase.messages_for_model(deadline)
             tools_for_model = self._tools_for_model()
+            tool_choice_turn = self._tool_choice_directive_phase.before_model_turn()
             tool_schema_names = [
                 str(schema.get("function", {}).get("name") or "")
                 for schema in tools_for_model
@@ -540,7 +541,7 @@ class AgentRuntime:
             self._record_llm_request()
             self._session.append(
                 "llm_request",
-                {"step": step, "tool_schema_names": tool_schema_names},
+                {"step": step, "tool_schema_names": tool_schema_names, "forced_tool_choice": tool_choice_turn.forced_tool_name},
             )
             self._events.emit(
                 "LlmRequest",
@@ -549,6 +550,7 @@ class AgentRuntime:
                     "message_count": len(messages_for_model),
                     "tool_schema_count": len(tools_for_model),
                     "tool_schema_names": tool_schema_names,
+                    "forced_tool_choice": tool_choice_turn.forced_tool_name,
                     "force_final_answer": self._run.force_final_answer_without_tools,
                 },
             )
@@ -560,6 +562,7 @@ class AgentRuntime:
                     messages_for_model,
                     tools_for_model,
                     timeout=self._provider_context_phase.remaining_timeout(deadline),
+                    tool_choice=tool_choice_turn.tool_choice,
                 )
             except LlmError as exc:
                 fallback = self._forced_final_timeout_fallback(
@@ -595,6 +598,24 @@ class AgentRuntime:
                     artifact=artifact,
                 )
             if not raw_tool_calls:
+                tool_choice_outcome = self._tool_choice_directive_phase.after_model_turn([])
+                if tool_choice_outcome.kind != "none":
+                    message = _provider_safe_assistant_message(raw_message)
+                    if message.get("content") is None:
+                        message = {**message, "content": ""}
+                    self._messages.append(message)
+                    self._session.append("assistant", message)
+                    self._events.emit("AssistantMessage", _assistant_event_payload(message))
+                    if tool_choice_outcome.kind == "force":
+                        step += 1
+                        continue
+                    return self._finish_run(
+                        tool_choice_outcome.terminal_message,
+                        deadline,
+                        run_start_index,
+                        reason=tool_choice_outcome.terminal_reason,
+                        skip_memory_consolidation=True,
+                    )
                 terminal_outcome = self._provider_terminal_phase.handle_no_tool_response(
                     raw_message.get("content"),
                     forced_final=force_final_answer,
@@ -620,6 +641,25 @@ class AgentRuntime:
             self._events.emit("AssistantMessage", _assistant_event_payload(message))
 
             tool_calls = message.get("tool_calls") or []
+            tool_choice_outcome = self._tool_choice_directive_phase.after_model_turn(tool_calls)
+            if tool_choice_outcome.kind != "none":
+                if tool_choice_outcome.append_skipped_results:
+                    self._append_synthetic_tool_results(
+                        tool_calls,
+                        tool_choice_outcome.skipped_message,
+                        metadata=tool_choice_outcome.skipped_metadata,
+                        count_as_error=False,
+                    )
+                if tool_choice_outcome.kind == "force":
+                    step += 1
+                    continue
+                return self._finish_run(
+                    tool_choice_outcome.terminal_message,
+                    deadline,
+                    run_start_index,
+                    reason=tool_choice_outcome.terminal_reason,
+                    skip_memory_consolidation=True,
+                )
             if getattr(response, "finish_reason", None) == "length":
                 self._append_synthetic_tool_results(tool_calls, self._length_stop_tool_message())
                 return self._stop_for_length(deadline, run_start_index)
@@ -672,7 +712,10 @@ class AgentRuntime:
                     continue
                 return self._finish_run(content, deadline, run_start_index)
 
+            synthetic_paired_tool_ids: set[str] = set()
             for index, tool_call in enumerate(tool_calls):
+                if tool_call.get("id") in synthetic_paired_tool_ids:
+                    continue
                 if self._deadline_exceeded(deadline):
                     self._append_synthetic_tool_results(tool_calls[index:], self._budget_stop_message())
                     return self._stop_for_budget(deadline, run_start_index)
@@ -723,12 +766,24 @@ class AgentRuntime:
                 explore_budget = self._read_only_explore_phase.after_tool_result(name)
                 if explore_budget is not None:
                     remaining_calls = tool_calls[index + 1 :]
-                    self._read_only_explore_phase.record_suppressed_calls(len(remaining_calls), explore_budget)
-                    self._append_synthetic_tool_results(
-                        remaining_calls,
-                        self._read_only_explore_phase.suppression_message(explore_budget),
-                        count_as_error=False,
-                    )
+                    plan = self._read_only_explore_phase.plan_remaining_batch(explore_budget, remaining_calls)
+                    if plan.suppress_calls:
+                        synthetic_paired_tool_ids.update(
+                            str(call.get("id"))
+                            for call in plan.suppress_calls
+                            if call.get("id") is not None
+                        )
+                        self._read_only_explore_phase.record_suppressed_calls(
+                            len(plan.suppress_calls),
+                            explore_budget,
+                        )
+                        self._append_synthetic_tool_results(
+                            list(plan.suppress_calls),
+                            self._read_only_explore_phase.suppression_message(explore_budget),
+                            count_as_error=False,
+                        )
+                    if plan.continue_batch:
+                        continue
                     break
                 if name == "git_diff" and not result.is_error:
                     patch_review = self._decide_post_diff_patch_review(run_start_index)
@@ -797,12 +852,12 @@ class AgentRuntime:
         if allowed_names is None:
             return [
                 schema
-                for schema in self._registry.schemas()
+                for schema in _registry_schemas_for_context(self._registry, self._tool_context)
                 if schema.get("function", {}).get("name") not in denied_names
             ]
         return [
             schema
-            for schema in self._registry.schemas()
+            for schema in _registry_schemas_for_context(self._registry, self._tool_context)
             if schema.get("function", {}).get("name") in allowed_names
             and schema.get("function", {}).get("name") not in denied_names
         ]
@@ -835,130 +890,12 @@ class AgentRuntime:
             allowed_names = _intersect_optional_tool_allowlist(allowed_names, self._run.tool_choice_allowed_tool_names)
         return allowed_names
 
-    def _apply_tool_choice_queue_if_needed(self, deadline: float | None = None) -> str | None:
-        contract = self._run.requirement_contract
-        if contract is None:
-            self._run.tool_choice_allowed_tool_names = None
-            return None
-        decision = self._run.tool_choice_queue.evaluate(
-            task_kind=contract.task_kind,
-            prompt=self._run.current_user_request or "",
-            tool_names=self._run.tool_choice_tool_names,
-            tool_results=self._run.tool_choice_results,
-            available_tool_names=self._available_registry_tool_names(),
-            design_evidence_roots=self._run.design_evidence_coverage.roots,
-            workspace_roots=tuple(str(root) for root in self._workspace_context.all_roots),
-            evidence_domain=contract.evidence_domain,
-            read_only_review_profile=contract.read_only_review_profile,
-            document_artifacts=contract.document_artifacts,
-        )
-        self._run.tool_choice_allowed_tool_names = set(decision.allowed_tool_names)
-        self._run.update_tool_choice_read_scope(decision.scoped_read_paths, decision.scoped_read_budget)
-        self._run.tool_choice_required_glob_roots = set(decision.required_glob_roots) or None
-        if decision.force_final_answer_without_tools:
-            content = _tool_choice_steering_message(decision, self._run.current_user_request)
-            self._messages.append({"role": "user", "content": content})
-            self._session.append(
-                "runtime_steering",
-                {
-                    "kind": "tool_choice_queue",
-                    "rule_id": decision.rule_id,
-                    "missing_requirements": list(decision.missing_requirements),
-                    "allowed_tool_names": [],
-                    "reason": decision.reason,
-                    "force_final_answer_without_tools": True,
-                },
-            )
-            if not self._queue_forced_final_answer(kind=decision.rule_id or "tool_choice_queue"):
-                self._run.block_unverified_final_answer(
-                    kind=decision.rule_id or "tool_choice_queue",
-                    reason=self._final_answer_rewrite_skip_reason() or "continuation_limit",
-                )
-            return None
-        if decision.should_stop:
-            self._session.append(
-                "runtime_steering",
-                {
-                    "kind": "tool_choice_queue",
-                    "rule_id": decision.rule_id,
-                    "reason": decision.reason,
-                    "stop_message": decision.stop_message,
-                },
-            )
-            return decision.stop_message
-        coverage = self._run.design_evidence_coverage.observe(
-            queue_requires_steering=decision.steering_required,
-            read_paths=(
-                result.path
-                for result in self._run.tool_choice_results
-                if result.name == "read_file" and not result.is_error
-            ),
-            tool_count=len(self._run.tool_choice_results),
-            reserve_required=self._run.finalization_reserve_required(),
-            request_summary=self._final_answer_request_summary(),
-        )
-        if coverage is not None:
-            for kind, payload in coverage.preceding_events:
-                self._session.append("runtime_steering", {"kind": kind, **payload})
-            self._session.append(
-                "runtime_steering",
-                {"kind": coverage.kind, **coverage.payload},
-            )
-            if coverage.message is not None:
-                self._messages.append({"role": "user", "content": coverage.message})
-                if coverage.force_final_answer_without_tools:
-                    if self._queue_forced_final_answer(kind=coverage.kind):
-                        self._run.force_final_answer_without_tools = True
-                    else:
-                        skip_reason = self._run.finalization_rewrite_skip_reason() or "continuation_limit"
-                        self._session.append(
-                            "runtime_steering",
-                            {
-                                "kind": "forced_final_answer_skipped",
-                                "source": coverage.kind,
-                                "reason": skip_reason,
-                            },
-                        )
-                        self._run.block_unverified_final_answer(kind=coverage.kind, reason=skip_reason)
-                        self._run.force_final_answer_without_tools = False
-                        self._tool_directive_phase.clear("coverage_final")
-                        return "Runtime could not safely schedule the required final answer rewrite."
-                else:
-                    self._run.force_final_answer_without_tools = False
-                self._tool_directive_phase.clear("coverage_final")
-                return None
-        if self._run.force_final_answer_without_tools:
-            return None
-        if not decision.steering_required:
-            return None
-        signature = _tool_choice_steering_signature(decision, len(self._run.tool_choice_results))
-        if signature in self._run.tool_choice_steering_signatures:
-            return None
-        if _tool_choice_signature_count(self._run.tool_choice_steering_signatures, decision.rule_id) >= (
-            MAX_TOOL_CHOICE_QUEUE_STEERS_PER_SIGNATURE
-        ):
-            return None
-        self._run.tool_choice_steering_signatures.add(signature)
-        content = _tool_choice_steering_message(decision, self._run.current_user_request)
-        self._messages.append({"role": "user", "content": content})
-        self._session.append(
-            "runtime_steering",
-            {
-                "kind": "tool_choice_queue",
-                "rule_id": decision.rule_id,
-                "missing_requirements": list(decision.missing_requirements),
-                "allowed_tool_names": sorted(decision.allowed_tool_names),
-                "reason": decision.reason,
-            },
-        )
-        return None
-
     def _available_registry_tool_names(self) -> tuple[str, ...]:
         denied_names = self._denied_model_tool_names()
-        if hasattr(self._registry, "tool_names"):
-            return tuple(name for name in self._registry.tool_names() if name not in denied_names)
+        if hasattr(self._registry, "exposed_tool_names"):
+            return tuple(name for name in self._registry.exposed_tool_names(self._tool_context) if name not in denied_names)
         names: list[str] = []
-        for schema in self._registry.schemas():
+        for schema in _registry_schemas_for_context(self._registry, self._tool_context):
             name = schema.get("function", {}).get("name")
             if isinstance(name, str) and name and name not in denied_names:
                 names.append(name)
@@ -1920,7 +1857,15 @@ class AgentRuntime:
             severity=severity,
         )
 
-    def _append_synthetic_tool_results(self, tool_calls: list[dict[str, Any]], content: str, *, is_error: bool = True, count_as_error: bool | None = None) -> None:
+    def _append_synthetic_tool_results(
+        self,
+        tool_calls: list[dict[str, Any]],
+        content: str,
+        *,
+        is_error: bool = True,
+        count_as_error: bool | None = None,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> None:
         if count_as_error is None:
             count_as_error = is_error
         for tool_call in tool_calls:
@@ -1928,7 +1873,7 @@ class AgentRuntime:
             name = function.get("name") or ""
             result = f"Tool call was not executed because {content}"
             self._record_synthetic_tool_result_for_run(count_as_error=count_as_error)
-            self._append_tool_result(tool_call, name, result, is_error=is_error)
+            self._append_tool_result(tool_call, name, result, is_error=is_error, metadata=metadata)
 
     def _log_tool_start(self, name: str, arguments: Any) -> None:
         self._record_tool_started_for_run(name)
@@ -1946,3 +1891,12 @@ class AgentRuntime:
 
     def _emit_event(self, event_type: str, payload: dict[str, Any]) -> None:
         self._events.emit(event_type, payload)
+
+
+def _registry_schemas_for_context(registry: Any, context: ToolContext) -> list[dict[str, Any]]:
+    """Return context-aware model schemas while tolerating narrow test registries."""
+
+    model_schemas = getattr(registry, "model_schemas", None)
+    if callable(model_schemas):
+        return model_schemas(context)
+    return registry.schemas()

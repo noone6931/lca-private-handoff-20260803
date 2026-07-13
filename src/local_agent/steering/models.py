@@ -10,6 +10,8 @@ from ..requirement_evidence import RequirementEvidence
 from ..task_contract import RequirementContract
 from ..tool_observation import ToolResultSummary
 from ..verification_plan import VerificationPlan
+from ..evidence_status import EVIDENCE_STATUS_LABELS
+from ..evidence_status import EVIDENCE_STATUS_REQUEST_KEYWORDS
 
 NO_EDIT_FINAL_HYGIENE_TOOLS = {"todo_read", "todo_add", "todo_update", "git_status", "git_diff"}
 READ_ONLY_EVIDENCE_TOOLS = {
@@ -201,13 +203,6 @@ SOURCE_FALSE_NEGATIVE_STOPWORDS = {
     "test",
     "token",
 }
-EVIDENCE_STATUS_REQUEST_KEYWORDS = {
-    "已验证",
-    "推断",
-    "证据状态",
-    "verified",
-    "inferred",
-}
 INFERENCE_MARKERS = {
     "可能",
     "推测",
@@ -220,14 +215,6 @@ INFERENCE_MARKERS = {
     "probably",
     "inferred",
     "guess",
-}
-EVIDENCE_STATUS_LABELS = {
-    "已验证",
-    "推断",
-    "verified",
-    "inferred",
-    "证据支持",
-    "未验证",
 }
 TODO_REQUEST_KEYWORDS = {
     "todo",

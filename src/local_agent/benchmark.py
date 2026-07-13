@@ -105,6 +105,7 @@ class ScriptedBenchmarkClient:
         tools: list[dict[str, Any]],
         *,
         timeout: float | None = None,
+        tool_choice: Mapping[str, Any] | None = None,
     ) -> Any:
         schema_names = tuple(
             str(schema.get("function", {}).get("name") or "")
@@ -117,6 +118,7 @@ class ScriptedBenchmarkClient:
                 "message_count": len(messages),
                 "tool_schema_names": list(schema_names),
                 "timeout": timeout,
+                "tool_choice": dict(tool_choice) if isinstance(tool_choice, Mapping) else None,
             }
         )
         if self._responses:
@@ -187,6 +189,7 @@ class SchemaRecordingClient:
         tools: list[dict[str, Any]],
         *,
         timeout: float | None = None,
+        tool_choice: Mapping[str, Any] | None = None,
     ) -> Any:
         schema_names = tuple(
             str(schema.get("function", {}).get("name") or "")
@@ -199,9 +202,12 @@ class SchemaRecordingClient:
                 "message_count": len(messages),
                 "tool_schema_names": list(schema_names),
                 "timeout": timeout,
+                "tool_choice": dict(tool_choice) if isinstance(tool_choice, Mapping) else None,
             }
         )
-        return self._delegate.chat(messages, tools, timeout=timeout)
+        if tool_choice is None:
+            return self._delegate.chat(messages, tools, timeout=timeout)
+        return self._delegate.chat(messages, tools, timeout=timeout, tool_choice=tool_choice)
 
 
 def load_benchmark_tasks(
@@ -601,6 +607,18 @@ def _evaluate_acceptance(
                 _mapping_integer_values_match(actual_safe_partial, expected_counts),
                 expected_counts,
                 actual_safe_partial,
+            )
+        )
+    expected_tool_choice_exact = acceptance.get("tool_choice_exact")
+    if isinstance(expected_tool_choice_exact, Mapping):
+        actual_tool_choice_exact = (runtime._last_run_summary or {}).get("tool_choice_exact") or {}
+        expected_counts = _integer_mapping(expected_tool_choice_exact)
+        checks.append(
+            _check(
+                "tool_choice_exact",
+                _mapping_integer_values_match(actual_tool_choice_exact, expected_counts),
+                expected_counts,
+                actual_tool_choice_exact,
             )
         )
     schema_excludes = _string_list(acceptance.get("schema_excludes"))

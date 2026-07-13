@@ -7,18 +7,21 @@ matrix that another model call can inspect without receiving the transcript.
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from pathlib import Path
 from typing import Any, Iterable
 
 from .document_consistency import explicit_reconciliation_excerpt
+from .document_identity import canonical_root_identity
+from .document_identity import document_artifact_identity
 from .evidence import EvidenceRecord
+from .requirement_evidence import document_locator_excerpt
+from .requirement_evidence import parse_document_locators
 from .requirement_evidence import RequirementEvidence
 from .steering.final_answer import SourceEvidence
 from .task_contract import RequirementContract
 from .tool_observation import ToolResultSummary
 
 
-MAX_HANDOFF_ITEMS = 18
+MAX_HANDOFF_ITEMS = 24
 MAX_HANDOFF_CONTENT_CHARS = 700
 MAX_VISUAL_OBSERVATION_CHARS = 2400
 MAX_REQUIREMENT_ITEMS = 4
@@ -26,6 +29,7 @@ MAX_SOURCE_ITEMS_PER_ROOT = 1
 MAX_RECORD_ITEMS_PER_ROOT = 1
 MAX_RESULT_ITEMS = 4
 MAX_DOCUMENT_ARTIFACT_ITEMS = 6
+MAX_CANDIDATE_LOCATOR_ITEMS = 6
 
 
 @dataclass(frozen=True)
@@ -41,6 +45,7 @@ class ClaimEvidenceItem:
     summary: str
     count: int = 1
     evidence_id: str = ""
+    identity_path: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -108,6 +113,15 @@ class ExploreHandoff:
         return tuple(item.evidence_id for item in self.items)
 
 
+@dataclass(frozen=True)
+class _DocumentLocatorSource:
+    path: str
+    content: str
+    root: str
+    scope: str
+    identity_path: str
+
+
 def build_explore_handoff(
     *,
     request: str,
@@ -116,6 +130,7 @@ def build_explore_handoff(
     source_evidence: Iterable[SourceEvidence],
     records: Iterable[EvidenceRecord],
     tool_results: Iterable[ToolResultSummary],
+    candidate: str | None = None,
 ) -> ExploreHandoff:
     """Build a conservative matrix from existing Runtime observations only.
 
@@ -128,8 +143,22 @@ def build_explore_handoff(
 
     results = tuple(tool_results)
     requirement_entries = tuple(requirement_evidence)
+    candidate_locator_items = _candidate_locator_items(
+        candidate or "",
+        requirement_entries,
+        results,
+    )
     requirements = [
-        ClaimEvidenceItem("requirement_fact", "read_file", item.path, item.root or "(unknown)", item.scope or "root_local", "ok", _clip(item.content))
+        ClaimEvidenceItem(
+            "requirement_fact",
+            "read_file",
+            item.path,
+            item.root or "(unknown)",
+            item.scope or "root_local",
+            "ok",
+            _clip(item.content),
+            identity_path=item.path,
+        )
         for item in requirement_entries[-MAX_REQUIREMENT_ITEMS:]
     ]
     source_items = _bounded_per_root(
@@ -151,6 +180,7 @@ def build_explore_handoff(
             str(item.metadata.get("evidence_scope") or "root_local"),
             "error" if item.is_error else "ok",
             _clip(item.content, limit=MAX_VISUAL_OBSERVATION_CHARS) if item.name == "inspect_image" else _clip(item.content),
+            identity_path=str(item.metadata.get("resolved_path") or item.path or ""),
         )
         for item in results
         if item.name == "inspect_image"
@@ -168,10 +198,11 @@ def build_explore_handoff(
             "unlocated",
             "read_only_explore",
             item.path or "(unknown root)",
-            str(item.metadata.get("evidence_root_label") or item.metadata.get("evidence_root") or item.path or "(unknown)"),
+            str(item.metadata.get("evidence_root") or item.metadata.get("evidence_root_label") or item.path or "(unknown)"),
             str(item.metadata.get("evidence_scope") or "root_local"),
             "incomplete",
             _clip(item.content),
+            identity_path=str(item.metadata.get("resolved_path") or item.path or ""),
         )
         for item in results
         if item.name == "read_only_explore" and item.metadata.get("read_only_explore_incomplete")
@@ -181,8 +212,9 @@ def build_explore_handoff(
             ClaimEvidenceItem(
                 "unlocated" if item.status in {"content_no_match", "path_no_match", "exact_path_missing", "no_match", "incomplete"} else "inspection_failure" if item.status == "error" else "observed_candidate",
                 item.tool, item.subject,
-                str(item.details.get("evidence_root_label") or item.details.get("evidence_root") or "(unknown)"),
+                str(item.details.get("evidence_root") or item.details.get("evidence_root_label") or "(unknown)"),
                 str(item.details.get("evidence_scope") or "(unknown)"), item.status, _clip(item.summary),
+                identity_path=str(item.details.get("resolved_path") or item.subject or ""),
             )
             for item in records
         ),
@@ -201,9 +233,10 @@ def build_explore_handoff(
                 else "observed_candidate"
             ),
             item.name, item.path or "(none)",
-            str(item.metadata.get("evidence_root_label") or item.metadata.get("evidence_root") or "(unknown)"),
+            str(item.metadata.get("evidence_root") or item.metadata.get("evidence_root_label") or "(unknown)"),
             str(item.metadata.get("evidence_scope") or "(unknown)"),
             "error" if item.is_error else "no_match" if item.useless else "ok", _clip(item.content),
+            identity_path=str(item.metadata.get("resolved_path") or item.path or ""),
         )
         for item in results
         if item.name.startswith("lsp_") or item.name == "search_code"
@@ -213,10 +246,11 @@ def build_explore_handoff(
             "inspection_failure",
             item.name,
             item.path or "(none)",
-            str(item.metadata.get("evidence_root_label") or item.metadata.get("evidence_root") or "(unknown)"),
+            str(item.metadata.get("evidence_root") or item.metadata.get("evidence_root_label") or "(unknown)"),
             str(item.metadata.get("evidence_scope") or "(unknown)"),
             "error",
             _clip(item.content),
+            identity_path=str(item.metadata.get("resolved_path") or item.path or ""),
         )
         for item in results
         if item.is_error and not (item.name.startswith("lsp_") or item.name == "search_code")
@@ -226,6 +260,7 @@ def build_explore_handoff(
     # aggregates repeated failures by root/category.
     items = _dedupe_items(
         [
+            *candidate_locator_items,
             *reconciliation_support_items,
             *document_items,
             *precise_results,
@@ -285,6 +320,7 @@ def _document_reconciliation_support_items(
                     item.scope or "root_local",
                     "ok",
                     excerpt,
+                    identity_path=item.path,
                 )
             )
     for item in tool_results:
@@ -301,9 +337,107 @@ def _document_reconciliation_support_items(
                     str(item.metadata.get("evidence_scope") or "root_local"),
                     "ok",
                     excerpt,
+                    identity_path=str(item.metadata.get("resolved_path") or item.path or ""),
                 )
             )
     return items[:MAX_REQUIREMENT_ITEMS]
+
+
+def _candidate_locator_items(
+    candidate: str,
+    requirements: Iterable[RequirementEvidence],
+    tool_results: Iterable[ToolResultSummary],
+) -> list[ClaimEvidenceItem]:
+    """Project only already-read document excerpts cited by the candidate."""
+
+    if not candidate:
+        return []
+    buckets: dict[tuple[str, str], list[ClaimEvidenceItem]] = {}
+    order: list[tuple[str, str]] = []
+    seen: set[tuple[tuple[str, str], str, str]] = set()
+    for source in _document_locator_sources(requirements, tool_results):
+        artifact_key = document_artifact_identity(
+            root=source.root,
+            path=source.path,
+            identity_path=source.identity_path,
+        )
+        for locator in parse_document_locators(candidate, source.path):
+            key = (artifact_key, locator.kind, locator.value)
+            if key in seen:
+                continue
+            seen.add(key)
+            excerpt = document_locator_excerpt(source.content, locator)
+            if not excerpt:
+                continue
+            if artifact_key not in buckets:
+                buckets[artifact_key] = []
+                order.append(artifact_key)
+            buckets[artifact_key].append(
+                ClaimEvidenceItem(
+                    "requirement_locator",
+                    "read_file",
+                    source.path,
+                    source.root,
+                    source.scope,
+                    "ok",
+                    f"{locator.kind} {locator.value}: {excerpt}",
+                    identity_path=source.identity_path,
+                )
+            )
+    return _fair_candidate_locator_items(buckets, order)
+
+
+def _document_locator_sources(
+    requirements: Iterable[RequirementEvidence],
+    tool_results: Iterable[ToolResultSummary],
+) -> list[_DocumentLocatorSource]:
+    sources: dict[tuple[str, str], _DocumentLocatorSource] = {}
+    for item in requirements:
+        source = _DocumentLocatorSource(
+            path=item.path,
+            content=item.content,
+            root=item.root or "(unknown)",
+            scope=item.scope or "root_local",
+            identity_path=item.path,
+        )
+        sources.setdefault(document_artifact_identity(root=source.root, path=source.path, identity_path=source.identity_path), source)
+    for item in tool_results:
+        if item.name != "read_file" or item.is_error:
+            continue
+        if not str(item.path or "").lower().endswith((".md", ".markdown", ".html", ".htm")):
+            continue
+        source = _DocumentLocatorSource(
+            path=item.path or "(none)",
+            content=item.content,
+            root=str(item.metadata.get("evidence_root") or item.metadata.get("evidence_root_label") or "(unknown)"),
+            scope=str(item.metadata.get("evidence_scope") or "root_local"),
+            identity_path=str(item.metadata.get("resolved_path") or item.path or ""),
+        )
+        sources.setdefault(document_artifact_identity(root=source.root, path=source.path, identity_path=source.identity_path), source)
+    return list(sources.values())
+
+
+def _fair_candidate_locator_items(
+    buckets: dict[tuple[str, str], list[ClaimEvidenceItem]],
+    order: list[tuple[str, str]],
+) -> list[ClaimEvidenceItem]:
+    items: list[ClaimEvidenceItem] = []
+    cursors = {key: 0 for key in order}
+    while len(items) < MAX_CANDIDATE_LOCATOR_ITEMS:
+        added = False
+        for key in order:
+            cursor = cursors[key]
+            bucket = buckets[key]
+            if cursor >= len(bucket):
+                continue
+            items.append(bucket[cursor])
+            cursors[key] = cursor + 1
+            added = True
+            if len(items) >= MAX_CANDIDATE_LOCATOR_ITEMS:
+                break
+        if not added:
+            break
+    return items
 
 
 def _dedupe_items(items: Iterable[ClaimEvidenceItem]) -> list[ClaimEvidenceItem]:
@@ -325,6 +459,7 @@ def _dedupe_items(items: Iterable[ClaimEvidenceItem]) -> list[ClaimEvidenceItem]
             prior.outcome,
             prior.summary,
             count=prior.count + item.count,
+            identity_path=prior.identity_path,
         )
     return list(deduped.values())
 
@@ -333,23 +468,16 @@ def _handoff_item_identity(item: ClaimEvidenceItem) -> tuple[str, ...]:
     """Use artifact identity rather than display spelling for document reads."""
 
     if item.classification == "inspection_failure":
-        return ("failure", item.classification, _root_identity(item.root), item.outcome)
+        return ("failure", item.classification, canonical_root_identity(item.root), item.outcome)
     if item.tool in {"read_file", "inspect_image"} and item.outcome == "ok":
+        root_identity, artifact_identity = document_artifact_identity(
+            root=item.root,
+            path=item.path,
+            identity_path=item.identity_path,
+        )
+        if item.classification == "requirement_locator":
+            return ("requirement_locator", root_identity, artifact_identity, item.summary)
         if item.classification == "document_reconciliation_support":
-            return ("document_support", _root_identity(item.root), _artifact_name(item.path), item.summary)
-        return ("artifact", item.tool, _root_identity(item.root), _artifact_name(item.path))
+            return ("document_support", root_identity, artifact_identity, item.summary)
+        return ("artifact", item.tool, root_identity, artifact_identity)
     return ("item", item.tool, item.path, item.outcome)
-
-
-def _root_identity(root: str) -> str:
-    value = (root or "").strip()
-    if value.startswith("/"):
-        try:
-            return str(Path(value).resolve())
-        except OSError:
-            return value
-    return value.lower()
-
-
-def _artifact_name(path: str) -> str:
-    return Path(path or "").name.lower() or (path or "").lower()

@@ -87,7 +87,7 @@ class ReadOnlyReviewPhase:
         skip_reason = runtime._run.finalization_rewrite_skip_reason()
         if skip_reason is not None:
             return self._unverified("deadline_or_finalization_budget", skip_reason)
-        handoff = self._handoff()
+        handoff = self._handoff(candidate)
         claim_units = candidate_claim_units(candidate)
         if not claim_units:
             return self._unverified("invalid_output", "candidate_has_no_addressable_claim_units")
@@ -189,6 +189,9 @@ class ReadOnlyReviewPhase:
         state.reason = result.reason
         state.findings = result.findings
         state.document_consistency = result.document_consistency
+        state.document_consistency_handoff_signature = (
+            self._handoff_signature(handoff) if result.document_consistency is not None else ()
+        )
         runtime._run.collector.record_read_only_review_result(result.verdict, len(result.findings))
         runtime._session.append("read_only_reviewer", {"event": "result", **result.to_dict()})
         runtime._events.emit(
@@ -279,7 +282,8 @@ class ReadOnlyReviewPhase:
             verdict=result.verdict,
         )
         if code is not None:
-            self._runtime._run.read_only_review.document_consistency = result.document_consistency
+            self._runtime._run.read_only_review.document_consistency = None
+            self._runtime._run.read_only_review.document_consistency_handoff_signature = ()
             raise ReviewerValidationError(code)
 
     def _review_timeout(self) -> float | None:
@@ -323,7 +327,7 @@ class ReadOnlyReviewPhase:
             safe_partial_report=safe_partial_report,
         )
 
-    def _handoff(self):
+    def _handoff(self, candidate: str | None = None):
         runtime = self._runtime
         return build_explore_handoff(
             request=runtime._run.current_user_request or "",
@@ -332,6 +336,7 @@ class ReadOnlyReviewPhase:
             source_evidence=runtime._run.evidence.source_evidence,
             records=runtime._run.evidence.records,
             tool_results=runtime._run.tool_choice_results,
+            candidate=candidate,
         )
 
     def _emit_safe_partial(self, handoff: Any, reason: str) -> str:
@@ -339,11 +344,17 @@ class ReadOnlyReviewPhase:
         state = runtime._run.read_only_review
         if state.safe_partial_emitted:
             return ""
+        document_consistency = state.document_consistency
+        if (
+            document_consistency is not None
+            and state.document_consistency_handoff_signature != self._handoff_signature(handoff)
+        ):
+            document_consistency = None
         partial = build_safe_partial_report(
             handoff,
             state.findings,
             reason=reason,
-            document_consistency=state.document_consistency,
+            document_consistency=document_consistency,
         )
         state.safe_partial_emitted = True
         runtime._run.collector.record_safe_partial_report(
@@ -361,3 +372,19 @@ class ReadOnlyReviewPhase:
             },
         )
         return partial.content
+
+    def _handoff_signature(self, handoff: Any) -> tuple[tuple[str, ...], ...]:
+        return tuple(
+            (
+                str(getattr(item, "evidence_id", "")),
+                str(getattr(item, "classification", "")),
+                str(getattr(item, "tool", "")),
+                str(getattr(item, "path", "")),
+                str(getattr(item, "root", "")),
+                str(getattr(item, "scope", "")),
+                str(getattr(item, "outcome", "")),
+                str(getattr(item, "identity_path", "")),
+                str(getattr(item, "summary", "")),
+            )
+            for item in getattr(handoff, "items", ())
+        )

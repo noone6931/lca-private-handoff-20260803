@@ -15,6 +15,7 @@ from .run_collector import RunCollector
 from .soft_tool_requirement import SoftToolRequirement
 from .steering.tool_loop import ToolLoopSteeringRegistry
 from .task_contract import RequirementContract
+from .tool_choice_directive import ToolChoiceDirectiveOwner
 from .tool_choice_queue import ToolChoiceQueue
 from .tool_observation import ToolResultSummary
 from .verification_plan import VerificationPlan
@@ -58,6 +59,7 @@ class RunContext:
     final_answer_steers: dict[str, int] = field(default_factory=dict)
     tool_loop_steering: ToolLoopSteeringRegistry = field(default_factory=ToolLoopSteeringRegistry)
     tool_choice_queue: ToolChoiceQueue = field(default_factory=ToolChoiceQueue)
+    tool_choice_directive: ToolChoiceDirectiveOwner = field(default_factory=ToolChoiceDirectiveOwner)
     collector: RunCollector = field(default_factory=RunCollector)
     session_evidence_reuse: SessionEvidenceReuse = field(default_factory=SessionEvidenceReuse)
     session_evidence_directive_emitted: bool = False
@@ -172,6 +174,7 @@ class RunContext:
         self.evidence.reset()
         self.final_answer_steers.clear()
         self.tool_loop_steering.reset()
+        self.tool_choice_directive.reset()
         self.session_evidence_reuse = SessionEvidenceReuse()
         self.session_evidence_directive_emitted = False
         self.user_facts_context = ""

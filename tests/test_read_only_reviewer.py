@@ -9,9 +9,12 @@ from unittest.mock import patch
 
 from local_agent.agent import AgentRuntime
 from local_agent.config import AgentConfig
+from local_agent.document_consistency import DocumentConsistencyAssessment
 from local_agent.explore_handoff import build_explore_handoff
+from local_agent.read_only_reviewer import ReviewerResult
 from local_agent.read_only_reviewer import candidate_claim_units
 from local_agent.read_only_reviewer import rewrite_complies_with_review
+from local_agent.read_only_reviewer import parse_reviewer_payload
 from local_agent.read_only_reviewer import parse_reviewer_result
 from local_agent.read_only_reviewer import ReviewerValidationError
 from local_agent.read_only_reviewer import reviewer_repair_messages
@@ -23,6 +26,8 @@ from local_agent.steering.final_answer import SourceEvidence
 from local_agent.steering.final_answer import SteeringDecision
 from local_agent.task_contract import generate_requirement_contract
 from local_agent.llm import LlmTimeoutError
+from local_agent.requirement_evidence import RequirementEvidence
+from local_agent.tool_observation import ToolResultSummary
 
 
 def _review_submit(payload: dict) -> object:
@@ -529,12 +534,111 @@ class ReadOnlyReviewerTests(unittest.TestCase):
                 answer = runtime.run("只根据 Markdown 和 HTML 分析资料一致性，不要检查代码。")
 
         self.assertIn("安全部分交付", answer)
-        self.assertIn("未消解的资料冲突", answer)
+        self.assertNotIn("未消解的资料冲突", answer)
         self.assertIn("policy.md", answer)
         self.assertIn("prototype.html", answer)
         self.assertNotIn("FORGED_RECONCILIATION", answer)
         self.assertEqual(runtime._last_run_summary["termination_reason"], "read_only_reviewer_unverified")
         self.assertEqual(runtime._last_run_summary["read_only_reviewer"]["errors"], {"invalid_output": 1})
+
+    def test_invalid_document_consistency_assessment_is_not_persisted_for_safe_partial(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = AgentRuntime(_config(Path(tmp).resolve()), show_tool_logs=False)
+            contract = generate_requirement_contract(
+                "只根据需求 Markdown、原型 HTML 和示例图分析资料一致性，不要检查代码。"
+            )
+            runtime._run.begin(
+                run_id="invalid-doc-consistency",
+                started_monotonic=time.monotonic(),
+                deadline_monotonic=None,
+                run_start_index=0,
+                git_baseline={},
+                prompt="只根据需求 Markdown、原型 HTML 和示例图分析资料一致性，不要检查代码。",
+                requirement_contract=contract,
+                requirement_contract_context="",
+                design_evidence_roots=(),
+            )
+            runtime._run.evidence.pinned_requirement_evidence = [
+                RequirementEvidence(
+                    "requirements.md",
+                    "1: Requirement says the field is blank.\n2: Requirement repeats blank state.",
+                    root="/workspace/root",
+                )
+            ]
+            handoff = runtime._read_only_review_phase._handoff(
+                "requirements.md:1 and requirements.md:2 conflict with the image."
+            )
+            result = ReviewerResult(
+                "unverified",
+                0.7,
+                reason="single artifact only",
+                document_consistency=DocumentConsistencyAssessment("reported_unresolved", ("e001", "e002"), ()),
+            )
+
+            with self.assertRaises(ReviewerValidationError) as raised:
+                runtime._read_only_review_phase._validate_document_consistency(
+                    result,
+                    handoff,
+                    "The requirement and image are not consistent; the role is unresolved.",
+                )
+
+            self.assertEqual(raised.exception.code, "document_conflict_evidence_insufficient")
+            self.assertIsNone(runtime._run.read_only_review.document_consistency)
+            self.assertEqual(runtime._run.read_only_review.document_consistency_handoff_signature, ())
+
+    def test_safe_partial_uses_document_consistency_only_for_the_same_handoff(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = AgentRuntime(_config(Path(tmp).resolve()), show_tool_logs=False)
+            contract = generate_requirement_contract(
+                "只根据需求 Markdown、原型 HTML 和示例图分析资料一致性，不要检查代码。"
+            )
+            runtime._run.begin(
+                run_id="handoff-bound-doc-consistency",
+                started_monotonic=time.monotonic(),
+                deadline_monotonic=None,
+                run_start_index=0,
+                git_baseline={},
+                prompt="只根据需求 Markdown、原型 HTML 和示例图分析资料一致性，不要检查代码。",
+                requirement_contract=contract,
+                requirement_contract_context="",
+                design_evidence_roots=(),
+            )
+            runtime._run.tool_choice_results.extend(
+                [
+                    ToolResultSummary(
+                        "read_file",
+                        "Requirement says blank.",
+                        path="requirements.md",
+                        metadata={
+                            "evidence_root": "/workspace/root",
+                            "resolved_path": "/workspace/root/requirements.md",
+                        },
+                    ),
+                    ToolResultSummary(
+                        "read_file",
+                        "Prototype shows value.",
+                        path="prototype.html",
+                        metadata={
+                            "evidence_root": "/workspace/root",
+                            "resolved_path": "/workspace/root/prototype.html",
+                        },
+                    ),
+                ]
+            )
+            state = runtime._run.read_only_review
+            state.document_consistency = DocumentConsistencyAssessment("reported_unresolved", ("e001", "e002"), ())
+
+            state.document_consistency_handoff_signature = (("candidate", "handoff"),)
+            stale_report = runtime._read_only_review_phase.safe_partial_for_terminal("invalid_output")
+            self.assertNotIn("未消解的资料冲突", stale_report)
+
+            state.safe_partial_emitted = False
+            terminal_handoff = runtime._read_only_review_phase._handoff()
+            state.document_consistency_handoff_signature = runtime._read_only_review_phase._handoff_signature(terminal_handoff)
+            matching_report = runtime._read_only_review_phase.safe_partial_for_terminal("invalid_output")
+            self.assertIn("未消解的资料冲突", matching_report)
+            self.assertIn("requirements.md", matching_report)
+            self.assertIn("prototype.html", matching_report)
 
     def test_handoff_is_bounded_and_conservative_about_source_reads(self) -> None:
         contract = generate_requirement_contract("只读分析服务 owner 和影响范围，不要修改。")
@@ -677,6 +781,130 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertIn("submit `pass` with no findings", prompt)
         self.assertIn("source materials disagreeing by itself is not a candidate defect", prompt)
         self.assertIn("unsupported reconciliation", prompt)
+        self.assertIn("supporting_evidence_ids to []", prompt)
+        self.assertIn("conflict_evidence_ids and supporting_evidence_ids must never overlap", prompt)
+
+        schema = reviewer_output_tool_schema(
+            candidate_claim_units("candidate"),
+            document_consistency=True,
+            evidence_ids=handoff.evidence_ids,
+        )
+        support_schema = schema["function"]["parameters"]["properties"]["document_consistency"]["properties"]["supporting_evidence_ids"]
+        self.assertIn("independent non-visual", support_schema["description"])
+
+    def test_document_consistency_overlap_repair_requires_empty_support_for_unresolved(self) -> None:
+        contract = generate_requirement_contract(
+            "只根据需求 Markdown、原型 HTML 和示例图分析需求，不要检查代码。"
+        )
+        handoff = build_explore_handoff(
+            request="compare the requested documents",
+            contract=contract,
+            requirement_evidence=(),
+            source_evidence=(),
+            records=(),
+            tool_results=(
+                type("Tool", (), {"name": "read_file", "content": "A says blank.", "path": "policy.md", "is_error": False, "useless": False, "metadata": {}})(),
+                type("Tool", (), {"name": "inspect_image", "content": "B shows a value.", "path": "example.png", "is_error": False, "useless": False, "metadata": {}})(),
+            ),
+        )
+        units = candidate_claim_units("A and B are consistent because B is the completed state.")
+        bad_payload = {
+            "verdict": "unverified",
+            "confidence": 0.5,
+            "findings": [{"claim_id": "c001", "issue": "unsupported reconciliation", "action": "keep unresolved"}],
+            "reason": "bad support ids",
+            "document_consistency": {
+                "stance": "explicitly_supported_reconciliation",
+                "conflict_evidence_ids": ["e001", "e002"],
+                "supporting_evidence_ids": ["e001"],
+            },
+        }
+        with self.assertRaises(ReviewerValidationError) as raised:
+            parse_reviewer_payload(
+                bad_payload,
+                claim_units=units,
+                document_consistency=True,
+                evidence_ids=handoff.evidence_ids,
+            )
+        self.assertEqual(raised.exception.code, "document_consistency_evidence_roles_overlap")
+
+        repair = reviewer_repair_messages(handoff, units, raised.exception.diagnostics)
+        repair_text = repair[-1]["content"]
+        self.assertIn("disjoint", repair_text)
+        self.assertIn("supporting_evidence_ids to []", repair_text)
+        self.assertIn("independent non-visual", repair_text)
+
+        repaired = dict(bad_payload)
+        repaired["document_consistency"] = {
+            "stance": "reported_unresolved",
+            "conflict_evidence_ids": ["e001", "e002"],
+            "supporting_evidence_ids": [],
+        }
+        parsed = parse_reviewer_payload(
+            repaired,
+            claim_units=units,
+            document_consistency=True,
+            evidence_ids=handoff.evidence_ids,
+        )
+        self.assertEqual(parsed.document_consistency.stance, "reported_unresolved")
+
+    def test_document_consistency_non_explicit_stance_rejects_non_overlapping_support_ids(self) -> None:
+        contract = generate_requirement_contract(
+            "只根据需求 Markdown、原型 HTML 和示例图分析需求，不要检查代码。"
+        )
+        handoff = build_explore_handoff(
+            request="compare the requested documents",
+            contract=contract,
+            requirement_evidence=(),
+            source_evidence=(),
+            records=(),
+            tool_results=(
+                type("Tool", (), {"name": "read_file", "content": "A says blank.", "path": "policy.md", "is_error": False, "useless": False, "metadata": {}})(),
+                type("Tool", (), {"name": "inspect_image", "content": "B shows a value.", "path": "example.png", "is_error": False, "useless": False, "metadata": {}})(),
+            ),
+        )
+        units = candidate_claim_units("A and B remain unresolved.")
+        payload = {
+            "verdict": "unverified",
+            "confidence": 0.5,
+            "findings": [{"claim_id": "c001", "issue": "unresolved", "action": "keep unresolved"}],
+            "reason": "bad support ids",
+            "document_consistency": {
+                "stance": "reported_unresolved",
+                "conflict_evidence_ids": ["e001"],
+                "supporting_evidence_ids": ["e002"],
+            },
+        }
+        with self.assertRaises(ReviewerValidationError) as raised:
+            parse_reviewer_payload(
+                payload,
+                claim_units=units,
+                document_consistency=True,
+                evidence_ids=handoff.evidence_ids,
+            )
+        self.assertEqual(raised.exception.code, "document_consistency_support_requires_explicit_stance")
+        repair = reviewer_repair_messages(handoff, units, raised.exception.diagnostics)
+        self.assertIn("supporting_evidence_ids to []", repair[-1]["content"])
+        conflict_repair = reviewer_repair_messages(
+            handoff,
+            units,
+            {"error_code": "document_conflict_evidence_insufficient"},
+        )
+        self.assertIn("at least two", conflict_repair[-1]["content"])
+        self.assertIn("Do not cite only one side", conflict_repair[-1]["content"])
+
+        payload["document_consistency"] = {
+            "stance": "conditional_reconciliation",
+            "conflict_evidence_ids": ["e001", "e002"],
+            "supporting_evidence_ids": [],
+        }
+        parsed = parse_reviewer_payload(
+            payload,
+            claim_units=units,
+            document_consistency=True,
+            evidence_ids=handoff.evidence_ids,
+        )
+        self.assertEqual(parsed.document_consistency.stance, "conditional_reconciliation")
 
     def test_claim_ids_address_markdown_units_without_reviewer_text_matching(self) -> None:
         candidate = "| Scope | Owner |\n| --- | --- |\n| Frontend | **platformPayment** |\n\n**Conclusion:** platformPayment is the verified owner."

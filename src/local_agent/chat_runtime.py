@@ -14,16 +14,22 @@ def call_chat_with_timeout(
     tools: list[dict[str, Any]],
     *,
     timeout: float | None,
+    tool_choice: dict[str, Any] | str | None = None,
 ) -> Any:
     """Enforce an outer timeout even when the client ignores its own timeout arg."""
 
     if timeout is None:
-        return client.chat(messages, tools, timeout=timeout)
+        if tool_choice is None:
+            return client.chat(messages, tools, timeout=timeout)
+        return client.chat(messages, tools, timeout=timeout, tool_choice=tool_choice)
     result_queue: queue.Queue[tuple[str, Any]] = queue.Queue(maxsize=1)
 
     def worker() -> None:
         try:
-            response = client.chat(messages, tools, timeout=timeout)
+            if tool_choice is None:
+                response = client.chat(messages, tools, timeout=timeout)
+            else:
+                response = client.chat(messages, tools, timeout=timeout, tool_choice=tool_choice)
         except BaseException as exc:  # noqa: BLE001 - normalized below.
             result_queue.put(("error", exc))
             return

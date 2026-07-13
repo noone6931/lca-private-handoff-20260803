@@ -7,6 +7,7 @@ from ..negative_evidence import allowed_tools_for_negative_claims
 from ..negative_evidence import negative_claim_metrics
 from ..negative_evidence import render_negative_existence_issues
 from ..negative_evidence import unsupported_negative_existence_claims
+from ..requirement_evidence import requirement_citation_examples
 from ..requirement_evidence import requirement_fact_citation_issues
 from ..task_contract import is_inspection_forbidden
 from .models import *  # noqa: F403
@@ -75,6 +76,8 @@ class RequirementEvidenceSteerer:
             f"{item.path} [root={item.root or '(unknown)'}; scope={item.scope}]"
             for item in context.requirement_evidence
         )
+        examples = requirement_citation_examples(context.requirement_evidence, limit=1)
+        example_text = ", ".join(f"`{example}`" for example in examples) if examples else "`path:line`"
         steering = (
             "Runtime steering: the previous read-only design answer states requirement facts without an exact "
             "requirement-file path and line citation. Do not call tools. Rewrite the final answer using the pinned "
@@ -83,7 +86,9 @@ class RequirementEvidenceSteerer:
             f"- Requirement sources: {sources}\n"
             "- A root_local source constrains only that source root; it does not require changes in sibling roots unless "
             "the user explicitly requested cross-root synthesis.\n"
-            "- Cite every requirement fact as `path:line`; do not cite a made-up section or line.\n"
+            "- Cite every requirement fact using one of these exact path-bound formats: `path:line`, `path#Lline`, or `path:#Lline`; "
+            f"use the real source name, not the literal placeholder `path`. Copyable examples from already-read evidence: {example_text}. "
+            "Do not cite a made-up section or line.\n"
             f"- Missing condition: {', '.join(issues)}"
             f"{final_answer_request_summary(context.request)}"
         )

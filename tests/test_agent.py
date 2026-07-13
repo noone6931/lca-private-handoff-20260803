@@ -17,6 +17,7 @@ from local_agent.config import AgentConfig
 from local_agent.design_evidence import DesignEvidenceCoverageSteerer
 from local_agent.design_evidence import missing_design_evidence_roots
 from local_agent.llm import LlmError
+from local_agent.protocol.interactions import InteractionResult
 from local_agent.protocol.events import ListEventSink
 from local_agent.requirement_evidence import RequirementEvidence
 from local_agent.run_context import MAX_FORCED_FINAL_ANSWER_CONTINUATIONS
@@ -295,6 +296,288 @@ class _OwnerExploreDirectReadClient:
             (),
             {"message": {"content": "Owner.java 是直接读取到的候选实现；请求行为的真实 owner 仍需调用链绑定确认。"}},
         )()
+
+
+class _OwnerExploreRootFairBatchClient:
+    calls: list[dict] = []
+
+    def __init__(self, config: AgentConfig):
+        self.config = config
+        self._primary_calls = 0
+
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
+        if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages):
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "review-submit",
+                                "type": "function",
+                                "function": {
+                                    "name": "submit_read_only_review",
+                                    "arguments": json.dumps(
+                                        {"verdict": "pass", "confidence": 0.9, "findings": [], "reason": "bounded evidence"}
+                                    ),
+                                },
+                            }
+                        ],
+                    }
+                },
+            )()
+        self._primary_calls += 1
+        additional = self.config.allowed_dirs[0]
+        if self._primary_calls == 1:
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "search-primary",
+                                "type": "function",
+                                "function": {
+                                    "name": "search_code",
+                                    "arguments": json.dumps({"path": "src", "pattern": "PrimaryOwner"}),
+                                },
+                            },
+                            {
+                                "id": "search-primary-duplicate",
+                                "type": "function",
+                                "function": {
+                                    "name": "search_code",
+                                    "arguments": json.dumps({"path": "src", "pattern": "PrimaryOwnerAgain"}),
+                                },
+                            },
+                            {
+                                "id": "search-additional",
+                                "type": "function",
+                                "function": {
+                                    "name": "search_code",
+                                    "arguments": json.dumps({"path": str(additional / "src"), "pattern": "AdditionalOwner"}),
+                                },
+                            },
+                        ],
+                    }
+                },
+            )()
+        if self._primary_calls == 2:
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "read-primary",
+                                "type": "function",
+                                "function": {
+                                    "name": "read_file",
+                                    "arguments": json.dumps({"path": str(self.config.workspace / "src" / "Primary.java")}),
+                                },
+                            },
+                            {
+                                "id": "read-additional",
+                                "type": "function",
+                                "function": {
+                                    "name": "read_file",
+                                    "arguments": json.dumps({"path": str(additional / "src" / "Additional.java")}),
+                                },
+                            },
+                        ],
+                    }
+                },
+            )()
+        return type(
+            "Response",
+            (),
+            {"message": {"content": "Primary.java 和 Additional.java 均为已直接读取的候选证据；真实 owner 仍按调用链限定。"}},
+        )()
+
+
+class _ExactToolChoicePairingClient:
+    calls: list[dict] = []
+
+    def __init__(self, config: AgentConfig):
+        self.config = config
+        self._primary_calls = 0
+
+    def chat(self, messages, tools, *, timeout=None, tool_choice=None):
+        type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout, "tool_choice": tool_choice})
+        if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages):
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "review-submit",
+                                "type": "function",
+                                "function": {
+                                    "name": "submit_read_only_review",
+                                    "arguments": json.dumps(
+                                        {"verdict": "pass", "confidence": 0.9, "findings": [], "reason": "bounded evidence"}
+                                    ),
+                                },
+                            }
+                        ],
+                    }
+                },
+            )()
+        self._primary_calls += 1
+        if self._primary_calls == 1:
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "search-owner",
+                                "type": "function",
+                                "function": {
+                                    "name": "search_code",
+                                    "arguments": json.dumps({"path": "src", "pattern": "CandidateOwner"}),
+                                },
+                            }
+                        ],
+                    }
+                },
+            )()
+        if self._primary_calls == 2:
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "wrong-detour",
+                                "type": "function",
+                                "function": {
+                                    "name": "search_code",
+                                    "arguments": json.dumps({"path": "src", "pattern": "detour"}),
+                                },
+                            }
+                        ],
+                    }
+                },
+            )()
+        if self._primary_calls == 3:
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "read-owner",
+                                "type": "function",
+                                "function": {
+                                    "name": "read_file",
+                                    "arguments": json.dumps({"path": "src/Owner.java"}),
+                                },
+                            }
+                        ],
+                    }
+                },
+            )()
+        return type("Response", (), {"message": {"content": "Owner.java 已读取；不再执行 detour。"}})()
+
+
+class _ExactToolChoiceNoToolClient:
+    calls: list[dict] = []
+
+    def __init__(self, config: AgentConfig):
+        self.config = config
+        self._primary_calls = 0
+
+    def chat(self, messages, tools, *, timeout=None, tool_choice=None):
+        type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout, "tool_choice": tool_choice})
+        if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages):
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "review-submit",
+                                "type": "function",
+                                "function": {
+                                    "name": "submit_read_only_review",
+                                    "arguments": json.dumps(
+                                        {"verdict": "pass", "confidence": 0.9, "findings": [], "reason": "bounded evidence"}
+                                    ),
+                                },
+                            }
+                        ],
+                    }
+                },
+            )()
+        self._primary_calls += 1
+        if self._primary_calls == 1:
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "search-owner",
+                                "type": "function",
+                                "function": {
+                                    "name": "search_code",
+                                    "arguments": json.dumps({"path": "src", "pattern": "CandidateOwner"}),
+                                },
+                            }
+                        ],
+                    }
+                },
+            )()
+        if self._primary_calls == 2:
+            return type("Response", (), {"message": {"content": ""}})()
+        if self._primary_calls == 3:
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "read-owner",
+                                "type": "function",
+                                "function": {
+                                    "name": "read_file",
+                                    "arguments": json.dumps({"path": "src/Owner.java"}),
+                                },
+                            }
+                        ],
+                    }
+                },
+            )()
+        return type("Response", (), {"message": {"content": "Owner.java 已读取；空响应已通过 exact tool_choice 收束。"}})()
+
+
+class _DummyInteractionHandler:
+    def request_interaction(self, request):
+        return InteractionResult("answered", "ok")
+
 
 class _BareObservedNoMatchClient:
     calls: list[dict] = []
@@ -651,7 +934,7 @@ class _ToolThenProviderErrorClient:
                             {
                                 "id": "call_list",
                                 "type": "function",
-                                "function": {"name": "list_files", "arguments": "{}"},
+                                "function": {"name": "glob_files", "arguments": json.dumps({"paths": ["**/*"], "limit": 20})},
                             }
                         ],
                     }
@@ -1709,6 +1992,25 @@ class _UnexpectedRegistry:
         raise AssertionError("Tool should not execute after finish_reason=length")
 
 
+class _LegacySchemaRegistry:
+    def schemas(self):
+        return [
+            {
+                "type": "function",
+                "function": {
+                    "name": "read_file",
+                    "description": "legacy read",
+                    "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
+                },
+            }
+        ]
+
+
+class _BrokenContextAwareSchemaRegistry(_LegacySchemaRegistry):
+    def model_schemas(self, context):
+        raise TypeError("schema construction bug")
+
+
 class AgentRuntimeTests(unittest.TestCase):
     def test_requirement_contract_is_injected_into_runtime_context(self) -> None:
         _MessageRecordingClient.messages = []
@@ -1812,7 +2114,7 @@ class AgentRuntimeTests(unittest.TestCase):
                 force_final_answer_without_tools=True,
             )
             with patch.object(runtime._run.tool_choice_queue, "evaluate", return_value=decision):
-                result = runtime._apply_tool_choice_queue_if_needed()
+                result = runtime._tool_choice_queue_phase.apply_if_needed()
 
         self.assertIsNone(result)
         self.assertTrue(runtime._run.force_final_answer_without_tools)
@@ -1843,6 +2145,98 @@ class AgentRuntimeTests(unittest.TestCase):
             self.assertNotIn(name, available_tools)
         self.assertIn("read_file", model_tools)
         self.assertIn("read_file", available_tools)
+
+    def test_ask_user_is_hidden_from_noninteractive_one_shot_schema(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, patch(
+            "local_agent.tools.base.sys.stdin.isatty",
+            return_value=False,
+        ):
+            runtime = AgentRuntime(
+                AgentConfig(
+                    provider="openai-compatible",
+                    api_base_url="https://example.invalid/v1",
+                    api_key="token",
+                    model="model",
+                    workspace=Path(tmp).resolve(),
+                    max_steps=1,
+                    budget_seconds=None,
+                    approval_mode="yolo",
+                ),
+                show_tool_logs=False,
+            )
+
+            model_tools = _tool_names_from_schema_call(runtime._tools_for_model())
+            available_tools = set(runtime._available_registry_tool_names())
+
+        self.assertNotIn("ask_user", model_tools)
+        self.assertNotIn("ask_user", available_tools)
+        self.assertIn("read_file", model_tools)
+        self.assertIn("read_file", available_tools)
+
+    def test_ask_user_is_visible_when_terminal_interaction_handler_is_installed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, patch(
+            "local_agent.tools.base.sys.stdin.isatty",
+            return_value=False,
+        ):
+            runtime = AgentRuntime(
+                AgentConfig(
+                    provider="openai-compatible",
+                    api_base_url="https://example.invalid/v1",
+                    api_key="token",
+                    model="model",
+                    workspace=Path(tmp).resolve(),
+                    max_steps=1,
+                    budget_seconds=None,
+                    approval_mode="yolo",
+                ),
+                show_tool_logs=False,
+            )
+            runtime.set_interaction_handler(_DummyInteractionHandler())
+
+            model_tools = _tool_names_from_schema_call(runtime._tools_for_model())
+            available_tools = set(runtime._available_registry_tool_names())
+
+        self.assertIn("ask_user", model_tools)
+        self.assertIn("ask_user", available_tools)
+
+    def test_legacy_registry_schema_api_remains_supported_without_typeerror_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = AgentRuntime(
+                AgentConfig(
+                    provider="openai-compatible",
+                    api_base_url="https://example.invalid/v1",
+                    api_key="token",
+                    model="model",
+                    workspace=Path(tmp).resolve(),
+                    max_steps=1,
+                    budget_seconds=None,
+                    approval_mode="yolo",
+                ),
+                show_tool_logs=False,
+            )
+            runtime._registry = _LegacySchemaRegistry()
+
+            self.assertEqual(_tool_names_from_schema_call(runtime._tools_for_model()), {"read_file"})
+
+    def test_context_aware_schema_typeerror_is_not_silently_fallbacked(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = AgentRuntime(
+                AgentConfig(
+                    provider="openai-compatible",
+                    api_base_url="https://example.invalid/v1",
+                    api_key="token",
+                    model="model",
+                    workspace=Path(tmp).resolve(),
+                    max_steps=1,
+                    budget_seconds=None,
+                    approval_mode="yolo",
+                ),
+                show_tool_logs=False,
+            )
+            runtime._registry = _BrokenContextAwareSchemaRegistry()
+
+            with self.assertRaisesRegex(TypeError, "schema construction bug"):
+                runtime._tools_for_model()
 
     def test_tool_choice_queue_restricts_implementation_to_explore_tools_before_evidence(self) -> None:
         _ToolSchemaRecordingClient.calls = []
@@ -3028,7 +3422,7 @@ class AgentRuntimeTests(unittest.TestCase):
         for call in _DocumentOnlyRequirementClient.calls:
             self.assertEqual(
                 _tool_names_from_schema_call(call["tools"]),
-                {"ask_user", "inspect_image", "list_files", "read_file"},
+                {"inspect_image", "list_files", "read_file"},
             )
         self.assertEqual(runtime._last_run_summary["tool_counts"], {"read_file": 1})
         self.assertNotIn("read_only_evidence", runtime._last_run_summary["steering_counts"])
@@ -3141,6 +3535,118 @@ class AgentRuntimeTests(unittest.TestCase):
             if record.get("event") == "read_only_explore" and record.get("payload", {}).get("event") == "direct_read_transition"
         ]
         self.assertEqual(len(direct_read_event), 1)
+
+    def test_owner_explore_suppresses_duplicate_before_later_root_fair_call(self) -> None:
+        _OwnerExploreRootFairBatchClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve() / "primary"
+            additional = Path(tmp).resolve() / "service-b"
+            (workspace / "src").mkdir(parents=True)
+            (additional / "src").mkdir(parents=True)
+            (workspace / "src" / "Primary.java").write_text("class PrimaryOwner {}\n", encoding="utf-8")
+            (additional / "src" / "Additional.java").write_text("class AdditionalOwner {}\n", encoding="utf-8")
+            with patch("local_agent.agent.OpenAICompatibleClient", _OwnerExploreRootFairBatchClient):
+                runtime = AgentRuntime(
+                    AgentConfig(
+                        provider="openai-compatible",
+                        api_base_url="https://example.invalid/v1",
+                        api_key="token",
+                        model="model",
+                        workspace=workspace,
+                        allowed_dirs=(additional,),
+                        max_steps=0,
+                        budget_seconds=None,
+                        approval_mode="yolo",
+                    ),
+                    show_tool_logs=False,
+                )
+                result = runtime.run("只读分析当前服务 owner 和影响范围，不要修改。")
+                records = [
+                    json.loads(line)
+                    for line in runtime._session.path.read_text(encoding="utf-8").splitlines()
+                    if line.strip()
+                ]
+
+        self.assertIn("Primary.java", result)
+        self.assertEqual(runtime._last_run_summary["tool_counts"], {"search_code": 2, "read_file": 2})
+        self.assertEqual(runtime._last_run_summary["suppressed_tool_executions"], 1)
+        tool_results = [
+            record["payload"]
+            for record in records
+            if record.get("event") == "tool_result"
+        ]
+        self.assertEqual(
+            [payload.get("tool_call_id") for payload in tool_results if payload.get("tool_call_id") in {"search-primary-duplicate", "search-additional"}],
+            ["search-primary-duplicate", "search-additional"],
+        )
+        self.assertTrue(
+            next(payload for payload in tool_results if payload.get("tool_call_id") == "search-primary-duplicate")["is_error"]
+        )
+
+    def test_exact_tool_choice_skipped_detour_keeps_transcript_pairing(self) -> None:
+        _ExactToolChoicePairingClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            (workspace / "src").mkdir()
+            (workspace / "src" / "Owner.java").write_text("class CandidateOwner {}\n", encoding="utf-8")
+            with patch("local_agent.agent.OpenAICompatibleClient", _ExactToolChoicePairingClient):
+                runtime = AgentRuntime(
+                    AgentConfig(
+                        provider="openai-compatible",
+                        api_base_url="https://example.invalid/v1",
+                        api_key="token",
+                        model="model",
+                        workspace=workspace,
+                        max_steps=0,
+                        budget_seconds=None,
+                        approval_mode="yolo",
+                    ),
+                    show_tool_logs=False,
+                )
+                result = runtime.run("只读分析当前服务 owner 和影响范围，不要修改。")
+
+        self.assertIn("Owner.java", result)
+        self.assertEqual(runtime._last_run_summary["tool_choice_exact"]["forces"], 1)
+        forced = _ExactToolChoicePairingClient.calls[2]["tool_choice"]
+        self.assertEqual(forced["function"]["name"], "read_file")
+        messages = _ExactToolChoicePairingClient.calls[2]["messages"]
+        detour_tool_index = next(
+            index for index, message in enumerate(messages)
+            if message.get("role") == "tool" and message.get("tool_call_id") == "wrong-detour"
+        )
+        prior = messages[detour_tool_index - 1]
+        self.assertEqual(prior.get("role"), "assistant")
+        self.assertEqual(prior.get("tool_calls")[0]["id"], "wrong-detour")
+        self.assertEqual(runtime._last_run_summary["tool_counts"], {"search_code": 1, "read_file": 1})
+
+    def test_exact_tool_choice_handles_no_tool_empty_turn_before_provider_terminal_retry(self) -> None:
+        _ExactToolChoiceNoToolClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            (workspace / "src").mkdir()
+            (workspace / "src" / "Owner.java").write_text("class CandidateOwner {}\n", encoding="utf-8")
+            with patch("local_agent.agent.OpenAICompatibleClient", _ExactToolChoiceNoToolClient):
+                runtime = AgentRuntime(
+                    AgentConfig(
+                        provider="openai-compatible",
+                        api_base_url="https://example.invalid/v1",
+                        api_key="token",
+                        model="model",
+                        workspace=workspace,
+                        max_steps=0,
+                        budget_seconds=None,
+                        approval_mode="yolo",
+                    ),
+                    show_tool_logs=False,
+                )
+                result = runtime.run("只读分析当前服务 owner 和影响范围，不要修改。")
+
+        self.assertIn("Owner.java", result)
+        self.assertEqual(runtime._last_run_summary["tool_choice_exact"]["forces"], 1)
+        self.assertEqual(runtime._last_run_summary["provider_terminal"]["non_substantive_retries"], 0)
+        forced = _ExactToolChoiceNoToolClient.calls[2]["tool_choice"]
+        self.assertEqual(forced["function"]["name"], "read_file")
+        self.assertEqual(runtime._last_run_summary["tool_counts"], {"search_code": 1, "read_file": 1})
 
     def test_negative_discovery_directive_exhausts_without_leaking_a_glob_only_schema(self) -> None:
         _DirectiveExhaustionClient.calls = []
@@ -3843,7 +4349,7 @@ class AgentRuntimeTests(unittest.TestCase):
                 result = runtime.run("请查看项目结构后说明。")
 
         self.assertEqual(runtime._last_run_summary["termination_reason"], "provider_error")
-        self.assertEqual(runtime._last_run_summary["tool_counts"], {"list_files": 1})
+        self.assertEqual(runtime._last_run_summary["tool_counts"], {"glob_files": 1})
         self.assertIn("此前动作以本轮 tool timeline 和 diff 为准", result)
         self.assertNotIn("未继续执行工具或写入操作", result)
         self.assertNotIn("任务在收到模型响应前已停止", result)
@@ -3895,6 +4401,8 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertEqual(decision.kind, "requirement_evidence")
         self.assertEqual(decision.severity, FinalAnswerSteeringSeverity.HARD)
         self.assertIn("docs/需求文档-拓展服务费结算V1.3.md", decision.message)
+        self.assertIn("docs/需求文档-拓展服务费结算V1.3.md:50", decision.message)
+        self.assertIn("not the literal placeholder `path`", decision.message)
 
     def test_requirement_evidence_gate_accepts_real_requirement_path_and_line_citation(self) -> None:
         contract = generate_requirement_contract("请只读分析需求方案，不要修改文件，并区分事实和推断。")

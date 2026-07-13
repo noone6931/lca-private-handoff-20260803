@@ -85,6 +85,24 @@ def requirement_fact_citation_issues(content: str, evidence: list[RequirementEvi
     return [f"missing_requirement_path_and_line_citation:{names}"]
 
 
+def requirement_citation_examples(evidence: list[RequirementEvidence], *, limit: int = 2) -> tuple[str, ...]:
+    """Return copyable path-bound examples using real read evidence lines."""
+
+    examples: list[str] = []
+    for item in evidence:
+        rows = _tagged_rows(item.content)
+        if not rows:
+            continue
+        line_no, _ = rows[0]
+        source = item.path
+        examples.append(f"{source}:{line_no}")
+        examples.append(f"{source}#L{line_no}")
+        examples.append(f"{source}:#L{line_no}")
+        if len(examples) >= limit * 3:
+            break
+    return tuple(examples[: limit * 3])
+
+
 def _mentions_requirement_facts(content: str) -> bool:
     lowered = content.lower()
     return any(marker in lowered for marker in _REQUIREMENT_FACT_MARKERS)
@@ -106,8 +124,9 @@ def parse_document_locators(content: str, path: str) -> tuple[DocumentLocator, .
         return ()
     prefix = rf"`?{re.escape(filename)}`?\s*"
     patterns = (
-        ("line", prefix + r"(?:#L|:)\s*(\d+)"),
+        ("line", prefix + r"(?::#L|#L|:)\s*(\d+)"),
         ("page", prefix + r"(?:P|page|页)\s*(\d+)"),
+        ("section", prefix + r"第\s*([\d.]+)\s*节"),
         ("section", prefix + r"(?:#|§|章节|章|节|section|heading)\s*([^\n`，,。;；:：]+)"),
         ("heading", prefix + r"(?:标题|title)\s*[:：]?\s*([^\n`，,。;；:：]+)"),
     )
@@ -118,3 +137,105 @@ def parse_document_locators(content: str, path: str) -> tuple[DocumentLocator, .
             if value:
                 found.append(DocumentLocator(filename, kind, value))
     return tuple(found)
+
+
+def document_locator_excerpt(content: str, locator: DocumentLocator, *, context_lines: int = 2) -> str | None:
+    """Return a bounded excerpt for a parsed path-bound locator.
+
+    The caller has already read and pinned the document.  This helper never
+    opens files; it only extracts visible source around the cited line, page,
+    section, or heading so downstream reviewers can audit a specific citation.
+    """
+
+    if not content:
+        return None
+    if locator.kind == "line":
+        try:
+            line_no = int(locator.value)
+        except ValueError:
+            return None
+        tagged = _tagged_line_excerpt(content, line_no, context_lines=context_lines)
+        if tagged:
+            return tagged
+        lines = content.splitlines()
+        if not 1 <= line_no <= len(lines):
+            return None
+        start = max(1, line_no - context_lines)
+        end = min(len(lines), line_no + context_lines)
+        rendered = [
+            f"{locator.path}:{number}: {lines[number - 1].strip()}"
+            for number in range(start, end + 1)
+            if lines[number - 1].strip()
+        ]
+        return "\n".join(rendered) if rendered else None
+    value = locator.value.strip()
+    if not value:
+        return None
+    pattern = _locator_search_pattern(locator)
+    tagged = _tagged_pattern_excerpt(content, pattern, context_lines=context_lines)
+    if tagged:
+        return tagged
+    lines = content.splitlines()
+    for index, line in enumerate(lines):
+        if not pattern.search(line):
+            continue
+        start = max(0, index - context_lines)
+        end = min(len(lines), index + context_lines + 1)
+        rendered = [
+            f"{locator.path}:{number + 1}: {lines[number].strip()}"
+            for number in range(start, end)
+            if lines[number].strip()
+        ]
+        return "\n".join(rendered) if rendered else None
+    return None
+
+
+def _locator_search_pattern(locator: DocumentLocator) -> re.Pattern[str]:
+    value = re.escape(locator.value.strip())
+    if locator.kind == "page":
+        return re.compile(rf"(?:P|page|页)\s*{value}\b", flags=re.IGNORECASE)
+    if locator.kind in {"section", "heading"}:
+        return re.compile(rf"(?:^|\s|#|第){value}(?:\s|节|[.、:-])", flags=re.IGNORECASE)
+    return re.compile(value, flags=re.IGNORECASE)
+
+
+def _tagged_line_excerpt(content: str, line_no: int, *, context_lines: int) -> str | None:
+    """Extract from read_file output that renders source as ``211: text``."""
+
+    indexed = _tagged_rows(content)
+    if not indexed or not any(number == line_no for number, _ in indexed):
+        return None
+    start = line_no - context_lines
+    end = line_no + context_lines
+    rendered = [
+        f"{number}: {text}"
+        for number, text in indexed
+        if start <= number <= end and text
+    ]
+    return "\n".join(rendered) if rendered else None
+
+
+def _tagged_pattern_excerpt(content: str, pattern: re.Pattern[str], *, context_lines: int) -> str | None:
+    indexed = _tagged_rows(content)
+    if not indexed:
+        return None
+    match_number = next((number for number, text in indexed if pattern.search(text)), None)
+    if match_number is None:
+        return None
+    start = match_number - context_lines
+    end = match_number + context_lines
+    rendered = [
+        f"{number}: {text}"
+        for number, text in indexed
+        if start <= number <= end and text
+    ]
+    return "\n".join(rendered) if rendered else None
+
+
+def _tagged_rows(content: str) -> list[tuple[int, str]]:
+    indexed: list[tuple[int, str]] = []
+    for line in content.splitlines():
+        match = re.match(r"^\s*(\d{1,6})\s*[:：]\s*(.*)$", line)
+        if match:
+            indexed.append((int(match.group(1)), match.group(2).strip()))
+    return indexed

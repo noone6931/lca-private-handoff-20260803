@@ -88,11 +88,18 @@ class ToolRegistry:
     def schemas(self) -> list[dict[str, Any]]:
         return [tool.openai_schema() for tool in self._tools.values()]
 
+    def model_schemas(self, context: ToolContext) -> list[dict[str, Any]]:
+        exposed = set(self.exposed_tool_names(context))
+        return [tool.openai_schema() for tool in self._tools.values() if tool.name in exposed]
+
     def has_tool(self, name: str) -> bool:
         return name in self._tools
 
     def tool_names(self) -> tuple[str, ...]:
         return tuple(sorted(self._tools))
+
+    def exposed_tool_names(self, context: ToolContext) -> tuple[str, ...]:
+        return tuple(self._exposed_tool_names(context))
 
     def is_preapproved(self, name: str, context: ToolContext) -> bool:
         """Return whether a tool can run without an interactive approval read."""
@@ -190,6 +197,8 @@ class ToolRegistry:
             for name, policy in (context.session_tool_approval or {}).items()
             if policy == "reject_always"
         )
+        if not _interaction_tool_can_prompt(context):
+            names.discard("ask_user")
         return sorted(names)
 
 
@@ -285,6 +294,10 @@ def _approval_denial_reason(tool: Tool, context: ToolContext) -> str | None:
     if mode == "always-ask" and tool.tier in {"read", "state", "interaction"}:
         return None
     return _interactive_approval_denial_reason(tool, context)
+
+
+def _interaction_tool_can_prompt(context: ToolContext) -> bool:
+    return context.interaction_handler is not None or sys.stdin.isatty()
 
 
 def tool_is_preapproved(tool: Tool, context: ToolContext) -> bool:

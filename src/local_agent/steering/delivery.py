@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from ..completion_audit import audit_completion
 from ..completion_audit import render_completion_audit_message
+from ..evidence_status import content_has_evidence_status_label as _shared_content_has_evidence_status_label
 from ..patch_reviewer import render_patch_review_message
 from ..patch_reviewer import review_patch
 from ..task_contract import requires_no_edit_final_hygiene
@@ -267,5 +268,4 @@ def request_needs_evidence_status_labels(request: str, content: str) -> bool:
 
 
 def content_has_evidence_status_label(content: str) -> bool:
-    lowered = content.lower()
-    return any(label.lower() in lowered for label in EVIDENCE_STATUS_LABELS)
+    return _shared_content_has_evidence_status_label(content)

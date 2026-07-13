@@ -226,6 +226,48 @@ class CompletionAuditTests(unittest.TestCase):
 
         self.assertTrue(result.passed)
 
+    def test_bare_evidence_word_does_not_satisfy_structured_status_labels(self) -> None:
+        contract = generate_requirement_contract(
+            "只读代码，请根据源码证据说明登录密码在哪里校验，并按需求事实、源码事实、设计建议、待确认标注。不要修改文件。"
+        )
+        result = audit_completion(
+            contract,
+            request=(
+                "只读代码，请根据源码证据说明登录密码在哪里校验，"
+                "并按需求事实、源码事实、设计建议、待确认标注。不要修改文件。"
+            ),
+            final_content="src/LoginController.java: 建议查看 evidence，密码校验可能在后端。",
+            tool_results=[ToolResultSummary("read_file", "class LoginController {}", path="src/LoginController.java")],
+            source_paths=["src/LoginController.java"],
+            open_todos=[],
+        )
+
+        self.assertFalse(result.passed)
+        self.assertTrue(any("verified facts" in item.reason for item in result.missing_items))
+
+    def test_explicit_evidence_status_categories_satisfy_structured_status_labels(self) -> None:
+        contract = generate_requirement_contract(
+            "只读代码，请根据源码证据说明登录密码在哪里校验，并按需求事实、源码事实、设计建议、待确认标注。不要修改文件。"
+        )
+        result = audit_completion(
+            contract,
+            request=(
+                "只读代码，请根据源码证据说明登录密码在哪里校验，"
+                "并按需求事实、源码事实、设计建议、待确认标注。不要修改文件。"
+            ),
+            final_content=(
+                "需求事实：用户要求只读分析。\n"
+                "源码事实：src/LoginController.java:1 包含 LoginController。\n"
+                "设计建议：如需确认调用链，应继续定位 PasswordUtil。\n"
+                "待确认：前端加密方式未在已读代码中确认。"
+            ),
+            tool_results=[ToolResultSummary("read_file", "class LoginController {}", path="src/LoginController.java")],
+            source_paths=["src/LoginController.java"],
+            open_todos=[],
+        )
+
+        self.assertTrue(result.passed)
+
     def test_semantic_only_no_inspection_task_does_not_reopen_code_evidence(self) -> None:
         request = "只解释这句话的语义，不判断仓库，不检查文件：‘没有 Java 源码’是什么意思？"
         result = audit_completion(

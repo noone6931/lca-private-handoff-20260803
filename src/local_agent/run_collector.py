@@ -64,6 +64,8 @@ class RunStats:
     safe_partial_observations: int = 0
     safe_partial_missing: int = 0
     safe_partial_rejected_categories: dict[str, int] = field(default_factory=dict)
+    tool_choice_exact_forces: int = 0
+    tool_choice_exact_exhausted: int = 0
     tool_counts: dict[str, int] = field(default_factory=dict)
     guard_start: dict[str, int] = field(default_factory=dict)
     steer_start: dict[str, int] = field(default_factory=dict)
@@ -308,6 +310,16 @@ class RunCollector:
                 self._stats.safe_partial_rejected_categories.get(category, 0) + 1
             )
 
+    def record_tool_choice_exact_action(self, action: str) -> None:
+        if self._stats is None:
+            return
+        if action == "force":
+            self._stats.tool_choice_exact_forces += 1
+
+    def record_tool_choice_exact_exhausted(self) -> None:
+        if self._stats is not None:
+            self._stats.tool_choice_exact_exhausted += 1
+
     def finish(
         self,
         reason: str,
@@ -391,6 +403,10 @@ class RunCollector:
                 "observations": stats.safe_partial_observations,
                 "missing": stats.safe_partial_missing,
                 "rejected_categories": dict(sorted(stats.safe_partial_rejected_categories.items())),
+            },
+            "tool_choice_exact": {
+                "forces": stats.tool_choice_exact_forces,
+                "exhausted": stats.tool_choice_exact_exhausted,
             },
             "tool_counts": dict(sorted(stats.tool_counts.items())),
             "guard_hits": {key: value for key, value in guard_hits.items() if value},

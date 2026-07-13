@@ -43,8 +43,9 @@ class OpenAICompatibleClient:
         tools: list[dict[str, Any]],
         *,
         timeout: float | None = None,
+        tool_choice: dict[str, Any] | str | None = None,
     ) -> ChatResponse:
-        return self._complete(messages, tools, timeout=timeout)
+        return self._complete(messages, tools, timeout=timeout, tool_choice=tool_choice)
 
     def inspect_image(
         self,
@@ -84,6 +85,7 @@ class OpenAICompatibleClient:
         *,
         timeout: float | None = None,
         model: str | None = None,
+        tool_choice: dict[str, Any] | str | None = None,
     ) -> ChatResponse:
         url = f"{self._config.api_base_url}/chat/completions"
         payload = {
@@ -92,7 +94,7 @@ class OpenAICompatibleClient:
         }
         if tools:
             payload["tools"] = tools
-            payload["tool_choice"] = "auto"
+            payload["tool_choice"] = tool_choice or "auto"
         request = urllib.request.Request(
             url,
             data=json.dumps(payload).encode("utf-8"),

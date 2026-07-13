@@ -7,6 +7,8 @@ from typing import Literal
 from .document_artifacts import document_artifact_coverage
 from .document_artifacts import missing_document_artifacts
 from .document_artifacts import unavailable_document_artifacts
+from .evidence_status import EVIDENCE_STATUS_LABELS
+from .evidence_status import content_has_evidence_status_label
 from .negative_evidence import allowed_tools_for_negative_claims
 from .negative_evidence import render_negative_existence_issues
 from .negative_evidence import unsupported_negative_existence_claims
@@ -46,21 +48,7 @@ IMPLEMENTATION_EVIDENCE_TOOLS = frozenset({"list_files", *CODE_EVIDENCE_TOOL_NAM
 IMPLEMENTATION_VERIFICATION_TOOLS = frozenset({"git_diff", "run_tests"})
 TODO_TOOLS = frozenset({"todo_read", "todo_update", "todo_add"})
 
-EVIDENCE_STATUS_MARKERS = frozenset(
-    {
-        "已验证",
-        "证据",
-        "证据支持",
-        "源码事实",
-        "推断",
-        "未确认",
-        "verified",
-        "evidence",
-        "inferred",
-        "inference",
-        "unverified",
-    }
-)
+EVIDENCE_STATUS_MARKERS = EVIDENCE_STATUS_LABELS
 NO_EDIT_MARKERS = frozenset(
     {
         "did not change",
@@ -533,7 +521,7 @@ def _document_requirement_items(
     evidence_requirement = _requirement_at(
         contract.evidence_requirements,
         0,
-        "Cite the requirement document path and line or section for direct requirement facts.",
+        "Cite the requirement document path and line or section for direct requirement facts, e.g. path:211, path#L211, or path:#L211.",
     )
     citation_issues = requirement_fact_citation_issues(content, requirement_evidence)
     document_paths = [item.path for item in requirement_evidence]
@@ -1046,8 +1034,7 @@ def _has_file_path(content: str) -> bool:
 
 
 def _has_evidence_status(content: str) -> bool:
-    lowered = (content or "").lower()
-    return any(marker in lowered for marker in EVIDENCE_STATUS_MARKERS)
+    return content_has_evidence_status_label(content)
 
 
 def _mentions_negative_evidence(content: str) -> bool:
