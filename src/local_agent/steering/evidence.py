@@ -21,6 +21,11 @@ class ReadOnlyEvidenceSteerer:
     def decide(self, context: FinalAnswerContext) -> SteeringDecision | None:
         if context.steer_counts.get(self.kind, 0) >= self._max_steers:
             return None
+        if (
+            context.requirement_contract is not None
+            and context.requirement_contract.evidence_domain == "requirement_documents"
+        ):
+            return None
         if not request_needs_read_only_code_evidence(context.request):
             return None
         if has_successful_read_file_since(context.messages, context.run_start_index):
@@ -242,6 +247,11 @@ class NegativeExistenceSteerer:
         if context.steer_counts.get(self.kind, 0) >= self._max_steers:
             return None
         if context.requirement_contract is not None and context.requirement_contract.inspection_forbidden:
+            return None
+        if (
+            context.requirement_contract is not None
+            and context.requirement_contract.evidence_domain == "requirement_documents"
+        ):
             return None
         issues = unsupported_negative_existence_claims(context.content, context.tool_results)
         if not issues:

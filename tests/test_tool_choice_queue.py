@@ -9,6 +9,7 @@ from local_agent.tool_choice_queue import CANDIDATE_DELIVERY_TOOL_NAMES
 from local_agent.tool_choice_queue import CANDIDATE_DIFF_TOOL_NAMES
 from local_agent.tool_choice_queue import CANDIDATE_REMEDIATION_TOOL_NAMES
 from local_agent.tool_choice_queue import CANDIDATE_TEST_TOOL_NAMES
+from local_agent.tool_choice_queue import DOCUMENT_ONLY_TOOL_NAMES
 from local_agent.tool_choice_queue import MAX_CANDIDATE_READ_REVISITS
 from local_agent.tool_choice_queue import MAX_CANDIDATE_PATCH_PREVIEW_FAILURES
 from local_agent.tool_choice_queue import PLANNER_EXPLORE_TOOL_NAMES
@@ -20,6 +21,19 @@ from local_agent.tool_choice_queue import session_evidence_reuse_directive
 
 
 class ToolChoiceQueueTests(unittest.TestCase):
+    def test_document_only_contract_never_reopens_code_discovery_tools(self) -> None:
+        decision = evaluate_tool_choice_state(
+            task_kind="read-only",
+            prompt="只根据需求文档 Markdown 和 HTML 分析需求；不要检查代码。",
+            tool_names=["read_file"],
+            tool_results=[ToolResultSummary("read_file", "requirement", path="requirements.md")],
+            evidence_domain="requirement_documents",
+        )
+
+        self.assertEqual(decision.allowed_tool_names, DOCUMENT_ONLY_TOOL_NAMES)
+        self.assertFalse(decision.steering_required)
+        self.assertNotIn("search_code", decision.allowed_tool_names)
+
     def test_observed_negative_prompt_requires_glob_when_available(self) -> None:
         decision = evaluate_tool_choice_state(
             task_kind="unclear",

@@ -24,6 +24,7 @@ from local_agent.steering.final_answer import SourceEvidence
 from local_agent.steering.final_answer import DesignEvidenceSteerer
 from local_agent.steering.final_answer import FinalAnswerContext
 from local_agent.steering.final_answer import FinalAnswerSteeringSeverity
+from local_agent.steering.final_answer import NegativeExistenceSteerer
 from local_agent.steering.final_answer import RequirementEvidenceSteerer
 from local_agent.steering.final_answer import SourceEvidenceFalseNegativeSteerer
 from local_agent.steering.final_answer import ToolUsageEvidenceSteerer
@@ -102,6 +103,83 @@ class _NoInspectionSemanticClient:
                     )
                 }
             },
+        )()
+
+
+class _DocumentOnlyRequirementClient:
+    calls: list[dict] = []
+
+    def __init__(self, config: AgentConfig):
+        self.config = config
+
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
+        if len(type(self).calls) == 1:
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "read_requirement",
+                                "type": "function",
+                                "function": {
+                                    "name": "read_file",
+                                    "arguments": json.dumps({"path": "requirements.md"}),
+                                },
+                            }
+                        ],
+                    }
+                },
+            )()
+        return type(
+            "Response",
+            (),
+            {
+                "message": {
+                    "content": (
+                        "需求事实：有效结算单为未回退的结算单（requirements.md:1）。"
+                        "示例图未读取，因此不据此补充规则；本结论不判断系统归属。"
+                    )
+                }
+            },
+        )()
+
+
+class _DirectiveExhaustionClient:
+    calls: list[dict] = []
+
+    def __init__(self, config: AgentConfig):
+        self.config = config
+
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
+        call = len(type(self).calls)
+        if call in {1, 3}:
+            return type("Response", (), {"message": {"content": "当前 root 没有 Java 源码。"}})()
+        if call in {2, 4}:
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": f"bad_glob_{call}",
+                                "type": "function",
+                                "function": {"name": "glob_files", "arguments": '{"paths":[""]}'},
+                            }
+                        ],
+                    }
+                },
+            )()
+        return type(
+            "Response",
+            (),
+            {"message": {"content": "无法验证当前 root 是否有 Java 源码；两次发现尝试均未成功。"}},
         )()
 
 
@@ -2784,6 +2862,67 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertEqual(runtime._last_run_summary["tool_calls"], 0)
         self.assertEqual(runtime._last_run_summary["termination_reason"], "final")
         self.assertNotIn("negative_existence", runtime._last_run_summary["steering_counts"])
+
+    def test_document_only_requirement_analysis_finishes_from_markdown_evidence(self) -> None:
+        _DocumentOnlyRequirementClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            (workspace / "requirements.md").write_text("有效结算单为未回退的结算单。\n", encoding="utf-8")
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=workspace,
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _DocumentOnlyRequirementClient):
+                runtime = AgentRuntime(config, show_tool_logs=False)
+                result = runtime.run(
+                    "只根据需求文档 Markdown、原型 HTML 和示例图分析需求；不要检查代码，也不要推测系统归属。"
+                )
+
+        self.assertIn("requirements.md:1", result)
+        self.assertEqual(len(_DocumentOnlyRequirementClient.calls), 2)
+        for call in _DocumentOnlyRequirementClient.calls:
+            self.assertEqual(_tool_names_from_schema_call(call["tools"]), {"ask_user", "list_files", "read_file"})
+        self.assertEqual(runtime._last_run_summary["tool_counts"], {"read_file": 1})
+        self.assertNotIn("read_only_evidence", runtime._last_run_summary["steering_counts"])
+        self.assertNotIn("negative_existence", runtime._last_run_summary["steering_counts"])
+        self.assertEqual(runtime._last_run_summary["termination_reason"], "final")
+
+    def test_negative_discovery_directive_exhausts_without_leaking_a_glob_only_schema(self) -> None:
+        _DirectiveExhaustionClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=Path(tmp).resolve(),
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _DirectiveExhaustionClient):
+                runtime = AgentRuntime(config, show_tool_logs=False)
+                runtime._final_answer_steerers = (NegativeExistenceSteerer(max_steers=3),)
+                result = runtime.run("请只读确认当前 root 是否有 Java 源码。")
+
+        tool_schemas = [_tool_names_from_schema_call(call["tools"]) for call in _DirectiveExhaustionClient.calls]
+        self.assertIn("无法验证", result)
+        self.assertEqual(len(_DirectiveExhaustionClient.calls), 5)
+        self.assertEqual(tool_schemas[1], {"glob_files"})
+        self.assertIn("read_file", tool_schemas[2])
+        self.assertEqual(tool_schemas[3], {"glob_files"})
+        self.assertEqual(tool_schemas[4], set())
+        self.assertEqual(runtime._last_run_summary["tool_counts"], {"glob_files": 2})
+        directive = runtime._last_run_summary["temporary_tool_directive"]["sources"]["negative_existence"]
+        self.assertEqual(directive["attempts"], 2)
+        self.assertEqual(directive["status"], "exhausted")
+        self.assertEqual(runtime._last_run_summary["termination_reason"], "final")
 
     def test_negative_discovery_with_all_required_tools_denied_finishes_unverified_without_provider_call(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

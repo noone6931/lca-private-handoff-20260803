@@ -6,6 +6,7 @@ from typing import Literal
 
 
 TaskKind = Literal["read-only", "code-implementation", "unclear"]
+EvidenceDomain = Literal["repository_code", "requirement_documents", "workspace_metadata", "semantic"]
 
 
 @dataclass(frozen=True)
@@ -19,6 +20,7 @@ class RequirementContract:
     verification_requirements: list[str]
     risk_notes: list[str]
     task_kind: TaskKind
+    evidence_domain: EvidenceDomain = "repository_code"
     inspection_forbidden: bool = False
     inspection_repository_facts_requested: bool = False
     workspace_metadata_subject: str | None = None
@@ -232,6 +234,38 @@ _INSPECTION_FORBIDDEN_MARKERS = (
     "do not check the repository",
 )
 
+_REQUIREMENT_DOCUMENT_MARKERS = (
+    "需求文档",
+    "需求说明",
+    "原型",
+    "markdown",
+    ".md",
+    "html",
+    ".html",
+    "示例图",
+    "图片",
+    "document only",
+    "requirement document",
+)
+
+_DOCUMENT_ONLY_ANALYSIS_MARKERS = (
+    "只根据",
+    "仅根据",
+    "不检查代码",
+    "不要检查代码",
+    "不读代码",
+    "不要读代码",
+    "不检查源码",
+    "不要检查源码",
+    "不推测系统归属",
+    "不判断系统归属",
+    "do not inspect code",
+    "do not read code",
+    "do not infer system ownership",
+    "only use the document",
+    "document-only",
+)
+
 def generate_requirement_contract(user_prompt: str) -> RequirementContract:
     """Generate a local deterministic contract without calling an LLM."""
 
@@ -241,6 +275,7 @@ def generate_requirement_contract(user_prompt: str) -> RequirementContract:
     inspection_forbidden = is_inspection_forbidden(prompt)
     inspection_repository_facts_requested = inspection_forbidden_repository_fact_request(prompt)
     metadata_subject = workspace_metadata_subject(prompt) if task_kind == "read-only" else None
+    evidence_domain = _evidence_domain(prompt, inspection_forbidden, metadata_subject)
 
     if inspection_forbidden:
         return RequirementContract(
@@ -263,6 +298,7 @@ def generate_requirement_contract(user_prompt: str) -> RequirementContract:
                 "A repository fact requested alongside a no-inspection directive remains unverified.",
             ],
             task_kind="read-only",
+            evidence_domain="semantic",
             inspection_forbidden=True,
             inspection_repository_facts_requested=inspection_repository_facts_requested,
             workspace_metadata_subject=None,
@@ -289,7 +325,33 @@ def generate_requirement_contract(user_prompt: str) -> RequirementContract:
                 "Git status is anchored to the primary workspace and cannot inspect an additional root.",
             ],
             task_kind="read-only",
+            evidence_domain="workspace_metadata",
             workspace_metadata_subject=metadata_subject,
+        )
+
+    if task_kind == "read-only" and evidence_domain == "requirement_documents":
+        return RequirementContract(
+            objective=objective,
+            scope=(
+                "Document-only requirement analysis. Read the supplied Markdown/HTML requirement sources and any "
+                "readable artifacts; do not inspect repository code or infer system ownership from similar code."
+            ),
+            acceptance_items=[
+                "Answer the requested requirement analysis directly from the supplied documents.",
+                "Keep direct requirement text distinct from any explicit inference or unread artifact boundary.",
+            ],
+            evidence_requirements=[
+                "Cite the requirement document path and line or section for direct requirement facts.",
+                "State when an artifact could not be read instead of treating it as document evidence.",
+            ],
+            verification_requirements=[
+                "Use document reads only; do not inspect repository code for this analysis.",
+            ],
+            risk_notes=[
+                "Document statements do not establish the current system owner or implementation state.",
+            ],
+            task_kind="read-only",
+            evidence_domain="requirement_documents",
         )
 
     if task_kind == "read-only":
@@ -317,6 +379,7 @@ def generate_requirement_contract(user_prompt: str) -> RequirementContract:
                 "Search misses may reflect incomplete keywords rather than absence of behavior.",
             ],
             task_kind=task_kind,
+            evidence_domain="repository_code",
         )
 
     if task_kind == "code-implementation":
@@ -344,6 +407,7 @@ def generate_requirement_contract(user_prompt: str) -> RequirementContract:
                 "Touching shared behavior can require broader regression coverage.",
             ],
             task_kind=task_kind,
+            evidence_domain="repository_code",
         )
 
     return RequirementContract(
@@ -354,6 +418,7 @@ def generate_requirement_contract(user_prompt: str) -> RequirementContract:
         verification_requirements=_unclear_verification_requirements(prompt),
         risk_notes=_unclear_risk_notes(prompt),
         task_kind=task_kind,
+        evidence_domain="repository_code",
     )
 
 
@@ -398,6 +463,7 @@ def render_contract_context(contract: RequirementContract) -> str:
         ("Risks", contract.risk_notes),
     ]
     lines = ["Requirement Contract", f"Task kind: {contract.task_kind}"]
+    lines.append(f"Evidence domain: {contract.evidence_domain}")
     if contract.inspection_forbidden:
         lines.append("Inspection policy: repository inspection is forbidden for this task.")
     if contract.workspace_metadata_subject:
@@ -410,6 +476,21 @@ def render_contract_context(contract: RequirementContract) -> str:
 
 def _normalize_prompt(user_prompt: str) -> str:
     return re.sub(r"\s+", " ", user_prompt or "").strip()
+
+
+def _evidence_domain(
+    prompt: str,
+    inspection_forbidden: bool,
+    metadata_subject: str | None,
+) -> EvidenceDomain:
+    if inspection_forbidden:
+        return "semantic"
+    if metadata_subject is not None:
+        return "workspace_metadata"
+    lower = prompt.lower()
+    if _contains_any(lower, _REQUIREMENT_DOCUMENT_MARKERS) and _contains_any(lower, _DOCUMENT_ONLY_ANALYSIS_MARKERS):
+        return "requirement_documents"
+    return "repository_code"
 
 
 def is_inspection_forbidden(user_prompt: str) -> bool:

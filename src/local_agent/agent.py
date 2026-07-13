@@ -129,6 +129,7 @@ from .user_facts import UserFactsLayer
 from .provider_context import ProviderContextPhase
 from .runtime_evidence import EvidenceVerificationLifecycle
 from .runtime_memory import MemoryConsolidationLifecycle
+from .runtime_tool_directive import RuntimeToolDirectivePhase
 from .runtime_workspace import WorkspaceLifecycle
 from .runtime_prompt import _assistant_event_payload
 from .runtime_prompt import _tool_call_event_payload
@@ -365,6 +366,7 @@ class AgentRuntime:
         self._workspace_phase = WorkspaceLifecycle(self)
         self._evidence_phase = EvidenceVerificationLifecycle(self)
         self._memory_phase = MemoryConsolidationLifecycle(self)
+        self._tool_directive_phase = RuntimeToolDirectivePhase(self)
         missing_roots = self._workspace_phase.restore_session_workspace_roots()
         self._path_rule_index = discover_path_scoped_rules(self._workspace_context.all_roots)
         system_prompt = self._workspace_phase.build_system_prompt()
@@ -450,6 +452,7 @@ class AgentRuntime:
             requirement_contract_context=requirement_contract_context,
             design_evidence_roots=design_evidence_roots,
         )
+        self._tool_directive_phase.begin_run()
         self._start_run_collector(run_id, prompt, started_monotonic)
         self._user_facts.begin_run(prompt, run_id)
         self._run.user_facts_context = self._user_facts.render_for(prompt)
@@ -514,6 +517,9 @@ class AgentRuntime:
                         else "tool_choice_queue"
                     ),
                 )
+            if self._tool_directive_phase.before_model_turn():
+                step += 1
+                continue
             messages_for_model = self._provider_context_phase.messages_for_model(deadline)
             tools_for_model = self._tools_for_model()
             tool_schema_names = [
@@ -591,6 +597,9 @@ class AgentRuntime:
                 self._append_synthetic_tool_results(tool_calls, self._length_stop_tool_message())
                 return self._stop_for_length(deadline, run_start_index)
             if not tool_calls:
+                if self._tool_directive_phase.after_model_turn():
+                    step += 1
+                    continue
                 if self._needs_soft_tool_requirement_steer():
                     if self._steer_for_soft_tool_requirement():
                         step += 1
@@ -618,6 +627,7 @@ class AgentRuntime:
                 arguments = function.get("arguments") or "{}"
                 self._log_tool_start(name, arguments)
                 guard_hits_before = self._session_guards.counts()
+                directive_transition = self._tool_directive_phase.before_tool_attempt(name)
                 try:
                     result = self._execute_tool_with_repeat_guard(name, arguments, tool_context)
                 except KeyboardInterrupt:
@@ -646,6 +656,16 @@ class AgentRuntime:
                 self._evidence_phase.record_tool_evidence(name, arguments, result)
                 self._evidence_phase.invalidate_stale_source_evidence_after_write(name, arguments, result)
                 self._observe_soft_tool_requirement(name, arguments, result)
+                if self._tool_directive_phase.after_tool_attempt(
+                    directive_transition,
+                    tool_name=name,
+                    is_error=result.is_error,
+                ):
+                    self._append_synthetic_tool_results(
+                        tool_calls[index + 1 :],
+                        "Skipped because the bounded runtime evidence directive is exhausted.",
+                    )
+                    break
                 if name == "git_diff" and not result.is_error:
                     patch_review = self._decide_post_diff_patch_review(run_start_index)
                     self._evidence_phase.record_verification_patch_review(patch_review)
@@ -695,6 +715,7 @@ class AgentRuntime:
                 if self._deadline_exceeded(deadline):
                     self._append_synthetic_tool_results(tool_calls[index + 1 :], self._budget_stop_message())
                     return self._stop_for_budget(deadline, run_start_index)
+            self._tool_directive_phase.after_model_turn()
             step += 1
 
         return self._finish_run(
@@ -763,6 +784,7 @@ class AgentRuntime:
             available_tool_names=self._available_registry_tool_names(),
             design_evidence_roots=self._run.design_evidence_coverage.roots,
             workspace_roots=tuple(str(root) for root in self._workspace_context.all_roots),
+            evidence_domain=contract.evidence_domain,
         )
         self._run.tool_choice_allowed_tool_names = set(decision.allowed_tool_names)
         self._run.update_tool_choice_read_scope(decision.scoped_read_paths, decision.scoped_read_budget)
@@ -833,11 +855,11 @@ class AgentRuntime:
                         )
                         self._run.block_unverified_final_answer(kind=coverage.kind, reason=skip_reason)
                         self._run.force_final_answer_without_tools = False
-                        self._run.temporary_tool_allowlist = None
+                        self._tool_directive_phase.clear("coverage_final")
                         return "Runtime could not safely schedule the required final answer rewrite."
                 else:
                     self._run.force_final_answer_without_tools = False
-                self._run.temporary_tool_allowlist = None
+                self._tool_directive_phase.clear("coverage_final")
                 return None
         if self._run.force_final_answer_without_tools:
             return None
@@ -1069,6 +1091,7 @@ class AgentRuntime:
             },
         )
         payload["finalization_attempts"] = self._run.finalization.aggregate_attempts
+        payload["temporary_tool_directive"] = self._run.temporary_tool_directive.snapshot()
         if self._run.negative_claim_metrics:
             payload["negative_evidence_claims"] = dict(self._run.negative_claim_metrics)
         if self._run.verification_plan.active:
@@ -1393,7 +1416,7 @@ class AgentRuntime:
                 )
         else:
             self._run.clear_forced_final_answer_request()
-        self._run.temporary_tool_allowlist = decision.temporary_tool_allowlist
+        self._tool_directive_phase.apply_steering(decision.kind, decision.temporary_tool_allowlist)
 
     def _tool_loop_stop_message(self, kind: str) -> str:
         return (
@@ -1508,7 +1531,7 @@ class AgentRuntime:
             self._run.force_final_answer_without_tools = True
         else:
             self._run.clear_forced_final_answer_request()
-        self._run.temporary_tool_allowlist = decision.temporary_tool_allowlist
+        self._tool_directive_phase.apply_steering(decision.kind, decision.temporary_tool_allowlist)
         return True
 
     def _final_answer_rewrite_skip_reason(self) -> str | None:
@@ -1604,6 +1627,7 @@ class AgentRuntime:
         skip_memory_consolidation: bool = False,
         preserve_terminal_content: bool = False,
     ) -> str:
+        self._tool_directive_phase.close_terminal(reason)
         incomplete_delivery: str | None = None
         hard_gate = self._run.unresolved_final_answer_gate
         if hard_gate is not None and not preserve_terminal_content:
@@ -1645,6 +1669,7 @@ class AgentRuntime:
 
     def _stop_for_interrupt(self) -> str:
         content = "Stopped after user interrupt."
+        self._tool_directive_phase.close_terminal("interrupt")
         self._session.append("final", {"content": content})
         run_summary = self._finish_run_summary("interrupt")
         self._events.emit(

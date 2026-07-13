@@ -108,6 +108,16 @@ class RequirementContractTests(unittest.TestCase):
         self.assertIn("Do not inspect", contract.scope)
         self.assertTrue(all("repository-grounded" not in item for item in contract.acceptance_items))
 
+    def test_document_only_requirement_analysis_has_its_own_evidence_domain(self) -> None:
+        contract = generate_requirement_contract(
+            "只根据需求文档 Markdown、原型 HTML 和示例图分析需求；不要检查代码，也不要推测系统归属。"
+        )
+
+        self.assertEqual(contract.task_kind, "read-only")
+        self.assertEqual(contract.evidence_domain, "requirement_documents")
+        self.assertIn("Document-only", contract.scope)
+        self.assertTrue(any("document path" in item for item in contract.evidence_requirements))
+
     def test_primary_git_metadata_contract_has_a_dedicated_evidence_owner(self) -> None:
         for prompt in (
             "当前 primary workspace 是不是 Git 仓库？",

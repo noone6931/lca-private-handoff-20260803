@@ -20,6 +20,8 @@ from .tool_observation import ToolResultSummary
 from .verification_plan import VerificationPlan
 from .test_planner import TestPlan
 from .session_evidence import SessionEvidenceReuse
+from .temporary_tool_directive import DirectiveTransition
+from .temporary_tool_directive import TemporaryToolDirectiveOwner
 
 
 @dataclass
@@ -34,7 +36,7 @@ class RunContext:
     current_user_request: str | None = None
     read_file_drift_guard_enabled: bool = False
     finalization: FinalizationCoordinator = field(default_factory=FinalizationCoordinator)
-    temporary_tool_allowlist: set[str] | None = None
+    temporary_tool_directive: TemporaryToolDirectiveOwner = field(default_factory=TemporaryToolDirectiveOwner)
     tool_choice_allowed_tool_names: set[str] | None = None
     tool_choice_read_file_paths: set[str] | None = None
     tool_choice_read_file_remaining: int | None = None
@@ -146,7 +148,7 @@ class RunContext:
         self.current_user_request = prompt
         self.read_file_drift_guard_enabled = False
         self.finalization.reset()
-        self.temporary_tool_allowlist = None
+        self.temporary_tool_directive.reset()
         self.tool_choice_allowed_tool_names = None
         self.tool_choice_read_file_paths = None
         self.tool_choice_read_file_remaining = None
@@ -173,6 +175,39 @@ class RunContext:
         for key, value in metrics.items():
             if value:
                 self.negative_claim_metrics[key] = self.negative_claim_metrics.get(key, 0) + int(value)
+
+    @property
+    def temporary_tool_allowlist(self) -> set[str] | None:
+        """Compatibility view; lifecycle ownership remains in the directive owner."""
+
+        return self.temporary_tool_directive.active_allowed_tools
+
+    def activate_temporary_tool_directive(
+        self,
+        source_kind: str,
+        allowed_tools: set[str] | frozenset[str],
+    ) -> DirectiveTransition:
+        return self.temporary_tool_directive.activate(source_kind, allowed_tools)
+
+    def begin_temporary_tool_directive_turn(self) -> DirectiveTransition | None:
+        return self.temporary_tool_directive.begin_turn()
+
+    def reserve_temporary_tool_directive_attempt(self, tool_name: str) -> DirectiveTransition | None:
+        return self.temporary_tool_directive.reserve_attempt(tool_name)
+
+    def record_temporary_tool_directive_attempt(
+        self,
+        transition: DirectiveTransition | None,
+        *,
+        is_error: bool,
+    ) -> DirectiveTransition | None:
+        return self.temporary_tool_directive.record_attempt_outcome(transition, is_error=is_error)
+
+    def finish_temporary_tool_directive_turn(self) -> DirectiveTransition | None:
+        return self.temporary_tool_directive.finish_turn()
+
+    def close_temporary_tool_directive(self, reason: str) -> DirectiveTransition | None:
+        return self.temporary_tool_directive.close_for_terminal(reason)
 
     def update_tool_choice_read_scope(
         self,

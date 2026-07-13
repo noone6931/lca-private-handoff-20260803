@@ -59,6 +59,10 @@ LSP_EVIDENCE_TOOL_NAMES = frozenset(
 )
 CODE_EVIDENCE_TOOL_NAMES = frozenset({"read_file", "search_code", *LSP_EVIDENCE_TOOL_NAMES})
 CODE_EVIDENCE_ALLOWED_TOOL_NAMES = frozenset({"glob_files", "list_files", *CODE_EVIDENCE_TOOL_NAMES})
+# A document-only contract is narrower than a requirement document used as an
+# input to a code investigation. The former must not quietly widen into source
+# discovery after the first Markdown read.
+DOCUMENT_ONLY_TOOL_NAMES = frozenset({"ask_user", "list_files", "read_file"})
 REQUIREMENT_DOC_TOOL_NAMES = frozenset({"ask_user", "list_files", "read_file", "search_code"})
 WORKSPACE_INVENTORY_TOOL_NAMES = frozenset({"glob_files", "list_files", "read_file"})
 WORKSPACE_INVENTORY_DISCOVERY_TOOL_NAMES = frozenset({"glob_files"})
@@ -352,6 +356,7 @@ class RequiredToolGate:
         available_tool_names: Iterable[str] | None = None,
         design_evidence_roots: Iterable[str] | None = None,
         workspace_roots: Iterable[str] | None = None,
+        evidence_domain: str | None = None,
     ) -> ToolChoiceDecision:
         return evaluate_tool_choice_state(
             task_kind=task_kind,
@@ -361,6 +366,7 @@ class RequiredToolGate:
             available_tool_names=available_tool_names,
             design_evidence_roots=design_evidence_roots,
             workspace_roots=workspace_roots,
+            evidence_domain=evidence_domain,
         )
 
 
@@ -377,6 +383,7 @@ def evaluate_tool_choice_state(
     available_tool_names: Iterable[str] | None = None,
     design_evidence_roots: Iterable[str] | None = None,
     workspace_roots: Iterable[str] | None = None,
+    evidence_domain: str | None = None,
 ) -> ToolChoiceDecision:
     if is_inspection_forbidden(prompt):
         return ToolChoiceDecision(
@@ -390,6 +397,20 @@ def evaluate_tool_choice_state(
     all_tools = _available_tool_names(available_tool_names)
     read_only = _is_read_only_task(task_kind, prompt)
     allowed_tools = all_tools - READ_ONLY_FORBIDDEN_TOOL_NAMES if read_only else all_tools
+
+    if evidence_domain == "requirement_documents":
+        has_document_read = _has_requirement_doc_read(prompt, results)
+        return ToolChoiceDecision(
+            steering_required=not has_document_read,
+            allowed_tool_names=_allowed_subset(DOCUMENT_ONLY_TOOL_NAMES, allowed_tools),
+            reason=(
+                "document_only contract: expose only document browsing/reading and clarification tools; "
+                "repository code discovery remains out of scope."
+            ),
+            rule_id="document_only_requirement_analysis",
+            missing_requirements=() if has_document_read else ("requirement_document_read",),
+            preferred_tool_names=("read_file",),
+        )
 
     negative_discovery = _negative_discovery_decision(prompt, results, allowed_tools)
     if negative_discovery is not None:
@@ -1023,6 +1044,7 @@ def _lower_text(value: str) -> str:
 __all__ = [
     "CODE_EVIDENCE_ALLOWED_TOOL_NAMES",
     "CODE_EVIDENCE_TOOL_NAMES",
+    "DOCUMENT_ONLY_TOOL_NAMES",
     "CANDIDATE_DELIVERY_TOOL_NAMES",
     "CANDIDATE_DIFF_TOOL_NAMES",
     "CANDIDATE_REMEDIATION_TOOL_NAMES",

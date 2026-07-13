@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 
 from local_agent.completion_audit import audit_completion
+from local_agent.requirement_evidence import RequirementEvidence
 from local_agent.task_contract import generate_requirement_contract
 from local_agent.test_planner import TestPlan
 from local_agent.tool_choice_queue import ToolResultSummary
@@ -10,6 +11,62 @@ from local_agent.verification_plan import VerificationPlan
 
 
 class CompletionAuditTests(unittest.TestCase):
+    def test_document_only_requirement_analysis_accepts_document_facts_without_code_inference_labels(self) -> None:
+        request = "只根据需求文档 Markdown、原型 HTML 和示例图分析需求；不要检查代码，也不要推测系统归属。"
+        requirement = RequirementEvidence(
+            path="requirements.md",
+            content="第 12 行：有效结算单为未回退的结算单。",
+            root="primary",
+        )
+        result = audit_completion(
+            generate_requirement_contract(request),
+            request=request,
+            final_content=(
+                "需求事实：有效结算单定义为未回退的结算单（requirements.md:12）。"
+                "示例图未读取，因此不据此补充规则；本结论不判断当前系统归属。"
+            ),
+            tool_results=[ToolResultSummary("read_file", "有效结算单", path="requirements.md")],
+            source_paths=["requirements.md"],
+            open_todos=[],
+            requirement_evidence=[requirement],
+        )
+
+        self.assertTrue(result.passed)
+        self.assertEqual(result.allowed_tool_names(), ())
+
+    def test_document_only_requirement_analysis_requires_a_document_reference(self) -> None:
+        request = "只根据需求文档 Markdown 分析需求；不要检查代码，也不要推测系统归属。"
+        result = audit_completion(
+            generate_requirement_contract(request),
+            request=request,
+            final_content="有效结算单定义为未回退的结算单；本结论不判断系统归属。",
+            tool_results=[ToolResultSummary("read_file", "有效结算单", path="requirements.md")],
+            source_paths=["requirements.md"],
+            open_todos=[],
+            requirement_evidence=[RequirementEvidence(path="requirements.md", content="有效结算单")],
+        )
+
+        self.assertFalse(result.passed)
+        self.assertTrue(any("document path" in item.reason for item in result.missing_items))
+
+    def test_document_only_requirement_analysis_rejects_a_code_inspection_detour(self) -> None:
+        request = "只根据需求文档 Markdown 分析需求；不要检查代码，也不要推测系统归属。"
+        result = audit_completion(
+            generate_requirement_contract(request),
+            request=request,
+            final_content="需求事实：有效结算单为未回退的结算单（requirements.md:1）。",
+            tool_results=[
+                ToolResultSummary("read_file", "有效结算单", path="requirements.md"),
+                ToolResultSummary("search_code", "src/Service.java:1: class Service", path="src/Service.java"),
+            ],
+            source_paths=["requirements.md"],
+            open_todos=[],
+            requirement_evidence=[RequirementEvidence(path="requirements.md", content="有效结算单")],
+        )
+
+        self.assertFalse(result.passed)
+        self.assertTrue(any("repository/code inspection" in item.reason for item in result.missing_items))
+
     def test_read_only_answer_requires_traceable_evidence_and_status_labels(self) -> None:
         contract = generate_requirement_contract("只读代码，请根据源码证据说明登录密码在哪里校验。不要修改文件。")
 

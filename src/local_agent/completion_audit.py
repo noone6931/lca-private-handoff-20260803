@@ -7,8 +7,11 @@ from typing import Literal
 from .negative_evidence import allowed_tools_for_negative_claims
 from .negative_evidence import render_negative_existence_issues
 from .negative_evidence import unsupported_negative_existence_claims
+from .requirement_evidence import RequirementEvidence
+from .requirement_evidence import requirement_fact_citation_issues
 from .task_contract import RequirementContract
 from .tool_choice_queue import CODE_EVIDENCE_TOOL_NAMES
+from .tool_choice_queue import DOCUMENT_ONLY_TOOL_NAMES
 from .tool_observation import ToolResultSummary
 from .verification_timeline import results_after_last_write
 from .verification_timeline import successful_tool_after_last_write
@@ -209,6 +212,7 @@ def audit_completion(
     source_paths: list[str],
     open_todos: list[str],
     verification_plan: VerificationPlan | None = None,
+    requirement_evidence: list[RequirementEvidence] | None = None,
 ) -> CompletionAuditResult:
     """Check whether a proposed final answer satisfies the current task contract."""
 
@@ -217,6 +221,17 @@ def audit_completion(
 
     mode = _effective_task_kind(contract, request)
     if mode == "read-only":
+        if contract.evidence_domain == "requirement_documents":
+            return CompletionAuditResult(
+                tuple(
+                    _document_requirement_items(
+                        contract,
+                        final_content=final_content,
+                        tool_results=tool_results,
+                        requirement_evidence=requirement_evidence or [],
+                    )
+                )
+            )
         return CompletionAuditResult(
             tuple(
                 _read_only_items(
@@ -439,6 +454,104 @@ def _read_only_items(
     return items
 
 
+def _document_requirement_items(
+    contract: RequirementContract,
+    *,
+    final_content: str,
+    tool_results: list[ToolResultSummary],
+    requirement_evidence: list[RequirementEvidence],
+) -> list[CompletionAuditItem]:
+    """Audit requirement analysis with document evidence, not code-investigation rules."""
+
+    content = final_content or ""
+    detours = [result.name for result in tool_results if result.name not in DOCUMENT_ONLY_TOOL_NAMES]
+    document_reads = [
+        result
+        for result in tool_results
+        if result.name == "read_file"
+        and not result.is_error
+        and str(result.path or "").lower().endswith((".md", ".html", ".htm"))
+    ]
+    no_edits = not workspace_write_happened(tool_results)
+    items: list[CompletionAuditItem] = []
+    direct_requirement = _requirement_at(
+        contract.acceptance_items,
+        0,
+        "Answer the requested requirement analysis directly from the supplied documents.",
+    )
+    if detours:
+        items.append(
+            _missing(
+                "acceptance",
+                direct_requirement,
+                "document-only task executed repository/code inspection tools: " + ", ".join(sorted(set(detours))),
+            )
+        )
+    elif _looks_incomplete(content):
+        items.append(_missing("acceptance", direct_requirement, "draft says it is ready instead of answering"))
+    elif not document_reads and not requirement_evidence:
+        items.append(
+            _missing(
+                "acceptance",
+                direct_requirement,
+                "no successful Markdown/HTML requirement read exists in this run",
+                ("read_file",),
+            )
+        )
+    else:
+        items.append(_passed("acceptance", direct_requirement, "document evidence is available"))
+
+    evidence_requirement = _requirement_at(
+        contract.evidence_requirements,
+        0,
+        "Cite the requirement document path and line or section for direct requirement facts.",
+    )
+    citation_issues = requirement_fact_citation_issues(content, requirement_evidence)
+    document_paths = [item.path for item in requirement_evidence]
+    document_paths.extend(str(result.path) for result in document_reads if result.path)
+    if citation_issues or not _mentions_source_reference(content, document_paths):
+        reason = "; ".join(citation_issues) if citation_issues else "answer does not cite a read requirement document path"
+        items.append(_missing("evidence", evidence_requirement, reason))
+    elif document_reads or requirement_evidence:
+        items.append(_passed("evidence", evidence_requirement, "document path/line evidence is traceable"))
+
+    boundary_requirement = _requirement_at(
+        contract.evidence_requirements,
+        1,
+        "State when an artifact could not be read instead of treating it as document evidence.",
+    )
+    # This is a conditional requirement: when the answer mentions an unread
+    # artifact, it must say so plainly. Direct document facts need no fake
+    # inference label merely because repository code was intentionally out of scope.
+    if _mentions_unread_artifact(content) and not _has_unverified_status(content):
+        items.append(_missing("evidence", boundary_requirement, "unread artifact is not labelled unverified"))
+    else:
+        items.append(_passed("evidence", boundary_requirement, "artifact boundary is explicit when needed"))
+
+    verification_requirement = _requirement_at(
+        contract.verification_requirements,
+        0,
+        "Use document reads only; do not inspect repository code for this analysis.",
+    )
+    if document_reads or requirement_evidence:
+        items.append(_passed("verification", verification_requirement, "document inspection happened"))
+    else:
+        items.append(_missing("verification", verification_requirement, "no document inspection happened", ("read_file",)))
+
+    if not no_edits:
+        items.append(
+            _missing(
+                "verification",
+                "Do not modify files for document-only analysis.",
+                "document-only task has workspace write tool results",
+                ("git_diff",),
+            )
+        )
+    else:
+        items.append(_passed("verification", "Do not modify files for document-only analysis.", "no workspace write tool results exist"))
+    return items
+
+
 def _inspection_forbidden_items(
     contract: RequirementContract,
     *,
@@ -562,6 +675,11 @@ def _has_direct_semantic_answer(content: str) -> bool:
 def _has_unverified_status(content: str) -> bool:
     lowered = (content or "").lower()
     return any(marker in lowered for marker in ("未验证", "无法确认", "不能确认", "unverified", "not verified", "cannot confirm"))
+
+
+def _mentions_unread_artifact(content: str) -> bool:
+    lowered = (content or "").lower()
+    return any(marker in lowered for marker in ("图片", "图像", "image", "artifact", "不可读", "无法读取", "cannot read", "unread"))
 
 
 def _git_repository_conclusion(content: str) -> bool | None:

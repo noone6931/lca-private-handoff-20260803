@@ -97,6 +97,7 @@ class CompletionAuditSteerer:
             source_paths=context.read_file_evidence_paths,
             open_todos=context.open_todos,
             verification_plan=context.verification_plan,
+            requirement_evidence=context.requirement_evidence,
         )
         if result.passed:
             return None
@@ -267,4 +268,3 @@ def request_needs_evidence_status_labels(request: str, content: str) -> bool:
 def content_has_evidence_status_label(content: str) -> bool:
     lowered = content.lower()
     return any(label.lower() in lowered for label in EVIDENCE_STATUS_LABELS)
-
