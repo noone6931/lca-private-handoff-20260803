@@ -148,6 +148,21 @@ class _DocumentOnlyRequirementClient:
         )()
 
 
+class _DocumentOnlyAnalysisWithNoEditLanguageClient(_DocumentOnlyRequirementClient):
+    """Keep a complete document analysis even when it truthfully says no files changed."""
+
+    def chat(self, messages, tools, *, timeout=None):
+        response = super().chat(messages, tools, timeout=timeout)
+        if len(type(self).calls) > 1:
+            response.message["content"] = (
+                "范围：本次仅分析需求文档，未修改文件。\n"
+                "流程：有效结算单为未回退的结算单（requirements.md:1），据此进入结算处理。\n"
+                "边界：示例图未读取，因此不据此补充规则，也不判断系统归属。\n"
+                "待确认项：图片中的字段、页面交互和现有实现归属需另行验证。"
+            )
+        return response
+
+
 class _DirectiveExhaustionClient:
     calls: list[dict] = []
 
@@ -182,6 +197,34 @@ class _DirectiveExhaustionClient:
             {"message": {"content": "无法验证当前 root 是否有 Java 源码；两次发现尝试均未成功。"}},
         )()
 
+
+class _OwnerExploreBatchClient:
+    calls: list[dict] = []
+
+    def __init__(self, config: AgentConfig):
+        self.config = config
+        self._primary_calls = 0
+
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
+        if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages):
+            return type("Response", (), {"message": {"content": '{"verdict":"pass","confidence":0.9,"findings":[],"reason":"scoped evidence is honest"}'}})()
+        self._primary_calls += 1
+        if self._primary_calls == 1:
+            tool_calls = [
+                {
+                    "id": f"search-{index}",
+                    "type": "function",
+                    "function": {"name": "search_code", "arguments": json.dumps({"pattern": f"Candidate{index}"})},
+                }
+                for index in range(12)
+            ]
+            return type("Response", (), {"message": {"content": None, "tool_calls": tool_calls}})()
+        return type(
+            "Response",
+            (),
+            {"message": {"content": "已检查限定范围内的搜索证据；直接 owner 仍未定位，未把缺少读取的 root 当作已覆盖。"}},
+        )()
 
 class _BareObservedNoMatchClient:
     calls: list[dict] = []
@@ -2892,6 +2935,59 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertNotIn("read_only_evidence", runtime._last_run_summary["steering_counts"])
         self.assertNotIn("negative_existence", runtime._last_run_summary["steering_counts"])
         self.assertEqual(runtime._last_run_summary["termination_reason"], "final")
+
+    def test_document_only_analysis_with_no_edit_language_keeps_the_analysis(self) -> None:
+        _DocumentOnlyAnalysisWithNoEditLanguageClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            (workspace / "requirements.md").write_text("有效结算单为未回退的结算单。\n", encoding="utf-8")
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=workspace,
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _DocumentOnlyAnalysisWithNoEditLanguageClient):
+                runtime = AgentRuntime(config, show_tool_logs=False)
+                result = runtime.run(
+                    "只根据需求文档 Markdown、原型 HTML 和示例图分析需求；不要检查代码，也不要修改文件。"
+                )
+
+        self.assertIn("范围：", result)
+        self.assertIn("流程：", result)
+        self.assertIn("边界：", result)
+        self.assertIn("待确认项：", result)
+        self.assertEqual(runtime._last_run_summary["steering_counts"].get("no_edit_final_hygiene", 0), 0)
+        self.assertEqual(runtime._last_run_summary["termination_reason"], "final")
+        self.assertLessEqual(len(_DocumentOnlyAnalysisWithNoEditLanguageClient.calls), 4)
+        self.assertTrue(all("git_status" not in _tool_names_from_schema_call(call["tools"]) for call in _DocumentOnlyAnalysisWithNoEditLanguageClient.calls))
+
+    def test_owner_explore_batch_cannot_overshoot_the_actual_hard_budget(self) -> None:
+        _OwnerExploreBatchClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            (workspace / "src").mkdir()
+            (workspace / "src/App.java").write_text("class App {}\n", encoding="utf-8")
+            with patch("local_agent.agent.OpenAICompatibleClient", _OwnerExploreBatchClient):
+                runtime = AgentRuntime(
+                    AgentConfig(
+                        provider="openai-compatible", api_base_url="https://example.invalid/v1", api_key="token",
+                        model="model", workspace=workspace, max_steps=0, budget_seconds=None, approval_mode="yolo",
+                    ),
+                    show_tool_logs=False,
+                )
+                result = runtime.run("只读分析当前服务 owner 和影响范围，不要修改。")
+
+        summary = runtime._last_run_summary
+        self.assertIn("owner", result)
+        self.assertLessEqual(summary["tool_counts"].get("search_code", 0), 4)
+        self.assertEqual(summary["suppressed_tool_executions"], 8)
+        self.assertEqual(summary["read_only_reviewer"]["triggers"], 1)
+        self.assertEqual(summary["read_only_reviewer"]["attempts"], 1)
 
     def test_negative_discovery_directive_exhausts_without_leaking_a_glob_only_schema(self) -> None:
         _DirectiveExhaustionClient.calls = []

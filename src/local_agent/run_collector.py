@@ -165,6 +165,10 @@ class RunCollector:
         self._stats.synthetic_tool_results += 1
         self._stats.tool_errors += 1
 
+    def record_suppressed_tool_executions(self, count: int) -> None:
+        if self._stats is not None:
+            self._stats.suppressed_tool_executions += max(0, count)
+
     def record_provider_protocol_violation(
         self,
         *,

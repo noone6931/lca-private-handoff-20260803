@@ -118,6 +118,7 @@ class PathRuleTests(unittest.TestCase):
                 root,
                 root / "user-config",
                 current_user_request="review src/App.java",
+                requirement_contract=None,
                 path_rule_metadata=metadata,
                 matched_path_rules=matched,
             )

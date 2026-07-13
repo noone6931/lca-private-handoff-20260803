@@ -35,6 +35,7 @@ class ReadOnlyExploreDecision:
     observation_calls: int = 0
     soft_budget: int = 0
     hard_budget: int = 0
+    read_candidates: tuple[str, ...] = ()
 
     @property
     def is_applicable(self) -> bool:
@@ -64,6 +65,7 @@ def evaluate_read_only_explore(
     hard_budget = min(MAX_OWNER_DESIGN_EXPLORE_CALLS, max(4, len(roots) * HARD_EXPLORE_CALLS_PER_ROOT))
     covered = _covered_roots(results, roots)
     missing = tuple(root for root in roots if root not in covered)
+    read_candidates = _read_candidates_for_missing_roots(results, missing)
     if not missing:
         return ReadOnlyExploreDecision(
             "finalize",
@@ -71,6 +73,7 @@ def evaluate_read_only_explore(
             observation_calls=observation_calls,
             soft_budget=soft_budget,
             hard_budget=hard_budget,
+            read_candidates=read_candidates,
         )
     if observation_calls >= hard_budget:
         return ReadOnlyExploreDecision(
@@ -80,6 +83,7 @@ def evaluate_read_only_explore(
             observation_calls=observation_calls,
             soft_budget=soft_budget,
             hard_budget=hard_budget,
+            read_candidates=read_candidates,
         )
     return ReadOnlyExploreDecision(
         "precise",
@@ -88,6 +92,7 @@ def evaluate_read_only_explore(
         observation_calls=observation_calls,
         soft_budget=soft_budget,
         hard_budget=hard_budget,
+        read_candidates=read_candidates,
     )
 
 
@@ -116,3 +121,41 @@ def _canonical_path(result: ToolResultSummary) -> str | None:
             except OSError:
                 return str(path)
     return None
+
+
+def _read_candidates_for_missing_roots(
+    results: Iterable[ToolResultSummary],
+    missing_roots: tuple[str, ...],
+) -> tuple[str, ...]:
+    """Return only existing, typed search/LSP paths for the next direct read."""
+
+    candidates: list[str] = []
+    seen: set[str] = set()
+    per_root: dict[str, int] = {root: 0 for root in missing_roots}
+    for result in results:
+        if result.name not in PRECISE_EVIDENCE_TOOLS - {"read_file"} or result.is_error:
+            continue
+        metadata = result.metadata
+        if metadata.get("evidence_paths_overflow"):
+            continue
+        values = metadata.get("evidence_paths")
+        if not isinstance(values, (list, tuple)):
+            continue
+        for raw in values:
+            if not isinstance(raw, str) or not raw.strip():
+                continue
+            raw_path = Path(raw)
+            possible = (raw_path,) if raw_path.is_absolute() else tuple(Path(root) / raw_path for root in missing_roots)
+            for path in possible:
+                try:
+                    resolved = path.resolve(strict=True)
+                except OSError:
+                    continue
+                rendered = str(resolved)
+                root = next((item for item in missing_roots if rendered == item or rendered.startswith(item + "/")), None)
+                if root is None or per_root[root] >= 2 or rendered in seen:
+                    continue
+                seen.add(rendered)
+                per_root[root] += 1
+                candidates.append(rendered)
+    return tuple(candidates)

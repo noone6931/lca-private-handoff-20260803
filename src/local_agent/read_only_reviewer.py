@@ -180,7 +180,7 @@ Review contract:
 - When the handoff has no explicit direct binding, do not say a main owner/module judgment is correct or mostly correct. Treat same-domain code as observed or analogous and leave the owner unlocated.
 
 Use schema: {"verdict":"pass|revise|unverified","confidence":0.0,"findings":[{"claim_id":"c001","claim":"optional human-readable summary","issue":"...","action":"..."}],"reason":"..."}.
-For every finding, choose exactly one claim_id from candidate_claims. Never invent a claim_id. The optional claim field is for people, not an address.
+The complete response must be a JSON object shorter than 9000 characters. `findings` must be a JSON list of at most 8 items. A `pass` verdict requires exactly 0 findings; `revise` and `unverified` require 1 to 8 findings. Every finding must have one unique, known claim_id plus non-empty issue and action. For every finding, choose exactly one claim_id from candidate_claims. Never invent or repeat a claim_id. The optional claim field is for people, not an address. Report only the highest-risk blocking findings when there are more than 8.
 Choose revise when the candidate can be corrected using the handoff. Choose unverified when the candidate cannot safely make the requested factual conclusion."""
     payload = {
         "kind": "LCA_READ_ONLY_EVIDENCE_REVIEW",
@@ -210,7 +210,8 @@ def reviewer_repair_messages(
                     "validation": _sanitize_diagnostics(diagnostics),
                     "instruction": (
                         "Return a complete JSON object that exactly follows the original schema. "
-                        "Use only candidate claim IDs supplied in the original payload."
+                        "Use only candidate claim IDs supplied in the original payload. "
+                        + _repair_shape_instruction(diagnostics)
                     ),
                 },
                 ensure_ascii=False,
@@ -353,6 +354,22 @@ def _sanitize_diagnostics(diagnostics: Mapping[str, Any]) -> dict[str, Any]:
         "top_level_type",
     }
     return {key: diagnostics[key] for key in allowed if key in diagnostics}
+
+
+def _repair_shape_instruction(diagnostics: Mapping[str, Any]) -> str:
+    """Describe the failed schema rule without repeating provider content."""
+
+    code = str(diagnostics.get("error_code") or "")
+    common = "Keep the JSON response under 9000 characters and use unique known claim IDs."
+    if code == "findings_too_many":
+        return "Return no more than 8 highest-risk findings. " + common
+    if code == "response_too_large":
+        return "Make reason, issue, and action concise; do not exceed 9000 characters. " + common
+    if code == "pass_with_findings":
+        return "A pass verdict must have an empty findings list; otherwise choose revise or unverified with 1 to 8 findings. " + common
+    if code == "nonpassing_without_findings":
+        return "A revise or unverified verdict needs 1 to 8 findings. " + common
+    return "Use a JSON findings list with at most 8 items and the verdict/finding cardinality from the original schema. " + common
 
 
 def _clip(value: str, limit: int = 420) -> str:

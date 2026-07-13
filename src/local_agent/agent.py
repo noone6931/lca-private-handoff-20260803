@@ -118,7 +118,7 @@ from .tools.base import ToolResult
 from .tools.base import tool_state_dir
 from .tools.git import capture_git_baseline
 from .tools.relevance import is_analysis_only_request
-from .tools.relevance import is_code_implementation_request
+from .task_contract import requires_no_edit_final_hygiene
 from .tools.relevance import path_matches_any
 from .tools.relevance import request_mentions_config_or_path
 from .tool_choice_queue import ToolChoiceDecision
@@ -131,6 +131,7 @@ from .runtime_evidence import EvidenceVerificationLifecycle
 from .runtime_memory import MemoryConsolidationLifecycle
 from .runtime_tool_directive import RuntimeToolDirectivePhase
 from .runtime_read_only_review import ReadOnlyReviewPhase
+from .runtime_read_only_explore import RuntimeReadOnlyExplorePhase
 from .runtime_provider_terminal import ProviderTerminalPhase
 from .runtime_workspace import WorkspaceLifecycle
 from .runtime_prompt import _assistant_event_payload
@@ -369,6 +370,7 @@ class AgentRuntime:
         self._evidence_phase = EvidenceVerificationLifecycle(self)
         self._memory_phase = MemoryConsolidationLifecycle(self)
         self._tool_directive_phase = RuntimeToolDirectivePhase(self)
+        self._read_only_explore_phase = RuntimeReadOnlyExplorePhase(self)
         self._read_only_review_phase = ReadOnlyReviewPhase(self)
         self._provider_terminal_phase = ProviderTerminalPhase(self)
         missing_roots = self._workspace_phase.restore_session_workspace_roots()
@@ -702,6 +704,15 @@ class AgentRuntime:
                     self._append_synthetic_tool_results(
                         tool_calls[index + 1 :],
                         "Skipped because the bounded runtime evidence directive is exhausted.",
+                    )
+                    break
+                explore_budget = self._read_only_explore_phase.after_tool_result(name)
+                if explore_budget is not None:
+                    remaining_calls = tool_calls[index + 1 :]
+                    self._read_only_explore_phase.record_suppressed_calls(len(remaining_calls), explore_budget)
+                    self._append_synthetic_tool_results(
+                        remaining_calls,
+                        "Skipped because the bounded read-only exploration budget was reached; produce a scoped candidate final answer.",
                     )
                     break
                 if name == "git_diff" and not result.is_error:
@@ -1510,7 +1521,7 @@ class AgentRuntime:
             required_design_evidence_roots=self._run.design_evidence_coverage.roots,
             design_evidence_read_paths=list(self._run.evidence.design_read_paths),
             open_todos=self._provider_context_phase.open_todo_summary(),
-            is_code_implementation_request=is_code_implementation_request(self._run.current_user_request),
+            is_code_implementation_request=requires_no_edit_final_hygiene(self._run.requirement_contract),
             steer_counts=self._final_answer_steer_counts(),
             verification_plan=self._run.verification_plan,
         )

@@ -466,10 +466,18 @@ def evaluate_tool_choice_state(
             )
         return ToolChoiceDecision(
             steering_required=True,
-            allowed_tool_names=_allowed_subset(PRECISE_EVIDENCE_TOOLS, allowed_tools),
+            allowed_tool_names=_allowed_subset(
+                {"read_file"} if explore_decision.read_candidates else PRECISE_EVIDENCE_TOOLS,
+                allowed_tools,
+            ),
             reason=(
-                "read_only_profile_explore active: use only precise source evidence to cover each remaining code root; "
-                "do not continue broad directory inventory. "
+                "read_only_profile_explore active: "
+                + (
+                    "read the typed search/LSP candidates before continuing discovery; "
+                    if explore_decision.read_candidates
+                    else "use only precise source evidence to cover each remaining code root; "
+                )
+                + "do not continue broad directory inventory. "
                 f"observations={explore_decision.observation_calls}/{explore_decision.hard_budget}."
             ),
             rule_id=(
@@ -478,7 +486,12 @@ def evaluate_tool_choice_state(
                 else "read_only_profile_explore"
             ),
             missing_requirements=tuple(f"code_read:{root}" for root in missing),
-            preferred_tool_names=("search_code", "read_file"),
+            preferred_tool_names=("read_file",) if explore_decision.read_candidates else ("search_code", "read_file"),
+            tool_call_hints=(
+                ("read_file candidates: " + ", ".join(explore_decision.read_candidates),)
+                if explore_decision.read_candidates
+                else ()
+            ),
         )
 
     evidence_preferred = _preferred_evidence_tools(results)

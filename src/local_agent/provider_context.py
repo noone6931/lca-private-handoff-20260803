@@ -196,6 +196,7 @@ class ProviderContextPhase:
                 runtime._user_config_dir,
                 runtime._workspace_context.additional_roots,
                 runtime._run.current_user_request,
+                runtime._run.requirement_contract,
                 runtime._run.requirement_contract_context,
                 render_pinned_requirement_evidence(runtime._run.evidence.pinned_requirement_evidence),
                 runtime._run.user_facts_context,

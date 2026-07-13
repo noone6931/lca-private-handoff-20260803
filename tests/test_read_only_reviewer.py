@@ -281,6 +281,61 @@ class _ReviewerXmlArtifactClient(_InvalidReviewerClient):
         return super().chat(messages, tools, timeout=timeout)
 
 
+class _ReviewerRepairTimeoutClient(_InvalidReviewerClient):
+    calls: list[dict] = []
+
+    def __init__(self, config: AgentConfig):
+        super().__init__(config)
+        self._review_calls = 0
+
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
+        if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages):
+            self._review_calls += 1
+            if self._review_calls == 1:
+                return type("Response", (), {"message": {"content": "not-json"}})()
+            raise LlmTimeoutError("repair timeout")
+        return type("Response", (), {"message": {"content": "PayServiceImpl is the verified owner."}})()
+
+
+class _ReviewerRepairProtocolClient(_InvalidReviewerClient):
+    calls: list[dict] = []
+
+    def __init__(self, config: AgentConfig):
+        super().__init__(config)
+        self._review_calls = 0
+
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
+        if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages):
+            self._review_calls += 1
+            if self._review_calls == 1:
+                return type("Response", (), {"message": {"content": "not-json"}})()
+            return type(
+                "Response",
+                (),
+                {"message": {"content": None, "tool_calls": [{"id": "forbidden", "function": {"name": "read_file", "arguments": '{"path":"secret"}'}}]}},
+            )()
+        return type("Response", (), {"message": {"content": "PayServiceImpl is the verified owner."}})()
+
+
+class _ReviewerRepairXmlClient(_InvalidReviewerClient):
+    calls: list[dict] = []
+
+    def __init__(self, config: AgentConfig):
+        super().__init__(config)
+        self._review_calls = 0
+
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
+        if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages):
+            self._review_calls += 1
+            if self._review_calls == 1:
+                return type("Response", (), {"message": {"content": "not-json"}})()
+            return type("Response", (), {"message": {"content": "<tool_call><function=read_file><parameter=path>secret</parameter></function></tool_call>"}})()
+        return type("Response", (), {"message": {"content": "PayServiceImpl is the verified owner."}})()
+
+
 class _NoncompliantRewriteClient(_ReviewerFlowClient):
     def chat(self, messages, tools, *, timeout=None):
         is_reviewer = any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages)
@@ -381,6 +436,20 @@ class ReadOnlyReviewerTests(unittest.TestCase):
             parse_reviewer_result('{"verdict":"pass","confidence":1,"findings":[{"claim_id":"c001","claim":"x","issue":"x","action":"x"}],"reason":"x"}', claim_units=units)
         with self.assertRaises(ValueError):
             parse_reviewer_result("review looks good", claim_units=units)
+
+    def test_reviewer_prompt_and_repair_repeat_the_parser_shape_limits(self) -> None:
+        handoff = build_explore_handoff(
+            request="review", contract=generate_requirement_contract("只读分析当前服务 owner，不要修改文件。"),
+            requirement_evidence=(), source_evidence=(), records=(), tool_results=(),
+        )
+        messages = reviewer_messages(handoff, candidate_claim_units("candidate"))
+        prompt = messages[0]["content"]
+        self.assertIn("shorter than 9000", prompt)
+        self.assertIn("at most 8", prompt)
+        self.assertIn("`pass` verdict requires exactly 0", prompt)
+        repair = reviewer_repair_messages(handoff, candidate_claim_units("candidate"), {"error_code": "findings_too_many"})
+        self.assertIn("at most 8", repair[0]["content"])
+        self.assertIn("no more than 8 highest-risk findings", repair[-1]["content"])
 
     def test_claim_ids_address_markdown_units_without_reviewer_text_matching(self) -> None:
         candidate = "| Scope | Owner |\n| --- | --- |\n| Frontend | **platformPayment** |\n\n**Conclusion:** platformPayment is the verified owner."
@@ -568,6 +637,48 @@ class ReadOnlyReviewerTests(unittest.TestCase):
                 self.assertIn("未完成/未验证", answer)
                 self.assertEqual(runtime._last_run_summary["read_only_reviewer"]["errors"], {expected: 1})
                 self.assertEqual(runtime._last_run_summary["provider_protocol_violations"], protocol_count)
+
+    def test_reviewer_repair_turn_timeout_and_protocol_violations_are_terminal_and_redacted(self) -> None:
+        cases = (
+            (_ReviewerRepairTimeoutClient, "openai-compatible", "timeout", 0),
+            (_ReviewerRepairProtocolClient, "openai-compatible", "protocol_error", 1),
+            (_ReviewerRepairXmlClient, "bailian", "protocol_error", 1),
+        )
+        for client, provider, expected, protocol_count in cases:
+            with self.subTest(client=client.__name__), tempfile.TemporaryDirectory() as tmp:
+                client.calls = []
+                with patch("local_agent.agent.OpenAICompatibleClient", client):
+                    runtime = AgentRuntime(_config(Path(tmp).resolve(), provider=provider), show_tool_logs=False)
+                    answer = runtime.run("只读分析当前服务 owner 和影响范围，不要修改。")
+                summary = runtime._last_run_summary["read_only_reviewer"]
+                self.assertIn("未完成/未验证", answer)
+                self.assertEqual(summary["attempts"], 2)
+                self.assertEqual(summary["schema_failures"], 1)
+                self.assertEqual(summary["repairs"], 1)
+                self.assertEqual(summary["errors"], {expected: 1})
+                self.assertEqual(runtime._last_run_summary["provider_protocol_violations"], protocol_count)
+                self.assertNotIn("secret", answer)
+                self.assertNotIn("secret", runtime._session.path.read_text(encoding="utf-8"))
+
+    def test_reviewer_schema_repair_is_not_attempted_without_remaining_deadline(self) -> None:
+        _ReviewerRepairExhaustedClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch("local_agent.agent.OpenAICompatibleClient", _ReviewerRepairExhaustedClient):
+                runtime = AgentRuntime(_config(Path(tmp).resolve()), show_tool_logs=False)
+                contract = generate_requirement_contract("只读分析当前服务 owner 和影响范围，不要修改。")
+                now = time.monotonic()
+                runtime._run.begin(
+                    run_id="repair-budget", started_monotonic=now, deadline_monotonic=now + 10,
+                    run_start_index=0, git_baseline={}, prompt="只读分析当前服务 owner 和影响范围，不要修改。",
+                    requirement_contract=contract, requirement_contract_context="", design_evidence_roots=(),
+                )
+                with patch.object(runtime._provider_context_phase, "remaining_timeout", side_effect=[1.0, 0.0]):
+                    outcome = runtime._read_only_review_phase.review_candidate("PayServiceImpl is the verified owner.")
+        self.assertEqual(outcome.kind, "unverified")
+        summary = runtime._run.read_only_review.snapshot()
+        self.assertEqual(summary["provider_attempts"], 1)
+        self.assertEqual(summary["schema_failures"], 1)
+        self.assertEqual(summary["repairs"], 0)
 
     def test_reviewer_unknown_claim_id_cannot_queue_a_rewrite(self) -> None:
         _ParaphraseReviewerClient.calls = []

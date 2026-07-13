@@ -4,6 +4,7 @@ from ..completion_audit import audit_completion
 from ..completion_audit import render_completion_audit_message
 from ..patch_reviewer import render_patch_review_message
 from ..patch_reviewer import review_patch
+from ..task_contract import requires_no_edit_final_hygiene
 from .models import *  # noqa: F403
 from .evidence import request_mentions_todo
 from .evidence import tool_names_since
@@ -17,7 +18,7 @@ class NoEditFinalHygieneSteerer:
     def decide(self, context: FinalAnswerContext) -> SteeringDecision | None:
         if context.steer_counts.get(self.kind, 0) >= self._max_steers:
             return None
-        if not context.is_code_implementation_request:
+        if not requires_no_edit_final_hygiene(context.requirement_contract):
             return None
         if not looks_like_no_edit_final(context.content):
             return None

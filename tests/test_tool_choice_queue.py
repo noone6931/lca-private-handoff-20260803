@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import tempfile
 import unittest
+from pathlib import Path
 
 from local_agent.tool_choice_queue import READ_ONLY_FORBIDDEN_TOOL_NAMES
 from local_agent.tool_choice_queue import WORKSPACE_INVENTORY_TOOL_NAMES
@@ -18,9 +20,49 @@ from local_agent.tool_choice_queue import ToolChoiceQueue
 from local_agent.tool_choice_queue import ToolResultSummary
 from local_agent.tool_choice_queue import evaluate_tool_choice_state
 from local_agent.tool_choice_queue import session_evidence_reuse_directive
+from local_agent.read_only_explore import evaluate_read_only_explore
 
 
 class ToolChoiceQueueTests(unittest.TestCase):
+    def test_owner_explore_prefers_direct_read_of_typed_search_candidates(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            source = root / "src" / "Owner.java"
+            source.parent.mkdir()
+            source.write_text("class Owner {}\n", encoding="utf-8")
+            result = ToolResultSummary(
+                "search_code", f"{source}:1: class Owner", metadata={"evidence_paths": [str(source)]}
+            )
+            decision = evaluate_read_only_explore(
+                profile="owner_impact", tool_results=(result,), code_roots=(str(root),)
+            )
+        self.assertEqual(decision.action, "precise")
+        self.assertEqual(decision.read_candidates, (str(source),))
+
+    def test_owner_explore_projects_typed_search_candidates_as_read_only_schema(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            source = root / "src" / "Owner.java"
+            source.parent.mkdir()
+            source.write_text("class Owner {}\n", encoding="utf-8")
+            decision = evaluate_tool_choice_state(
+                task_kind="read-only",
+                prompt="请分析这个服务的实现 owner 和影响范围。",
+                tool_results=[
+                    ToolResultSummary(
+                        "search_code",
+                        f"{source}:1: class Owner",
+                        metadata={"evidence_paths": [str(source)]},
+                    )
+                ],
+                workspace_roots=(str(root),),
+                read_only_review_profile="owner_impact",
+            )
+
+        self.assertEqual(decision.rule_id, "read_only_profile_explore")
+        self.assertEqual(decision.allowed_tool_names, frozenset({"read_file"}))
+        self.assertEqual(decision.preferred_tool_names, ("read_file",))
+        self.assertIn(str(source), decision.tool_call_hints[0])
     def test_document_only_contract_never_reopens_code_discovery_tools(self) -> None:
         decision = evaluate_tool_choice_state(
             task_kind="read-only",

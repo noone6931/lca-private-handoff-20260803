@@ -9,8 +9,9 @@ from typing import Any
 from .startup_context import load_sticky_rules
 from .startup_context import workspace_roots_context
 from .steering.final_answer import request_mentions_todo
+from .task_contract import RequirementContract
+from .task_contract import requires_no_edit_final_hygiene
 from .tools.relevance import is_analysis_only_request
-from .tools.relevance import is_code_implementation_request
 
 WORKFLOW_NUDGE = (
     "For this coding task, infer the tool sequence yourself. "
@@ -107,6 +108,7 @@ def _messages_with_runtime_context(
     user_config_dir: Path,
     allowed_dirs: tuple[Path, ...] = (),
     current_user_request: str | None = None,
+    requirement_contract: RequirementContract | None = None,
     requirement_contract_context: str = "",
     pinned_requirement_evidence: str = "",
     user_facts_context: str = "",
@@ -121,7 +123,12 @@ def _messages_with_runtime_context(
         updated = _messages_with_workspace_roots(updated, workspace_roots)
     if current_user_request:
         updated = _messages_with_current_task_contract(updated, current_user_request)
-        updated = _messages_with_no_edit_final_hygiene(updated, current_user_request, todo_summary)
+        updated = _messages_with_no_edit_final_hygiene(
+            updated,
+            current_user_request,
+            todo_summary,
+            requirement_contract=requirement_contract,
+        )
     if requirement_contract_context:
         updated = _messages_with_requirement_contract(updated, requirement_contract_context)
     if pinned_requirement_evidence:
@@ -258,8 +265,10 @@ def _messages_with_no_edit_final_hygiene(
     messages: list[dict[str, Any]],
     current_user_request: str,
     todo_summary: list[str],
+    *,
+    requirement_contract: RequirementContract | None,
 ) -> list[dict[str, Any]]:
-    if not is_code_implementation_request(current_user_request):
+    if not requires_no_edit_final_hygiene(requirement_contract):
         return list(messages)
     todo_clause = (
         "If the user requested todo tracking or open todos exist, update/read todo state before finalizing."

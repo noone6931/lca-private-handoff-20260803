@@ -28,6 +28,12 @@ class RequirementContract:
     read_only_review_profile: ReadOnlyReviewProfile = "none"
 
 
+def requires_no_edit_final_hygiene(contract: RequirementContract | None) -> bool:
+    """Whether an implementation contract needs an auditable no-write stop."""
+
+    return contract is not None and contract.task_kind == "code-implementation"
+
+
 _READ_ONLY_MARKERS = (
     "只读",
     "不要修改",
@@ -625,6 +631,8 @@ def _has_implementation_intent(lower_prompt: str) -> bool:
     if _contains_any(lower_prompt, _IMPLEMENTATION_CONTEXT_MARKERS):
         return True
     if re.search(r"(请|帮我|需要|直接|完成|落地|开发).{0,24}(实现|修复|修改|新增|增加|添加|接入|支持|调整|重构|删除|补充|编写|创建|更新|优化|迁移)", lower_prompt):
+        return True
+    if re.search(r"(?:根据|基于|对照).{0,24}(实现|修复|修改|新增|增加|添加|接入|支持|调整|重构|删除|补充|编写|创建|更新|优化|迁移)", lower_prompt):
         return True
     if re.search(r"(实现|修复|修改|新增|增加|添加|接入|支持|调整|重构|删除|补充|编写|创建|更新|优化|迁移).{0,16}(功能|模块|接口|测试|逻辑|校验|能力)", lower_prompt):
         return True
