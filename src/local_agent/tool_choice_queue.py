@@ -492,6 +492,8 @@ def evaluate_tool_choice_state(
                 if explore_decision.read_candidates
                 else ()
             ),
+            scoped_read_paths=explore_decision.read_candidates,
+            scoped_read_budget=(len(explore_decision.read_candidates) if explore_decision.read_candidates else None),
         )
 
     evidence_preferred = _preferred_evidence_tools(results)

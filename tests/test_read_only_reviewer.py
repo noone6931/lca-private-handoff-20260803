@@ -16,10 +16,32 @@ from local_agent.read_only_reviewer import parse_reviewer_result
 from local_agent.read_only_reviewer import ReviewerValidationError
 from local_agent.read_only_reviewer import reviewer_repair_messages
 from local_agent.read_only_reviewer import reviewer_messages
+from local_agent.read_only_reviewer import reviewer_output_tool_schema
+from local_agent.read_only_reviewer import REVIEWER_OUTPUT_TOOL_NAME
 from local_agent.read_only_reviewer import should_review_read_only_candidate
 from local_agent.steering.final_answer import SourceEvidence
+from local_agent.steering.final_answer import SteeringDecision
 from local_agent.task_contract import generate_requirement_contract
 from local_agent.llm import LlmTimeoutError
+
+
+def _review_submit(payload: dict) -> object:
+    return type(
+        "Response",
+        (),
+        {
+            "message": {
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "review-submit",
+                        "type": "function",
+                        "function": {"name": REVIEWER_OUTPUT_TOOL_NAME, "arguments": json.dumps(payload)},
+                    }
+                ],
+            }
+        },
+    )()
 
 
 class _ReviewerFlowClient:
@@ -28,6 +50,7 @@ class _ReviewerFlowClient:
     def __init__(self, config: AgentConfig):
         self.config = config
         self._primary_calls = 0
+        self._review_calls = 0
 
     def chat(self, messages, tools, *, timeout=None):
         type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
@@ -36,29 +59,24 @@ class _ReviewerFlowClient:
             for message in messages
         )
         if is_reviewer:
-            return type(
-                "Response",
-                (),
+            self._review_calls += 1
+            if self._review_calls > 1:
+                return _review_submit({"verdict": "pass", "confidence": 0.96, "findings": [], "reason": "rewrite is scoped"})
+            return _review_submit(
                 {
-                    "message": {
-                        "content": json.dumps(
-                            {
-                                "verdict": "revise",
-                                "confidence": 0.96,
-                                "findings": [
-                                    {
-                                        "claim_id": "c001",
-                                        "claim": "已证实真实 owner 是 PayServiceImpl",
-                                        "issue": "same-domain code is only analogous without a requested behavior binding",
-                                        "action": "label it as a reusable candidate and keep the owner unlocated",
-                                    }
-                                ],
-                                "reason": "owner binding is absent",
-                            }
-                        )
-                    }
-                },
-            )()
+                    "verdict": "revise",
+                    "confidence": 0.96,
+                    "findings": [
+                        {
+                            "claim_id": "c001",
+                            "claim": "已证实真实 owner 是 PayServiceImpl",
+                            "issue": "same-domain code is only analogous without a requested behavior binding",
+                            "action": "label it as a reusable candidate and keep the owner unlocated",
+                        }
+                    ],
+                    "reason": "owner binding is absent",
+                }
+            )
         self._primary_calls += 1
         if self._primary_calls == 1:
             return type(
@@ -92,34 +110,30 @@ class _InventedDesignReviewerClient:
     def __init__(self, config: AgentConfig):
         self.config = config
         self._primary_calls = 0
+        self._review_calls = 0
 
     def chat(self, messages, tools, *, timeout=None):
         type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
         is_reviewer = any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages)
         if is_reviewer:
-            return type(
-                "Response",
-                (),
+            self._review_calls += 1
+            if self._review_calls > 1:
+                return _review_submit({"verdict": "pass", "confidence": 0.99, "findings": [], "reason": "rewrite is proposal-only"})
+            return _review_submit(
                 {
-                    "message": {
-                        "content": json.dumps(
-                            {
-                                "verdict": "revise",
-                                "confidence": 0.99,
-                                "findings": [
-                                    {
-                                        "claim_id": "c001",
-                                        "claim": "现有 PayBillRecordInfoVo 使用 SF 前缀，并包含多级审批和退款复用",
-                                        "issue": "invented repository types and numbering behavior",
-                                        "action": "move them to proposal or pending confirmation",
-                                    }
-                                ],
-                                "reason": "no source binding exists",
-                            }
-                        )
-                    }
-                },
-            )()
+                    "verdict": "revise",
+                    "confidence": 0.99,
+                    "findings": [
+                        {
+                            "claim_id": "c001",
+                            "claim": "现有 PayBillRecordInfoVo 使用 SF 前缀，并包含多级审批和退款复用",
+                            "issue": "invented repository types and numbering behavior",
+                            "action": "move them to proposal or pending confirmation",
+                        }
+                    ],
+                    "reason": "no source binding exists",
+                }
+            )
         self._primary_calls += 1
         if self._primary_calls == 1:
             return type("Response", (), {"message": {"content": "现有 PayBillRecordInfoVo 使用 SF 前缀，并包含多级审批和退款复用。"}})()
@@ -162,11 +176,13 @@ class _ReviewerRepairClient:
                     "findings": [{"claim_id": "c001", "issue": "unsupported", "action": "downgrade"}],
                     "reason": "contradictory shape",
                 })}})()
-            return type("Response", (), {"message": {"content": json.dumps({
-                "verdict": "revise", "confidence": 0.9,
-                "findings": [{"claim_id": "c001", "issue": "unsupported owner", "action": "mark unlocated"}],
-                "reason": "binding absent",
-            })}})()
+            if self._review_calls == 2:
+                return _review_submit({
+                    "verdict": "revise", "confidence": 0.9,
+                    "findings": [{"claim_id": "c001", "issue": "unsupported owner", "action": "mark unlocated"}],
+                    "reason": "binding absent",
+                })
+            return _review_submit({"verdict": "pass", "confidence": 0.9, "findings": [], "reason": "rewrite is scoped"})
         self._primary_calls += 1
         if self._primary_calls == 1:
             return type("Response", (), {"message": {"content": "PayServiceImpl is the verified owner."}})()
@@ -192,33 +208,29 @@ class _ReviewerUnverifiedRewriteClient:
     def __init__(self, config: AgentConfig):
         self.config = config
         self.primary_calls = 0
+        self._review_calls = 0
 
     def chat(self, messages, tools, *, timeout=None):
         type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
         if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages):
-            return type(
-                "Response",
-                (),
+            self._review_calls += 1
+            if self._review_calls > 1:
+                return _review_submit({"verdict": "pass", "confidence": 0.9, "findings": [], "reason": "rewrite is truthful"})
+            return _review_submit(
                 {
-                    "message": {
-                        "content": json.dumps(
-                            {
-                                "verdict": "unverified",
-                                "confidence": 0.9,
-                                "findings": [
-                                    {
-                                        "claim_id": "c001",
-                                        "claim": "owner conclusion is unsupported",
-                                        "issue": "no direct behavior-to-owner binding exists",
-                                        "action": "report the owner as unlocated and the inspected code as analogous",
-                                    }
-                                ],
-                                "reason": "owner cannot be verified from the bounded evidence",
-                            }
-                        )
-                    }
-                },
-            )()
+                    "verdict": "unverified",
+                    "confidence": 0.9,
+                    "findings": [
+                        {
+                            "claim_id": "c001",
+                            "claim": "owner conclusion is unsupported",
+                            "issue": "no direct behavior-to-owner binding exists",
+                            "action": "report the owner as unlocated and the inspected code as analogous",
+                        }
+                    ],
+                    "reason": "owner cannot be verified from the bounded evidence",
+                }
+            )
         self.primary_calls += 1
         content = (
             "已证实真实 owner 是 PayServiceImpl。"
@@ -249,6 +261,47 @@ class _ReviewerProtocolClient(_InvalidReviewerClient):
     def chat(self, messages, tools, *, timeout=None):
         if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages):
             return type("Response", (), {"message": {"content": None, "tool_calls": [{"id": "forbidden", "function": {"name": "read_file", "arguments": "{}"}}]}})()
+        return super().chat(messages, tools, timeout=timeout)
+
+
+class _ReviewerMultipleOutputClient(_InvalidReviewerClient):
+    def chat(self, messages, tools, *, timeout=None):
+        if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages):
+            payload = json.dumps({"verdict": "pass", "confidence": 0.9, "findings": [], "reason": "x"})
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {"id": "one", "function": {"name": REVIEWER_OUTPUT_TOOL_NAME, "arguments": payload}},
+                            {"id": "two", "function": {"name": REVIEWER_OUTPUT_TOOL_NAME, "arguments": payload}},
+                        ],
+                    }
+                },
+            )()
+        return super().chat(messages, tools, timeout=timeout)
+
+
+class _ReviewerMalformedOutputClient(_InvalidReviewerClient):
+    def chat(self, messages, tools, *, timeout=None):
+        if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages):
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "bad-submit",
+                                "function": {"name": REVIEWER_OUTPUT_TOOL_NAME, "arguments": "{"},
+                            }
+                        ],
+                    }
+                },
+            )()
         return super().chat(messages, tools, timeout=timeout)
 
 
@@ -340,12 +393,68 @@ class _NoncompliantRewriteClient(_ReviewerFlowClient):
     def chat(self, messages, tools, *, timeout=None):
         is_reviewer = any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages)
         if is_reviewer:
-            return super().chat(messages, tools, timeout=timeout)
+            self._review_calls += 1
+            return _review_submit(
+                {
+                    "verdict": "revise",
+                    "confidence": 0.9,
+                    "findings": [{"claim_id": "c001", "issue": "unsupported", "action": "qualify"}],
+                    "reason": "binding absent",
+                }
+            )
         self._primary_calls += 1
         type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
         if self._primary_calls == 1:
             return type("Response", (), {"message": {"content": "已证实真实 owner 是 PayServiceImpl。"}})()
         return type("Response", (), {"message": {"content": "已证实真实 owner 是 PayServiceImpl。"}})()
+
+
+class _ReviewerLastGateClient:
+    calls: list[dict] = []
+
+    def __init__(self, config: AgentConfig):
+        self.config = config
+        self._primary_calls = 0
+        self._review_calls = 0
+
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
+        reviewer = any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages)
+        if reviewer:
+            self._review_calls += 1
+            return _review_submit(
+                {
+                    "verdict": "revise",
+                    "confidence": 0.9,
+                    "findings": [{"claim_id": "c001", "issue": "unsupported repository detail", "action": "mark it unverified"}],
+                    "reason": "no direct binding",
+                }
+            )
+        self._primary_calls += 1
+        content = (
+            "现有 Redis key、权限接口和模板服务已经由 PayServiceImpl 实现。"
+            if self._primary_calls in {1, 3}
+            else "需要补充需求引用后再给出结论。"
+        )
+        return type("Response", (), {"message": {"content": content}})()
+
+
+class _OneShotDeterministicRewrite:
+    kind = "requirement_evidence"
+
+    def __init__(self) -> None:
+        self._used = False
+
+    def decide(self, context):
+        if self._used or context.content != "需要补充需求引用后再给出结论。":
+            return None
+        self._used = True
+        return SteeringDecision(
+            kind=self.kind,
+            message="Runtime steering: rewrite the final answer with a requirement citation.",
+            payload={},
+            force_final_answer_without_tools=True,
+        )
 
 
 def _config(workspace: Path, *, provider: str = "openai-compatible") -> AgentConfig:
@@ -378,6 +487,9 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertIn("proposal", handoff.to_dict()["review_categories"])
         messages = reviewer_messages(handoff, candidate_claim_units("PayServiceImpl is the owner"))
         self.assertEqual([message["role"] for message in messages], ["system", "user"])
+        schema = reviewer_output_tool_schema(candidate_claim_units("PayServiceImpl is the owner"))
+        self.assertEqual(schema["function"]["name"], REVIEWER_OUTPUT_TOOL_NAME)
+        self.assertEqual(schema["function"]["parameters"]["additionalProperties"], False)
         self.assertNotIn("class PayServiceImpl", messages[0]["content"])
 
     def test_handoff_preserves_requirement_and_multi_root_evidence_with_late_binding(self) -> None:
@@ -437,6 +549,32 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             parse_reviewer_result("review looks good", claim_units=units)
 
+    def test_output_tool_schema_and_parser_reject_extra_or_oversized_payload_fields(self) -> None:
+        units = candidate_claim_units("unsupported owner claim")
+        schema = reviewer_output_tool_schema(units)
+        parameters = schema["function"]["parameters"]
+        self.assertFalse(parameters["additionalProperties"])
+        self.assertEqual(parameters["properties"]["findings"]["maxItems"], 8)
+
+        invalid_payloads = (
+            {
+                "verdict": "pass", "confidence": 0.9, "findings": [], "reason": "ok", "extra": "no",
+            },
+            {
+                "verdict": "revise",
+                "confidence": 0.9,
+                "findings": [{"claim_id": "c001", "issue": "x", "action": "y", "extra": "no"}],
+                "reason": "x",
+            },
+            {
+                "verdict": "pass", "confidence": 0.9, "findings": [], "reason": "x" * 1601,
+            },
+        )
+        for payload in invalid_payloads:
+            with self.subTest(payload=payload):
+                with self.assertRaises(ReviewerValidationError):
+                    parse_reviewer_result(json.dumps(payload), claim_units=units)
+
     def test_reviewer_prompt_and_repair_repeat_the_parser_shape_limits(self) -> None:
         handoff = build_explore_handoff(
             request="review", contract=generate_requirement_contract("只读分析当前服务 owner，不要修改文件。"),
@@ -450,6 +588,7 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         repair = reviewer_repair_messages(handoff, candidate_claim_units("candidate"), {"error_code": "findings_too_many"})
         self.assertIn("at most 8", repair[0]["content"])
         self.assertIn("no more than 8 highest-risk findings", repair[-1]["content"])
+        self.assertIn("original output tool", repair[-1]["content"])
 
     def test_claim_ids_address_markdown_units_without_reviewer_text_matching(self) -> None:
         candidate = "| Scope | Owner |\n| --- | --- |\n| Frontend | **platformPayment** |\n\n**Conclusion:** platformPayment is the verified owner."
@@ -515,9 +654,10 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertIn("可复用候选", answer)
         self.assertIn("仍未定位", answer)
         review_calls = [call for call in _ReviewerFlowClient.calls if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(m.get("content")) for m in call["messages"])]
-        self.assertEqual(len(review_calls), 1)
-        self.assertEqual(review_calls[0]["tools"], [])
+        self.assertEqual(len(review_calls), 2)
+        self.assertTrue(all([tool["function"]["name"] for tool in call["tools"]] == [REVIEWER_OUTPUT_TOOL_NAME] for call in review_calls))
         self.assertEqual(runtime._last_run_summary["read_only_reviewer"]["rewrites"], 1)
+        self.assertEqual(runtime._last_run_summary["read_only_reviewer"]["typed_submits"], 2)
         self.assertNotIn("LCA_READ_ONLY_EVIDENCE_REVIEW", "\n".join(str(m) for m in runtime._messages))
 
     def test_invented_design_is_rewritten_as_proposal(self) -> None:
@@ -551,7 +691,7 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertIn("analogous candidate", answer)
         summary = runtime._last_run_summary["read_only_reviewer"]
         self.assertEqual(summary["triggers"], 1)
-        self.assertEqual(summary["attempts"], 2)
+        self.assertEqual(summary["attempts"], 3)
         self.assertEqual(summary["schema_failures"], 1)
         self.assertEqual(summary["repairs"], 1)
         self.assertEqual(summary["repair_successes"], 1)
@@ -559,8 +699,8 @@ class ReadOnlyReviewerTests(unittest.TestCase):
             call for call in _ReviewerRepairClient.calls
             if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in call["messages"])
         ]
-        self.assertEqual(len(review_calls), 2)
-        self.assertTrue(all(call["tools"] == [] for call in review_calls))
+        self.assertEqual(len(review_calls), 3)
+        self.assertTrue(all([tool["function"]["name"] for tool in call["tools"]] == [REVIEWER_OUTPUT_TOOL_NAME] for call in review_calls))
         self.assertIn("LCA_READ_ONLY_EVIDENCE_REVIEW_SCHEMA_REPAIR", str(review_calls[1]["messages"][-1]["content"]))
 
     def test_schema_repair_exhaustion_stays_unverified_without_raw_payload(self) -> None:
@@ -606,7 +746,7 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertIn("真实 owner 仍未定位", answer)
         self.assertIn("弱相关候选", answer)
         self.assertEqual(runtime._last_run_summary["termination_reason"], "final")
-        self.assertEqual(runtime._last_run_summary["read_only_reviewer"]["verdicts"], {"unverified": 1})
+        self.assertEqual(runtime._last_run_summary["read_only_reviewer"]["verdicts"], {"pass": 1, "unverified": 1})
         self.assertEqual(runtime._last_run_summary["read_only_reviewer"]["rewrites"], 1)
 
     def test_explicit_source_binding_can_pass_one_isolated_review(self) -> None:
@@ -624,9 +764,11 @@ class ReadOnlyReviewerTests(unittest.TestCase):
 
     def test_reviewer_protocol_timeout_and_markup_are_auditable_unverified_outcomes(self) -> None:
         cases = (
-            (_ReviewerProtocolClient, "openai-compatible", "protocol_error", 1),
+            (_ReviewerProtocolClient, "openai-compatible", "protocol_error", 3),
+            (_ReviewerMultipleOutputClient, "openai-compatible", "protocol_error", 3),
+            (_ReviewerMalformedOutputClient, "openai-compatible", "protocol_error", 3),
             (_ReviewerTimeoutClient, "openai-compatible", "timeout", 0),
-            (_ReviewerXmlArtifactClient, "bailian", "protocol_error", 1),
+            (_ReviewerXmlArtifactClient, "bailian", "protocol_error", 3),
         )
         for client, provider, expected, protocol_count in cases:
             with self.subTest(client=client.__name__), tempfile.TemporaryDirectory() as tmp:
@@ -636,15 +778,16 @@ class ReadOnlyReviewerTests(unittest.TestCase):
                     answer = runtime.run("只读分析当前服务 owner 和影响范围，不要修改。")
                 self.assertIn("未完成/未验证", answer)
                 self.assertEqual(runtime._last_run_summary["read_only_reviewer"]["errors"], {expected: 1})
-                self.assertEqual(runtime._last_run_summary["provider_protocol_violations"], protocol_count)
+                self.assertEqual(runtime._last_run_summary["provider_protocol_violations"], 0)
+                self.assertEqual(runtime._last_run_summary["read_only_reviewer"]["protocol_failures"], protocol_count)
 
     def test_reviewer_repair_turn_timeout_and_protocol_violations_are_terminal_and_redacted(self) -> None:
         cases = (
-            (_ReviewerRepairTimeoutClient, "openai-compatible", "timeout", 0),
-            (_ReviewerRepairProtocolClient, "openai-compatible", "protocol_error", 1),
-            (_ReviewerRepairXmlClient, "bailian", "protocol_error", 1),
+            (_ReviewerRepairTimeoutClient, "openai-compatible", "timeout", 0, 2),
+            (_ReviewerRepairProtocolClient, "openai-compatible", "protocol_error", 2, 3),
+            (_ReviewerRepairXmlClient, "bailian", "protocol_error", 2, 3),
         )
-        for client, provider, expected, protocol_count in cases:
+        for client, provider, expected, protocol_count, attempts in cases:
             with self.subTest(client=client.__name__), tempfile.TemporaryDirectory() as tmp:
                 client.calls = []
                 with patch("local_agent.agent.OpenAICompatibleClient", client):
@@ -652,11 +795,12 @@ class ReadOnlyReviewerTests(unittest.TestCase):
                     answer = runtime.run("只读分析当前服务 owner 和影响范围，不要修改。")
                 summary = runtime._last_run_summary["read_only_reviewer"]
                 self.assertIn("未完成/未验证", answer)
-                self.assertEqual(summary["attempts"], 2)
-                self.assertEqual(summary["schema_failures"], 1)
-                self.assertEqual(summary["repairs"], 1)
+                self.assertEqual(summary["attempts"], attempts)
+                self.assertEqual(summary["schema_failures"], 1 if attempts == 2 else 3)
+                self.assertEqual(summary["repairs"], 1 if attempts == 2 else 2)
                 self.assertEqual(summary["errors"], {expected: 1})
-                self.assertEqual(runtime._last_run_summary["provider_protocol_violations"], protocol_count)
+                self.assertEqual(runtime._last_run_summary["provider_protocol_violations"], 0)
+                self.assertEqual(summary["protocol_failures"], protocol_count)
                 self.assertNotIn("secret", answer)
                 self.assertNotIn("secret", runtime._session.path.read_text(encoding="utf-8"))
 
@@ -712,7 +856,34 @@ class ReadOnlyReviewerTests(unittest.TestCase):
                 answer = runtime.run("只读分析当前服务 owner 和影响范围，不要修改。")
         self.assertIn("未完成/未验证", answer)
         self.assertEqual(runtime._last_run_summary["termination_reason"], "read_only_reviewer_unverified")
-        self.assertEqual(runtime._last_run_summary["read_only_reviewer"]["errors"], {"rewrite_noncompliant": 1})
+        self.assertEqual(runtime._last_run_summary["read_only_reviewer"]["errors"], {"second_review_nonpass": 1})
+
+    def test_deterministic_rewrite_after_first_review_must_pass_a_second_last_gate(self) -> None:
+        _ReviewerLastGateClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch("local_agent.agent.OpenAICompatibleClient", _ReviewerLastGateClient):
+                runtime = AgentRuntime(_config(Path(tmp).resolve()), show_tool_logs=False)
+                runtime._final_answer_steerers = (_OneShotDeterministicRewrite(),)
+                answer = runtime.run("基于当前代码给出可实施设计草案：接口和权限；不得编造现有服务。")
+
+        self.assertIn("未完成/未验证", answer)
+        summary = runtime._last_run_summary["read_only_reviewer"]
+        self.assertEqual(summary["triggers"], 1)
+        self.assertEqual(summary["rewrites"], 1)
+        self.assertEqual(summary["typed_submits"], 2)
+        self.assertEqual(summary["errors"], {"second_review_nonpass": 1})
+        review_calls = [
+            call
+            for call in _ReviewerLastGateClient.calls
+            if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in call["messages"])
+        ]
+        self.assertEqual(len(review_calls), 2)
+        primary_calls = [
+            call
+            for call in _ReviewerLastGateClient.calls
+            if not any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in call["messages"])
+        ]
+        self.assertEqual(len(primary_calls), 3)
 
 
 if __name__ == "__main__":

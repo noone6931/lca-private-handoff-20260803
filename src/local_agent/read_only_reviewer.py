@@ -13,7 +13,9 @@ from .task_contract import RequirementContract
 ReviewerVerdict = Literal["pass", "revise", "unverified"]
 MAX_REVIEWER_FINDINGS = 8
 MAX_REVIEWER_RESPONSE_CHARS = 9000
-MAX_REVIEWER_PROVIDER_CALLS = 3
+MAX_INITIAL_REVIEWER_PROVIDER_CALLS = 3
+MAX_REWRITE_REVIEWER_PROVIDER_CALLS = 2
+REVIEWER_OUTPUT_TOOL_NAME = "submit_read_only_review"
 MAX_CLAIM_UNITS = 80
 MAX_CLAIM_UNIT_CHARS = 500
 MAX_CLAIM_TOTAL_CHARS = 40000
@@ -79,6 +81,9 @@ class ReadOnlyReviewState:
     repairs: int = 0
     repair_success: bool = False
     repair_exhausted: bool = False
+    review_round: int = 0
+    typed_submits: int = 0
+    protocol_failures: int = 0
 
     def reset(self) -> None:
         self.attempted = False
@@ -92,6 +97,9 @@ class ReadOnlyReviewState:
         self.repairs = 0
         self.repair_success = False
         self.repair_exhausted = False
+        self.review_round = 0
+        self.typed_submits = 0
+        self.protocol_failures = 0
 
     def snapshot(self) -> dict[str, Any]:
         return {
@@ -106,6 +114,9 @@ class ReadOnlyReviewState:
             "repairs": self.repairs,
             "repair_success": self.repair_success,
             "repair_exhausted": self.repair_exhausted,
+            "review_round": self.review_round,
+            "typed_submits": self.typed_submits,
+            "protocol_failures": self.protocol_failures,
         }
 
 
@@ -169,7 +180,7 @@ def reviewer_messages(handoff: ExploreHandoff, claim_units: tuple[CandidateClaim
     """Return an isolated reviewer transcript with no primary conversation history."""
 
     system = """You are the read-only evidence reviewer for a coding agent.
-Return exactly one JSON object. You have no tools and must never assume unseen repository facts.
+Use the only available output tool exactly once to submit the review. You have no workspace tools and must never assume unseen repository facts.
 
 Review contract:
 - A direct owner is justified only by evidence that explicitly binds the requested behavior to a path, symbol, or call chain.
@@ -179,8 +190,7 @@ Review contract:
 - A proposal must not be worded as an existing table, class, endpoint, service, approval flow, numbering prefix, or integration unless the handoff explicitly supports it.
 - When the handoff has no explicit direct binding, do not say a main owner/module judgment is correct or mostly correct. Treat same-domain code as observed or analogous and leave the owner unlocated.
 
-Use schema: {"verdict":"pass|revise|unverified","confidence":0.0,"findings":[{"claim_id":"c001","claim":"optional human-readable summary","issue":"...","action":"..."}],"reason":"..."}.
-The complete response must be a JSON object shorter than 9000 characters. `findings` must be a JSON list of at most 8 items. A `pass` verdict requires exactly 0 findings; `revise` and `unverified` require 1 to 8 findings. Every finding must have one unique, known claim_id plus non-empty issue and action. For every finding, choose exactly one claim_id from candidate_claims. Never invent or repeat a claim_id. The optional claim field is for people, not an address. Report only the highest-risk blocking findings when there are more than 8.
+The output tool arguments use verdict, confidence, findings, and reason. The complete submission must be shorter than 9000 characters. `findings` must contain at most 8 items. A `pass` verdict requires exactly 0 findings; `revise` and `unverified` require 1 to 8 findings. Every finding must have one unique, known claim_id plus non-empty issue and action. For every finding, choose exactly one claim_id from candidate_claims. Never invent or repeat a claim_id. The optional claim field is for people, not an address. Report only the highest-risk blocking findings when there are more than 8.
 Choose revise when the candidate can be corrected using the handoff. Choose unverified when the candidate cannot safely make the requested factual conclusion."""
     payload = {
         "kind": "LCA_READ_ONLY_EVIDENCE_REVIEW",
@@ -191,6 +201,41 @@ Choose revise when the candidate can be corrected using the handoff. Choose unve
         {"role": "system", "content": system},
         {"role": "user", "content": json.dumps(payload, ensure_ascii=False, sort_keys=True)},
     ]
+
+
+def reviewer_output_tool_schema(claim_units: tuple[CandidateClaimUnit, ...]) -> dict[str, Any]:
+    """Return the isolated reviewer yield schema, never a workspace tool."""
+
+    known_ids = [unit.claim_id for unit in claim_units]
+    finding = {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "claim_id": {"type": "string", "enum": known_ids},
+            "claim": {"type": "string"},
+            "issue": {"type": "string", "minLength": 1, "maxLength": 1000},
+            "action": {"type": "string", "minLength": 1, "maxLength": 1000},
+        },
+        "required": ["claim_id", "issue", "action"],
+    }
+    return {
+        "type": "function",
+        "function": {
+            "name": REVIEWER_OUTPUT_TOOL_NAME,
+            "description": "Submit the isolated read-only evidence review. This is output-only and cannot access the workspace.",
+            "parameters": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "verdict": {"type": "string", "enum": ["pass", "revise", "unverified"]},
+                    "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                    "findings": {"type": "array", "maxItems": MAX_REVIEWER_FINDINGS, "items": finding},
+                    "reason": {"type": "string", "maxLength": 1600},
+                },
+                "required": ["verdict", "confidence", "findings", "reason"],
+            },
+        },
+    }
 
 
 def reviewer_repair_messages(
@@ -209,7 +254,7 @@ def reviewer_repair_messages(
                     "kind": "LCA_READ_ONLY_EVIDENCE_REVIEW_SCHEMA_REPAIR",
                     "validation": _sanitize_diagnostics(diagnostics),
                     "instruction": (
-                        "Return a complete JSON object that exactly follows the original schema. "
+                        "Use only the original output tool and submit complete arguments that exactly follow its schema. "
                         "Use only candidate claim IDs supplied in the original payload. "
                         + _repair_shape_instruction(diagnostics)
                     ),
@@ -231,9 +276,22 @@ def parse_reviewer_result(content: object, *, claim_units: tuple[CandidateClaimU
         raw = _json_object(content)
     except (TypeError, ValueError, json.JSONDecodeError):
         raise ReviewerValidationError("malformed_json") from None
+    return parse_reviewer_payload(raw, claim_units=claim_units)
+
+
+def parse_reviewer_payload(raw: object, *, claim_units: tuple[CandidateClaimUnit, ...]) -> ReviewerResult:
     if not isinstance(raw, Mapping):
         raise ReviewerValidationError("top_level_not_object", {"top_level_type": type(raw).__name__})
+    try:
+        rendered_size = len(json.dumps(raw, ensure_ascii=False, separators=(",", ":")))
+    except (TypeError, ValueError):
+        rendered_size = MAX_REVIEWER_RESPONSE_CHARS + 1
+    if rendered_size > MAX_REVIEWER_RESPONSE_CHARS:
+        raise ReviewerValidationError("response_too_large", {"response_chars": rendered_size})
     diagnostics = _shape_diagnostics(raw)
+    allowed_keys = {"verdict", "confidence", "findings", "reason"}
+    if set(raw) != allowed_keys:
+        raise ReviewerValidationError("top_level_keys_invalid", diagnostics)
     verdict = raw.get("verdict")
     if verdict not in {"pass", "revise", "unverified"}:
         raise ReviewerValidationError("verdict_invalid", diagnostics)
@@ -251,6 +309,10 @@ def parse_reviewer_result(content: object, *, claim_units: tuple[CandidateClaimU
     for item in findings_value:
         if not isinstance(item, Mapping):
             raise ReviewerValidationError("finding_not_object", diagnostics)
+        allowed_finding_keys = {"claim_id", "claim", "issue", "action"}
+        required_finding_keys = {"claim_id", "issue", "action"}
+        if not required_finding_keys.issubset(item) or not set(item).issubset(allowed_finding_keys):
+            raise ReviewerValidationError("finding_keys_invalid", diagnostics)
         claim_id, claim, issue, action = (item.get("claim_id"), item.get("claim"), item.get("issue"), item.get("action"))
         if not isinstance(claim_id, str) or claim_id not in known_claim_ids:
             raise ReviewerValidationError("claim_id_unknown", {**diagnostics, "unknown_claim_id_count": 1})
@@ -258,6 +320,8 @@ def parse_reviewer_result(content: object, *, claim_units: tuple[CandidateClaimU
             raise ReviewerValidationError("claim_id_duplicate", {**diagnostics, "duplicate_claim_id_count": 1})
         if not all(isinstance(value, str) and value.strip() for value in (issue, action)):
             raise ReviewerValidationError("finding_fields_invalid", diagnostics)
+        if len(issue) > 1000 or len(action) > 1000:
+            raise ReviewerValidationError("finding_fields_too_large", diagnostics)
         if claim is not None and not isinstance(claim, str):
             raise ReviewerValidationError("finding_claim_invalid", diagnostics)
         used_claim_ids.add(claim_id)
@@ -265,6 +329,8 @@ def parse_reviewer_result(content: object, *, claim_units: tuple[CandidateClaimU
     reason = raw.get("reason")
     if not isinstance(reason, str):
         raise ReviewerValidationError("reason_invalid", diagnostics)
+    if len(reason) > 1600:
+        raise ReviewerValidationError("reason_too_large", diagnostics)
     if verdict == "pass" and findings:
         raise ReviewerValidationError("pass_with_findings", diagnostics)
     if verdict in {"revise", "unverified"} and not findings:

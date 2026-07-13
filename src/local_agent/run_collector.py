@@ -51,6 +51,8 @@ class RunStats:
     read_only_reviewer_repairs: int = 0
     read_only_reviewer_repair_successes: int = 0
     read_only_reviewer_repair_exhausted: int = 0
+    read_only_reviewer_typed_submits: int = 0
+    read_only_reviewer_protocol_failures: int = 0
     read_only_reviewer_verdicts: dict[str, int] = field(default_factory=dict)
     read_only_reviewer_errors: dict[str, int] = field(default_factory=dict)
     tool_counts: dict[str, int] = field(default_factory=dict)
@@ -258,6 +260,14 @@ class RunCollector:
         if self._stats is not None:
             self._stats.read_only_reviewer_repair_exhausted += 1
 
+    def record_read_only_review_typed_submit(self) -> None:
+        if self._stats is not None:
+            self._stats.read_only_reviewer_typed_submits += 1
+
+    def record_read_only_review_protocol_failure(self) -> None:
+        if self._stats is not None:
+            self._stats.read_only_reviewer_protocol_failures += 1
+
     def finish(
         self,
         reason: str,
@@ -324,6 +334,8 @@ class RunCollector:
                 "repairs": stats.read_only_reviewer_repairs,
                 "repair_successes": stats.read_only_reviewer_repair_successes,
                 "repair_exhausted": stats.read_only_reviewer_repair_exhausted,
+                "typed_submits": stats.read_only_reviewer_typed_submits,
+                "protocol_failures": stats.read_only_reviewer_protocol_failures,
                 "verdicts": dict(sorted(stats.read_only_reviewer_verdicts.items())),
                 "errors": dict(sorted(stats.read_only_reviewer_errors.items())),
             },

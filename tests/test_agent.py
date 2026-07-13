@@ -226,6 +226,76 @@ class _OwnerExploreBatchClient:
             {"message": {"content": "已检查限定范围内的搜索证据；直接 owner 仍未定位，未把缺少读取的 root 当作已覆盖。"}},
         )()
 
+
+class _OwnerExploreDirectReadClient:
+    calls: list[dict] = []
+
+    def __init__(self, config: AgentConfig):
+        self.config = config
+        self._primary_calls = 0
+
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
+        if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages):
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "review-submit",
+                                "type": "function",
+                                "function": {
+                                    "name": "submit_read_only_review",
+                                    "arguments": json.dumps(
+                                        {"verdict": "pass", "confidence": 0.9, "findings": [], "reason": "scoped evidence"}
+                                    ),
+                                },
+                            }
+                        ],
+                    }
+                },
+            )()
+        self._primary_calls += 1
+        if self._primary_calls == 1:
+            calls = [
+                {
+                    "id": "search-owner",
+                    "type": "function",
+                    "function": {"name": "search_code", "arguments": json.dumps({"path": "src", "pattern": "CandidateOwner"})},
+                },
+                {
+                    "id": "search-suppressed",
+                    "type": "function",
+                    "function": {"name": "search_code", "arguments": json.dumps({"path": "src", "pattern": "unnecessary"})},
+                },
+            ]
+            return type("Response", (), {"message": {"content": None, "tool_calls": calls}})()
+        if self._primary_calls == 2:
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "read-owner",
+                                "type": "function",
+                                "function": {"name": "read_file", "arguments": json.dumps({"path": "src/Owner.java"})},
+                            }
+                        ],
+                    }
+                },
+            )()
+        return type(
+            "Response",
+            (),
+            {"message": {"content": "Owner.java 是直接读取到的候选实现；请求行为的真实 owner 仍需调用链绑定确认。"}},
+        )()
+
 class _BareObservedNoMatchClient:
     calls: list[dict] = []
 
@@ -2988,6 +3058,43 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertEqual(summary["suppressed_tool_executions"], 8)
         self.assertEqual(summary["read_only_reviewer"]["triggers"], 1)
         self.assertEqual(summary["read_only_reviewer"]["attempts"], 1)
+
+    def test_owner_explore_switches_the_same_batch_to_scoped_direct_read(self) -> None:
+        _OwnerExploreDirectReadClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            (workspace / "src").mkdir()
+            (workspace / "src/Owner.java").write_text("class CandidateOwner { void handle() {} }\n", encoding="utf-8")
+            with patch("local_agent.agent.OpenAICompatibleClient", _OwnerExploreDirectReadClient):
+                runtime = AgentRuntime(
+                    AgentConfig(
+                        provider="openai-compatible", api_base_url="https://example.invalid/v1", api_key="token",
+                        model="model", workspace=workspace, max_steps=0, budget_seconds=None, approval_mode="yolo",
+                    ),
+                    show_tool_logs=False,
+                )
+                result = runtime.run("只读分析当前服务 owner 和影响范围，不要修改。")
+                records = [
+                    json.loads(line)
+                    for line in runtime._session.path.read_text(encoding="utf-8").splitlines()
+                    if line.strip()
+                ]
+
+        self.assertIn("Owner.java", result)
+        summary = runtime._last_run_summary
+        self.assertEqual(summary["tool_counts"], {"search_code": 1, "read_file": 1})
+        self.assertEqual(summary["suppressed_tool_executions"], 1)
+        primary_calls = [
+            call for call in _OwnerExploreDirectReadClient.calls
+            if not any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in call["messages"])
+        ]
+        self.assertEqual(_tool_names_from_schema_call(primary_calls[1]["tools"]), {"read_file"})
+        self.assertEqual(_tool_names_from_schema_call(primary_calls[2]["tools"]), set())
+        direct_read_event = [
+            record for record in records
+            if record.get("event") == "read_only_explore" and record.get("payload", {}).get("event") == "direct_read_transition"
+        ]
+        self.assertEqual(len(direct_read_event), 1)
 
     def test_negative_discovery_directive_exhausts_without_leaking_a_glob_only_schema(self) -> None:
         _DirectiveExhaustionClient.calls = []

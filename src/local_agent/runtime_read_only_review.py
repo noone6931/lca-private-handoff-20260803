@@ -1,6 +1,7 @@
 """Runtime phase for one isolated, read-only evidence review per run."""
 from __future__ import annotations
 
+import json
 from typing import Any, Protocol
 
 from .chat_runtime import call_chat_with_timeout
@@ -8,16 +9,18 @@ from .explore_handoff import build_explore_handoff
 from .llm import LlmError
 from .llm import LlmTimeoutError
 from .provider_protocol import classify_provider_content_artifact
-from .provider_protocol import protocol_violation_payload
 from .read_only_reviewer import candidate_claim_units
-from .read_only_reviewer import MAX_REVIEWER_PROVIDER_CALLS
+from .read_only_reviewer import MAX_INITIAL_REVIEWER_PROVIDER_CALLS
+from .read_only_reviewer import MAX_REWRITE_REVIEWER_PROVIDER_CALLS
+from .read_only_reviewer import REVIEWER_OUTPUT_TOOL_NAME
 from .read_only_reviewer import ReviewerPhaseOutcome
 from .read_only_reviewer import ReviewerValidationError
+from .read_only_reviewer import parse_reviewer_payload
 from .read_only_reviewer import parse_reviewer_result
 from .read_only_reviewer import reviewer_messages
+from .read_only_reviewer import reviewer_output_tool_schema
 from .read_only_reviewer import reviewer_repair_messages
 from .read_only_reviewer import reviewer_rewrite_message
-from .read_only_reviewer import rewrite_complies_with_review
 from .read_only_reviewer import should_review_read_only_candidate
 
 
@@ -55,17 +58,23 @@ class ReadOnlyReviewPhase:
         request = runtime._run.current_user_request
         if not should_review_read_only_candidate(contract, request):
             return ReviewerPhaseOutcome("not_applicable")
+        if state.rewrite_requested:
+            if state.review_round >= 2:
+                return self._unverified("rewrite_noncompliant", "reviewer_round_limit")
+            return self._review(candidate, rewrite_round=True)
         if state.attempted:
-            if state.rewrite_requested and state.findings:
-                if not rewrite_complies_with_review(candidate, state.claim_units, state.findings):
-                    return self._unverified("rewrite_noncompliant", "unsupported_claim_repeated")
             return ReviewerPhaseOutcome("pass")
+        return self._review(candidate, rewrite_round=False)
+
+    def _review(self, candidate: str, *, rewrite_round: bool) -> ReviewerPhaseOutcome:
+        runtime = self._runtime
+        state = runtime._run.read_only_review
+        contract = runtime._run.requirement_contract
         skip_reason = runtime._run.finalization_rewrite_skip_reason()
         if skip_reason is not None:
             return self._unverified("deadline_or_finalization_budget", skip_reason)
-        state.attempted = True
         handoff = build_explore_handoff(
-            request=request or "",
+            request=runtime._run.current_user_request or "",
             contract=contract,
             requirement_evidence=runtime._run.evidence.pinned_requirement_evidence,
             source_evidence=runtime._run.evidence.source_evidence,
@@ -75,9 +84,13 @@ class ReadOnlyReviewPhase:
         claim_units = candidate_claim_units(candidate)
         if not claim_units:
             return self._unverified("invalid_output", "candidate_has_no_addressable_claim_units")
+        state.attempted = True
+        state.review_round += 1
         state.claim_units = claim_units
         timeout = self._review_timeout()
-        runtime._run.collector.record_read_only_review_trigger()
+        max_attempts = MAX_REWRITE_REVIEWER_PROVIDER_CALLS if rewrite_round else MAX_INITIAL_REVIEWER_PROVIDER_CALLS
+        if not rewrite_round:
+            runtime._run.collector.record_read_only_review_trigger()
         runtime._session.append(
             "read_only_reviewer",
             {
@@ -85,6 +98,7 @@ class ReadOnlyReviewPhase:
                 "run_id": runtime._run.run_id,
                 "items": len(handoff.items),
                 "timeout_seconds": timeout,
+                "review_round": state.review_round,
             },
         )
         runtime._events.emit(
@@ -92,12 +106,15 @@ class ReadOnlyReviewPhase:
             {"kind": "read_only_reviewer_triggered", "items": len(handoff.items)},
         )
         messages = reviewer_messages(handoff, claim_units)
+        output_schema = reviewer_output_tool_schema(claim_units)
         result = None
-        for attempt in range(1, MAX_REVIEWER_PROVIDER_CALLS + 1):
+        saw_protocol_failure = False
+        repaired_this_round = False
+        for attempt in range(1, max_attempts + 1):
             state.provider_attempts = attempt
             runtime._run.collector.record_read_only_review_attempt()
             try:
-                response = call_chat_with_timeout(runtime._client, messages, [], timeout=timeout)
+                response = call_chat_with_timeout(runtime._client, messages, [output_schema], timeout=timeout)
             except LlmError as exc:
                 return self._unverified(
                     "timeout" if isinstance(exc, LlmTimeoutError) else "provider_error",
@@ -106,31 +123,28 @@ class ReadOnlyReviewPhase:
             message = getattr(response, "message", None)
             if not isinstance(message, dict):
                 return self._unverified("protocol_error", "missing_message")
-            tool_calls = message.get("tool_calls")
-            if isinstance(tool_calls, list) and tool_calls:
-                return self._protocol_unverified("structured_tool_calls", tool_calls=tool_calls)
-            artifact = getattr(response, "protocol_artifact", None)
-            if artifact is None:
-                artifact = classify_provider_content_artifact(runtime._config.provider, message.get("content"))
-            if artifact is not None:
-                return self._protocol_unverified(artifact.kind, artifact=artifact)
             try:
-                result = parse_reviewer_result(message.get("content"), claim_units=claim_units)
+                result, typed_submit = self._parse_reviewer_response(response, message, claim_units)
             except ReviewerValidationError as exc:
+                if exc.code.startswith("output_tool_") or exc.code == "provider_markup_artifact":
+                    saw_protocol_failure = True
+                    state.protocol_failures += 1
+                    runtime._run.collector.record_read_only_review_protocol_failure()
                 state.schema_failures += 1
                 runtime._run.collector.record_read_only_review_schema_failure()
                 diagnostic = exc.diagnostics
-                if attempt >= MAX_REVIEWER_PROVIDER_CALLS:
+                if attempt >= max_attempts:
                     state.repair_exhausted = True
                     runtime._run.collector.record_read_only_review_repair_exhausted()
                     runtime._session.append(
                         "read_only_reviewer",
                         {"event": "schema_repair_exhausted", "attempts": attempt, "diagnostic": diagnostic},
                     )
-                    return self._unverified("invalid_output", exc.code)
+                    return self._unverified("protocol_error" if saw_protocol_failure else "invalid_output", exc.code)
                 if not self._has_reviewer_time_for_repair():
                     return self._unverified("deadline_or_finalization_budget", "reviewer_repair_timeout")
                 state.repairs += 1
+                repaired_this_round = True
                 runtime._run.collector.record_read_only_review_repair()
                 runtime._session.append(
                     "read_only_reviewer",
@@ -143,10 +157,13 @@ class ReadOnlyReviewPhase:
                 messages = reviewer_repair_messages(handoff, claim_units, diagnostic)
                 timeout = self._review_timeout()
                 continue
+            if typed_submit:
+                state.typed_submits += 1
+                runtime._run.collector.record_read_only_review_typed_submit()
             break
         if result is None:
             return self._unverified("invalid_output", "schema_repair_exhausted")
-        if state.repairs:
+        if repaired_this_round:
             state.repair_success = True
             runtime._run.collector.record_read_only_review_repair_success()
         state.verdict = result.verdict
@@ -156,10 +173,17 @@ class ReadOnlyReviewPhase:
         runtime._session.append("read_only_reviewer", {"event": "result", **result.to_dict()})
         runtime._events.emit(
             "ContextUpdated",
-            {"kind": "read_only_reviewer_result", "verdict": result.verdict, "findings": len(result.findings)},
+            {
+                "kind": "read_only_reviewer_result",
+                "verdict": result.verdict,
+                "findings": len(result.findings),
+                "review_round": state.review_round,
+            },
         )
         if result.verdict == "pass":
             return ReviewerPhaseOutcome("pass")
+        if rewrite_round:
+            return self._unverified("second_review_nonpass", result.verdict, result=result)
         if not runtime._run.queue_finalization_rewrite(kind="read_only_reviewer"):
             return self._unverified(
                 "rewrite_unavailable",
@@ -174,22 +198,37 @@ class ReadOnlyReviewPhase:
             rewrite_message=reviewer_rewrite_message(result, profile=contract.read_only_review_profile),
         )
 
-    def _protocol_unverified(self, artifact_kind: str, *, tool_calls: list[object] = (), artifact: Any = None) -> ReviewerPhaseOutcome:
-        runtime = self._runtime
-        runtime._run.collector.record_provider_protocol_violation(
-            phase="read_only_reviewer",
-            artifact_kind=artifact_kind,
-            suppressed_tool_calls=len(tool_calls),
-        )
-        payload = protocol_violation_payload(
-            phase="read_only_reviewer",
-            artifact_kind=artifact_kind,
-            tool_calls=tool_calls,
-            artifact=artifact,
-        )
-        runtime._session.append("read_only_reviewer_protocol_violation", payload)
-        runtime._events.emit("ErrorEvent", {"kind": "read_only_reviewer_protocol_violation", **payload})
-        return self._unverified("protocol_error", artifact_kind)
+    def _parse_reviewer_response(
+        self,
+        response: Any,
+        message: dict[str, Any],
+        claim_units: tuple[Any, ...],
+    ) -> tuple[Any, bool]:
+        tool_calls = message.get("tool_calls")
+        if isinstance(tool_calls, list) and tool_calls:
+            if len(tool_calls) != 1:
+                raise ReviewerValidationError("output_tool_multiple_calls", {"tool_call_count": len(tool_calls)})
+            call = tool_calls[0]
+            function = call.get("function") if isinstance(call, dict) else None
+            name = function.get("name") if isinstance(function, dict) else None
+            if name != REVIEWER_OUTPUT_TOOL_NAME:
+                raise ReviewerValidationError("output_tool_name_invalid")
+            arguments = function.get("arguments") if isinstance(function, dict) else None
+            if not isinstance(arguments, str):
+                raise ReviewerValidationError("output_tool_arguments_invalid")
+            try:
+                payload = json.loads(arguments)
+            except json.JSONDecodeError:
+                raise ReviewerValidationError("output_tool_arguments_invalid") from None
+            return parse_reviewer_payload(payload, claim_units=claim_units), True
+        artifact = getattr(response, "protocol_artifact", None)
+        if artifact is None:
+            artifact = classify_provider_content_artifact(self._runtime._config.provider, message.get("content"))
+        if artifact is not None:
+            raise ReviewerValidationError("provider_markup_artifact", {"artifact_kind": artifact.kind})
+        # Compatibility path for providers that cannot emit a structured output
+        # call. It remains strict and is deliberately not the preferred schema.
+        return parse_reviewer_result(message.get("content"), claim_units=claim_units), False
 
     def _review_timeout(self) -> float | None:
         remaining = self._runtime._provider_context_phase.remaining_timeout(self._runtime._run.deadline_monotonic)

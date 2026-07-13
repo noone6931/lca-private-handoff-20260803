@@ -39,7 +39,21 @@ class RuntimeReadOnlyExplorePhase:
                 str(root) for root in runtime._workspace_context.all_roots
             ),
         )
-        if not decision.is_applicable or decision.action != "finalize":
+        if not decision.is_applicable:
+            return None
+        if decision.action == "precise" and decision.read_candidates:
+            runtime._session.append(
+                "read_only_explore",
+                {
+                    "event": "direct_read_transition",
+                    "observations": decision.observation_calls,
+                    "soft_budget": decision.soft_budget,
+                    "missing_roots": list(decision.missing_roots),
+                    "read_candidates": list(decision.read_candidates),
+                },
+            )
+            return decision
+        if decision.action != "finalize":
             return None
         runtime._session.append(
             "read_only_explore",
@@ -64,5 +78,11 @@ class RuntimeReadOnlyExplorePhase:
                 "count": count,
                 "observations": decision.observation_calls,
                 "hard_budget": decision.hard_budget,
+                "transition": "direct_read" if decision.action == "precise" else "finalize",
             },
         )
+
+    def suppression_message(self, decision: ReadOnlyExploreDecision) -> str:
+        if decision.action == "precise":
+            return "Skipped because typed search/LSP evidence identified bounded direct-read candidates; read those candidates before further discovery."
+        return "Skipped because the bounded read-only exploration budget was reached; produce a scoped candidate final answer."

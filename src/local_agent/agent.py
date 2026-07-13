@@ -636,6 +636,11 @@ class AgentRuntime:
                         reason="soft_tool_requirement",
                     )
                 content = message.get("content") or ""
+                steering = self._decide_final_answer_steering(content, run_start_index)
+                if steering is not None:
+                    if self._apply_final_answer_steering(steering):
+                        step += 1
+                        continue
                 review_outcome = self._read_only_review_phase.review_candidate(content)
                 if review_outcome.kind == "unverified":
                     return self._finish_run(
@@ -651,11 +656,6 @@ class AgentRuntime:
                     self._run.force_final_answer_without_tools = True
                     step += 1
                     continue
-                steering = self._decide_final_answer_steering(content, run_start_index)
-                if steering is not None:
-                    if self._apply_final_answer_steering(steering):
-                        step += 1
-                        continue
                 return self._finish_run(content, deadline, run_start_index)
 
             for index, tool_call in enumerate(tool_calls):
@@ -712,7 +712,7 @@ class AgentRuntime:
                     self._read_only_explore_phase.record_suppressed_calls(len(remaining_calls), explore_budget)
                     self._append_synthetic_tool_results(
                         remaining_calls,
-                        "Skipped because the bounded read-only exploration budget was reached; produce a scoped candidate final answer.",
+                        self._read_only_explore_phase.suppression_message(explore_budget),
                     )
                     break
                 if name == "git_diff" and not result.is_error:
@@ -1823,6 +1823,7 @@ class AgentRuntime:
                 resolved = None
             if resolved is not None:
                 canonical_path = str(resolved)
+                metadata.setdefault("resolved_path", canonical_path)
                 root = evidence_root_for_path(
                     resolved,
                     self._workspace_context.primary,

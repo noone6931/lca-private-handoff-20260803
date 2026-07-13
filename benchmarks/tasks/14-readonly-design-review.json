@@ -8,8 +8,9 @@
   },
   "scripted_responses": [
     {"content": "现有 PayBillRecordInfoVo、SF 前缀、多级审批和退款复用已经实现，可直接接入。"},
-    {"content": "{\"verdict\":\"revise\",\"confidence\":0.99,\"findings\":[{\"claim_id\":\"c001\",\"claim\":\"invented existing implementation\",\"issue\":\"the handoff contains no repository evidence for these existing details\",\"action\":\"move them to proposal or pending confirmation\"}],\"reason\":\"invented existing implementation\"}"},
-    {"content": "设计建议：可以在确认现有模型后新增结算记录、状态规则和接口。现有表、类、服务、审批流、退款复用和编号前缀均待确认。"}
+    {"tool_calls": [{"name": "submit_read_only_review", "arguments": {"verdict": "revise", "confidence": 0.99, "findings": [{"claim_id": "c001", "claim": "invented existing implementation", "issue": "the handoff contains no repository evidence for these existing details", "action": "move them to proposal or pending confirmation"}], "reason": "invented existing implementation"}}]},
+    {"content": "设计建议：可以在确认现有模型后新增结算记录、状态规则和接口。现有表、类、服务、审批流、退款复用和编号前缀均待确认。"},
+    {"tool_calls": [{"name": "submit_read_only_review", "arguments": {"verdict": "pass", "confidence": 0.99, "findings": [], "reason": "rewrite is proposal-only"}}]}
   ],
   "acceptance": {
     "forbidden_tools": ["apply_patch", "write_file", "shell", "run_tests"],
@@ -18,7 +19,7 @@
     "answer_forbidden_regex": ["PayBillRecordInfoVo.*已经实现"],
     "termination_reason": "final",
     "run_summary": {"tool_calls": 0, "tool_errors": 0},
-    "read_only_reviewer": {"triggers": 1, "rewrites": 1},
+    "read_only_reviewer": {"triggers": 1, "rewrites": 1, "typed_submits": 2},
     "max_tool_errors": 0
   },
   "residual_risk": "The fixture blocks invented existing implementation details; a real design still needs project-specific evidence and user confirmation."
