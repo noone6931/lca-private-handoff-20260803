@@ -1,0 +1,110 @@
+{
+  "id": "readonly-transport-recovery",
+  "title": "Read-only reviewer gets one bounded transport rewrite before claim-matrix omission fails closed",
+  "prompt": "只读分析 policy.md、prototype.html 和示例图片，说明本期范围、关键规则，以及资料之间是否有冲突。每项结论给出证据；证据不足不要推测。",
+  "budget_seconds": 90,
+  "workspace_files": {
+    "policy.md": "Reviewer and signature are blank in this phase.\n2: requirement rule 2\n3: requirement rule 3\n4: requirement rule 4\n5: requirement rule 5\n6: requirement rule 6\n7: requirement rule 7\n8: requirement rule 8\n9: requirement rule 9\n10: requirement rule 10\n11: requirement rule 11\n12: requirement rule 12\n13: requirement rule 13\n14: requirement rule 14\n15: requirement rule 15\n16: requirement rule 16\n17: requirement rule 17\n18: requirement rule 18\n19: requirement rule 19\n20: requirement rule 20\n21: requirement rule 21\n22: requirement rule 22\n23: requirement rule 23\n24: requirement rule 24\n25: requirement rule 25\n26: requirement rule 26\n27: requirement rule 27\n28: requirement rule 28\n29: requirement rule 29\n30: requirement rule 30\n31: requirement rule 31\n32: requirement rule 32\n33: requirement rule 33\n34: requirement rule 34\n35: requirement rule 35\n36: requirement rule 36\n37: requirement rule 37\n38: requirement rule 38\n39: requirement rule 39\n40: requirement rule 40\n41: requirement rule 41\n42: requirement rule 42\n43: requirement rule 43\n44: requirement rule 44\n45: requirement rule 45\n46: requirement rule 46\n47: requirement rule 47\n48: requirement rule 48\n49: requirement rule 49\n50: requirement rule 50\n51: requirement rule 51\n52: requirement rule 52\n53: requirement rule 53\n54: requirement rule 54\n55: requirement rule 55\n56: requirement rule 56\n57: requirement rule 57\n58: requirement rule 58\n59: requirement rule 59\n60: requirement rule 60\n61: requirement rule 61\n62: requirement rule 62\n63: requirement rule 63\n64: requirement rule 64\n65: requirement rule 65\n66: requirement rule 66\n67: requirement rule 67\n68: requirement rule 68\n69: requirement rule 69\n70: requirement rule 70\n71: requirement rule 71\n72: requirement rule 72\n73: requirement rule 73\n74: requirement rule 74\n75: requirement rule 75\n76: requirement rule 76\n77: requirement rule 77\n78: requirement rule 78\n79: requirement rule 79\n80: requirement rule 80\n81: requirement rule 81\n82: requirement rule 82\n83: requirement rule 83\n84: requirement rule 84\n85: requirement rule 85\n86: requirement rule 86\n87: requirement rule 87\n88: requirement rule 88\n89: requirement rule 89\n90: requirement rule 90\n91: requirement rule 91\n92: requirement rule 92\n93: requirement rule 93\n94: requirement rule 94\n95: requirement rule 95\n96: requirement rule 96\n97: requirement rule 97\n98: requirement rule 98\n99: requirement rule 99\n100: requirement rule 100\n101: requirement rule 101\n102: requirement rule 102\n103: requirement rule 103\n104: requirement rule 104\n105: requirement rule 105\n106: requirement rule 106\n107: requirement rule 107\n108: requirement rule 108\n109: requirement rule 109\n110: requirement rule 110\n111: requirement rule 111\n112: requirement rule 112\n113: requirement rule 113\n114: requirement rule 114\n115: requirement rule 115\n116: requirement rule 116\n117: requirement rule 117\n118: requirement rule 118\n119: requirement rule 119\n120: requirement rule 120\n121: requirement rule 121\n122: requirement rule 122\n123: requirement rule 123\n124: requirement rule 124\n125: requirement rule 125\n126: requirement rule 126\n127: requirement rule 127\n128: requirement rule 128\n129: requirement rule 129\n130: requirement rule 130\n131: requirement rule 131\n132: requirement rule 132\n133: requirement rule 133\n134: requirement rule 134\n135: requirement rule 135\n136: requirement rule 136\n137: requirement rule 137\n138: requirement rule 138\n139: requirement rule 139\n140: requirement rule 140\n141: requirement rule 141\n142: requirement rule 142\n143: requirement rule 143\n144: requirement rule 144\n145: requirement rule 145\n146: requirement rule 146\n147: requirement rule 147\n148: requirement rule 148\n149: requirement rule 149\n150: requirement rule 150\n151: requirement rule 151\n152: requirement rule 152\n153: requirement rule 153\n154: requirement rule 154\n155: requirement rule 155\n156: requirement rule 156\n157: requirement rule 157\n158: requirement rule 158\n159: requirement rule 159\n160: requirement rule 160\n161: requirement rule 161\n162: requirement rule 162\n163: requirement rule 163\n164: requirement rule 164\n165: requirement rule 165\n166: requirement rule 166\n167: requirement rule 167\n168: requirement rule 168\n169: requirement rule 169\n170: requirement rule 170\n171: requirement rule 171\n172: requirement rule 172\n173: requirement rule 173\n174: requirement rule 174\n175: requirement rule 175\n176: requirement rule 176\n177: requirement rule 177\n178: requirement rule 178\n179: requirement rule 179\n180: requirement rule 180\n181: requirement rule 181\n182: requirement rule 182\n183: requirement rule 183\n184: requirement rule 184\n185: requirement rule 185\n186: requirement rule 186\n187: requirement rule 187\n188: requirement rule 188\n189: requirement rule 189\n190: requirement rule 190\n191: requirement rule 191\n192: requirement rule 192\n193: requirement rule 193\n194: requirement rule 194\n195: requirement rule 195\n196: requirement rule 196\n197: requirement rule 197\n198: requirement rule 198\n199: requirement rule 199\n200: requirement rule 200\n210: total rule\n",
+    "prototype.html": "<p>Prototype form area.</p>\n",
+    "example.png": "GIF89a\n"
+  },
+  "scripted_image_observations": [
+    {
+      "observations": [
+        "The example image visibly shows reviewer/signature fields filled."
+      ],
+      "uncertainties": [],
+      "inferences": []
+    }
+  ],
+  "scripted_responses": [
+    {
+      "tool_calls": [
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "policy.md"
+          }
+        },
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "prototype.html"
+          }
+        },
+        {
+          "name": "inspect_image",
+          "arguments": {
+            "path": "example.png",
+            "question": "Describe visible reviewer and signature fields."
+          }
+        }
+      ]
+    },
+    {
+      "content": "- policy.md:10 states requirement rule 10.\n- policy.md:20 states requirement rule 20.\n- policy.md:30 states requirement rule 30.\n- policy.md:40 states requirement rule 40.\n- policy.md:50 states requirement rule 50.\n- policy.md:60 states requirement rule 60.\n- policy.md:70 states requirement rule 70.\n- policy.md:80 states requirement rule 80.\n- policy.md:90 states requirement rule 90.\n- policy.md:100 states requirement rule 100.\n- policy.md:110 states requirement rule 110.\n- policy.md:120 states requirement rule 120.\n- policy.md:130 states requirement rule 130.\n- policy.md:140 states requirement rule 140.\n- policy.md:150 states requirement rule 150.\n- policy.md:160 states requirement rule 160.\n- policy.md:170 states requirement rule 170.\n- policy.md:180 states requirement rule 180.\n- policy.md:190 states requirement rule 190.\n- policy.md:200 states requirement rule 200.\n- policy.md:1 says reviewer/signature blank; example.png shows reviewer/signature filled; therefore the image is only an illustrative template and there is no substantive conflict."
+    },
+    {
+      "content": "Compact reviewable answer:\n- Current scope: policy.md:1 says the generated document keeps reviewer/signature blank.\n- Prototype scope: prototype.html:1 describes the form area.\n- Visual observation: example.png visibly shows reviewer/signature fields filled.\n- Source discrepancy: policy.md:1 and example.png differ; artifact role, lifecycle, and precedence are not established, so the discrepancy remains unresolved / pending confirmation.\n- Open confirmation: do not treat either artifact as authoritative without explicit support."
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "submit_read_only_review",
+          "arguments": {
+            "verdict": "pass",
+            "confidence": 0.96,
+            "reason": "compact candidate cites the Markdown and image observations and keeps the discrepancy unresolved",
+            "document_consistency": {
+              "stance": "reported_unresolved",
+              "conflict_evidence_ids": [
+                "e001",
+                "e005"
+              ],
+              "supporting_evidence_ids": []
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "acceptance": {
+    "required_tools": [
+      "read_file",
+      "inspect_image"
+    ],
+    "forbidden_tools": [
+      "apply_patch",
+      "write_file",
+      "shell",
+      "run_tests",
+      "search_code"
+    ],
+    "changed_files": [],
+    "answer_all_of": [
+      "policy.md",
+      "example.png",
+      "unresolved"
+    ],
+    "answer_forbidden_regex": [
+      "illustrative template",
+      "no substantive conflict"
+    ],
+    "termination_reason": "final",
+    "run_summary": {
+      "tool_calls": 3,
+      "tool_errors": 0
+    },
+    "read_only_reviewer": {
+      "claim_transport_rewrites": 1,
+      "claim_transport_rewrite_acceptances": 1,
+      "triggers": 1,
+      "typed_submits": 1
+    },
+    "safe_partial_report": {
+      "emitted": 0
+    },
+    "max_tool_errors": 0
+  },
+  "residual_risk": "This fixture proves one bounded pre-review transport rewrite can compact an over-granular document/image answer before isolated review; it remains a deterministic provider script."
+}

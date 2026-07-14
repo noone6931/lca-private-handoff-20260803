@@ -1,0 +1,189 @@
+{
+  "id": "readonly-rewrite-verification-closure",
+  "title": "Read-only rewrite requires bounded reviewer verification, not string-only paraphrase closure",
+  "prompt": "只读分析当前服务 owner、表、接口和影响范围，不要修改。",
+  "budget_seconds": 90,
+  "workspace_files": {
+    "src/Evidence.java": "class Evidence {}\n"
+  },
+  "scripted_responses": [
+    {
+      "tool_calls": [
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "src/Evidence.java"
+          }
+        }
+      ]
+    },
+    {
+      "content": "- Current code proves no settlement DDL exists.\n- Current code proves no settlement API exists.\n- Current code proves no menu route exists.\n- Current code proves no template engine exists.\n- Current code proves no owner class exists.\n- Current code proves no status field exists.\n- Current code proves no rollback flow exists.\n- Current code proves no export mapping exists."
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "report_read_only_finding",
+          "arguments": {
+            "claim_id": "c001",
+            "finding_scope": "candidate_defect",
+            "issue": "claim overstates bounded evidence",
+            "action": "downgrade to unlocated or proposal"
+          }
+        },
+        {
+          "name": "report_read_only_finding",
+          "arguments": {
+            "claim_id": "c002",
+            "finding_scope": "candidate_defect",
+            "issue": "claim overstates bounded evidence",
+            "action": "downgrade to unlocated or proposal"
+          }
+        },
+        {
+          "name": "report_read_only_finding",
+          "arguments": {
+            "claim_id": "c003",
+            "finding_scope": "candidate_defect",
+            "issue": "claim overstates bounded evidence",
+            "action": "downgrade to unlocated or proposal"
+          }
+        },
+        {
+          "name": "report_read_only_finding",
+          "arguments": {
+            "claim_id": "c004",
+            "finding_scope": "candidate_defect",
+            "issue": "claim overstates bounded evidence",
+            "action": "downgrade to unlocated or proposal"
+          }
+        },
+        {
+          "name": "report_read_only_finding",
+          "arguments": {
+            "claim_id": "c005",
+            "finding_scope": "candidate_defect",
+            "issue": "claim overstates bounded evidence",
+            "action": "downgrade to unlocated or proposal"
+          }
+        },
+        {
+          "name": "report_read_only_finding",
+          "arguments": {
+            "claim_id": "c006",
+            "finding_scope": "candidate_defect",
+            "issue": "claim overstates bounded evidence",
+            "action": "downgrade to unlocated or proposal"
+          }
+        },
+        {
+          "name": "report_read_only_finding",
+          "arguments": {
+            "claim_id": "c007",
+            "finding_scope": "candidate_defect",
+            "issue": "claim overstates bounded evidence",
+            "action": "downgrade to unlocated or proposal"
+          }
+        },
+        {
+          "name": "report_read_only_finding",
+          "arguments": {
+            "claim_id": "c008",
+            "finding_scope": "candidate_defect",
+            "issue": "claim overstates bounded evidence",
+            "action": "downgrade to unlocated or proposal"
+          }
+        },
+        {
+          "name": "submit_read_only_review",
+          "arguments": {
+            "verdict": "revise",
+            "confidence": 0.9,
+            "reason": "eight blocking overclaims"
+          }
+        }
+      ]
+    },
+    {
+      "content": "The repository conclusively lacks database schema, service API, menu route, template engine, owner class, status field, rollback flow, and export mapping."
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "report_read_only_finding",
+          "arguments": {
+            "claim_id": "c001",
+            "finding_scope": "candidate_defect",
+            "issue": "paraphrased absence claim is still beyond bounded evidence",
+            "action": "make it a proposal or pending confirmation"
+          }
+        },
+        {
+          "name": "submit_read_only_review",
+          "arguments": {
+            "verdict": "revise",
+            "confidence": 0.9,
+            "reason": "paraphrase still blocks"
+          }
+        }
+      ]
+    },
+    {
+      "content": "已读证据未定位直接 owner。设计建议：可提出新增 settlement model/API/menu/template 作为候选方案；待确认是否复用旧实体、字段和下载能力。"
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "submit_read_only_review",
+          "arguments": {
+            "verdict": "pass",
+            "confidence": 0.95,
+            "reason": "all blockers are downgraded to proposal or pending confirmation"
+          }
+        }
+      ]
+    }
+  ],
+  "acceptance": {
+    "required_tools": [
+      "read_file"
+    ],
+    "forbidden_tools": [
+      "apply_patch",
+      "write_file",
+      "shell",
+      "run_tests",
+      "search_code"
+    ],
+    "changed_files": [],
+    "answer_all_of": [
+      "设计建议",
+      "待确认",
+      "未定位"
+    ],
+    "answer_forbidden_regex": [
+      "conclusively lacks",
+      "proves no"
+    ],
+    "termination_reason": "final",
+    "run_summary": {
+      "tool_calls": 1,
+      "tool_errors": 0
+    },
+    "read_only_reviewer": {
+      "triggers": 3,
+      "rewrites": 2,
+      "rewrite_corrections": 1,
+      "rewrite_verification_rounds": 2,
+      "rewrite_acceptances": 1,
+      "typed_submits": 12,
+      "finding_submits": 9,
+      "final_submits": 3
+    },
+    "safe_partial_report": {
+      "emitted": 0
+    },
+    "max_tool_errors": 0
+  },
+  "residual_risk": "This fixture proves a bounded second reviewer verification round catches paraphrased overclaims; it does not prove every possible design-review nuance."
+}

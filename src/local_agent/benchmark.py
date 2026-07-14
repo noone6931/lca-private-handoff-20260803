@@ -34,6 +34,7 @@ class BenchmarkTask:
     workspace_files: Mapping[str, str]
     additional_roots: Mapping[str, Mapping[str, str]]
     scripted_responses: tuple[Mapping[str, Any], ...]
+    scripted_image_observations: tuple[Mapping[str, Any], ...]
     approval_mode: str
     tool_approval: Mapping[str, str]
     budget_seconds: int | None
@@ -91,10 +92,12 @@ class ScriptedBenchmarkClient:
         *,
         workspace: Path,
         named_roots: Mapping[str, Path],
+        image_observations: Iterable[Mapping[str, Any]] = (),
     ) -> None:
         self._responses = [deepcopy(dict(response)) for response in responses]
         self._workspace = workspace
         self._named_roots = dict(named_roots)
+        self._image_observation_queue = [dict(value) for value in image_observations]
         self._last_terminal_action: Mapping[str, Any] | None = None
         self.calls: list[dict[str, Any]] = []
         self.tool_schema_names: list[tuple[str, ...]] = []
@@ -166,6 +169,15 @@ class ScriptedBenchmarkClient:
             finish_reason=str(action["finish_reason"]) if action.get("finish_reason") else None,
             protocol_artifact=protocol_artifact,
         )
+
+    def inspect_image(self, **kwargs: Any) -> str:
+        """Return deterministic direct-observation JSON supplied by the task fixture."""
+
+        _ = kwargs
+        if not self._image_observation_queue:
+            raise RuntimeError("No scripted image observation remains for benchmark inspect_image call")
+        observation = self._image_observation_queue.pop(0)
+        return json.dumps(observation, ensure_ascii=False)
 
 
 @dataclass(frozen=True)
@@ -278,6 +290,7 @@ def run_benchmark_task(
                     task.scripted_responses,
                     workspace=workspace,
                     named_roots=named_roots,
+                    image_observations=task.scripted_image_observations,
                 )
                 runtime._client = client
             else:
@@ -375,6 +388,8 @@ def _load_benchmark_task(path: Path) -> BenchmarkTask:
     responses = raw.get("scripted_responses") or []
     if not isinstance(responses, list) or not all(isinstance(item, Mapping) for item in responses):
         raise ValueError(f"Benchmark task {path} scripted_responses must be a list of objects.")
+    image_observation_payload = raw.get("scripted_image_observations", [])
+    image_observations = _mapping_list(image_observation_payload, "scripted_image_observations", path)
     tool_approval = _string_mapping(raw.get("tool_approval") or {}, "tool_approval", path)
     acceptance = raw.get("acceptance") or {}
     if not isinstance(acceptance, Mapping):
@@ -390,6 +405,7 @@ def _load_benchmark_task(path: Path) -> BenchmarkTask:
         workspace_files=workspace_files,
         additional_roots=additional_roots,
         scripted_responses=tuple(responses),
+        scripted_image_observations=image_observations,
         approval_mode=str(raw.get("approval_mode") or "yolo"),
         tool_approval=tool_approval,
         budget_seconds=budget_seconds,
@@ -436,6 +452,7 @@ def _benchmark_config(
         api_base_url="https://benchmark.invalid/v1",
         api_key="benchmark-token",
         model="benchmark-script",
+        vision_model="benchmark-vision" if task.scripted_image_observations else "",
         workspace=workspace,
         state_dir=state_root / "workspace",
         state_root=state_root,
@@ -858,6 +875,19 @@ def _nested_string_mapping(raw: Any, label: str, path: Path) -> dict[str, dict[s
             raise ValueError(f"Benchmark task {path} {label} names must be strings.")
         values[key] = _string_mapping(value, f"{label}.{key}", path)
     return values
+
+
+def _mapping_list(raw: Any, label: str, path: Path) -> tuple[dict[str, Any], ...]:
+    if raw is None:
+        return ()
+    if not isinstance(raw, list):
+        raise ValueError(f"Benchmark task {path} {label} must be a list of objects.")
+    values: list[dict[str, Any]] = []
+    for index, value in enumerate(raw, start=1):
+        if not isinstance(value, Mapping):
+            raise ValueError(f"Benchmark task {path} {label}[{index}] must be an object.")
+        values.append(dict(value))
+    return tuple(values)
 
 
 def _string_list(raw: Any) -> list[str]:

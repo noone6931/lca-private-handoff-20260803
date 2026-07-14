@@ -648,6 +648,216 @@ class _ReviewerNoClaimFindingsClient(_ReviewerFindingMalformedFinalThenPassClien
         return type("Response", (), {"message": {"content": content}})()
 
 
+class _RewriteVerificationParaphraseClient:
+    calls: list[dict] = []
+
+    def __init__(self, config: AgentConfig):
+        self._primary_calls = 0
+        self._review_calls = 0
+
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
+        is_reviewer = any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages)
+        is_verification = any("LCA_READ_ONLY_REWRITE_VERIFICATION" in str(message.get("content")) for message in messages)
+        if is_reviewer:
+            self._review_calls += 1
+            if not is_verification:
+                findings = [
+                    _finding_call(
+                        f"finding-{index}",
+                        f"c{index:03d}",
+                        _candidate_claim(messages, f"c{index:03d}"),
+                        issue="claim overstates bounded evidence",
+                        action="downgrade to unlocated or proposal",
+                        include_claim=False,
+                    )
+                    for index in range(1, 9)
+                ]
+                return _review_tool_calls_response([
+                    *findings,
+                    _final_call("initial-revise", {"verdict": "revise", "confidence": 0.9, "reason": "eight blockers"}),
+                ])
+            candidate_text = " ".join(
+                str(claim.get("text") or "")
+                for message in messages
+                if message.get("role") == "user" and "LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content"))
+                for claim in json.loads(message["content"]).get("candidate_claims", ())
+            )
+            if "repository conclusively lacks" in candidate_text:
+                return _review_tool_calls_response([
+                    _finding_call(
+                        "verify-finding",
+                        "c001",
+                        _candidate_claim(messages, "c001"),
+                        issue="paraphrased absence claim is still beyond bounded evidence",
+                        action="make it a proposal or pending confirmation",
+                        include_claim=False,
+                    ),
+                    _final_call("verify-revise", {"verdict": "revise", "confidence": 0.9, "reason": "paraphrase still blocks"}),
+                ])
+            return _review_tool_calls_response([
+                _final_call("verify-pass", {"verdict": "pass", "confidence": 0.95, "reason": "all blockers downgraded"})
+            ])
+        self._primary_calls += 1
+        if self._primary_calls == 1:
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "read-evidence",
+                                "type": "function",
+                                "function": {"name": "read_file", "arguments": '{"path":"src/Evidence.java"}'},
+                            }
+                        ],
+                    }
+                },
+            )()
+        if self._primary_calls == 2:
+            claims = [
+                "Current code proves no settlement DDL exists.",
+                "Current code proves no settlement API exists.",
+                "Current code proves no menu route exists.",
+                "Current code proves no template engine exists.",
+                "Current code proves no owner class exists.",
+                "Current code proves no status field exists.",
+                "Current code proves no rollback flow exists.",
+                "Current code proves no export mapping exists.",
+            ]
+            return type("Response", (), {"message": {"content": "\n".join(f"- {claim}" for claim in claims)}})()
+        if self._primary_calls == 3:
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": (
+                            "The repository conclusively lacks database schema, service API, menu route, template engine, "
+                            "owner class, status field, rollback flow, and export mapping."
+                        )
+                    }
+                },
+            )()
+        return type(
+            "Response",
+            (),
+            {
+                "message": {
+                    "content": (
+                        "已读证据未定位直接 owner。设计建议：可提出新增 settlement model/API/menu/template 作为候选方案；"
+                        "待确认是否复用旧实体、字段和下载能力。"
+                    )
+                }
+            },
+        )()
+
+
+class _ProposalSemanticsClient:
+    calls: list[dict] = []
+
+    def __init__(self, config: AgentConfig):
+        self._primary_calls = 0
+
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
+        if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages):
+            prompt = "\n".join(str(message.get("content") or "") for message in messages if message.get("role") == "system")
+            if "clearly labeled design proposal" not in prompt:
+                raise AssertionError("reviewer prompt did not preserve proposal semantics")
+            return _review_tool_calls_response([
+                _final_call("proposal-pass", {"verdict": "pass", "confidence": 0.95, "reason": "proposal is labeled and prerequisites remain pending"})
+            ])
+        self._primary_calls += 1
+        if self._primary_calls == 1:
+            return type("Response", (), {"message": {"content": None, "tool_calls": [
+                {"id": "read-src", "type": "function", "function": {"name": "read_file", "arguments": '{"path":"src/Mapper.xml"}'}}
+            ]}})()
+        return type(
+            "Response",
+            (),
+            {
+                "message": {
+                    "content": (
+                        "设计建议：建议新建 SettlementBill 表、SettlementDetail 表和 /api/settlement/create 接口；"
+                        "这些名称是候选方案/待确认项，前置条件是确认旧实体字段、Owner 和下载能力是否可复用。"
+                    )
+                }
+            },
+        )()
+
+
+class _RewriteVerificationSameClaimIdClient:
+    calls: list[dict] = []
+
+    def __init__(self, config: AgentConfig):
+        self._primary_calls = 0
+        self._review_calls = 0
+
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
+        is_reviewer = any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages)
+        is_verification = any("LCA_READ_ONLY_REWRITE_VERIFICATION" in str(message.get("content")) for message in messages)
+        if is_reviewer:
+            self._review_calls += 1
+            if self._review_calls == 1:
+                return _review_tool_calls_response([
+                    _finding_call(
+                        "initial-finding",
+                        "c001",
+                        _candidate_claim(messages, "c001"),
+                        issue="initial owner claim unsupported",
+                        action="downgrade owner to unlocated",
+                        include_claim=False,
+                    ),
+                    _final_call("initial-final", {"verdict": "revise", "confidence": 0.9, "reason": "initial blocker"}),
+                ])
+            if self._review_calls == 2 and is_verification:
+                return _review_tool_calls_response([
+                    _finding_call(
+                        "verification-finding",
+                        "c001",
+                        _candidate_claim(messages, "c001"),
+                        issue="paraphrased owner absence still overstates evidence",
+                        action="make owner absence pending confirmation",
+                        include_claim=False,
+                    ),
+                    _final_call("verification-final", {"verdict": "revise", "confidence": 0.9, "reason": "verification blocker"}),
+                ])
+            if self._review_calls == 3 and is_verification:
+                closure_payloads = [
+                    json.loads(message["content"])
+                    for message in messages
+                    if message.get("role") == "user"
+                    and "LCA_READ_ONLY_REWRITE_VERIFICATION" in str(message.get("content"))
+                ]
+                originals = closure_payloads[-1]["original_findings"]
+                issues = {item["issue"] for item in originals}
+                if len(originals) != 2 or {
+                    "initial owner claim unsupported",
+                    "paraphrased owner absence still overstates evidence",
+                } - issues:
+                    raise AssertionError(f"closure findings were not preserved: {originals!r}")
+                return _review_tool_calls_response([
+                    _final_call("verification-pass", {"verdict": "pass", "confidence": 0.95, "reason": "all closure findings scoped"})
+                ])
+            return _review_tool_calls_response([
+                _final_call("fallback-pass", {"verdict": "pass", "confidence": 0.95, "reason": "fallback"})
+            ])
+        self._primary_calls += 1
+        if self._primary_calls == 1:
+            return type("Response", (), {"message": {"content": None, "tool_calls": [
+                {"id": "read-src", "type": "function", "function": {"name": "read_file", "arguments": '{"path":"src/Evidence.java"}'}}
+            ]}})()
+        if self._primary_calls == 2:
+            return type("Response", (), {"message": {"content": "PayServiceImpl is the verified owner."}})()
+        if self._primary_calls == 3:
+            return type("Response", (), {"message": {"content": "The repository proves no other owner exists."}})()
+        return type("Response", (), {"message": {"content": "Owner evidence remains unlocated; reuse remains pending confirmation."}})()
+
+
 class _ReviewerValidFindingUnknownLaterClient(_ReviewerFindingMalformedFinalThenPassClient):
     def chat(self, messages, tools, *, timeout=None):
         type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
@@ -1062,9 +1272,19 @@ class _NoncompliantRewriteClient(_ReviewerFlowClient):
 class _PartialProgressRewriteClient(_ReviewerFlowClient):
     def chat(self, messages, tools, *, timeout=None):
         is_reviewer = any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages)
+        is_verification = any("LCA_READ_ONLY_REWRITE_VERIFICATION" in str(message.get("content")) for message in messages)
         if is_reviewer:
             type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
             self._review_calls += 1
+            if is_verification:
+                return _review_submit(
+                    {
+                        "verdict": "pass",
+                        "confidence": 0.9,
+                        "findings": [],
+                        "reason": "one blocking owner claim was downgraded and remaining advice is non-blocking",
+                    }
+                )
             first_claim = _candidate_claim(messages, "c001")
             second_claim = _candidate_claim(messages, "c002")
             return _review_submit(
@@ -1123,8 +1343,11 @@ class _ReviewerLastGateClient:
     def chat(self, messages, tools, *, timeout=None):
         type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
         reviewer = any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages)
+        is_verification = any("LCA_READ_ONLY_REWRITE_VERIFICATION" in str(message.get("content")) for message in messages)
         if reviewer:
             self._review_calls += 1
+            if is_verification:
+                return _review_submit({"verdict": "pass", "confidence": 0.9, "findings": [], "reason": "rewrite downgraded unsupported repository detail"})
             return _review_submit(
                 {
                     "verdict": "revise",
@@ -1981,6 +2204,144 @@ class _TransportOmittedClaimClient:
         return type("Response", (), {"message": {"content": "\n".join(claim_lines)}})()
 
 
+class _TransportRecoveryDocumentClient:
+    calls: list[dict] = []
+
+    def __init__(self, config: AgentConfig):
+        self._primary_calls = 0
+
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
+        if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages):
+            payload = next(
+                json.loads(message["content"])
+                for message in messages
+                if message.get("role") == "user" and "LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content"))
+            )
+            self._assert_reviewable_compact_payload(payload)
+            conflict_ids = self._conflict_ids(payload)
+            return _review_tool_calls_response([
+                _final_call(
+                    "doc-pass",
+                    {
+                        "verdict": "pass",
+                        "confidence": 0.96,
+                        "reason": "compact candidate preserves the unresolved artifact discrepancy",
+                        "document_consistency": {
+                            "stance": "reported_unresolved",
+                            "conflict_evidence_ids": list(conflict_ids),
+                            "supporting_evidence_ids": [],
+                        },
+                    },
+                )
+            ])
+        self._primary_calls += 1
+        if self._primary_calls == 1:
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {"id": "read-policy", "type": "function", "function": {"name": "read_file", "arguments": '{"path":"policy.md"}'}},
+                            {"id": "read-prototype", "type": "function", "function": {"name": "read_file", "arguments": '{"path":"prototype.html"}'}},
+                            {"id": "inspect-example", "type": "function", "function": {"name": "inspect_image", "arguments": '{"path":"example.png","question":"Describe visible reviewer and signature fields."}'}},
+                        ],
+                    }
+                },
+            )()
+        if any("bounded transport recovery" in str(message.get("content")) for message in messages):
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": (
+                            "## Compact reviewable answer\n\n"
+                            "- Current scope: policy.md:1 says the generated document keeps reviewer/signature blank.\n"
+                            "- Prototype scope: prototype.html:1 describes the corresponding form area.\n"
+                            "- Visual observation: example.png visibly shows reviewer/signature fields filled.\n"
+                            "- Source discrepancy: policy.md:1 and example.png differ; artifact role, lifecycle, and precedence are not established, so the discrepancy remains unresolved / pending confirmation.\n"
+                            "- Open confirmation: do not treat either artifact as authoritative without explicit support."
+                        )
+                    }
+                },
+            )()
+        claim_lines = [f"- policy.md:{index * 10} states requirement rule {index * 10}." for index in range(1, 75)]
+        claim_lines.append(
+            "- policy.md:1 says reviewer/signature blank; example.png shows reviewer/signature filled; "
+            "therefore the image is only an illustrative template and there is no substantive conflict."
+        )
+        return type("Response", (), {"message": {"content": "\n".join(claim_lines)}})()
+
+    def inspect_image(self, **_kwargs):
+        return json.dumps(
+            {
+                "observations": [
+                    "The example image visibly shows reviewer/signature fields filled.",
+                ],
+                "uncertainties": [],
+                "inferences": [],
+            }
+        )
+
+    def _assert_reviewable_compact_payload(self, payload: dict) -> None:
+        self.assertEqual(payload.get("handoff", {}).get("transport_omitted_claim_ids"), [])
+        claims = " ".join(str(claim.get("text") or "") for claim in payload.get("candidate_claims") or ())
+        matrix = payload.get("handoff", {}).get("claim_matrix") or ()
+        self.assertIn("unresolved", claims)
+        self.assertNotIn("illustrative template", claims)
+        self.assertIn("example.png", claims)
+        self.assertIn("visibly shows reviewer/signature fields filled", claims)
+        self.assertTrue(any("policy.md" in str(item.get("path") or "") for item in matrix))
+        self.assertTrue(any("prototype.html" in str(item.get("path") or "") for item in matrix))
+        conflict_ids = self._conflict_ids(payload)
+        prototype_ids = {
+            str(item.get("evidence_id") or "")
+            for item in matrix
+            if "prototype.html" in str(item.get("path") or "")
+        }
+        self.assertTrue(conflict_ids[0] not in prototype_ids and conflict_ids[1] not in prototype_ids)
+
+    def _conflict_ids(self, payload: dict) -> tuple[str, str]:
+        matrix = payload.get("handoff", {}).get("claim_matrix") or ()
+        policy_ids = [
+            str(item.get("evidence_id") or "")
+            for item in matrix
+            if item.get("tool") == "read_file"
+            and "policy.md" in str(item.get("path") or "")
+            and "blank" in str(item.get("summary") or "").lower()
+        ]
+        image_ids = [
+            str(item.get("evidence_id") or "")
+            for item in matrix
+            if item.get("tool") == "inspect_image"
+            and item.get("classification") == "visual_observation"
+            and "example.png" in str(item.get("path") or "")
+            and "filled" in str(item.get("summary") or "").lower()
+        ]
+        self.assertTrue(policy_ids)
+        self.assertTrue(image_ids)
+        return (policy_ids[0], image_ids[0])
+
+    def assertEqual(self, left, right) -> None:
+        if left != right:
+            raise AssertionError(f"{left!r} != {right!r}")
+
+    def assertIn(self, member, container) -> None:
+        if member not in container:
+            raise AssertionError(f"{member!r} not found")
+
+    def assertNotIn(self, member, container) -> None:
+        if member in container:
+            raise AssertionError(f"{member!r} unexpectedly found")
+
+    def assertTrue(self, value) -> None:
+        if not value:
+            raise AssertionError("expected truthy value")
+
+
 class _PostRewriteProjectionOverflowClient(_OverlongClaimClient):
     calls: list[dict] = []
 
@@ -2162,7 +2523,7 @@ class _PackedLocatorRuntimeClient:
         )()
 
 
-def _config(workspace: Path, *, provider: str = "openai-compatible") -> AgentConfig:
+def _config(workspace: Path, *, provider: str = "openai-compatible", vision_model: str = "") -> AgentConfig:
     return AgentConfig(
         provider=provider,
         api_base_url="https://example.invalid/v1",
@@ -2172,6 +2533,7 @@ def _config(workspace: Path, *, provider: str = "openai-compatible") -> AgentCon
         max_steps=0,
         budget_seconds=None,
         approval_mode="yolo",
+        vision_model=vision_model,
     )
 
 
@@ -2804,7 +3166,7 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         ]
         self.assertEqual(review_calls, [])
 
-    def test_runtime_fails_closed_when_reviewed_claim_evidence_is_transport_omitted(self) -> None:
+    def test_runtime_fails_closed_when_transport_rewrite_still_omits_claim_evidence(self) -> None:
         _TransportOmittedClaimClient.calls = []
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp).resolve()
@@ -2818,16 +3180,72 @@ class ReadOnlyReviewerTests(unittest.TestCase):
 
         self.assertNotIn("PayServiceImpl is the verified owner", answer)
         self.assertEqual(runtime._last_run_summary["termination_reason"], "read_only_reviewer_unverified")
+        summary = runtime._last_run_summary["read_only_reviewer"]
         self.assertEqual(
-            runtime._last_run_summary["read_only_reviewer"]["errors"],
+            summary["errors"],
             {"claim_evidence_transport_incomplete": 1},
         )
+        self.assertEqual(summary["claim_transport_rewrites"], 1)
+        self.assertEqual(summary["claim_transport_rewrite_acceptances"], 0)
+        self.assertEqual(summary["claim_transport_rewrite_exhausted"], 1)
         review_calls = [
             call
             for call in _TransportOmittedClaimClient.calls
             if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in call["messages"])
         ]
         self.assertEqual(review_calls, [])
+        transport_rewrite_calls = [
+            call
+            for call in _TransportOmittedClaimClient.calls
+            if any("bounded transport recovery" in str(message.get("content")) for message in call["messages"])
+        ]
+        self.assertEqual(len(transport_rewrite_calls), 1)
+
+    def test_transport_omitted_claims_get_one_bounded_compact_rewrite_before_review(self) -> None:
+        _TransportRecoveryDocumentClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            (workspace / "policy.md").write_text(
+                "Reviewer and signature are blank in this phase.\n"
+                + "\n".join(f"{index}: requirement rule {index}" for index in range(2, 900)),
+                encoding="utf-8",
+            )
+            (workspace / "prototype.html").write_text(
+                "Reviewer and signature are visibly filled in the example artifact.\n",
+                encoding="utf-8",
+            )
+            (workspace / "example.png").write_bytes(
+                b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
+                b"\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc```\x00\x00\x00\x04\x00\x01"
+                b"\xf6\x178U\x00\x00\x00\x00IEND\xaeB`\x82"
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _TransportRecoveryDocumentClient):
+                runtime = AgentRuntime(_config(workspace, vision_model="vision"), show_tool_logs=False)
+                answer = runtime.run(
+                    "只读分析 policy.md、prototype.html 和示例图片，说明本期范围、关键规则，以及资料之间是否有冲突。"
+                    "每项结论给出证据；证据不足不要推测。"
+                )
+
+        self.assertIn("discrepancy remains unresolved", answer)
+        self.assertNotIn("illustrative template", answer)
+        summary = runtime._last_run_summary["read_only_reviewer"]
+        self.assertEqual(runtime._last_run_summary["termination_reason"], "final")
+        self.assertEqual(summary["claim_transport_rewrites"], 1)
+        self.assertEqual(summary["claim_transport_rewrite_acceptances"], 1)
+        self.assertEqual(summary["claim_transport_rewrite_exhausted"], 0)
+        self.assertEqual(summary["triggers"], 1)
+        self.assertEqual(summary["verdicts"], {"pass": 1})
+        self.assertEqual(summary["rewrites"], 0)
+        self.assertEqual(summary["rewrite_acceptances"], 0)
+        rewrite_messages = [
+            str(message.get("content") or "")
+            for call in _TransportRecoveryDocumentClient.calls
+            for message in call["messages"]
+            if "bounded transport recovery" in str(message.get("content"))
+        ]
+        self.assertEqual(len(rewrite_messages), 1)
+        self.assertIn("merge repeated table rows", rewrite_messages[0])
+        self.assertIn("discrepancy remains unresolved", rewrite_messages[0])
 
     def test_post_rewrite_projection_overflow_fails_closed_without_second_reviewer(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -4177,7 +4595,7 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertIn("可复用候选", answer)
         self.assertIn("仍未定位", answer)
         review_calls = [call for call in _ReviewerFlowClient.calls if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(m.get("content")) for m in call["messages"])]
-        self.assertEqual(len(review_calls), 1)
+        self.assertEqual(len(review_calls), 2)
         self.assertTrue(
             all(
                 [tool["function"]["name"] for tool in call["tools"]]
@@ -4187,10 +4605,74 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         )
         self.assertEqual(runtime._last_run_summary["read_only_reviewer"]["rewrites"], 1)
         self.assertEqual(runtime._last_run_summary["read_only_reviewer"]["rewrite_acceptances"], 1)
-        self.assertEqual(runtime._last_run_summary["read_only_reviewer"]["typed_submits"], 2)
+        self.assertEqual(runtime._last_run_summary["read_only_reviewer"]["rewrite_verification_rounds"], 1)
+        self.assertEqual(runtime._last_run_summary["read_only_reviewer"]["typed_submits"], 3)
         self.assertEqual(runtime._last_run_summary["read_only_reviewer"]["finding_submits"], 1)
-        self.assertEqual(runtime._last_run_summary["read_only_reviewer"]["final_submits"], 1)
+        self.assertEqual(runtime._last_run_summary["read_only_reviewer"]["final_submits"], 2)
         self.assertNotIn("LCA_READ_ONLY_EVIDENCE_REVIEW", "\n".join(str(m) for m in runtime._messages))
+
+    def test_rewrite_verification_rejects_paraphrased_blocking_claims_then_accepts_downgrade(self) -> None:
+        _RewriteVerificationParaphraseClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            (workspace / "src").mkdir()
+            (workspace / "src/Evidence.java").write_text("class Evidence {}\n", encoding="utf-8")
+            with patch("local_agent.agent.OpenAICompatibleClient", _RewriteVerificationParaphraseClient):
+                runtime = AgentRuntime(_config(workspace), show_tool_logs=False)
+                answer = runtime.run("只读分析当前服务 owner、表、接口和影响范围，不要修改。")
+
+        self.assertIn("设计建议", answer)
+        self.assertIn("待确认", answer)
+        self.assertNotIn("conclusively lacks", answer)
+        summary = runtime._last_run_summary["read_only_reviewer"]
+        self.assertEqual(summary["triggers"], 3)
+        self.assertEqual(summary["rewrites"], 2)
+        self.assertEqual(summary["rewrite_corrections"], 1)
+        self.assertEqual(summary["rewrite_verification_rounds"], 2)
+        self.assertEqual(summary["rewrite_acceptances"], 1)
+        self.assertEqual(summary["verdicts"], {"pass": 1, "revise": 2})
+
+    def test_rewrite_verification_preserves_same_local_claim_id_findings(self) -> None:
+        _RewriteVerificationSameClaimIdClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            (workspace / "src").mkdir()
+            (workspace / "src/Evidence.java").write_text("class Evidence {}\n", encoding="utf-8")
+            with patch("local_agent.agent.OpenAICompatibleClient", _RewriteVerificationSameClaimIdClient):
+                runtime = AgentRuntime(_config(workspace), show_tool_logs=False)
+                answer = runtime.run("只读分析当前服务 owner，不要修改。")
+
+        self.assertIn("pending confirmation", answer)
+        summary = runtime._last_run_summary["read_only_reviewer"]
+        self.assertEqual(summary["rewrite_verification_rounds"], 2)
+        self.assertEqual(summary["rewrite_acceptances"], 1)
+        verification_payloads = [
+            json.loads(message["content"])
+            for call in _RewriteVerificationSameClaimIdClient.calls
+            for message in call["messages"]
+            if message.get("role") == "user"
+            and "LCA_READ_ONLY_REWRITE_VERIFICATION" in str(message.get("content"))
+        ]
+        self.assertEqual(len(verification_payloads[-1]["original_findings"]), 2)
+        self.assertEqual(
+            [item["claim_id"] for item in verification_payloads[-1]["original_findings"]],
+            ["c001", "c001"],
+        )
+
+    def test_explicit_design_proposal_with_pending_reuse_check_can_pass_review(self) -> None:
+        _ProposalSemanticsClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            (workspace / "src").mkdir()
+            (workspace / "src/Mapper.xml").write_text("<mapper/>\n", encoding="utf-8")
+            with patch("local_agent.agent.OpenAICompatibleClient", _ProposalSemanticsClient):
+                runtime = AgentRuntime(_config(workspace), show_tool_logs=False)
+                answer = runtime.run("基于当前只读证据给出设计建议：数据模型和接口；不能伪装成现有事实。")
+
+        self.assertIn("建议新建", answer)
+        self.assertIn("待确认", answer)
+        self.assertEqual(runtime._last_run_summary["termination_reason"], "final")
+        self.assertEqual(runtime._last_run_summary["read_only_reviewer"]["verdicts"], {"pass": 1})
 
     def test_invented_design_is_rewritten_as_proposal(self) -> None:
         _InventedDesignReviewerClient.calls = []
@@ -4222,8 +4704,8 @@ class ReadOnlyReviewerTests(unittest.TestCase):
                 answer = runtime.run("只读分析当前服务 owner 和影响范围，不要修改文件。")
         self.assertIn("analogous candidate", answer)
         summary = runtime._last_run_summary["read_only_reviewer"]
-        self.assertEqual(summary["triggers"], 1)
-        self.assertEqual(summary["attempts"], 2)
+        self.assertEqual(summary["triggers"], 2)
+        self.assertEqual(summary["attempts"], 3)
         self.assertEqual(summary["schema_failures"], 0)
         self.assertEqual(summary["repairs"], 0)
         self.assertEqual(summary["repair_successes"], 0)
@@ -4232,7 +4714,7 @@ class ReadOnlyReviewerTests(unittest.TestCase):
             call for call in _ReviewerRepairClient.calls
             if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in call["messages"])
         ]
-        self.assertEqual(len(review_calls), 2)
+        self.assertEqual(len(review_calls), 3)
         self.assertTrue(
             all(
                 [tool["function"]["name"] for tool in call["tools"]]
@@ -4282,7 +4764,7 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertEqual(summary["finding_submits"], 1)
         self.assertEqual(summary["rejected_finding_submits"], 1)
         self.assertEqual(summary["rejected_final_submits"], 1)
-        self.assertEqual(summary["final_submits"], 1)
+        self.assertEqual(summary["final_submits"], 2)
         review_calls = [
             call for call in _ReviewerIncrementalRepairLifecycleClient.calls
             if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in call["messages"])
@@ -4327,7 +4809,7 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertEqual(summary["schema_failures"], 0)
         self.assertEqual(summary["repairs"], 0)
         self.assertEqual(summary["rejected_final_submits"], 1)
-        self.assertEqual(summary["verdicts"], {"revise": 1})
+        self.assertEqual(summary["verdicts"], {"revise": 1, "pass": 1})
         self.assertEqual(summary["rewrite_acceptances"], 1)
         self.assertEqual(summary["finding_submits"], 1)
 
@@ -4342,7 +4824,7 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertEqual(summary["finding_submits"], 1)
         self.assertEqual(summary["rejected_finding_submits"], 1)
         self.assertEqual(summary["rejected_final_submits"], 1)
-        self.assertEqual(summary["verdicts"], {"revise": 1})
+        self.assertEqual(summary["verdicts"], {"revise": 1, "pass": 1})
         self.assertEqual(summary["rewrite_acceptances"], 1)
         self.assertEqual(summary["errors"], {})
         review_calls = [
@@ -4427,7 +4909,7 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertEqual(summary["protocol_failures"], 0)
         self.assertEqual(summary["finding_limit_hits"], 1)
         self.assertEqual(summary["output_lifecycle_exhausted"], 0)
-        self.assertEqual(summary["final_submits"], 1)
+        self.assertEqual(summary["final_submits"], 2)
         review_calls = [
             call for call in _ReviewerMixedRejectedTurnThenFinalClient.calls
             if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in call["messages"])
@@ -4464,7 +4946,7 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertEqual(summary["findings"], 8)
         self.assertEqual(summary["rejected_finding_submits"], 1)
         self.assertEqual(summary["finding_limit_hits"], 1)
-        self.assertEqual(summary["final_submits"], 1)
+        self.assertEqual(summary["final_submits"], 2)
 
     def test_pass_after_accepted_finding_is_rejected_until_revise_preserves_it(self) -> None:
         _ReviewerAcceptedFindingThenPassClient.calls = []
@@ -4476,7 +4958,7 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         summary = runtime._last_run_summary["read_only_reviewer"]
         self.assertEqual(summary["finding_submits"], 1)
         self.assertEqual(summary["rejected_final_submits"], 1)
-        self.assertEqual(summary["verdicts"], {"revise": 1})
+        self.assertEqual(summary["verdicts"], {"revise": 1, "pass": 1})
         self.assertEqual(summary["rewrite_acceptances"], 1)
 
     def test_incremental_findings_without_claim_use_claim_id_anchor_binding(self) -> None:
@@ -4491,7 +4973,7 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertEqual(summary["rejected_finding_submits"], 0)
         self.assertEqual(summary["output_lifecycle_exhausted"], 0)
         self.assertEqual(summary["errors"], {})
-        self.assertEqual(summary["verdicts"], {"revise": 1})
+        self.assertEqual(summary["verdicts"], {"revise": 1, "pass": 1})
         self.assertEqual(summary["rewrite_acceptances"], 1)
         review_calls = [
             call for call in _ReviewerNoClaimFindingsClient.calls
@@ -4513,7 +4995,7 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         summary = runtime._last_run_summary["read_only_reviewer"]
         self.assertEqual(summary["finding_submits"], 1)
         self.assertEqual(summary["protocol_failures"], 1)
-        self.assertEqual(summary["verdicts"], {"revise": 1})
+        self.assertEqual(summary["verdicts"], {"revise": 1, "pass": 1})
         self.assertEqual(summary["rewrite_acceptances"], 1)
 
     def test_blocking_rejection_plus_valid_final_in_same_response_cannot_terminal(self) -> None:
@@ -4530,9 +5012,9 @@ class ReadOnlyReviewerTests(unittest.TestCase):
                     answer = runtime.run("只读分析当前服务 owner 和影响范围，不要修改文件。")
             self.assertIn("analogous candidate", answer)
             summary = runtime._last_run_summary["read_only_reviewer"]
-            self.assertEqual(summary["verdicts"], {"revise": 1})
+            self.assertEqual(summary["verdicts"], {"revise": 1, "pass": 1})
             self.assertEqual(summary["rewrite_acceptances"], 1)
-            self.assertEqual(summary["final_submits"], 1)
+            self.assertEqual(summary["final_submits"], 2)
             review_calls = [
                 call for call in client.calls
                 if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in call["messages"])
@@ -4600,7 +5082,7 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertIn("弱相关候选", answer)
         self.assertEqual(runtime._last_run_summary["termination_reason"], "final")
         summary = runtime._last_run_summary["read_only_reviewer"]
-        self.assertEqual(summary["verdicts"], {"unverified": 1})
+        self.assertEqual(summary["verdicts"], {"unverified": 1, "pass": 1})
         self.assertEqual(summary["rewrites"], 1)
         self.assertEqual(summary["rewrite_acceptances"], 1)
         review_calls = [
@@ -4608,7 +5090,7 @@ class ReadOnlyReviewerTests(unittest.TestCase):
             for call in _ReviewerUnverifiedRewriteClient.calls
             if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in call["messages"])
         ]
-        self.assertEqual(len(review_calls), 1)
+        self.assertEqual(len(review_calls), 2)
         self.assertTrue(runtime._run.read_only_review.rewrite_accepted)
         self.assertFalse(runtime._run.read_only_review.rewrite_requested)
         outcome = runtime._read_only_review_phase.review_candidate(answer)
@@ -4752,7 +5234,7 @@ class ReadOnlyReviewerTests(unittest.TestCase):
             for call in _PartialProgressRewriteClient.calls
             if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in call["messages"])
         ]
-        self.assertEqual(len(review_calls), 1)
+        self.assertEqual(len(review_calls), 2)
 
     def test_deterministic_rewrite_after_first_review_does_not_call_second_reviewer(self) -> None:
         _ReviewerLastGateClient.calls = []
@@ -4765,19 +5247,19 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertIn("仅作为设计建议/待确认项", answer)
         self.assertNotIn("已经由 PayServiceImpl 实现", answer)
         summary = runtime._last_run_summary["read_only_reviewer"]
-        self.assertEqual(summary["triggers"], 1)
+        self.assertEqual(summary["triggers"], 2)
         self.assertEqual(summary["rewrites"], 1)
         self.assertEqual(summary["rewrite_acceptances"], 1)
-        self.assertEqual(summary["typed_submits"], 2)
+        self.assertEqual(summary["typed_submits"], 3)
         self.assertEqual(summary["finding_submits"], 1)
-        self.assertEqual(summary["final_submits"], 1)
+        self.assertEqual(summary["final_submits"], 2)
         self.assertEqual(summary["errors"], {})
         review_calls = [
             call
             for call in _ReviewerLastGateClient.calls
             if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in call["messages"])
         ]
-        self.assertEqual(len(review_calls), 1)
+        self.assertEqual(len(review_calls), 2)
         primary_calls = [
             call
             for call in _ReviewerLastGateClient.calls

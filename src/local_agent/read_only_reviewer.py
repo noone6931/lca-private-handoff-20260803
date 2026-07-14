@@ -106,9 +106,13 @@ class ReviewerValidationError(ValueError):
 class ReadOnlyReviewState:
     attempted: bool = False
     rewrite_requested: bool = False
+    transport_rewrite_requested: bool = False
+    transport_rewrite_accepted: bool = False
+    transport_rewrite_exhausted: bool = False
     verdict: str | None = None
     reason: str | None = None
     findings: tuple[ReviewerFinding, ...] = ()
+    rewrite_closure_findings: tuple[ReviewerFinding, ...] = ()
     claim_units: tuple[CandidateClaimUnit, ...] = ()
     document_consistency: DocumentConsistencyAssessment | None = None
     document_consistency_handoff_signature: tuple[tuple[str, ...], ...] = ()
@@ -128,14 +132,19 @@ class ReadOnlyReviewState:
     output_lifecycle_exhausted: bool = False
     rewrite_accepted: bool = False
     rewrite_corrections: int = 0
+    rewrite_verification_rounds: int = 0
     safe_partial_emitted: bool = False
 
     def reset(self) -> None:
         self.attempted = False
         self.rewrite_requested = False
+        self.transport_rewrite_requested = False
+        self.transport_rewrite_accepted = False
+        self.transport_rewrite_exhausted = False
         self.verdict = None
         self.reason = None
         self.findings = ()
+        self.rewrite_closure_findings = ()
         self.claim_units = ()
         self.document_consistency = None
         self.document_consistency_handoff_signature = ()
@@ -155,16 +164,21 @@ class ReadOnlyReviewState:
         self.output_lifecycle_exhausted = False
         self.rewrite_accepted = False
         self.rewrite_corrections = 0
+        self.rewrite_verification_rounds = 0
         self.safe_partial_emitted = False
 
     def snapshot(self) -> dict[str, Any]:
         return {
             "attempted": self.attempted,
             "rewrite_requested": self.rewrite_requested,
+            "transport_rewrite_requested": self.transport_rewrite_requested,
+            "transport_rewrite_accepted": self.transport_rewrite_accepted,
+            "transport_rewrite_exhausted": self.transport_rewrite_exhausted,
             "verdict": self.verdict,
             "reason": self.reason,
             "reviewed_claim_ids": [item.claim_id for item in self.findings],
             "reviewed_claim_count": len({item.claim_id for item in self.findings}),
+            "rewrite_closure_claim_ids": [item.claim_id for item in self.rewrite_closure_findings],
             "document_consistency_stance": self.document_consistency.stance if self.document_consistency else None,
             "rewrite_accepted": self.rewrite_accepted,
             "provider_attempts": self.provider_attempts,
@@ -182,6 +196,7 @@ class ReadOnlyReviewState:
             "invalidated_finding_submits": self.invalidated_finding_submits,
             "output_lifecycle_exhausted": self.output_lifecycle_exhausted,
             "rewrite_corrections": self.rewrite_corrections,
+            "rewrite_verification_rounds": self.rewrite_verification_rounds,
         }
 
 
@@ -290,6 +305,7 @@ Review contract:
 - Requirement facts, repository facts, proposals, and open questions must remain distinct.
 - Some handoff claim_matrix items include claim_ids. Those are claim-scoped evidence excerpts for those candidate claims only; check that the addressed claim_id is a member of claim_ids before using the excerpt, and do not use an image observation to prove a Markdown requirement rule or vice versa.
 - A proposal must not be worded as an existing table, class, endpoint, service, approval flow, numbering prefix, or integration unless the handoff explicitly supports it.
+- A clearly labeled design proposal, suggested new table/class/API, candidate option, or pending-confirmation plan is allowed without proving that every old asset is impossible to reuse. It must stay labeled as proposal/pending confirmation and list the prerequisite reuse/owner checks; report a defect only when the candidate presents the proposed name as current implementation, existing fact, verified owner, or proven absence.
 - When the handoff has no explicit direct binding, do not say a main owner/module judgment is correct or mostly correct. Treat same-domain code as observed or analogous and leave the owner unlocated.
 - For a document-consistency review, do not resolve conflicting document or image observations with an invented workflow, scope, actor, source priority, authoritative source, or precedence rule. Preserve the conflict as unresolved unless the handoff explicitly reconciles it. A candidate that accurately cites both observations, explicitly keeps the conflict unresolved, and presents only labeled options or questions for later confirmation is compliant: submit `pass` with no reported findings. A finding must identify a candidate error such as an unsupported reconciliation, a self-contradictory candidate statement, a missing cited observation, a user-request violation, or a claim that exceeds the handoff; the source materials disagreeing by itself is not a candidate defect. If the only issue is that a source owner must decide how to update source materials, submit `pass` with no reported findings.
 
@@ -318,6 +334,69 @@ Choose revise when the candidate can be corrected using the handoff. Choose unve
         {"role": "system", "content": system},
         {"role": "user", "content": json.dumps(payload, ensure_ascii=False, sort_keys=True)},
     ]
+
+
+def reviewer_rewrite_verification_messages(
+    handoff: ExploreHandoff,
+    claim_units: tuple[CandidateClaimUnit, ...],
+    original_findings: tuple[ReviewerFinding, ...],
+) -> list[dict[str, str]]:
+    """Return reviewer messages for validating a rewritten candidate."""
+
+    messages = reviewer_messages(handoff, claim_units)
+    closure_payload = {
+        "kind": "LCA_READ_ONLY_REWRITE_VERIFICATION",
+        "instruction": (
+            "This is a bounded verification of a primary rewrite after an earlier revise verdict. "
+            "Submit pass only if the rewritten candidate closes the original candidate defects: each addressed original "
+            "claim must now be removed, downgraded to unverified/unlocated/proposal/pending confirmation, or supported by "
+            "the current handoff. If any original blocking defect remains under paraphrase, report revise with findings "
+            "against the rewritten candidate claims."
+        ),
+        "original_findings": [
+            {
+                "finding_ordinal": index,
+                "source_round": "prior_reviewer_round",
+                "claim_id": finding.claim_id,
+                "claim": _clip(finding.claim, 360),
+                "finding_scope": finding.finding_scope,
+                "issue": _clip(finding.issue, 360),
+                "action": _clip(finding.action, 360),
+            }
+            for index, finding in enumerate(original_findings, start=1)
+        ],
+    }
+    messages.append({"role": "user", "content": json.dumps(closure_payload, ensure_ascii=False, sort_keys=True)})
+    return messages
+
+
+def reviewer_transport_rewrite_message(
+    *,
+    handoff: ExploreHandoff,
+    omitted_claim_ids: tuple[str, ...],
+) -> str:
+    """Ask the primary model to compact an over-granular answer before review.
+
+    This is a pre-review transport recovery, not a reviewer verdict rewrite:
+    no findings have been accepted yet and the isolated reviewer still needs to
+    run after the compact answer is produced.
+    """
+
+    omitted_count = len(tuple(dict.fromkeys(omitted_claim_ids)))
+    return (
+        "[Read-only evidence review: bounded transport recovery]\n"
+        "The previous answer was too granular for the isolated evidence reviewer: "
+        f"{omitted_count} reviewed claim(s) had cited evidence that could not fit inside the bounded claim matrix.\n\n"
+        "Rewrite the same answer once, without tools, into a compact reviewable final candidate. Follow these constraints:\n"
+        "- Keep only the user's high-value requested conclusions; merge repeated table rows and duplicate facts.\n"
+        "- Use a small number of precise, already-observed locators per conclusion; prefer shared ranges over one citation per row.\n"
+        "- Do not add new facts, paths, artifacts, owners, lifecycle explanations, source priority, or inferred workflow state.\n"
+        "- Preserve direct observations exactly at their evidence boundary. Visual observations show what is visible; they do not prove author intent, lifecycle, precedence, or role.\n"
+        "- If document/image/prototype observations differ and the handoff has no explicit role/lifecycle/precedence support, state that the discrepancy remains unresolved / pending confirmation. Do not describe either artifact as a mockup, reference-only example, historical version, later/final/offline-filled state, or authoritative source unless an existing handoff item explicitly supports that.\n"
+        "- Suggested compact structure: current scope; later/planned items; key rules; source discrepancies/open confirmations. Use short bullets, not exhaustive row-by-row restatement.\n\n"
+        f"Original user request (mandatory): {handoff.request}\n"
+        "Return only the rewritten candidate answer."
+    )
 
 
 def reviewer_output_tool_schema(

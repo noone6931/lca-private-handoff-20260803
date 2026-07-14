@@ -94,12 +94,13 @@
       "tool_errors": 0
     },
     "read_only_reviewer": {
-      "triggers": 1,
+      "triggers": 2,
       "rewrites": 1,
       "rewrite_acceptances": 1,
-      "typed_submits": 2,
+      "rewrite_verification_rounds": 1,
+      "typed_submits": 3,
       "finding_submits": 1,
-      "final_submits": 1
+      "final_submits": 2
     },
     "max_tool_errors": 0
   },

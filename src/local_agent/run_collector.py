@@ -49,6 +49,11 @@ class RunStats:
     read_only_reviewer_triggers: int = 0
     read_only_reviewer_rewrites: int = 0
     read_only_reviewer_rewrite_acceptances: int = 0
+    read_only_reviewer_rewrite_corrections: int = 0
+    read_only_reviewer_rewrite_verification_rounds: int = 0
+    read_only_reviewer_claim_transport_rewrites: int = 0
+    read_only_reviewer_claim_transport_rewrite_acceptances: int = 0
+    read_only_reviewer_claim_transport_rewrite_exhausted: int = 0
     read_only_reviewer_findings: int = 0
     read_only_reviewer_reviewed_claims: int = 0
     read_only_reviewer_attempts: int = 0
@@ -282,6 +287,26 @@ class RunCollector:
         if self._stats is not None:
             self._stats.read_only_reviewer_rewrite_acceptances += 1
 
+    def record_read_only_review_rewrite_correction(self) -> None:
+        if self._stats is not None:
+            self._stats.read_only_reviewer_rewrite_corrections += 1
+
+    def record_read_only_review_rewrite_verification_round(self) -> None:
+        if self._stats is not None:
+            self._stats.read_only_reviewer_rewrite_verification_rounds += 1
+
+    def record_read_only_review_claim_transport_rewrite(self) -> None:
+        if self._stats is not None:
+            self._stats.read_only_reviewer_claim_transport_rewrites += 1
+
+    def record_read_only_review_claim_transport_rewrite_acceptance(self) -> None:
+        if self._stats is not None:
+            self._stats.read_only_reviewer_claim_transport_rewrite_acceptances += 1
+
+    def record_read_only_review_claim_transport_rewrite_exhausted(self) -> None:
+        if self._stats is not None:
+            self._stats.read_only_reviewer_claim_transport_rewrite_exhausted += 1
+
     def record_read_only_review_error(self, reason: str) -> None:
         if self._stats is not None:
             self._stats.read_only_reviewer_errors[reason] = self._stats.read_only_reviewer_errors.get(reason, 0) + 1
@@ -436,6 +461,11 @@ class RunCollector:
                 "triggers": stats.read_only_reviewer_triggers,
                 "rewrites": stats.read_only_reviewer_rewrites,
                 "rewrite_acceptances": stats.read_only_reviewer_rewrite_acceptances,
+                "rewrite_corrections": stats.read_only_reviewer_rewrite_corrections,
+                "rewrite_verification_rounds": stats.read_only_reviewer_rewrite_verification_rounds,
+                "claim_transport_rewrites": stats.read_only_reviewer_claim_transport_rewrites,
+                "claim_transport_rewrite_acceptances": stats.read_only_reviewer_claim_transport_rewrite_acceptances,
+                "claim_transport_rewrite_exhausted": stats.read_only_reviewer_claim_transport_rewrite_exhausted,
                 "findings": stats.read_only_reviewer_findings,
                 "reviewed_claims": stats.read_only_reviewer_reviewed_claims,
                 "attempts": stats.read_only_reviewer_attempts,
