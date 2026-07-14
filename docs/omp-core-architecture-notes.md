@@ -1,6 +1,6 @@
 # OMP 核心架构笔记
 
-更新时间：2026-07-07
+更新时间：2026-07-15
 
 本文记录当前项目从 oh-my-pi / OMP 源码中确认过、后续可直接复用的架构判断。它不是 OMP 全量源码分析，而是我们实现个人本地编程助手时需要反复引用的核心设计基线。
 
@@ -218,6 +218,27 @@ OMP 的 Agent 主任务不靠 `max_steps` 终止。它把“任务是否继续�
   --allow-dir /path/to/requirements \
   "读取需求文档并在代码项目中实现"
 ```
+
+## T-192~T-196 P12 对照结论
+
+P12 收敛后的 LCA 实现继续采用“本地安全层 + OMP 生命周期原则”的裁剪方案，不能写成 OMP 有同名 evidence taxonomy 或 WorkspaceEvidenceRootProjection。
+
+源码可证实的 OMP 行为：
+
+- `packages/coding-agent/src/session/tool-choice-queue.ts` 管理 queued / in-flight directive 的 served、resolve、reject、requeue；directive head 稳定，动态 requirement identity 由 requirement id / scope 承担。
+- `packages/agent/src/agent-loop.ts` 管 tool result pairing、soft requirement detour suppress、bounded force 和 continuation，偏离的工具调用不会被当作业务观察直接消费。
+- `packages/coding-agent/src/session/agent-session.ts` 在 turn end 按成功、aborted、error 路径 resolve / reject in-flight directive，并持续维护 session / project context。
+- `packages/coding-agent/src/prompts/agents/explore.md` 要求空搜索后更换 pattern、path 或 strategy，不能直接下结论。
+- `packages/coding-agent/src/prompts/tools/glob.md` 与 `packages/coding-agent/src/tools/glob.ts` 把 glob 定位为有界 path inventory，而不是语义 Owner 结论。
+- OMP reviewer / advisor 相关 prompt 与 runtime 把 review/advice 作为任务内的可证实缺陷或 steer，不是要求 Runtime 反复 fresh review 直到模型说 pass 的无限认证循环。
+
+LCA 在 T-192~T-196 的裁剪与增强：
+
+- T-192 将 reviewer finding role、transport projection、document conflict repair 收回 reviewer/document-consistency Owner；这对齐 OMP 的 typed output lifecycle，但 isolated read-only reviewer 是 LCA 为只读交付增加的安全层。
+- T-193 把 rewrite 后的 fresh semantic reviewer 改为 deterministic advisory closure：首次 reviewer 的 accepted findings 必须被 rewrite 删除或实质改变，后续不再允许 moving-goalpost finding 阻塞终止。
+- T-194 / T-195 把 targeted read-only explore directive、root-scoped candidate read、semantic source candidate commit 放回 queue / explore Owner；broad inventory 只提供发现线索，不会自动成为 Owner 证据。
+- T-196 增加 WorkspaceEvidenceRootProjection：`authorized_roots` 仍是权限边界，`code_evidence_roots` 是 owner/design profile 的代码证据根，`cross_root_coverage_roots` 是 reviewer/explore 需要覆盖的矩阵。该投影是 LCA 多授权根模型下的本地增强；OMP 只有 session cwd / project context 和 queue directive 消费明确范围，不能虚构 OMP 有同名投影类。
+- inspection-forbidden 时 projection 为空；Runtime 只调用 facade 装配 typed roots，Queue / Explore 消费投影，不在 `agent.py` 增加 domain guard。
 
 ## OMP 主循环
 
