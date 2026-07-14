@@ -7,6 +7,7 @@ from ..negative_evidence import allowed_tools_for_negative_claims
 from ..negative_evidence import negative_claim_metrics
 from ..negative_evidence import render_negative_existence_issues
 from ..negative_evidence import unsupported_negative_existence_claims
+from ..read_only_root_coverage import read_only_root_coverage
 from ..requirement_evidence import requirement_citation_examples
 from ..requirement_evidence import requirement_fact_citation_issues
 from ..task_contract import is_inspection_forbidden
@@ -431,6 +432,7 @@ def phantom_tool_evidence_claims(
         return ()
     claimed: set[str] = set()
     claimed.update(_unsupported_read_file_path_claims(content, tool_results))
+    claimed.update(_unsupported_root_coverage_claims(content, tool_results))
     for segment in re.split(r"[\n。！？!?;]+", content.lower()):
         if not segment.strip() or not _looks_like_tool_evidence_claim(segment):
             continue
@@ -457,12 +459,12 @@ def _unsupported_read_file_path_claims(content: str, tool_results: list[ToolResu
     for segment in re.split(r"[\n。！？!?;]+", content):
         if not segment.strip():
             continue
-        segment_claims_successful_read = _claims_successful_read(segment)
-        for path, start, end in _path_like_mentions(segment):
+        path_mentions = _path_like_mentions(segment)
+        for path, start, end in path_mentions:
             clause = _path_reference_clause(segment, start, end)
             if _explicit_read_failure_claim(clause) or _future_read_recommendation(clause):
                 continue
-            if not (_claims_successful_read(clause) or segment_claims_successful_read):
+            if not (_claims_successful_read(clause) or _path_list_claims_successful_read(segment, path_mentions, start, end)):
                 continue
             if _path_matches_observed(path, successful_paths):
                 continue
@@ -567,6 +569,51 @@ def _path_reference_clause(segment: str, start: int, end: int) -> str:
     return segment[left + 1 : right]
 
 
+def _path_list_claims_successful_read(
+    segment: str,
+    mentions: tuple[tuple[str, int, int], ...],
+    target_start: int,
+    target_end: int,
+) -> bool:
+    groups: list[list[tuple[str, int, int]]] = []
+    current: list[tuple[str, int, int]] = []
+    previous_end: int | None = None
+    for mention in mentions:
+        if previous_end is None or _path_list_separator(segment[previous_end : mention[1]]):
+            current.append(mention)
+        else:
+            if current:
+                groups.append(current)
+            current = [mention]
+        previous_end = mention[2]
+    if current:
+        groups.append(current)
+    for index, group in enumerate(groups):
+        if len(group) < 2 or not any(start == target_start and end == target_end for _, start, end in group):
+            continue
+        suffix_end = groups[index + 1][0][1] if index + 1 < len(groups) else len(segment)
+        suffix = segment[group[-1][2] : suffix_end]
+        if _claims_successful_read(suffix):
+            return True
+    return False
+
+
+def _path_list_separator(value: str) -> bool:
+    compact = "".join((value or "").split())
+    if not compact:
+        return True
+    while compact:
+        matched = False
+        for token in ("以及", "和", "与", "及", ",", "，", "、", "/", "&"):
+            if compact.startswith(token):
+                compact = compact[len(token) :]
+                matched = True
+                break
+        if not matched:
+            return False
+    return True
+
+
 def _path_matches_observed(claim_path: str, observed_paths: set[str]) -> bool:
     claim_parts = _path_parts(_normalize_evidence_path(claim_path))
     if not claim_parts:
@@ -576,6 +623,69 @@ def _path_matches_observed(claim_path: str, observed_paths: set[str]) -> bool:
         if len(observed_parts) >= len(claim_parts) and observed_parts[-len(claim_parts) :] == claim_parts:
             return True
     return False
+
+
+def _unsupported_root_coverage_claims(content: str, tool_results: list[ToolResultSummary]) -> set[str]:
+    coverages = tuple(item for item in read_only_root_coverage(tool_results) if item.searched_without_direct_read)
+    if not coverages or not content.strip():
+        return set()
+    unsupported: set[str] = set()
+    for segment in re.split(r"[\n。！？!?;]+", content):
+        if not segment.strip():
+            continue
+        lowered = segment.lower()
+        for coverage in coverages:
+            if not _segment_mentions_root_alias(lowered, set(coverage.aliases)):
+                continue
+            if _segment_claims_root_not_inspected(lowered) and not _segment_negates_root_coverage_forbidden_claim(lowered):
+                unsupported.add(f"read_only_explore:{coverage.root}")
+    return unsupported
+
+
+def _segment_mentions_root_alias(segment: str, aliases: set[str]) -> bool:
+    normalized = _normalize_evidence_path(segment)
+    for alias in aliases:
+        if not alias:
+            continue
+        if "/" in alias:
+            if alias in normalized:
+                return True
+            continue
+        if re.search(rf"(?<![a-z0-9_.-]){re.escape(alias)}(?![a-z0-9_.-])", normalized):
+            return True
+    return False
+
+
+def _segment_claims_root_not_inspected(segment: str) -> bool:
+    return bool(
+        re.search(
+            r"(?:out\s+of\s+scope|outside\s+(?:the\s+)?inspection\s+scope|not\s+inspected|not\s+checked|"
+            r"not\s+in\s+(?:the\s+)?inspection\s+scope|未检查|未检视|未纳入检查|不在(?:本轮)?检查范围|"
+            r"不在(?:本轮|本次|此次)?(?:直接)?检查范围内?|不在(?:本轮|本次|此次)?(?:直接)?检视范围内?|"
+            r"未纳入(?:本轮|本次|此次)?(?:直接)?检查范围|未纳入(?:本轮|本次|此次)?(?:直接)?检视范围|"
+            r"范围外|未覆盖)",
+            segment,
+            flags=re.IGNORECASE,
+        )
+    )
+
+
+def _segment_negates_root_coverage_forbidden_claim(segment: str) -> bool:
+    return bool(
+        re.search(
+            r"(?:不能|不要|不得|禁止).{0,48}(?:未检查|未检视|未纳入.{0,12}(?:检查|检视)范围|"
+            r"不在.{0,12}(?:检查|检视)范围|范围外|未覆盖)",
+            segment,
+            flags=re.IGNORECASE,
+        )
+        or re.search(
+            r"(?:do\s+not|don't|must\s+not|should\s+not|cannot|can't|avoid).{0,64}"
+            r"(?:out\s+of\s+scope|outside\s+(?:the\s+)?inspection\s+scope|not\s+inspected|not\s+checked|"
+            r"not\s+in\s+(?:the\s+)?inspection\s+scope)",
+            segment,
+            flags=re.IGNORECASE,
+        )
+    )
 
 
 def _path_parts(path: str) -> tuple[str, ...]:

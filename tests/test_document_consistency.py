@@ -481,6 +481,32 @@ class DocumentConsistencyTests(unittest.TestCase):
                 assessment,
                 (
                     {
+                        "claim": "Automatic sending is current scope.",
+                        "issue": "Requirement says this is later phase.",
+                        "action": "Classify automatic sending as later.",
+                    },
+                ),
+            ),
+            None,
+        )
+        self.assertEqual(
+            validate_document_consistency_findings(
+                assessment,
+                (
+                    {
+                        "claim": "自动发送属于本期范围。",
+                        "issue": "需求说明自动发送是后期规划。",
+                        "action": "将自动发送降级为后期规划。",
+                    },
+                ),
+            ),
+            None,
+        )
+        self.assertEqual(
+            validate_document_consistency_findings(
+                assessment,
+                (
+                    {
                         "claim": "example image conflict remains unresolved",
                         "issue": "candidate invented an image lifecycle",
                         "action": "删除“图片属于历史示例”这一无证据推断，并保留冲突未消解。",

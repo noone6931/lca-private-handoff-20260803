@@ -256,7 +256,18 @@ class EvidenceVerificationLifecycle:
             max_events=MAX_SESSION_EVIDENCE_JOURNAL_EVENTS,
         )
         entries = [payload["entry"] for payload in payloads if isinstance(payload.get("entry"), Mapping)]
-        runtime._session_evidence.restore_entries(entries)
+        restored = runtime._session_evidence.restore_entries(entries)
+        removed = runtime._session_evidence.revalidate_authorized_roots(
+            workspace_revision=runtime._workspace_context.revision,
+            authorized_roots=runtime._workspace_context.all_roots,
+        )
+        if removed:
+            self.record_session_evidence_event(
+                "invalidated",
+                {"reason": "restore_authorization_revalidation", "count": removed},
+            )
+        if restored and removed:
+            runtime._run.collector.record_session_evidence_invalidation(removed)
 
     def hydrate_session_evidence(self, prompt: str) -> None:
         runtime = self._runtime

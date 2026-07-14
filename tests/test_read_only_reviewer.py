@@ -3435,6 +3435,49 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertIn("without inventing", repair[-1]["content"])
         self.assertIn("historical/current role", repair[-1]["content"])
 
+    def test_document_consistency_preserves_unrelated_scope_findings(self) -> None:
+        contract = generate_requirement_contract(
+            "只根据需求 Markdown、原型 HTML 和示例图分析需求，不要检查代码。"
+        )
+        handoff = build_explore_handoff(
+            request="compare the requested documents",
+            contract=contract,
+            requirement_evidence=(),
+            source_evidence=(),
+            records=(),
+            tool_results=(
+                type("Tool", (), {"name": "read_file", "content": "A says blank.", "path": "policy.md", "is_error": False, "useless": False, "metadata": {}})(),
+                type("Tool", (), {"name": "inspect_image", "content": "B shows a value.", "path": "example.png", "is_error": False, "useless": False, "metadata": {}})(),
+            ),
+        )
+        units = candidate_claim_units("Automatic sending is current scope.")
+        result = parse_reviewer_payload(
+            {
+                "verdict": "revise",
+                "confidence": 0.8,
+                "findings": [
+                    {
+                        "claim_id": "c001",
+                        "finding_scope": "candidate_defect",
+                        "issue": "Requirement says this is later phase.",
+                        "action": "Classify automatic sending as later.",
+                    }
+                ],
+                "reason": "scope correction",
+                "document_consistency": {
+                    "stance": "reported_unresolved",
+                    "conflict_evidence_ids": ["e001", "e002"],
+                    "supporting_evidence_ids": [],
+                },
+            },
+            claim_units=units,
+            document_consistency=True,
+            evidence_ids=handoff.evidence_ids,
+        )
+
+        self.assertEqual(result.verdict, "revise")
+        self.assertEqual(result.findings[0].action, "Classify automatic sending as later.")
+
     def test_source_material_gap_finding_requires_repair_not_silent_normalization(self) -> None:
         units = candidate_claim_units("The document and image are not consistent; artifact role remains unresolved.")
         with self.assertRaises(ReviewerValidationError) as raised:

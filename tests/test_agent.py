@@ -3377,8 +3377,70 @@ class AgentRuntimeTests(unittest.TestCase):
             ),
             ("read_file:CloudPayConvert.java", "read_file:ResponseBillTx.java"),
         )
+        self.assertEqual(
+            phantom_tool_evidence_claims("已读取 Foo.java，并建议修改 Bar.java。", [success]),
+            (),
+        )
         self.assertEqual(phantom_tool_evidence_claims("Foo.java 读取失败，不能确认。", [failed]), ())
         self.assertEqual(phantom_tool_evidence_claims("建议后续读取 Foo.java。", []), ())
+
+    def test_tool_usage_evidence_checks_attempted_root_coverage_claims(self) -> None:
+        backend_search = ToolResultSummary(
+            "search_code",
+            "No matches.",
+            useless=True,
+            metadata={
+                "evidence_root": "/workspace/backend",
+                "evidence_root_label": "backend",
+                "negative_evidence_type": "content_no_match",
+            },
+        )
+        context = FinalAnswerContext(
+            request="请定位前后端 owner。",
+            content="backend was outside inspection scope, so no conclusion is available.",
+            messages=[],
+            run_start_index=0,
+            requirement_contract=generate_requirement_contract("请定位前后端 owner。"),
+            tool_results=[backend_search],
+            read_file_evidence_paths=[],
+            source_evidence=[],
+            open_todos=[],
+            is_code_implementation_request=False,
+            steer_counts={},
+        )
+
+        decision = ToolUsageEvidenceSteerer(max_steers=2).decide(context)
+
+        self.assertEqual(
+            phantom_tool_evidence_claims("backend was outside inspection scope.", [backend_search]),
+            ("read_only_explore:/workspace/backend",),
+        )
+        self.assertEqual(
+            phantom_tool_evidence_claims(
+                "backend was searched; no direct read succeeded, so owner remains unlocated.",
+                [backend_search],
+            ),
+            (),
+        )
+        for forbidden in (
+            "backend was searched, but backend was outside inspection scope.",
+            "backend was not inspected; owner remains unlocated.",
+            "backend 不在此次检查范围内。",
+            "backend 未纳入本次直接检查范围。",
+        ):
+            with self.subTest(forbidden=forbidden):
+                self.assertEqual(
+                    phantom_tool_evidence_claims(forbidden, [backend_search]),
+                    ("read_only_explore:/workspace/backend",),
+                )
+        self.assertEqual(
+            phantom_tool_evidence_claims("未检查 backend。", [backend_search]),
+            ("read_only_explore:/workspace/backend",),
+        )
+        self.assertEqual(phantom_tool_evidence_claims("不能说 backend 未检查。", [backend_search]), ())
+        self.assertIsNotNone(decision)
+        self.assertEqual(decision.kind, "tool_usage_evidence")
+        self.assertIn("read_only_explore:/workspace/backend", decision.message)
 
     def test_bare_observed_no_match_cannot_finalize_without_discovery_evidence(self) -> None:
         _BareObservedNoMatchClient.calls = []

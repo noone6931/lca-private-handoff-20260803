@@ -95,6 +95,60 @@ class SessionEvidenceCacheTests(unittest.TestCase):
             resumed = AgentRuntime(allowed, show_tool_logs=False, session_id=session_id)
             self.assertEqual(resumed._session_evidence.snapshot()["entries"], 1)
 
+    def test_named_session_restore_revalidates_latest_authorized_roots(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp).resolve()
+            primary = base / "primary"
+            extra = base / "extra"
+            primary.mkdir()
+            extra.mkdir()
+            primary_source = primary / "requirements.md"
+            extra_source = extra / "extra.md"
+            primary_source.write_text("primary requirement continuity\n", encoding="utf-8")
+            extra_source.write_text("secondaryrootxyz evidence should not revive\n", encoding="utf-8")
+            first = AgentRuntime(_config(primary), show_tool_logs=False)
+
+            def capture(runtime: AgentRuntime, source: Path, request: str) -> None:
+                runtime._run.run_id = "run-journal-roots"
+                runtime._run.current_user_request = request
+                result = ToolResult(source.read_text(encoding="utf-8"))
+                runtime._evidence_phase.record_tool_choice_result("read_file", {"path": str(source)}, result)
+                runtime._evidence_phase.record_read_file_evidence("read_file", {"path": str(source)}, result)
+                runtime._evidence_phase.record_tool_evidence("read_file", {"path": str(source)}, result)
+
+            capture(first, primary_source, "primary continuity")
+            first.add_workspace_root(str(extra))
+            capture(first, extra_source, "secondaryrootxyz continuity")
+            self.assertEqual(first._session_evidence.snapshot()["entries"], 2)
+            first.remove_workspace_root(str(extra))
+            self.assertEqual(first._session_evidence.snapshot()["entries"], 1)
+            first.add_workspace_root(str(extra))
+            capture(first, extra_source, "secondaryrootxyz continuity reset")
+            self.assertEqual(first._session_evidence.snapshot()["entries"], 2)
+            first.reset_workspace_roots()
+            self.assertEqual(first._session_evidence.snapshot()["entries"], 1)
+
+            resumed = AgentRuntime(_config(primary), show_tool_logs=False, session_id=first._session.session_id)
+            primary_reuse = resumed._session_evidence.reuse_for_request(
+                prompt="primary continuity",
+                workspace_revision=resumed._workspace_context.revision,
+                authorized_roots=resumed._workspace_context.all_roots,
+            )
+            extra_reuse = resumed._session_evidence.reuse_for_request(
+                prompt="secondaryrootxyz",
+                workspace_revision=resumed._workspace_context.revision,
+                authorized_roots=resumed._workspace_context.all_roots,
+            )
+
+        self.assertEqual(resumed._session_evidence.snapshot()["entries"], 1)
+        restored_paths = tuple(resumed._session_evidence.snapshot()["paths"])
+        self.assertEqual(restored_paths, (str(primary_source),))
+        self.assertTrue(all(str(primary) in path for path in primary_reuse.reused_paths))
+        self.assertNotIn(str(extra_source), restored_paths)
+        self.assertTrue(all(entry.root == str(primary) for entry in primary_reuse.entries))
+        self.assertTrue(all(entry.root == str(primary) for entry in extra_reuse.entries))
+        self.assertEqual(primary_reuse.hit_count, 1)
+
     def test_serialized_entry_is_revalidated_after_restore(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp).resolve()

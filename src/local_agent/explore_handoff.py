@@ -20,6 +20,7 @@ from .requirement_evidence import document_locator_excerpt
 from .requirement_evidence import parse_document_line_range
 from .requirement_evidence import parse_document_locators
 from .requirement_evidence import RequirementEvidence
+from .read_only_root_coverage import read_only_root_coverage
 from .steering.final_answer import SourceEvidence
 from .task_contract import RequirementContract
 from .tool_observation import ToolResultSummary
@@ -241,6 +242,7 @@ def build_explore_handoff(
         for item in results
         if item.name == "read_only_explore" and item.metadata.get("read_only_explore_incomplete")
     ]
+    coverage_items = _read_only_explore_coverage_items(results)
     record_items = _bounded_per_root(
         (
             ClaimEvidenceItem(
@@ -300,6 +302,7 @@ def build_explore_handoff(
             *precise_results,
             *source_items,
             *requirements,
+            *coverage_items,
             *incomplete_root_items,
             *error_results,
             *record_items,
@@ -557,6 +560,38 @@ def _line_locator_summary_chunks(
     if current:
         chunks.append(_render_line_summary_chunk(current))
     return tuple(chunks)
+
+
+def _read_only_explore_coverage_items(results: Iterable[ToolResultSummary]) -> list[ClaimEvidenceItem]:
+    items: list[ClaimEvidenceItem] = []
+    for coverage in read_only_root_coverage(tuple(results)):
+        if not coverage.attempted_without_direct_read:
+            continue
+        status = (
+            "searched/no direct read/unlocated"
+            if coverage.successful_searches > 0
+            else "attempted/no direct read/unlocated"
+        )
+        summary = (
+            f"Bounded root coverage: {status}. "
+            f"search_attempts={coverage.search_attempts}; successful_searches={coverage.successful_searches}; "
+            f"no_match={coverage.no_match}; "
+            f"failures={coverage.failures}; suppressed={coverage.suppressed}. "
+            "This root was attempted in the authorized scope, but no successful read_file observation covered it."
+        )
+        items.append(
+            ClaimEvidenceItem(
+                "unlocated",
+                "read_only_explore",
+                coverage.root,
+                coverage.root,
+                "root_local",
+                "incomplete",
+                summary,
+                identity_path=coverage.root,
+            )
+        )
+    return items
 
 
 def _summary_rows_from_excerpt(excerpt: str) -> tuple[tuple[int, str], ...]:

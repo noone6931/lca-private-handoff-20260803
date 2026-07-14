@@ -95,8 +95,11 @@ def validate_document_consistency_findings(
     if assessment.stance == "explicitly_supported_reconciliation":
         return None
     for finding in findings:
+        claim = str(finding.get("claim") or "")
         issue = str(finding.get("issue") or "")
         action = str(finding.get("action") or "")
+        if not _finding_targets_artifact_conflict(claim, issue):
+            continue
         if _finding_reconciles_unresolved_conflict(issue, action):
             return "document_consistency_finding_reconciles_conflict"
     return None
@@ -488,3 +491,16 @@ def _finding_reconciles_unresolved_conflict(issue: str, action: str) -> bool:
 
 def _finding_instruction_clauses(value: str) -> tuple[str, ...]:
     return tuple(piece.strip() for piece in re.split(r"[。；;，,、\n]+", " ".join((value or "").split())) if piece.strip())
+
+
+def _finding_targets_artifact_conflict(claim: str, issue: str) -> bool:
+    text = "。".join(part for part in (claim, issue) if part)
+    if not text.strip():
+        return False
+    if candidate_reconciliation_stance(text) in {"reported_unresolved", "conditional_reconciliation", "asserted_reconciled"}:
+        return True
+    return any(
+        _EXPLICIT_CONFLICT_MARKER.search(clause)
+        and (_TWO_ARTIFACT_RELATION_MARKER.search(clause) or _artifact_families(clause))
+        for clause in _candidate_clauses(text)
+    )
