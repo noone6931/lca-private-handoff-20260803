@@ -3751,9 +3751,15 @@ class ReadOnlyReviewerTests(unittest.TestCase):
             tool_results=(),
         )
 
+        claim_units = candidate_claim_units(
+            "## 源码当前事实\n"
+            "1. **后端 Processor.java**\n"
+            "- 当前没有找到任何结算实现。\n"
+        )
         message = reviewer_transport_rewrite_message(
             handoff=handoff,
-            omitted_claim_ids=("c001",),
+            omitted_claim_ids=tuple(unit.claim_id for unit in claim_units),
+            claim_units=claim_units,
         )
 
         self.assertIn("Treat failed guessed paths in other roots only as scoped inspection failures", message)
@@ -3763,6 +3769,10 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertIn("Recount asserted totals from the cited excerpt", message)
         self.assertIn("handler reference is not a method or function definition", message)
         self.assertIn("Do not state a derived item/variable/field/method count", message)
+        self.assertIn("Exact candidate claims that failed transport", message)
+        self.assertIn("后端 Processor.java", message)
+        self.assertIn("当前没有找到任何结算实现", message)
+        self.assertIn("converting a presentation-only label into a Markdown heading", message)
 
     def test_rewrite_treats_reviewer_action_as_advisory_not_source_evidence(self) -> None:
         result = ReviewerResult(

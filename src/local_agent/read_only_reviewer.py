@@ -440,6 +440,7 @@ def reviewer_transport_rewrite_message(
     *,
     handoff: ExploreHandoff,
     omitted_claim_ids: tuple[str, ...],
+    claim_units: tuple[CandidateClaimUnit, ...] = (),
 ) -> str:
     """Ask the primary model to compact an over-granular answer before review.
 
@@ -465,6 +466,19 @@ def reviewer_transport_rewrite_message(
         if source_paths
         else ""
     )
+    omitted = set(omitted_claim_ids)
+    omitted_claims = tuple(unit for unit in claim_units if unit.claim_id in omitted)[:16]
+    omitted_claim_context = (
+        "\n- Exact candidate claims that failed transport. Resolve every listed item by adding a supported "
+        "path-bound locator on that claim, converting a presentation-only label into a Markdown heading, or "
+        "removing/downgrading the unsupported claim:\n"
+        + "\n".join(
+            f"  - {unit.claim_id} [{unit.section_context or 'unsectioned'}]: {_clip(unit.text, 360)}"
+            for unit in omitted_claims
+        )
+        if omitted_claims
+        else ""
+    )
     return (
         "[Read-only evidence review: bounded transport recovery]\n"
         "The previous answer was not fully transportable to the isolated evidence reviewer: "
@@ -475,6 +489,7 @@ def reviewer_transport_rewrite_message(
         "- Every current repository/source fact must cite an already-read source with a precise path-bound line or narrow line range. "
         "Remove or explicitly downgrade a source claim when the existing evidence cannot support such a locator.\n"
         f"{source_path_context}\n"
+        f"{omitted_claim_context}\n"
         "- Use a small number of precise, already-observed locators per conclusion; prefer narrow shared ranges over one citation per row.\n"
         "- Do not add new facts, paths, artifacts, owners, lifecycle explanations, source priority, or inferred workflow state.\n"
         "- Treat failed guessed paths in other roots only as scoped inspection failures. Do not infer that roots are branches, versions, mirrors, paired repositories, or expected to contain the same relative paths; omit irrelevant failed guesses from the design answer.\n"

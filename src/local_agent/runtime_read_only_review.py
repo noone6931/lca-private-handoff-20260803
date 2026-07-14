@@ -94,7 +94,7 @@ class ReadOnlyReviewPhase:
         handoff = self._handoff(candidate, claim_units=claim_units)
         omitted_claim_ids = set(getattr(handoff, "transport_omitted_claim_ids", ()) or ())
         if omitted_claim_ids:
-            return self._request_transport_rewrite_or_unverified(handoff, omitted_claim_ids)
+            return self._request_transport_rewrite_or_unverified(handoff, omitted_claim_ids, claim_units)
         skip_reason = runtime._run.finalization_rewrite_skip_reason()
         if skip_reason is not None:
             return self._unverified("deadline_or_finalization_budget", skip_reason, handoff=handoff)
@@ -183,7 +183,12 @@ class ReadOnlyReviewPhase:
             rewrite_message=reviewer_rewrite_message(result, profile=contract.read_only_review_profile, handoff=handoff),
         )
 
-    def _request_transport_rewrite_or_unverified(self, handoff: Any, omitted_claim_ids: set[str]) -> ReviewerPhaseOutcome:
+    def _request_transport_rewrite_or_unverified(
+        self,
+        handoff: Any,
+        omitted_claim_ids: set[str],
+        claim_units: tuple[Any, ...],
+    ) -> ReviewerPhaseOutcome:
         runtime = self._runtime
         state = runtime._run.read_only_review
         detail = f"omitted_claims={len(omitted_claim_ids)}"
@@ -210,6 +215,7 @@ class ReadOnlyReviewPhase:
                     rewrite_message=reviewer_transport_rewrite_message(
                         handoff=handoff,
                         omitted_claim_ids=tuple(sorted(omitted_claim_ids)),
+                        claim_units=claim_units,
                     ),
                     reason="claim_evidence_transport_incomplete",
                 )
@@ -262,7 +268,7 @@ class ReadOnlyReviewPhase:
         handoff = self._handoff(candidate, claim_units=claim_units)
         omitted_claim_ids = set(getattr(handoff, "transport_omitted_claim_ids", ()) or ())
         if omitted_claim_ids:
-            return self._request_transport_rewrite_or_unverified(handoff, omitted_claim_ids)
+            return self._request_transport_rewrite_or_unverified(handoff, omitted_claim_ids, claim_units)
         self._accept_transport_rewrite(handoff, claim_units)
         artifact = classify_provider_content_artifact(runtime._config.provider, candidate)
         if artifact is not None:
