@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Literal, Mapping
 
 from .document_consistency import DocumentConsistencyAssessment
@@ -39,9 +39,15 @@ class CandidateClaimUnit:
     claim_id: str
     text: str
     locator_context: str = ""
+    section_context: str = ""
 
     def to_dict(self) -> dict[str, str]:
-        return {"claim_id": self.claim_id, "text": self.text}
+        payload = {"claim_id": self.claim_id, "text": self.text}
+        if self.section_context:
+            payload["section_context"] = self.section_context
+        if self.locator_context:
+            payload["locator_context"] = self.locator_context
+        return payload
 
 
 @dataclass(frozen=True)
@@ -243,9 +249,21 @@ def _extract_candidate_claim_units(candidate: str) -> tuple[tuple[CandidateClaim
     issues: list[CandidateClaimProjectionIssue] = []
     paragraph: list[str] = []
     locator_context = ""
+    section_context = ""
+    pending_structural_group: list[int] = []
 
     def record_issue(code: str, detail: str = "") -> None:
         issues.append(CandidateClaimProjectionIssue(code, detail))
+
+    def append_unit(unit: str) -> None:
+        indexed.append(CandidateClaimUnit(f"c{len(indexed) + 1:03d}", unit, locator_context, section_context))
+
+    def apply_locator_to_pending_group(context: str) -> None:
+        for item_index in pending_structural_group:
+            unit = indexed[item_index]
+            if not unit.locator_context:
+                indexed[item_index] = replace(unit, locator_context=context)
+        pending_structural_group.clear()
 
     def flush_paragraph() -> None:
         if not paragraph:
@@ -253,11 +271,15 @@ def _extract_candidate_claim_units(candidate: str) -> tuple[tuple[CandidateClaim
             return
         text = "\n".join(paragraph).strip()
         paragraph.clear()
+        if _is_citation_only_context(text):
+            apply_locator_to_pending_group(text)
+            return
+        pending_structural_group.clear()
         units, overflow = _paragraph_units(text)
         if overflow:
             record_issue("candidate_claim_projection_overflow", "paragraph")
         for sentence in units:
-            indexed.append(CandidateClaimUnit(f"c{len(indexed) + 1:03d}", sentence, locator_context))
+            append_unit(sentence)
 
     raw_lines = (candidate or "").splitlines()
     for index, raw_line in enumerate(raw_lines):
@@ -267,10 +289,19 @@ def _extract_candidate_claim_units(candidate: str) -> tuple[tuple[CandidateClaim
             continue
         if _is_markdown_horizontal_rule(line):
             flush_paragraph()
+            pending_structural_group.clear()
             continue
         if _is_markdown_heading(line):
             flush_paragraph()
+            section_context = _heading_context(line)
+            pending_structural_group.clear()
             locator_context = line if _line_has_path_bound_locator(line) else ""
+            if locator_context:
+                pending_structural_group.clear()
+            continue
+        if _is_citation_only_context(line):
+            flush_paragraph()
+            apply_locator_to_pending_group(line)
             continue
         structural = line.startswith(("- ", "* ", "+ ", "> ")) or _is_ordered_list_item(line) or _is_table_row(line)
         if structural:
@@ -282,12 +313,15 @@ def _extract_candidate_claim_units(candidate: str) -> tuple[tuple[CandidateClaim
                     if overflow:
                         record_issue("candidate_claim_projection_overflow", "table_row" if _is_table_row(line) else "structural_line")
                     for unit in units:
-                        indexed.append(CandidateClaimUnit(f"c{len(indexed) + 1:03d}", unit, locator_context))
+                        before = len(indexed)
+                        append_unit(unit)
+                        pending_structural_group.append(before)
             continue
+        pending_structural_group.clear()
         paragraph.append(raw_line)
     flush_paragraph()
     if not indexed and candidate.strip() and not issues:
-        indexed.append(CandidateClaimUnit("c001", _clip_unit(candidate)))
+        indexed.append(CandidateClaimUnit("c001", _clip_unit(candidate), section_context=section_context))
     return _sample_claim_units(indexed), tuple(issues)
 
 
@@ -1118,6 +1152,12 @@ def _is_markdown_heading(line: str) -> bool:
     return bool(re.fullmatch(r"#{1,6}\s+\S.*", line))
 
 
+def _heading_context(line: str) -> str:
+    value = re.sub(r"^#{1,6}\s+", "", line or "").strip()
+    value = re.sub(r"\s+", " ", value)
+    return value[:180]
+
+
 def _is_markdown_horizontal_rule(line: str) -> bool:
     return bool(re.fullmatch(r"(?:-{3,}|\*{3,}|_{3,})", line.replace(" ", "")))
 
@@ -1144,6 +1184,28 @@ def _is_presentation_list_container_label(line: str) -> bool:
 
 def _line_has_path_bound_locator(line: str) -> bool:
     return bool(re.search(r"\.(?:md|markdown|html?|png|jpe?g|gif|webp)\s*[:#（(；;，, ]", line, flags=re.IGNORECASE))
+
+
+def _is_citation_only_context(line: str) -> bool:
+    if not _line_has_path_bound_locator(line):
+        return False
+    remainder = re.sub(
+        r"`?[\w./\\ \-\u4e00-\u9fff]+?\.(?:md|markdown|html?|png|jpe?g|gif|webp)"
+        r"(?:\s*[:#]\s*L?\d+(?:\s*[-–]\s*L?\d+)?|\s*第?\d+(?:\.\d+)*节)?`?",
+        "",
+        line,
+        flags=re.IGNORECASE,
+    )
+    remainder = re.sub(r"[\s()[\]（）【】《》:：;；,，.。、\-–#L\d]+", "", remainder, flags=re.IGNORECASE)
+    if not remainder:
+        return True
+    remainder = re.sub(
+        r"(?:证据|引用|来源|参考|见|详见|evidence|source|sources|citation|citations|ref|reference|see|line|lines)",
+        "",
+        remainder,
+        flags=re.IGNORECASE,
+    )
+    return not remainder.strip()
 
 
 def _sample_claim_units(indexed: list[CandidateClaimUnit]) -> tuple[CandidateClaimUnit, ...]:

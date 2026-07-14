@@ -54,12 +54,15 @@ class RuntimeToolChoiceQueuePhase:
         runtime._run.tool_choice_required_glob_roots = set(decision.required_glob_roots) or None
         runtime._tool_choice_directive_phase.begin_decision(decision)
         if decision.force_final_answer_without_tools:
-            self._append_tool_choice_message(decision, force_final=True)
-            if not runtime._queue_forced_final_answer(kind=decision.rule_id or "tool_choice_queue"):
-                runtime._run.block_unverified_final_answer(
-                    kind=decision.rule_id or "tool_choice_queue",
-                    reason=runtime._final_answer_rewrite_skip_reason() or "continuation_limit",
-                )
+            signature = tool_choice_steering_signature(decision, len(runtime._run.tool_choice_results))
+            if signature not in runtime._run.tool_choice_force_final_signatures:
+                runtime._run.tool_choice_force_final_signatures.add(signature)
+                self._append_tool_choice_message(decision, force_final=True)
+                if not runtime._queue_forced_final_answer(kind=decision.rule_id or "tool_choice_queue"):
+                    runtime._run.block_unverified_final_answer(
+                        kind=decision.rule_id or "tool_choice_queue",
+                        reason=runtime._final_answer_rewrite_skip_reason() or "continuation_limit",
+                    )
             return None
         if decision.should_stop:
             runtime._session.append(

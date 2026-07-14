@@ -287,8 +287,13 @@ def validate_document_consistency_assessment(
     conflicts = tuple(by_id[item_id] for item_id in assessment.conflict_evidence_ids)
     if any(not _is_document_observation(item) for item in conflicts):
         return "document_conflict_evidence_not_observation"
-    candidate_stance = candidate_reconciliation_stance(candidate)
-    if (assessment.conflict_evidence_ids or candidate_stance is not None) and _distinct_artifact_count(conflicts) < 2:
+    global_candidate_stance = candidate_reconciliation_stance(candidate)
+    candidate_stance = (
+        candidate_reconciliation_stance_for_conflict(candidate, conflicts, handoff.items)
+        if conflicts
+        else global_candidate_stance
+    )
+    if (assessment.conflict_evidence_ids or global_candidate_stance is not None) and _distinct_artifact_count(conflicts) < 2:
         return "document_conflict_evidence_insufficient"
     if assessment.stance in {"conditional_reconciliation", "asserted_reconciled", "explicitly_supported_reconciliation"}:
         if _distinct_artifact_count(conflicts) < 2:
@@ -407,10 +412,52 @@ def explicit_reconciliation_excerpt(value: str) -> str | None:
 def candidate_reconciliation_stance(candidate: str) -> DocumentReconciliationStance | None:
     """Classify only explicit reconciliation clauses, never artifact business content."""
 
+    return _candidate_reconciliation_stance(candidate, clause_filter=lambda _clause: True)
+
+
+def candidate_reconciliation_stance_for_conflict(
+    candidate: str,
+    conflict_items: Iterable["ClaimEvidenceItem"],
+    all_items: Iterable["ClaimEvidenceItem"] = (),
+) -> DocumentReconciliationStance | None:
+    """Classify reconciliation only when scoped to the reviewer-cited artifact pair."""
+
+    conflicts = tuple(conflict_items)
+    if _distinct_artifact_count(conflicts) < 2:
+        return candidate_reconciliation_stance(candidate)
+    all_observations = tuple(item for item in all_items if _is_document_observation(item))
+    comparable_items = _comparable_document_observations(all_observations, conflicts)
+    return _candidate_reconciliation_stance(
+        candidate,
+        clause_filter=lambda clause: _clause_scopes_to_conflict_pair(clause, conflicts, comparable_items),
+        contextual_clause_filter=lambda clause: _context_uniquely_scopes_to_conflict_pair(
+            clause,
+            conflicts,
+            comparable_items,
+        ),
+    )
+
+
+def _candidate_reconciliation_stance(
+    candidate: str,
+    *,
+    clause_filter: Any,
+    contextual_clause_filter: Any | None = None,
+) -> DocumentReconciliationStance | None:
     clauses = _candidate_clauses(candidate)
     saw_conditional = False
     saw_unresolved = False
     for index, clause in enumerate(clauses):
+        if not clause_filter(clause):
+            prior_context = "。".join(clauses[max(0, index - 2) : index])
+            contextual_clause = "。".join((*clauses[max(0, index - 2) : index], clause))
+            if (
+                contextual_clause_filter is None
+                or not _ANAPHORIC_ARTIFACT_RELATION_MARKER.search(clause)
+                or not prior_context
+                or not contextual_clause_filter(contextual_clause)
+            ):
+                continue
         assertions = _positive_reconciliation_matches(clause)
         if not assertions:
             if _EXPLICIT_CONFLICT_MARKER.search(clause):
@@ -427,6 +474,136 @@ def candidate_reconciliation_stance(candidate: str) -> DocumentReconciliationSta
     if saw_conditional:
         return "conditional_reconciliation"
     return "reported_unresolved" if saw_unresolved else None
+
+
+def _clause_scopes_to_conflict_pair(
+    clause: str,
+    conflict_items: tuple["ClaimEvidenceItem", ...],
+    all_items: tuple["ClaimEvidenceItem", ...],
+) -> bool:
+    if _broad_artifact_relation(clause):
+        return True
+    comparable_items = _comparable_document_observations(all_items, conflict_items)
+    mentioned = tuple(item for item in conflict_items if _clause_mentions_artifact(clause, item, conflict_items))
+    if _distinct_artifact_count(mentioned) >= 2:
+        return True
+    mentioned_comparable = tuple(
+        item for item in comparable_items if _clause_mentions_artifact(clause, item, comparable_items)
+    )
+    if (
+        not mentioned_comparable
+        and _GENERIC_ARTIFACT_DIFFERENCE_MARKER.search(clause)
+        and _EXPLICIT_CONFLICT_MARKER.search(clause)
+        and _UNRESOLVED_MARKER.search(clause)
+    ):
+        # A candidate that leaves the material differences broadly unresolved
+        # necessarily leaves every reviewer-cited pair unresolved. Keep this
+        # one-way: a generic reconciliation still needs an explicit pair or a
+        # genuinely broad all-artifact relation.
+        return True
+    if _TWO_ARTIFACT_RELATION_MARKER.search(clause) and _distinct_artifact_count(conflict_items) == 2:
+        specific_items = mentioned_comparable
+        if specific_items:
+            return _distinct_artifact_count(tuple(item for item in specific_items if item in conflict_items)) >= 2
+        return _distinct_artifact_count(comparable_items) == 2
+    if _ANAPHORIC_ARTIFACT_RELATION_MARKER.search(clause):
+        return _distinct_artifact_count(comparable_items) == 2
+    return False
+
+
+def _context_uniquely_scopes_to_conflict_pair(
+    clause: str,
+    conflict_items: tuple["ClaimEvidenceItem", ...],
+    all_items: tuple["ClaimEvidenceItem", ...],
+) -> bool:
+    comparable_items = _comparable_document_observations(all_items, conflict_items)
+    mentioned = tuple(item for item in comparable_items if _clause_mentions_artifact(clause, item, comparable_items))
+    mentioned_identities = {_document_artifact_identity(item) for item in mentioned}
+    conflict_identities = {_document_artifact_identity(item) for item in conflict_items}
+    return len(mentioned_identities) == 2 and mentioned_identities == conflict_identities
+
+
+def _comparable_document_observations(
+    all_items: tuple["ClaimEvidenceItem", ...],
+    conflict_items: tuple["ClaimEvidenceItem", ...],
+) -> tuple["ClaimEvidenceItem", ...]:
+    observations = tuple(
+        item
+        for item in all_items
+        if _is_document_observation(item) and item.classification != "document_reconciliation_support"
+    )
+    return observations or conflict_items
+
+
+def _broad_artifact_relation(clause: str) -> bool:
+    return bool(
+        re.search(
+            r"(?:\b(?:all|every|all\s+three)\b.{0,40}\b(?:artifacts|sources|documents|materials)\b|"
+            r"\b(?:between|among)\b.{0,24}\b(?:artifacts|sources|documents|materials)\b|"
+            r"\b(?:the\s+)?(?:artifacts|sources|documents|materials)\b.{0,60}"
+            r"\b(?:consistent|reconciled|resolved|aligned|no\s+conflict|not\s+(?:a\s+)?conflict)\b|"
+            r"(?:所有|全部|三份|各)(?:资料|文档|来源|材料)|(?:资料|文档|来源|材料)之间)",
+            clause,
+            flags=re.IGNORECASE,
+        )
+    )
+
+
+def _clause_mentions_artifact(
+    clause: str,
+    item: "ClaimEvidenceItem",
+    peer_items: Iterable["ClaimEvidenceItem"],
+) -> bool:
+    compact = clause.lower()
+    ambiguous_aliases = _ambiguous_artifact_aliases(tuple(peer_items))
+    exact_aliases = _artifact_exact_aliases(item)
+    if any(alias and alias.lower() not in ambiguous_aliases and alias.lower() in compact for alias in exact_aliases):
+        return True
+    family = _artifact_family(item)
+    peer_families = {_artifact_family(peer) for peer in peer_items}
+    if len(peer_families) <= 1:
+        return False
+    same_family_items = tuple(peer for peer in peer_items if _artifact_family(peer) == family)
+    if _distinct_artifact_count(same_family_items) > 1:
+        return False
+    return bool(family and _ARTIFACT_FAMILY_MARKERS.get(family, re.compile(r"$^")).search(clause))
+
+
+def _ambiguous_artifact_aliases(items: tuple["ClaimEvidenceItem", ...]) -> set[str]:
+    identities_by_alias: dict[str, set[tuple[str, str]]] = {}
+    for item in items:
+        identity = _document_artifact_identity(item)
+        for alias in _artifact_exact_aliases(item):
+            key = alias.lower()
+            identities_by_alias.setdefault(key, set()).add(identity)
+    return {alias for alias, identities in identities_by_alias.items() if len(identities) > 1}
+
+
+def _artifact_exact_aliases(item: "ClaimEvidenceItem") -> tuple[str, ...]:
+    aliases: list[str] = []
+    for value in (item.path, item.identity_path):
+        value = (value or "").strip()
+        if not value:
+            continue
+        aliases.append(value)
+        basename = value.replace("\\", "/").rsplit("/", 1)[-1]
+        if basename and basename != value:
+            aliases.append(basename)
+        stem = basename.rsplit(".", 1)[0] if "." in basename else ""
+        if stem and len(stem) >= 4:
+            aliases.append(stem)
+    return tuple(dict.fromkeys(aliases))
+
+
+def _artifact_family(item: "ClaimEvidenceItem") -> str:
+    provenance = f"{item.classification} {item.tool} {item.path} {item.identity_path}"
+    for family, pattern in _ARTIFACT_FAMILY_PATTERNS:
+        if pattern.search(provenance):
+            return family
+    for family, pattern in _ARTIFACT_FAMILY_PATTERNS:
+        if pattern.search(item.summary):
+            return family
+    return "artifact"
 
 
 def _unique_known_ids(value: object, known: set[str], prefix: str) -> tuple[str, ...]:
@@ -589,6 +766,9 @@ _RELATIONAL_RECONCILIATION_MARKER = re.compile(
 )
 _TWO_ARTIFACT_RELATION_MARKER = re.compile(
     r"(?:\b(?:A\s+and\s+B|(?:both|two|the\s+two|multiple)\s+(?:artifacts|sources|documents|materials))\b|"
+    r"[\w./\\ \-\u4e00-\u9fff]+\.(?:md|markdown|html?|png|jpe?g|gif|webp)"
+    r".{0,24}(?:\band\b|vs\.?|versus|和|与|及|以及|、|/|对比|相比).{0,24}"
+    r"[\w./\\ \-\u4e00-\u9fff]+\.(?:md|markdown|html?|png|jpe?g|gif|webp)|"
     r"\b(?:document|markdown|html|prototype|image|screenshot|artifact|source|spec|policy)\b"
     r".{0,24}\b(?:and|vs\.?|versus)\b.{0,24}"
     r"\b(?:document|markdown|html|prototype|image|screenshot|artifact|source|spec|policy)\b|"
@@ -598,11 +778,23 @@ _TWO_ARTIFACT_RELATION_MARKER = re.compile(
     r"(?:文档|需求|规范|说明|资料|来源|原型|页面|图片|图像|截图|示例图|HTML|Markdown))",
     flags=re.IGNORECASE,
 )
+_ANAPHORIC_ARTIFACT_RELATION_MARKER = re.compile(
+    r"(?:\b(?:they|them|their|both|the\s+two|these\s+two|discrepancy|conflict|"
+    r"this\s+(?:discrepancy|conflict)|the\s+(?:discrepancy|conflict))\b|"
+    r"这两份|上述两份|两者|二者|差异|冲突|矛盾|该(?:差异|冲突|矛盾)|这(?:项|个)(?:差异|冲突|矛盾))",
+    flags=re.IGNORECASE,
+)
+_GENERIC_ARTIFACT_DIFFERENCE_MARKER = re.compile(
+    r"(?:\b(?:artifact|source|document|material)s?\b.{0,16}\b(?:difference|discrepancy|conflict)s?\b|"
+    r"(?:资料|来源|文档|材料)(?:之间|中的)?(?:差异|冲突|矛盾))",
+    flags=re.IGNORECASE,
+)
 _ARTIFACT_FAMILY_PATTERNS = (
     ("document", re.compile(r"\b(?:document|markdown|md|spec|policy|requirement|requirements)\b|需求文档|文档|需求|规范|说明", re.IGNORECASE)),
     ("prototype", re.compile(r"\b(?:html|prototype|page)\b|原型|页面", re.IGNORECASE)),
     ("image", re.compile(r"\b(?:image|screenshot|picture|photo|png|jpg|jpeg)\b|图片|图像|截图|示例图", re.IGNORECASE)),
 )
+_ARTIFACT_FAMILY_MARKERS = {family: pattern for family, pattern in _ARTIFACT_FAMILY_PATTERNS}
 _EXPLICIT_CONFLICT_MARKER = re.compile(
     r"(?:\b(?:not\s+consistent|in\s+conflict|inconsistent|conflicts?\s+with|conflict\s+remains|source\s+differen(?:ce|ces)|artifact\s+differen(?:ce|ces)|discrepanc(?:y|ies)|(?:document|image|artifact|source)s?.{0,32}\bdiffer(?:s|ent)?)\b|"
     r"不一致|存在冲突|仍.{0,8}(?:冲突|矛盾)|(?:冲突|矛盾).{0,8}(?:未消解|未解决|待确认|不明确)|"
@@ -612,7 +804,7 @@ _EXPLICIT_CONFLICT_MARKER = re.compile(
 _CONDITIONAL_MARKER = re.compile(r"(?:\b(?:if|may|might|could|perhaps)\b|如果|若|可能|或许|可由|可以)", flags=re.IGNORECASE)
 _UNRESOLVED_MARKER = re.compile(
     r"(?:\b(?:unresolved|unclear|not\s+specified|not\s+established|pending\s+confirmation)\b|"
-    r"(?:未说明|不明确|无法确认|待确认|仍.{0,8}未解决|(?:可由|需由|需要|请).{0,24}(?:确认|决定)))",
+    r"(?:未说明|不明确|无法确认|待确认|未消解|仍.{0,8}未解决|(?:可由|需由|需要|请).{0,24}(?:确认|决定)))",
     flags=re.IGNORECASE,
 )
 

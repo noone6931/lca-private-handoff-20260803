@@ -1,0 +1,129 @@
+{
+  "id": "document-transport-scoped-consistency",
+  "title": "Document transport and reviewer rewrites preserve pair-scoped unresolved evidence",
+  "prompt": "只读分析 policy.md、prototype.html 和示例图片，说明本期范围、后期规划、关键规则，以及资料之间是否有冲突。每项结论给出证据；证据不足不要推测。",
+  "budget_seconds": 90,
+  "workspace_files": {
+    "policy.md": "1: Reviewer and signature are blank in this phase.\n2: filler\n3: filler\n4: requirement rule 4\n5: filler\n6: filler\n7: requirement rule 7\n8: filler\n9: filler\n10: requirement rule 10\n11: filler\n12: filler\n13: requirement rule 13\n14: filler\n15: filler\n16: requirement rule 16\n17: filler\n18: filler\n19: requirement rule 19\n20: filler\n21: filler\n22: requirement rule 22\n23: filler\n24: filler\n25: requirement rule 25\n26: filler\n27: filler\n28: requirement rule 28\n29: filler\n30: filler\n31: requirement rule 31\n32: filler\n33: filler\n34: requirement rule 34\n35: filler\n36: filler\n37: requirement rule 37\n38: filler\n39: filler\n40: Automated delivery remains later planned.\n41: Digital signing remains later planned.\n42: filler\n43: requirement rule 43\n44: filler\n45: filler\n46: requirement rule 46\n47: filler\n48: filler\n49: requirement rule 49\n",
+    "prototype.html": "<p>Reviewer and signature use the corresponding field area.</p>\n",
+    "example.png": "GIF89a\n"
+  },
+  "scripted_image_observations": [
+    {
+      "observations": [
+        "The example image visibly shows reviewer/signature fields filled."
+      ],
+      "uncertainties": [],
+      "inferences": []
+    }
+  ],
+  "scripted_responses": [
+    {
+      "tool_calls": [
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "policy.md"
+          }
+        },
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "prototype.html"
+          }
+        },
+        {
+          "name": "inspect_image",
+          "arguments": {
+            "path": "example.png",
+            "question": "Describe visible reviewer and signature fields."
+          }
+        }
+      ]
+    },
+    {
+      "content": "- policy.md:1 states requirement rule 1.\n- policy.md:4 states requirement rule 4.\n- policy.md:7 states requirement rule 7.\n- policy.md:10 states requirement rule 10.\n- policy.md:13 states requirement rule 13.\n- policy.md:16 states requirement rule 16.\n- policy.md:19 states requirement rule 19.\n- policy.md:22 states requirement rule 22.\n- policy.md:25 states requirement rule 25.\n- policy.md:28 states requirement rule 28.\n- policy.md:31 states requirement rule 31.\n- policy.md:34 states requirement rule 34.\n- policy.md:37 states requirement rule 37.\n- policy.md:40 states requirement rule 40.\n- policy.md:43 states requirement rule 43.\n- policy.md:46 states requirement rule 46.\n- policy.md:49 states requirement rule 49.\n- policy.md:1 says reviewer/signature blank; example.png shows reviewer/signature filled; therefore the image is only an illustrative template and there is no substantive conflict."
+    },
+    {
+      "content": "## Current scope\n\n- policy.md and prototype.html align on the reviewer/signature field area.\n- policy.md:1 says the generated document keeps reviewer/signature blank.\n- example.png visibly shows reviewer/signature fields filled.\n- policy.md:1 and example.png differ; artifact role, lifecycle, and precedence are not established, so the discrepancy remains unresolved.\n\n## Later planned / not current\n\n- Automated delivery remains later planned.\n- Digital signing remains later planned.\n\nEvidence: policy.md:40-41"
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "report_read_only_finding",
+          "arguments": {
+            "claim_id": "c001",
+            "finding_scope": "candidate_defect",
+            "issue": "the alignment wording is broader than the cited field-area observation",
+            "action": "limit the alignment statement to the observed field area"
+          }
+        },
+        {
+          "name": "submit_read_only_review",
+          "arguments": {
+            "verdict": "revise",
+            "confidence": 0.96,
+            "reason": "scope the unrelated alignment claim while preserving the unresolved discrepancy",
+            "document_consistency": {
+              "stance": "reported_unresolved",
+              "conflict_evidence_ids": [
+                "e001",
+                "e005"
+              ],
+              "supporting_evidence_ids": []
+            }
+          }
+        }
+      ]
+    },
+    {
+      "content": "## Current scope\n\n- Scoped observation: policy.md and prototype.html both include the reviewer/signature field area.\n- policy.md:1 says the generated document keeps reviewer/signature blank.\n- example.png visibly shows reviewer/signature fields filled.\n- policy.md:1 and example.png differ; artifact role, lifecycle, and precedence are not established, so the discrepancy remains unresolved.\n\n## Later planned / not current\n\n- Automated delivery remains later planned.\n- Digital signing remains later planned.\n\nEvidence: policy.md:40-41"
+    }
+  ],
+  "acceptance": {
+    "required_tools": [
+      "read_file",
+      "inspect_image"
+    ],
+    "forbidden_tools": [
+      "apply_patch",
+      "write_file",
+      "shell",
+      "run_tests",
+      "search_code"
+    ],
+    "changed_files": [],
+    "answer_all_of": [
+      "Scoped observation",
+      "Later planned / not current",
+      "policy.md",
+      "prototype.html",
+      "example.png",
+      "unresolved"
+    ],
+    "answer_forbidden_regex": [
+      "illustrative template",
+      "no substantive conflict"
+    ],
+    "termination_reason": "final",
+    "run_summary": {
+      "tool_calls": 3,
+      "tool_errors": 0,
+      "finalization_attempts": 3
+    },
+    "read_only_reviewer": {
+      "claim_transport_rewrites": 1,
+      "claim_transport_rewrite_acceptances": 1,
+      "triggers": 1,
+      "finding_submits": 1,
+      "final_submits": 1,
+      "rewrites": 1,
+      "rewrite_acceptances": 1
+    },
+    "safe_partial_report": {
+      "emitted": 0
+    },
+    "max_tool_errors": 0
+  },
+  "residual_risk": "The deterministic script proves the bounded owner lifecycle and pair-scoped review shape; live provider wording can still vary."
+}

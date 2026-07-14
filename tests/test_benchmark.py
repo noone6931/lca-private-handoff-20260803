@@ -20,7 +20,7 @@ class BenchmarkTests(unittest.TestCase):
         tasks = load_benchmark_tasks()
         identifiers = {task.identifier for task in tasks}
 
-        self.assertEqual(len(tasks), 31)
+        self.assertEqual(len(tasks), 32)
         self.assertEqual(
             identifiers,
             {
@@ -55,6 +55,7 @@ class BenchmarkTests(unittest.TestCase):
                 "readonly-rewrite-verification-closure",
                 "readonly-design-proposal-semantics",
                 "document-artifact-synthesis-reviewer-recovery",
+                "document-transport-scoped-consistency",
             },
         )
         self.assertTrue(DEFAULT_TASKS_DIR.is_dir())
@@ -66,9 +67,9 @@ class BenchmarkTests(unittest.TestCase):
             payload = json.loads((output_dir / "benchmark-report.json").read_text(encoding="utf-8"))
             markdown = (output_dir / "benchmark-report.md").read_text(encoding="utf-8")
 
-            self.assertEqual(len(results), 31)
+            self.assertEqual(len(results), 32)
         self.assertTrue(all(result.passed for result in results))
-        self.assertEqual(payload["passed"], 31)
+        self.assertEqual(payload["passed"], 32)
         self.assertEqual(payload["failed"], 0)
         self.assertIn("small-code-change-test-diff", markdown)
         self.assertIn("budget-exhausted-incomplete", markdown)
@@ -96,6 +97,7 @@ class BenchmarkTests(unittest.TestCase):
         self.assertIn("readonly-rewrite-verification-closure", markdown)
         self.assertIn("readonly-design-proposal-semantics", markdown)
         self.assertIn("document-artifact-synthesis-reviewer-recovery", markdown)
+        self.assertIn("document-transport-scoped-consistency", markdown)
 
     def test_scripted_tool_call_can_emit_raw_malformed_arguments(self) -> None:
         client = ScriptedBenchmarkClient(

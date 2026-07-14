@@ -2444,6 +2444,114 @@ class _TransportRecoveryDocumentClient:
             raise AssertionError("expected truthy value")
 
 
+class _TransportReviewerRewriteDocumentClient(_TransportRecoveryDocumentClient):
+    calls: list[dict] = []
+
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
+        if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages):
+            payload = next(
+                json.loads(message["content"])
+                for message in messages
+                if message.get("role") == "user" and "LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content"))
+            )
+            self._assert_reviewable_compact_payload(payload)
+            conflict_ids = self._conflict_ids(payload)
+            claim = str(payload["candidate_claims"][0]["text"])
+            return _review_tool_calls_response(
+                [
+                    _finding_call(
+                        "scoped-alignment-finding",
+                        "c001",
+                        claim,
+                        issue="the alignment wording is broader than the cited field-area observation",
+                        action="limit the alignment statement to the observed field area",
+                    ),
+                    _final_call(
+                        "doc-revise",
+                        {
+                            "verdict": "revise",
+                            "confidence": 0.96,
+                            "reason": "scope the unrelated alignment claim while preserving the unresolved discrepancy",
+                            "document_consistency": {
+                                "stance": "reported_unresolved",
+                                "conflict_evidence_ids": list(conflict_ids),
+                                "supporting_evidence_ids": [],
+                            },
+                        },
+                    ),
+                ]
+            )
+        self._primary_calls += 1
+        if self._primary_calls == 1:
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {"id": "read-policy", "type": "function", "function": {"name": "read_file", "arguments": '{"path":"policy.md"}'}},
+                            {"id": "read-prototype", "type": "function", "function": {"name": "read_file", "arguments": '{"path":"prototype.html"}'}},
+                            {"id": "inspect-example", "type": "function", "function": {"name": "inspect_image", "arguments": '{"path":"example.png","question":"Describe visible reviewer and signature fields."}'}},
+                        ],
+                    }
+                },
+            )()
+        if tools:
+            raise AssertionError("primary transport and reviewer rewrites must use tools=[]")
+        latest_user = next(
+            (str(message.get("content") or "") for message in reversed(messages) if message.get("role") == "user"),
+            "",
+        )
+        if "bounded transport recovery" in latest_user:
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": (
+                            "## Current scope\n\n"
+                            "- policy.md and prototype.html align on the reviewer/signature field area.\n"
+                            "- policy.md:1 says the generated document keeps reviewer/signature blank.\n"
+                            "- example.png visibly shows reviewer/signature fields filled.\n"
+                            "- policy.md:1 and example.png differ; artifact role, lifecycle, and precedence are not established, so the discrepancy remains unresolved.\n\n"
+                            "## Later planned / not current\n\n"
+                            "- Automated delivery remains later planned.\n"
+                            "- Digital signing remains later planned.\n\n"
+                            "Evidence: policy.md:40-41"
+                        )
+                    }
+                },
+            )()
+        if latest_user.startswith("[Read-only evidence review]"):
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": (
+                            "## Current scope\n\n"
+                            "- Scoped observation: policy.md and prototype.html both include the reviewer/signature field area.\n"
+                            "- policy.md:1 says the generated document keeps reviewer/signature blank.\n"
+                            "- example.png visibly shows reviewer/signature fields filled.\n"
+                            "- policy.md:1 and example.png differ; artifact role, lifecycle, and precedence are not established, so the discrepancy remains unresolved.\n\n"
+                            "## Later planned / not current\n\n"
+                            "- Automated delivery remains later planned.\n"
+                            "- Digital signing remains later planned.\n\n"
+                            "Evidence: policy.md:40-41"
+                        )
+                    }
+                },
+            )()
+        claim_lines = [f"- policy.md:{index * 10} states requirement rule {index * 10}." for index in range(1, 75)]
+        claim_lines.append(
+            "- policy.md:1 says reviewer/signature blank; example.png shows reviewer/signature filled; "
+            "therefore the image is only an illustrative template and there is no substantive conflict."
+        )
+        return type("Response", (), {"message": {"content": "\n".join(claim_lines)}})()
+
+
 class _PostRewriteProjectionOverflowClient(_OverlongClaimClient):
     calls: list[dict] = []
 
@@ -3240,6 +3348,58 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertTrue(any(item.get("claim_ids") for item in serialized_locators))
         self.assertFalse(any("claim_id" in item and item.get("claim_ids") for item in serialized_locators))
 
+    def test_claim_units_keep_section_context_and_bind_trailing_shared_locator(self) -> None:
+        contract = generate_requirement_contract("只根据 policy.md 分析资料一致性，不要检查代码。")
+        lines = [f"{index}: filler line {index}" for index in range(1, 80)]
+        lines[44] = "45: later planned item A"
+        lines[45] = "46: later planned item B"
+        candidate = (
+            "## Later planned / not current\n\n"
+            "This intro paragraph explains the section but is not part of the cited bullet group.\n\n"
+            "- Item A is later planned.\n"
+            "- Item B is not current.\n\n"
+            "Evidence: policy.md:45-46\n\n"
+            "- After citation item should not inherit the shared citation.\n\n"
+            "## Current scope\n\n"
+            "- Current item must not inherit the later citation.\n"
+        )
+        units = candidate_claim_units(candidate)
+        later_units = [unit for unit in units if "Item" in unit.text]
+
+        self.assertTrue(later_units)
+        self.assertTrue(all(unit.section_context == "Later planned / not current" for unit in later_units[:2]))
+        self.assertTrue(all("policy.md:45-46" in unit.locator_context for unit in later_units[:2]))
+        self.assertFalse(next(unit.locator_context for unit in units if "intro paragraph" in unit.text))
+        self.assertFalse(next(unit.locator_context for unit in units if "After citation item" in unit.text))
+        self.assertEqual(next(unit.section_context for unit in units if "Current item" in unit.text), "Current scope")
+        self.assertFalse(any("policy.md:45-46" in unit.locator_context for unit in units if "Current item" in unit.text))
+        serialized_claims = [unit.to_dict() for unit in units]
+        self.assertTrue(any(item.get("section_context") == "Later planned / not current" for item in serialized_claims))
+
+        handoff = build_explore_handoff(
+            request="只根据 Markdown 分析资料。",
+            contract=contract,
+            requirement_evidence=(),
+            source_evidence=(),
+            records=(),
+            tool_results=(
+                ToolResultSummary(
+                    "read_file",
+                    "\n".join(lines),
+                    path="policy.md",
+                    metadata={"evidence_root": "/workspace", "resolved_path": "/workspace/policy.md"},
+                ),
+            ),
+            candidate=candidate,
+            claim_units=units,
+        )
+        locator_items = [item for item in handoff.items if item.classification == "requirement_locator"]
+        shared = [item for item in locator_items if "line 45-46" in item.summary]
+        self.assertEqual(len(shared), 1)
+        self.assertGreaterEqual(len(shared[0].claim_ids), 2)
+        current_id = next(unit.claim_id for unit in units if "Current item" in unit.text)
+        self.assertNotIn(current_id, shared[0].claim_ids)
+
     def test_claim_units_do_not_split_filenames_decimals_or_table_headers(self) -> None:
         candidate = (
             "prototype.html only supplies layout. Version 2.1 remains draft.\n\n"
@@ -3429,6 +3589,7 @@ class ReadOnlyReviewerTests(unittest.TestCase):
                     "只读分析 policy.md、prototype.html 和示例图片，说明本期范围、关键规则，以及资料之间是否有冲突。"
                     "每项结论给出证据；证据不足不要推测。"
                 )
+                steering_events = runtime._session.load_event_payloads("runtime_steering")
 
         self.assertIn("discrepancy remains unresolved", answer)
         self.assertNotIn("illustrative template", answer)
@@ -3441,6 +3602,9 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertEqual(summary["verdicts"], {"pass": 1})
         self.assertEqual(summary["rewrites"], 0)
         self.assertEqual(summary["rewrite_acceptances"], 0)
+        self.assertEqual(runtime._last_run_summary["finalization_attempts"], 2)
+        synthesis_events = [event for event in steering_events if event.get("rule_id") == "document_artifacts_synthesis"]
+        self.assertEqual(len(synthesis_events), 1)
         rewrite_messages = [
             str(message.get("content") or "")
             for call in _TransportRecoveryDocumentClient.calls
@@ -3450,6 +3614,53 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertEqual(len(rewrite_messages), 1)
         self.assertIn("merge repeated table rows", rewrite_messages[0])
         self.assertIn("discrepancy remains unresolved", rewrite_messages[0])
+
+    def test_document_transport_and_reviewer_rewrite_use_one_queue_directive(self) -> None:
+        _TransportReviewerRewriteDocumentClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            (workspace / "policy.md").write_text(
+                "Reviewer and signature are blank in this phase.\n"
+                + "\n".join(f"{index}: requirement rule {index}" for index in range(2, 900)),
+                encoding="utf-8",
+            )
+            (workspace / "prototype.html").write_text(
+                "Reviewer and signature use the corresponding field area.\n",
+                encoding="utf-8",
+            )
+            (workspace / "example.png").write_bytes(
+                b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
+                b"\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc```\x00\x00\x00\x04\x00\x01"
+                b"\xf6\x178U\x00\x00\x00\x00IEND\xaeB`\x82"
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _TransportReviewerRewriteDocumentClient):
+                runtime = AgentRuntime(_config(workspace, vision_model="vision"), show_tool_logs=False)
+                answer = runtime.run(
+                    "只读分析 policy.md、prototype.html 和示例图片，说明本期范围、后期规划、关键规则，以及资料之间是否有冲突。"
+                    "每项结论给出证据；证据不足不要推测。"
+                )
+                steering_events = runtime._session.load_event_payloads("runtime_steering")
+
+        self.assertEqual(runtime._last_run_summary["termination_reason"], "final")
+        self.assertEqual(runtime._last_run_summary["finalization_attempts"], 3)
+        self.assertIn("Scoped observation", answer)
+        self.assertIn("Later planned / not current", answer)
+        self.assertIn("discrepancy remains unresolved", answer)
+        summary = runtime._last_run_summary["read_only_reviewer"]
+        self.assertEqual(summary["claim_transport_rewrites"], 1)
+        self.assertEqual(summary["claim_transport_rewrite_acceptances"], 1)
+        self.assertEqual(summary["triggers"], 1)
+        self.assertEqual(summary["rewrites"], 1)
+        self.assertEqual(summary["rewrite_acceptances"], 1)
+        synthesis_events = [event for event in steering_events if event.get("rule_id") == "document_artifacts_synthesis"]
+        self.assertEqual(len(synthesis_events), 1)
+        primary_calls = [
+            call
+            for call in _TransportReviewerRewriteDocumentClient.calls
+            if not any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in call["messages"])
+        ]
+        self.assertGreaterEqual(len(primary_calls), 3)
+        self.assertTrue(all(call["tools"] == [] for call in primary_calls[1:]))
 
     def test_post_rewrite_projection_overflow_fails_closed_without_second_reviewer(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

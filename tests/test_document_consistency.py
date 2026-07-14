@@ -5,6 +5,7 @@ import unittest
 from local_agent.document_consistency import DocumentConsistencyAssessment
 from local_agent.document_consistency import DOCUMENT_CONSISTENCY_REJECTION_CODES
 from local_agent.document_consistency import candidate_reconciliation_stance
+from local_agent.document_consistency import candidate_reconciliation_stance_for_conflict
 from local_agent.document_consistency import complete_document_consistency_assessment
 from local_agent.document_consistency import document_consistency_schema
 from local_agent.document_consistency import DocumentConsistencyValidationError
@@ -40,6 +41,18 @@ def _handoff(*, support: bool = False) -> ExploreHandoff:
             )
         )
     return ExploreHandoff(request="compare artifacts", contract=_contract(), items=tuple(items))
+
+
+def _three_artifact_handoff() -> ExploreHandoff:
+    return ExploreHandoff(
+        request="compare artifacts",
+        contract=_contract(),
+        items=(
+            ClaimEvidenceItem("requirement_fact", "read_file", "policy.md", "primary", "root_local", "ok", "Field must remain blank."),
+            ClaimEvidenceItem("requirement_fact", "read_file", "prototype.html", "primary", "root_local", "ok", "Prototype structure matches policy."),
+            ClaimEvidenceItem("visual_observation", "inspect_image", "example.png", "primary", "root_local", "ok", "Visible field has a value."),
+        ),
+    )
 
 
 class DocumentConsistencyTests(unittest.TestCase):
@@ -148,6 +161,203 @@ class DocumentConsistencyTests(unittest.TestCase):
                 verdict="pass",
             ),
             "document_consistency_stance_mismatch",
+        )
+
+    def test_document_reconciliation_stance_is_scoped_to_cited_conflict_pair(self) -> None:
+        handoff = _three_artifact_handoff()
+        assessment = DocumentConsistencyAssessment("reported_unresolved", ("e001", "e003"))
+        scoped_candidate = (
+            "policy.md 与 prototype.html 在结构说明上一致。"
+            "policy.md 说字段留空；example.png 显示字段有值。"
+            "这两份资料的角色/生命周期/优先级未建立，差异未消解。"
+        )
+
+        conflicts = tuple(item for item in handoff.items if item.evidence_id in assessment.conflict_evidence_ids)
+        self.assertEqual(candidate_reconciliation_stance(scoped_candidate), "asserted_reconciled")
+        self.assertEqual(
+            candidate_reconciliation_stance_for_conflict(scoped_candidate, conflicts, handoff.items),
+            "reported_unresolved",
+        )
+        self.assertIsNone(
+            validate_document_consistency_assessment(
+                assessment,
+                handoff,
+                candidate=scoped_candidate,
+                verdict="pass",
+            )
+        )
+
+        reversed_relations = (
+            "policy.md 说字段留空；example.png 显示字段有值。"
+            "这两份资料的角色/生命周期/优先级未建立，差异未消解。"
+            "policy.md 与 prototype.html 在结构说明上一致。"
+        )
+        self.assertEqual(
+            candidate_reconciliation_stance_for_conflict(reversed_relations, conflicts, handoff.items),
+            "reported_unresolved",
+        )
+        self.assertIsNone(
+            validate_document_consistency_assessment(
+                assessment,
+                handoff,
+                candidate=reversed_relations,
+                verdict="pass",
+            )
+        )
+
+        ambiguous_antecedent = (
+            "policy.md、prototype.html 和 example.png 分别描述了字段。"
+            "两者已经一致。"
+        )
+        self.assertIsNone(
+            candidate_reconciliation_stance_for_conflict(ambiguous_antecedent, conflicts, handoff.items)
+        )
+
+        same_pair_reconciled = "policy.md 说字段留空；example.png 显示字段有值，但 example.png 是后期完成态，因此两者无冲突。"
+        self.assertEqual(
+            validate_document_consistency_assessment(
+                assessment,
+                handoff,
+                candidate=same_pair_reconciled,
+                verdict="pass",
+            ),
+            "document_consistency_stance_mismatch",
+        )
+
+        broad_reconciled = "policy.md、prototype.html 和 example.png 三份资料均一致，没有冲突。"
+        self.assertEqual(
+            validate_document_consistency_assessment(
+                assessment,
+                handoff,
+                candidate=broad_reconciled,
+                verdict="pass",
+            ),
+            "document_consistency_stance_mismatch",
+        )
+        ambiguous_two_artifacts = (
+            "两份资料在结构说明上一致。"
+            "policy.md 说字段留空；example.png 显示字段有值，差异仍未消解。"
+        )
+        self.assertIsNone(
+            validate_document_consistency_assessment(
+                assessment,
+                handoff,
+                candidate=ambiguous_two_artifacts,
+                verdict="pass",
+            )
+        )
+
+    def test_same_family_conflict_scope_uses_exact_artifact_identity(self) -> None:
+        handoff = ExploreHandoff(
+            request="compare artifacts",
+            contract=_contract(),
+            items=(
+                ClaimEvidenceItem("requirement_fact", "read_file", "docs/policy.md", "primary", "root_local", "ok", "A says blank."),
+                ClaimEvidenceItem("requirement_fact", "read_file", "other/policy.md", "primary", "root_local", "ok", "B says value."),
+                ClaimEvidenceItem("requirement_fact", "read_file", "prototype.html", "primary", "root_local", "ok", "Prototype aligns elsewhere."),
+            ),
+        )
+        assessment = DocumentConsistencyAssessment("reported_unresolved", ("e001", "e002"))
+
+        self.assertEqual(
+            validate_document_consistency_assessment(
+                assessment,
+                handoff,
+                candidate="policy.md 与 prototype.html 一致。docs/policy.md 与 other/policy.md 的差异仍未消解。",
+                verdict="pass",
+            ),
+            None,
+        )
+        self.assertEqual(
+            validate_document_consistency_assessment(
+                assessment,
+                handoff,
+                candidate="docs/policy.md 与 other/policy.md 一致，因为后者是最终态。",
+                verdict="pass",
+            ),
+            "document_consistency_stance_mismatch",
+        )
+
+    def test_artifact_family_prefers_tool_and_path_over_cross_artifact_summary_words(self) -> None:
+        handoff = ExploreHandoff(
+            request="compare artifacts",
+            contract=_contract(),
+            items=(
+                ClaimEvidenceItem("requirement_fact", "read_file", "policy.md", "primary", "root_local", "ok", "Document says blank."),
+                ClaimEvidenceItem("requirement_fact", "read_file", "prototype.html", "primary", "root_local", "ok", "Prototype references policy."),
+                ClaimEvidenceItem(
+                    "visual_observation",
+                    "inspect_image",
+                    "example.png",
+                    "primary",
+                    "root_local",
+                    "ok",
+                    "Image differs from the document field.",
+                ),
+            ),
+        )
+        assessment = DocumentConsistencyAssessment("reported_unresolved", ("e001", "e003"))
+
+        self.assertIsNone(
+            validate_document_consistency_assessment(
+                assessment,
+                handoff,
+                candidate="The document and image conflict remains unresolved.",
+                verdict="pass",
+            )
+        )
+
+    def test_support_document_relation_does_not_pollute_the_conflict_pair(self) -> None:
+        handoff = _handoff(support=True)
+        assessment = DocumentConsistencyAssessment("reported_unresolved", ("e001", "e002"))
+        candidate = (
+            "policy.md 与 lifecycle.md 在说明上一致。"
+            "policy.md 与 example.png 的差异仍未消解，资料角色和优先级待确认。"
+        )
+
+        self.assertEqual(candidate_reconciliation_stance(candidate), "asserted_reconciled")
+        self.assertIsNone(
+            validate_document_consistency_assessment(
+                assessment,
+                handoff,
+                candidate=candidate,
+                verdict="pass",
+            )
+        )
+
+    def test_duplicate_observations_keep_exact_artifact_alias_unambiguous(self) -> None:
+        handoff = ExploreHandoff(
+            request="compare artifacts",
+            contract=_contract(),
+            items=(
+                ClaimEvidenceItem("requirement_locator", "read_file", "policy.md", "primary", "root_local", "ok", "line 1"),
+                ClaimEvidenceItem("requirement_fact", "read_file", "policy.md", "primary", "root_local", "ok", "Policy says blank."),
+                ClaimEvidenceItem("requirement_fact", "read_file", "prototype.html", "primary", "root_local", "ok", "Prototype field."),
+                ClaimEvidenceItem("visual_observation", "inspect_image", "example.png", "primary", "root_local", "ok", "Image shows value."),
+            ),
+        )
+        assessment = DocumentConsistencyAssessment("reported_unresolved", ("e001", "e004"))
+
+        self.assertIsNone(
+            validate_document_consistency_assessment(
+                assessment,
+                handoff,
+                candidate="policy.md and example.png differ; the discrepancy remains unresolved.",
+                verdict="pass",
+            )
+        )
+
+    def test_generic_unresolved_material_difference_covers_cited_pair(self) -> None:
+        handoff = _three_artifact_handoff()
+        assessment = DocumentConsistencyAssessment("reported_unresolved", ("e001", "e003"))
+
+        self.assertIsNone(
+            validate_document_consistency_assessment(
+                assessment,
+                handoff,
+                candidate="policy.md、prototype.html 和 example.png 均已观察；资料差异保持未消解。",
+                verdict="pass",
+            )
         )
 
     def test_conflict_candidate_requires_two_document_observation_ids(self) -> None:

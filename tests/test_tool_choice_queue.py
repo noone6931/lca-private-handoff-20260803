@@ -24,6 +24,8 @@ from local_agent.tool_choice_queue import session_evidence_reuse_directive
 from local_agent.tool_choice_queue import tool_choice_steering_message
 from local_agent.read_only_explore import evaluate_read_only_explore
 from local_agent.document_artifacts import DocumentArtifactRequirement
+from local_agent.run_context import RunContext
+from local_agent.task_contract import generate_requirement_contract
 
 
 class ToolChoiceQueueTests(unittest.TestCase):
@@ -720,6 +722,36 @@ class ToolChoiceQueueTests(unittest.TestCase):
         message = tool_choice_steering_message(decision, "只根据 Markdown、HTML 和图片分析需求；不要检查代码。")
         self.assertIn("typed unavailable", message)
         self.assertNotIn("budget is exhausted", message)
+
+    def test_force_final_signature_ledger_is_per_run(self) -> None:
+        context = RunContext()
+        contract = generate_requirement_contract("只根据 Markdown、HTML 和图片分析需求；不要检查代码。")
+
+        context.begin(
+            run_id="run-1",
+            started_monotonic=1.0,
+            deadline_monotonic=None,
+            run_start_index=0,
+            git_baseline={},
+            prompt="只根据 Markdown、HTML 和图片分析需求；不要检查代码。",
+            requirement_contract=contract,
+            requirement_contract_context="",
+            design_evidence_roots=(),
+        )
+        context.tool_choice_force_final_signatures.add("document-artifacts-complete")
+        context.begin(
+            run_id="run-2",
+            started_monotonic=2.0,
+            deadline_monotonic=None,
+            run_start_index=0,
+            git_baseline={},
+            prompt="只根据 Markdown、HTML 和图片分析需求；不要检查代码。",
+            requirement_contract=contract,
+            requirement_contract_context="",
+            design_evidence_roots=(),
+        )
+
+        self.assertEqual(context.tool_choice_force_final_signatures, set())
 
     def test_observed_negative_prompt_requires_glob_when_available(self) -> None:
         decision = evaluate_tool_choice_state(
