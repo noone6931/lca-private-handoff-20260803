@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from copy import deepcopy
 from typing import Any, Literal
 
 from .provider_protocol import classify_provider_content_artifact
@@ -205,6 +206,34 @@ def reviewer_tool_result_messages(message: dict[str, Any], events: tuple[Reviewe
             continue
         results.append({"role": "tool", "tool_call_id": call_id, "content": reviewer_tool_result_content(event)})
     return results
+
+
+def reviewer_assistant_tool_message(message: dict[str, Any], events: tuple[ReviewerOutputEvent, ...]) -> dict[str, Any]:
+    """Return a provider-valid assistant tool-call envelope for continuation.
+
+    Rejected reviewer output calls still remain rejected through their tool
+    result.  This only prevents malformed/native historical arguments from
+    poisoning the next OpenAI-compatible request.
+    """
+
+    event_by_id = {event.tool_call_id: event for event in events}
+    safe_calls: list[dict[str, Any]] = []
+    for call in message.get("tool_calls") or []:
+        safe_call = deepcopy(call)
+        function = safe_call.get("function") if isinstance(safe_call, dict) else None
+        call_id = _tool_call_id(call)
+        event = event_by_id.get(call_id)
+        if isinstance(function, dict) and event is not None and event.code in {
+            "output_tool_arguments_type_invalid",
+            "output_tool_arguments_json_invalid",
+        }:
+            function["arguments"] = "{}"
+        safe_calls.append(safe_call)
+    return {
+        "role": "assistant",
+        "content": message.get("content"),
+        "tool_calls": safe_calls,
+    }
 
 
 def reviewer_tool_result_content(event: ReviewerOutputEvent) -> str:

@@ -9,6 +9,7 @@ from .explore_handoff import build_explore_handoff
 from .llm import LlmError
 from .llm import LlmTimeoutError
 from .reviewer_output_lifecycle import parse_reviewer_output_turn
+from .reviewer_output_lifecycle import reviewer_assistant_tool_message
 from .reviewer_output_lifecycle import reviewer_tool_result_messages
 from .read_only_reviewer import candidate_claim_units
 from .read_only_reviewer import candidate_claim_projection_issues
@@ -293,7 +294,7 @@ class ReadOnlyReviewPhase:
                 collected_findings = (*collected_findings, *turn.accepted_findings)
                 if len(collected_findings) >= MAX_REVIEWER_FINDINGS:
                     finding_capacity_reached = True
-                messages.append(self._assistant_tool_message(message))
+                messages.append(reviewer_assistant_tool_message(message, turn.events))
                 messages.extend(reviewer_tool_result_messages(message, turn.events))
                 if capacity_directives >= MAX_REVIEWER_CAPACITY_DIRECTIVES:
                     state.output_lifecycle_exhausted = True
@@ -372,13 +373,6 @@ class ReadOnlyReviewPhase:
             "rewrite",
             rewrite_message=reviewer_rewrite_message(result, profile=contract.read_only_review_profile, handoff=handoff),
         )
-
-    def _assistant_tool_message(self, message: dict[str, Any]) -> dict[str, Any]:
-        return {
-            "role": "assistant",
-            "content": message.get("content"),
-            "tool_calls": message.get("tool_calls") or [],
-        }
 
     def _validate_document_consistency(self, result: Any, handoff: Any, candidate: str) -> None:
         if result.document_consistency is None:

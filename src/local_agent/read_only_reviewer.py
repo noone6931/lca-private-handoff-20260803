@@ -249,11 +249,12 @@ def _extract_candidate_claim_units(candidate: str) -> tuple[tuple[CandidateClaim
             flush_paragraph()
             next_line = raw_lines[index + 1].strip() if index + 1 < len(raw_lines) else ""
             if not _is_table_separator(line) and not (_is_table_row(line) and _is_table_separator(next_line)):
-                units, overflow = _structural_units(line)
-                if overflow:
-                    record_issue("candidate_claim_projection_overflow", "table_row" if _is_table_row(line) else "structural_line")
-                for unit in units:
-                    indexed.append(CandidateClaimUnit(f"c{len(indexed) + 1:03d}", unit, locator_context))
+                if not _is_presentation_list_container_label(line):
+                    units, overflow = _structural_units(line)
+                    if overflow:
+                        record_issue("candidate_claim_projection_overflow", "table_row" if _is_table_row(line) else "structural_line")
+                    for unit in units:
+                        indexed.append(CandidateClaimUnit(f"c{len(indexed) + 1:03d}", unit, locator_context))
             continue
         paragraph.append(raw_line)
     flush_paragraph()
@@ -990,6 +991,22 @@ def _is_markdown_horizontal_rule(line: str) -> bool:
 
 def _is_ordered_list_item(line: str) -> bool:
     return bool(re.match(r"^\d{1,4}[.)]\s+\S", line))
+
+
+def _is_presentation_list_container_label(line: str) -> bool:
+    if _is_table_row(line):
+        return False
+    if line.startswith(">"):
+        line = line[1:].strip()
+    if line.startswith(("- ", "* ", "+ ")):
+        label = line[2:].strip()
+    else:
+        match = re.match(r"^\d{1,4}[.)]\s+(.+)$", line)
+        if match is None:
+            return False
+        label = match.group(1).strip()
+    semantic = re.sub(r"[*_`~]", "", label).strip()
+    return bool(semantic) and semantic.endswith((":", "："))
 
 
 def _line_has_path_bound_locator(line: str) -> bool:

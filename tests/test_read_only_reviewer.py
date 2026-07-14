@@ -153,6 +153,37 @@ def _review_tool_calls_response(tool_calls: list[dict]) -> object:
     return type("Response", (), {"message": {"content": None, "tool_calls": tool_calls}})()
 
 
+def _assert_provider_safe_reviewer_history(
+    messages: list[dict],
+    *,
+    expected_ids: tuple[str, ...],
+    canonicalized_ids: tuple[str, ...],
+) -> None:
+    assistant_calls: dict[str, dict] = {}
+    tool_result_ids: list[str] = []
+    for message in messages:
+        if message.get("role") == "assistant":
+            for call in message.get("tool_calls") or ():
+                call_id = str(call.get("id") or "")
+                if call_id:
+                    assistant_calls[call_id] = call
+                    arguments = call.get("function", {}).get("arguments")
+                    if not isinstance(arguments, str):
+                        raise AssertionError(f"tool call {call_id} has non-string arguments")
+                    json.loads(arguments)
+        elif message.get("role") == "tool":
+            tool_result_ids.append(str(message.get("tool_call_id") or ""))
+    for call_id in expected_ids:
+        if call_id not in assistant_calls:
+            raise AssertionError(f"missing assistant tool call {call_id}")
+        if tool_result_ids.count(call_id) != 1:
+            raise AssertionError(f"missing paired tool result for {call_id}")
+    for call_id in canonicalized_ids:
+        arguments = assistant_calls[call_id]["function"]["arguments"]
+        if arguments != "{}":
+            raise AssertionError(f"tool call {call_id} was not canonicalized")
+
+
 class _ReviewerFlowClient:
     calls: list[dict] = []
 
@@ -427,6 +458,55 @@ class _ReviewerFindingMalformedFinalThenPassClient:
         if self._primary_calls == 1:
             return type("Response", (), {"message": {"content": "PayServiceImpl is the verified owner."}})()
         return type("Response", (), {"message": {"content": "PayServiceImpl is an analogous candidate; the owner is unlocated."}})()
+
+
+class _ReviewerProviderSafeContinuationClient(_ReviewerFindingMalformedFinalThenPassClient):
+    calls: list[dict] = []
+
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
+        if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages):
+            self._review_calls += 1
+            if self._review_calls == 1:
+                return _review_tool_calls_response([
+                    _finding_call("valid-finding", "c001", _candidate_claim(messages, "c001"), action="mark unlocated"),
+                    {
+                        "id": "native-finding",
+                        "type": "function",
+                        "function": {
+                            "name": REVIEWER_FINDING_TOOL_NAME,
+                            "arguments": {
+                                "claim_id": "c002",
+                                "finding_scope": "candidate_defect",
+                                "issue": "native arguments",
+                                "action": "mark unverified",
+                            },
+                        },
+                    },
+                    _final_call("bad-final", "{"),
+                ])
+            if self._review_calls == 2:
+                _assert_provider_safe_reviewer_history(
+                    messages,
+                    expected_ids=("valid-finding", "native-finding", "bad-final"),
+                    canonicalized_ids=("native-finding", "bad-final"),
+                )
+                return _review_tool_calls_response([
+                    _final_call("valid-final", {"verdict": "revise", "confidence": 0.9, "reason": "kept safe continuation"}),
+                ])
+            return _review_submit({"verdict": "pass", "confidence": 0.9, "findings": [], "reason": "rewrite scoped"})
+        self._primary_calls += 1
+        if self._primary_calls == 1:
+            return type(
+                "Response",
+                (),
+                {"message": {"content": "PayServiceImpl is the verified owner.\nExisting DDL is complete."}},
+            )()
+        return type(
+            "Response",
+            (),
+            {"message": {"content": "PayServiceImpl is an analogous candidate; the owner is unlocated."}},
+        )()
 
 
 class _ReviewerEightFindingsClient:
@@ -2053,6 +2133,24 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertNotIn("1.", texts)
         self.assertNotIn("---", texts)
 
+    def test_claim_units_skip_presentation_only_list_container_labels(self) -> None:
+        candidate = (
+            "2. **Feature**：\n"
+            "   - child requirement remains addressable.\n"
+            "- **Observed image** shows:\n"
+            "  - image child observation remains addressable.\n"
+            "- 状态：未消解\n"
+            "- Owner: unlocated candidate.\n"
+        )
+        texts = [unit.text for unit in candidate_claim_units(candidate)]
+
+        self.assertNotIn("2. **Feature**：", texts)
+        self.assertNotIn("- **Observed image** shows:", texts)
+        self.assertIn("- child requirement remains addressable.", texts)
+        self.assertIn("- image child observation remains addressable.", texts)
+        self.assertIn("- 状态：未消解", texts)
+        self.assertIn("- Owner: unlocated candidate.", texts)
+
     def test_overlong_factual_units_are_projection_issues_not_silent_drops(self) -> None:
         long_sentence = "Unsupported owner fact " + ("x" * 620)
         long_cell = "| Owner | " + ("y" * 620) + " |"
@@ -3387,6 +3485,26 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertEqual(summary["rejected_final_submits"], 1)
         self.assertEqual(summary["verdicts"], {"pass": 1, "revise": 1})
         self.assertEqual(summary["finding_submits"], 1)
+
+    def test_reviewer_continuation_canonicalizes_malformed_tool_arguments(self) -> None:
+        _ReviewerProviderSafeContinuationClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch("local_agent.agent.OpenAICompatibleClient", _ReviewerProviderSafeContinuationClient):
+                runtime = AgentRuntime(_config(Path(tmp).resolve()), show_tool_logs=False)
+                answer = runtime.run("只读分析当前服务 owner 和影响范围，不要修改文件。")
+        self.assertIn("analogous candidate", answer)
+        summary = runtime._last_run_summary["read_only_reviewer"]
+        self.assertEqual(summary["finding_submits"], 1)
+        self.assertEqual(summary["rejected_finding_submits"], 1)
+        self.assertEqual(summary["rejected_final_submits"], 1)
+        self.assertEqual(summary["verdicts"], {"pass": 1, "revise": 1})
+        self.assertEqual(summary["errors"], {})
+        review_calls = [
+            call
+            for call in _ReviewerProviderSafeContinuationClient.calls
+            if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in call["messages"])
+        ]
+        self.assertGreaterEqual(len(review_calls), 2)
 
     def test_eight_incremental_findings_can_assemble_before_final(self) -> None:
         _ReviewerEightFindingsClient.calls = []
