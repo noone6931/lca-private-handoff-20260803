@@ -239,7 +239,7 @@ Review contract:
 - When the handoff has no explicit direct binding, do not say a main owner/module judgment is correct or mostly correct. Treat same-domain code as observed or analogous and leave the owner unlocated.
 - For a document-consistency review, do not resolve conflicting document or image observations with an invented workflow, scope, actor, source priority, authoritative source, or precedence rule. Preserve the conflict as unresolved unless the handoff explicitly reconciles it. A candidate that accurately cites both observations, explicitly keeps the conflict unresolved, and presents only labeled options or questions for later confirmation is compliant: submit `pass` with no reported findings. A finding must identify a candidate error such as an unsupported reconciliation, a self-contradictory candidate statement, a missing cited observation, a user-request violation, or a claim that exceeds the handoff; the source materials disagreeing by itself is not a candidate defect. If the only issue is that a source owner must decide how to update source materials, submit `pass` with no reported findings.
 
-The incremental output contract is bounded and shallow. Report at most 8 findings total by calling report_read_only_finding once per finding; then call submit_read_only_review with verdict, confidence, and reason only. Findings are capacity-limited: choose the highest-risk blocking candidate defects first. Once 8 findings are recorded, stop reporting findings and submit the final verdict. A `pass` verdict requires 0 reported findings; `revise` and `unverified` require 1 to 8 reported findings. Every finding must have one unique, known claim_id plus non-empty issue and action. For every finding, choose exactly one claim_id from candidate_claims, set finding_scope to `candidate_defect`, and copy that exact candidate_claims text into `claim`. The action must change the candidate answer; it must not ask to modify the requirements, images, prototypes, or source artifacts, and must not merely ask a source owner to decide. Never invent or repeat a claim_id. Do not submit `source_material_gap` findings; those are not candidate defects. Report only the highest-risk blocking findings when there are more than 8. Keep the complete output under 9000 characters.
+The incremental output contract is bounded and shallow. Report at most 8 findings total by calling report_read_only_finding once per finding; then call submit_read_only_review with verdict, confidence, and reason only. Findings are capacity-limited: choose the highest-risk blocking candidate defects first. Once 8 findings are recorded, stop reporting findings and submit the final verdict. A `pass` verdict requires 0 reported findings; `revise` and `unverified` require 1 to 8 reported findings. Every finding must have one unique, known claim_id plus non-empty issue and action. For every finding, choose exactly one claim_id from candidate_claims and set finding_scope to `candidate_defect`; Runtime binds the exact candidate text by claim_id. The action must change the candidate answer; it must not ask to modify the requirements, images, prototypes, or source artifacts, and must not merely ask a source owner to decide. Never invent or repeat a claim_id. Do not submit `source_material_gap` findings; those are not candidate defects. Report only the highest-risk blocking findings when there are more than 8. Keep the complete output under 9000 characters.
 Choose revise when the candidate can be corrected using the handoff. Choose unverified when the candidate cannot safely make the requested factual conclusion."""
     if _is_document_consistency_review(handoff):
         system += (
@@ -345,14 +345,9 @@ def reviewer_finding_tool_schema(claim_units: tuple[CandidateClaimUnit, ...]) ->
                 "additionalProperties": False,
                 "properties": {
                     "claim_id": {"type": "string", "enum": known_ids},
-                    "claim": {
-                        "type": "string",
-                        "minLength": 1,
-                        "description": "Exact text copied from the selected candidate_claims item.",
-                    },
                     "finding_scope": {
                         "type": "string",
-                        "enum": ["candidate_defect", "source_material_gap"],
+                        "enum": ["candidate_defect"],
                         "description": (
                             "Must be candidate_defect. source_material_gap is invalid because source-material "
                             "gaps are not candidate-answer defects."
@@ -369,7 +364,7 @@ def reviewer_finding_tool_schema(claim_units: tuple[CandidateClaimUnit, ...]) ->
                         ),
                     },
                 },
-                "required": ["claim_id", "claim", "finding_scope", "issue", "action"],
+                "required": ["claim_id", "finding_scope", "issue", "action"],
             },
         },
     }
@@ -445,6 +440,7 @@ def reviewer_repair_message(
                     "recorded and must be preserved in the final verdict semantics. "
                     "required_resubmit_candidate_defect_claim_ids were validated in a response that could not be safely "
                     "paired, so report those findings again before submitting the final verdict. "
+                    "Do not include candidate claim text; Runtime binds the exact claim by claim_id. "
                     + _repair_shape_instruction(diagnostics)
                 ),
             },
@@ -568,7 +564,7 @@ def parse_reviewer_payload(
         if not isinstance(item, Mapping):
             raise ReviewerValidationError("finding_not_object", diagnostics)
         allowed_finding_keys = {"claim_id", "claim", "finding_scope", "issue", "action"}
-        required_finding_keys = {"claim_id", "claim", "finding_scope", "issue", "action"}
+        required_finding_keys = {"claim_id", "finding_scope", "issue", "action"}
         if not required_finding_keys.issubset(item) or not set(item).issubset(allowed_finding_keys):
             raise ReviewerValidationError("finding_keys_invalid", diagnostics)
         claim_id, claim, finding_scope, issue, action = (
@@ -586,10 +582,12 @@ def parse_reviewer_payload(
             raise ReviewerValidationError("finding_fields_invalid", diagnostics)
         if len(issue) > 1000 or len(action) > 1000:
             raise ReviewerValidationError("finding_fields_too_large", diagnostics)
-        if not isinstance(claim, str) or not claim.strip():
-            raise ReviewerValidationError("finding_claim_invalid", diagnostics)
-        if _normalize_claim_binding(claim) != _normalize_claim_binding(claim_text_by_id[claim_id]):
-            raise ReviewerValidationError("finding_claim_mismatch", {**diagnostics, "claim_mismatch_count": 1})
+        canonical_claim = claim_text_by_id[claim_id]
+        if claim is not None:
+            if not isinstance(claim, str) or not claim.strip():
+                raise ReviewerValidationError("finding_claim_invalid", diagnostics)
+            if _normalize_claim_binding(claim) != _normalize_claim_binding(canonical_claim):
+                raise ReviewerValidationError("finding_claim_mismatch", {**diagnostics, "claim_mismatch_count": 1})
         if finding_scope not in {"candidate_defect", "source_material_gap"}:
             raise ReviewerValidationError("finding_scope_invalid", diagnostics)
         if finding_scope == "source_material_gap":
@@ -598,7 +596,7 @@ def parse_reviewer_payload(
             candidate_defect_count += 1
             candidate_defect_claim_ids.append(claim_id)
         used_claim_ids.add(claim_id)
-        findings.append(ReviewerFinding(claim_id, _clip(issue), _clip(action), _clip(claim), finding_scope))
+        findings.append(ReviewerFinding(claim_id, _clip(issue), _clip(action), _clip(canonical_claim), finding_scope))
     if source_material_gap_count:
         raise ReviewerValidationError(
             "source_material_gap_finding",
@@ -781,8 +779,8 @@ def _repair_shape_instruction(diagnostics: Mapping[str, Any]) -> str:
         return "A revise or unverified verdict needs 1 to 8 report_read_only_finding calls. " + common
     if code in {"finding_claim_invalid", "finding_claim_mismatch"}:
         return (
-            "Every finding must copy the exact candidate_claims text for its selected claim_id into claim. "
-            "If the text belongs to another claim_id, select that claim_id instead. "
+            "Do not include claim text in report_read_only_finding; Runtime binds the exact candidate_claims text "
+            "from the selected claim_id. If using legacy claim text, it must exactly match that claim_id. "
             + common
         )
     if code in {"source_material_gap_finding", "finding_scope_invalid"}:

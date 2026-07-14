@@ -112,21 +112,22 @@ def _finding_call(
     issue: str = "unsupported",
     action: str = "qualify",
     scope: str = "candidate_defect",
+    include_claim: bool = True,
 ) -> dict:
+    arguments = {
+        "claim_id": claim_id,
+        "finding_scope": scope,
+        "issue": issue,
+        "action": action,
+    }
+    if include_claim:
+        arguments["claim"] = claim
     return {
         "id": call_id,
         "type": "function",
         "function": {
             "name": REVIEWER_FINDING_TOOL_NAME,
-            "arguments": json.dumps(
-                {
-                    "claim_id": claim_id,
-                    "claim": claim,
-                    "finding_scope": scope,
-                    "issue": issue,
-                    "action": action,
-                }
-            ),
+            "arguments": json.dumps(arguments),
         },
     }
 
@@ -515,6 +516,38 @@ class _ReviewerAcceptedFindingThenPassClient(_ReviewerFindingMalformedFinalThenP
         if self._primary_calls == 1:
             return type("Response", (), {"message": {"content": "PayServiceImpl is the verified owner."}})()
         return type("Response", (), {"message": {"content": "PayServiceImpl is an analogous candidate; the owner is unlocated."}})()
+
+
+class _ReviewerNoClaimFindingsClient(_ReviewerFindingMalformedFinalThenPassClient):
+    calls: list[dict] = []
+
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
+        if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages):
+            self._review_calls += 1
+            if self._review_calls == 1:
+                return _review_tool_calls_response([
+                    _finding_call("finding-1", "c001", "", issue="unsupported owner", action="mark unlocated", include_claim=False),
+                    _finding_call("finding-2", "c002", "", issue="unsupported DDL", action="mark unverified", include_claim=False),
+                ])
+            if self._review_calls == 2:
+                return _review_tool_calls_response([
+                    _finding_call("finding-3", "c003", "", issue="unsupported API", action="mark proposal", include_claim=False),
+                    _final_call("final-revise", {"verdict": "revise", "confidence": 0.9, "reason": "anchor-bound findings"})
+                ])
+            return _review_submit({"verdict": "pass", "confidence": 0.9, "findings": [], "reason": "rewrite scoped"})
+        self._primary_calls += 1
+        if self._primary_calls == 1:
+            return type(
+                "Response",
+                (),
+                {"message": {"content": "- PayServiceImpl is verified owner.\n- Existing DDL is complete.\n- API path is implemented."}},
+            )()
+        return type(
+            "Response",
+            (),
+            {"message": {"content": "- Owner remains unlocated.\n- DDL is unverified.\n- API path is only a proposal."}},
+        )()
 
 
 class _ReviewerValidFindingUnknownLaterClient(_ReviewerFindingMalformedFinalThenPassClient):
@@ -1484,7 +1517,11 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertNotIn("findings", parameters["properties"])
         finding_schema = reviewer_finding_tool_schema(units)
         self.assertEqual(finding_schema["function"]["name"], REVIEWER_FINDING_TOOL_NAME)
-        self.assertEqual(finding_schema["function"]["parameters"]["additionalProperties"], False)
+        finding_parameters = finding_schema["function"]["parameters"]
+        self.assertEqual(finding_parameters["additionalProperties"], False)
+        self.assertNotIn("claim", finding_parameters["properties"])
+        self.assertEqual(finding_parameters["required"], ["claim_id", "finding_scope", "issue", "action"])
+        self.assertEqual(finding_parameters["properties"]["finding_scope"]["enum"], ["candidate_defect"])
 
         invalid_payloads = (
             {
@@ -1516,7 +1553,8 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertIn("at most 8", prompt)
         self.assertIn("`pass` verdict requires 0", prompt)
         self.assertIn("finding_scope to `candidate_defect`", prompt)
-        self.assertIn("copy that exact candidate_claims text", prompt)
+        self.assertIn("Runtime binds the exact candidate text by claim_id", prompt)
+        self.assertNotIn("copy that exact candidate_claims text", prompt)
         self.assertIn("action must change the candidate answer", prompt)
         self.assertIn("exact request is mandatory", prompt)
         self.assertIn("source priority", prompt)
@@ -1531,6 +1569,7 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertIn("at most 8", repair[0]["content"])
         self.assertIn("no more than 8 highest-risk findings", repair[-1]["content"])
         self.assertIn("original output tools", repair[-1]["content"])
+        self.assertIn("Runtime binds the exact claim by claim_id", repair[-1]["content"])
 
     def test_document_consistency_contract_passes_an_explicit_unresolved_conflict(self) -> None:
         contract = generate_requirement_contract(
@@ -1716,6 +1755,24 @@ class ReadOnlyReviewerTests(unittest.TestCase):
                 claim_units=units,
             )
         self.assertEqual(raised.exception.code, "source_material_gap_finding")
+        with self.assertRaises(ReviewerValidationError) as no_claim_raised:
+            parse_reviewer_payload(
+                {
+                    "verdict": "revise",
+                    "confidence": 0.7,
+                    "findings": [
+                        {
+                            "claim_id": "c001",
+                            "finding_scope": "source_material_gap",
+                            "issue": "source materials still need confirmation",
+                            "action": "ask the artifact owner to update sources",
+                        }
+                    ],
+                    "reason": "source gap",
+                },
+                claim_units=units,
+            )
+        self.assertEqual(no_claim_raised.exception.code, "source_material_gap_finding")
         repair = reviewer_repair_messages(
             build_explore_handoff(
                 request="review",
@@ -1828,7 +1885,28 @@ class ReadOnlyReviewerTests(unittest.TestCase):
             units,
             raised.exception.diagnostics,
         )
-        self.assertIn("copy the exact candidate_claims text", repair[-1]["content"])
+        self.assertIn("Do not include claim text", repair[-1]["content"])
+
+    def test_finding_without_claim_binds_canonical_claim_by_id(self) -> None:
+        units = candidate_claim_units("First unsupported claim.\n\nSecond unsupported claim.")
+        parsed = parse_reviewer_payload(
+            {
+                "verdict": "revise",
+                "confidence": 0.8,
+                "findings": [
+                    {
+                        "claim_id": "c002",
+                        "finding_scope": "candidate_defect",
+                        "issue": "unsupported",
+                        "action": "qualify",
+                    }
+                ],
+                "reason": "anchor-bound finding",
+            },
+            claim_units=units,
+        )
+        self.assertEqual(parsed.findings[0].claim_id, "c002")
+        self.assertEqual(parsed.findings[0].claim, "Second unsupported claim.")
 
     def test_claim_ids_address_markdown_units_without_reviewer_text_matching(self) -> None:
         candidate = "| Scope | Owner |\n| --- | --- |\n| Frontend | **platformPayment** |\n\n**Conclusion:** platformPayment is the verified owner."
@@ -2204,6 +2282,29 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertEqual(summary["finding_submits"], 1)
         self.assertEqual(summary["rejected_final_submits"], 1)
         self.assertEqual(summary["verdicts"], {"pass": 1, "revise": 1})
+
+    def test_incremental_findings_without_claim_use_claim_id_anchor_binding(self) -> None:
+        _ReviewerNoClaimFindingsClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch("local_agent.agent.OpenAICompatibleClient", _ReviewerNoClaimFindingsClient):
+                runtime = AgentRuntime(_config(Path(tmp).resolve()), show_tool_logs=False)
+                answer = runtime.run("只读分析当前服务 owner、DDL 和 API，不要修改文件。")
+        self.assertIn("Owner remains unlocated", answer)
+        summary = runtime._last_run_summary["read_only_reviewer"]
+        self.assertEqual(summary["finding_submits"], 3)
+        self.assertEqual(summary["rejected_finding_submits"], 0)
+        self.assertEqual(summary["output_lifecycle_exhausted"], 0)
+        self.assertEqual(summary["errors"], {})
+        self.assertEqual(summary["verdicts"], {"pass": 1, "revise": 1})
+        review_calls = [
+            call for call in _ReviewerNoClaimFindingsClient.calls
+            if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in call["messages"])
+        ]
+        finding_schema = review_calls[0]["tools"][0]["function"]["parameters"]
+        self.assertNotIn("claim", finding_schema["properties"])
+        tool_results = [message for message in review_calls[1]["messages"] if message.get("role") == "tool"]
+        self.assertEqual(len([message for message in tool_results if message.get("tool_call_id") == "finding-1"]), 1)
+        self.assertEqual(len([message for message in tool_results if message.get("tool_call_id") == "finding-2"]), 1)
 
     def test_valid_finding_survives_unknown_later_output_call(self) -> None:
         _ReviewerValidFindingUnknownLaterClient.calls = []
