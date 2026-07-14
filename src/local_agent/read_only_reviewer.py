@@ -205,8 +205,10 @@ def _extract_candidate_claim_units(candidate: str) -> tuple[tuple[CandidateClaim
     """Index Markdown claims, then deterministically sample both head and tail.
 
     Structural lines are independent units. Ordinary paragraphs split on common
-    sentence boundaries and then on fixed-size chunks when one sentence is very
-    long. This is presentation-aware text segmentation, not semantic NLP.
+    sentence boundaries and then on complete punctuation-delimited pieces. If a
+    factual unit cannot be transported without mid-unit clipping, the caller
+    receives a projection issue and must fail closed rather than silently omit
+    that claim. This is presentation-aware text segmentation, not semantic NLP.
     """
 
     indexed: list[CandidateClaimUnit] = []

@@ -97,9 +97,11 @@ class ReadOnlyReviewPhase:
         handoff = self._handoff(candidate, claim_units=claim_units)
         omitted_claim_ids = set(getattr(handoff, "transport_omitted_claim_ids", ()) or ())
         if omitted_claim_ids:
-            claim_units = tuple(unit for unit in claim_units if unit.claim_id not in omitted_claim_ids)
-            if not claim_units:
-                return self._unverified("invalid_output", "claim_evidence_transport_omitted_all_reviewable_claims")
+            return self._unverified(
+                "claim_evidence_transport_incomplete",
+                f"omitted_claims={len(omitted_claim_ids)}",
+                handoff=handoff,
+            )
         state.attempted = True
         state.review_round += 1
         state.claim_units = claim_units

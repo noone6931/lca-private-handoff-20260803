@@ -1470,6 +1470,46 @@ class _OverlongClaimClient:
         )()
 
 
+class _TransportOmittedClaimClient:
+    calls: list[dict] = []
+
+    def __init__(self, config: AgentConfig):
+        self._primary_calls = 0
+
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
+        if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages):
+            return _review_tool_calls_response(
+                [
+                    _final_call(
+                        "omitted-pass",
+                        {
+                            "verdict": "pass",
+                            "confidence": 0.99,
+                            "reason": "would pass visible claims only",
+                        },
+                    )
+                ]
+            )
+        self._primary_calls += 1
+        if self._primary_calls == 1:
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {"id": "read-policy", "type": "function", "function": {"name": "read_file", "arguments": '{"path":"policy.md"}'}},
+                        ],
+                    }
+                },
+            )()
+        claim_lines = [f"- policy.md:{index} states rule {index}." for index in range(1, 75)]
+        claim_lines.append("- policy.md:210 states rule 210; PayServiceImpl is the verified owner.")
+        return type("Response", (), {"message": {"content": "\n".join(claim_lines)}})()
+
+
 def _config(workspace: Path, *, provider: str = "openai-compatible") -> AgentConfig:
     return AgentConfig(
         provider=provider,
@@ -1918,6 +1958,31 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         ]
         self.assertEqual(review_calls, [])
 
+    def test_runtime_fails_closed_when_reviewed_claim_evidence_is_transport_omitted(self) -> None:
+        _TransportOmittedClaimClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            (workspace / "policy.md").write_text(
+                "\n".join(f"{index}: rule {index}" for index in range(1, 250)),
+                encoding="utf-8",
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _TransportOmittedClaimClient):
+                runtime = AgentRuntime(_config(workspace), show_tool_logs=False)
+                answer = runtime.run("只读分析当前服务 owner、调用链和影响范围，不要修改文件。")
+
+        self.assertNotIn("PayServiceImpl is the verified owner", answer)
+        self.assertEqual(runtime._last_run_summary["termination_reason"], "read_only_reviewer_unverified")
+        self.assertEqual(
+            runtime._last_run_summary["read_only_reviewer"]["errors"],
+            {"claim_evidence_transport_incomplete": 1},
+        )
+        review_calls = [
+            call
+            for call in _TransportOmittedClaimClient.calls
+            if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in call["messages"])
+        ]
+        self.assertEqual(review_calls, [])
+
     def test_claim_scoped_locator_selection_exceeds_six_and_ignores_unread_citations(self) -> None:
         contract = generate_requirement_contract(
             "只根据 Markdown 和 HTML 分析资料一致性，不要检查代码。"
@@ -1951,6 +2016,27 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertTrue(omitted.isdisjoint(covered_claims))
         self.assertNotIn(missing_claim, omitted)
         self.assertFalse(any("missing.md" in item.summary for item in locator_items))
+
+    def test_oversized_locator_line_is_not_marked_transported(self) -> None:
+        contract = generate_requirement_contract(
+            "只根据 Markdown 分析资料一致性，不要检查代码。"
+        )
+        candidate = "- policy.md:10 states an oversized rule."
+        units = candidate_claim_units(candidate)
+        handoff = build_explore_handoff(
+            request="只根据 Markdown 分析资料一致性，不要检查代码。",
+            contract=contract,
+            requirement_evidence=(RequirementEvidence("policy.md", "10: " + ("x" * 5000), root="/workspace"),),
+            source_evidence=(),
+            records=(),
+            tool_results=(),
+            candidate=candidate,
+            claim_units=units,
+        )
+        locator_items = [item for item in handoff.items if item.classification == "requirement_locator"]
+
+        self.assertEqual(locator_items, [])
+        self.assertEqual(handoff.transport_omitted_claim_ids, ("c001",))
 
     def test_shared_range_locator_binds_many_claims_without_repeating_summary(self) -> None:
         contract = generate_requirement_contract(

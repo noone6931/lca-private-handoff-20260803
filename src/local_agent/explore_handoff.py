@@ -377,6 +377,7 @@ def _candidate_locator_items(
     buckets: dict[tuple[tuple[str, str], str, str], ClaimEvidenceItem] = {}
     order: list[tuple[tuple[str, str], str, str]] = []
     seen: set[tuple[str, tuple[str, str], str, str]] = set()
+    untransportable_claim_ids: list[str] = []
     sources = _document_locator_sources(requirements, source_evidence, tool_results)
     claim_texts = _candidate_locator_claim_texts(candidate, claim_units)
     for claim_id, claim_text in claim_texts:
@@ -398,6 +399,7 @@ def _candidate_locator_items(
                     continue
                 summary = _locator_summary(locator, excerpt)
                 if not summary:
+                    untransportable_claim_ids.append(claim_id)
                     continue
                 bucket_key = (artifact_key, locator.kind, locator.value)
                 prior = buckets.get(bucket_key)
@@ -416,7 +418,8 @@ def _candidate_locator_items(
                 )
                 if prior is None:
                     order.append(bucket_key)
-    return _fair_candidate_locator_items(buckets, order)
+    items, omitted_claim_ids = _fair_candidate_locator_items(buckets, order)
+    return items, tuple(dict.fromkeys((*omitted_claim_ids, *untransportable_claim_ids)))
 
 
 def _candidate_locator_claim_texts(candidate: str, claim_units: Iterable[Any]) -> tuple[tuple[str, str], ...]:
@@ -615,6 +618,8 @@ def _bounded_complete_lines(value: str, budget: int) -> str:
         tail.append(line)
         used += len(line) + (1 if tail else 0)
     rendered = [*head, marker, *reversed(tail)]
+    if rendered == [marker]:
+        return ""
     return "\n".join(rendered)
 
 
