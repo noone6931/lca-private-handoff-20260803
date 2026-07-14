@@ -359,7 +359,7 @@ class ReadOnlyReviewPhase:
         runtime._session.append("read_only_reviewer", {"event": "rewrite_queued", "verdict": result.verdict})
         return ReviewerPhaseOutcome(
             "rewrite",
-            rewrite_message=reviewer_rewrite_message(result, profile=contract.read_only_review_profile),
+            rewrite_message=reviewer_rewrite_message(result, profile=contract.read_only_review_profile, handoff=handoff),
         )
 
     def _assistant_tool_message(self, message: dict[str, Any]) -> dict[str, Any]:

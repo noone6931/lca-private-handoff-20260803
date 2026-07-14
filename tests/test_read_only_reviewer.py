@@ -11,7 +11,10 @@ from local_agent.agent import AgentRuntime
 from local_agent.config import AgentConfig
 from local_agent.document_consistency import DocumentConsistencyAssessment
 from local_agent.explore_handoff import build_explore_handoff
+from local_agent.explore_handoff import ClaimEvidenceItem
+from local_agent.explore_handoff import ExploreHandoff
 from local_agent.read_only_reviewer import ReviewerResult
+from local_agent.read_only_reviewer import ReviewerFinding
 from local_agent.read_only_reviewer import candidate_claim_units
 from local_agent.read_only_reviewer import rewrite_complies_with_review
 from local_agent.read_only_reviewer import parse_reviewer_payload
@@ -19,6 +22,7 @@ from local_agent.read_only_reviewer import parse_reviewer_result
 from local_agent.read_only_reviewer import ReviewerValidationError
 from local_agent.read_only_reviewer import reviewer_repair_messages
 from local_agent.read_only_reviewer import reviewer_messages
+from local_agent.read_only_reviewer import reviewer_rewrite_message
 from local_agent.read_only_reviewer import reviewer_finding_tool_schema
 from local_agent.read_only_reviewer import reviewer_output_tool_schema
 from local_agent.read_only_reviewer import reviewer_output_tool_schemas
@@ -1603,6 +1607,214 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         )
         support_schema = schema["function"]["parameters"]["properties"]["document_consistency"]["properties"]["supporting_evidence_ids"]
         self.assertIn("independent non-visual", support_schema["description"])
+
+    def test_document_consistency_rewrite_projects_typed_conflict_context_not_actions(self) -> None:
+        contract = generate_requirement_contract(
+            "Compare Markdown and image artifacts. Do not choose source priority or infer lifecycle."
+        )
+        handoff = ExploreHandoff(
+            request="Compare Markdown and image artifacts. Do not choose source priority or infer lifecycle.",
+            contract=contract,
+            items=(
+                ClaimEvidenceItem(
+                    "requirement_fact",
+                    "read_file",
+                    "policy.md",
+                    "primary",
+                    "root_local",
+                    "ok",
+                    "Document A says the field must stay empty.",
+                ),
+                ClaimEvidenceItem(
+                    "visual_observation",
+                    "inspect_image",
+                    "example.png",
+                    "primary",
+                    "root_local",
+                    "ok",
+                    "Image B visibly shows the field has a value.",
+                ),
+            ),
+        )
+        result = ReviewerResult(
+            "revise",
+            0.7,
+            findings=(
+                ReviewerFinding(
+                    "c001",
+                    "unsupported reconciliation",
+                    "treat Doc A authoritative / image later state",
+                    "A and B are consistent because image B is a later state.",
+                    "candidate_defect",
+                ),
+            ),
+            reason="unsupported reconciliation",
+            document_consistency=DocumentConsistencyAssessment("reported_unresolved", ("e001", "e002"), ()),
+        )
+
+        message = reviewer_rewrite_message(result, profile="document_consistency", handoff=handoff)
+
+        self.assertIn("Do not choose source priority or infer lifecycle", message)
+        self.assertIn("evidence_id=e001", message)
+        self.assertIn("policy.md", message)
+        self.assertIn("Document A says the field must stay empty", message)
+        self.assertIn("evidence_id=e002", message)
+        self.assertIn("example.png", message)
+        self.assertIn("Image B visibly shows the field has a value", message)
+        self.assertIn("Reviewer stance: reported_unresolved", message)
+        self.assertIn("No valid supporting evidence in this handoff establishes artifact lifecycle", message)
+        self.assertIn("role/lifecycle/precedence is not established", message)
+        self.assertIn("unresolved or pending confirmation", message)
+        self.assertIn("mockup, reference-only, example-only", message)
+        self.assertNotIn("treat Doc A authoritative", message)
+        self.assertNotIn("image later state", message)
+        self.assertLessEqual(len(message), 5000)
+
+    def test_document_consistency_rewrite_omits_stale_ids_and_keeps_supported_context(self) -> None:
+        contract = generate_requirement_contract(
+            "Compare two artifacts and keep reconciliation evidence scoped."
+        )
+        handoff = ExploreHandoff(
+            request="Compare two artifacts and keep reconciliation evidence scoped.",
+            contract=contract,
+            items=(
+                ClaimEvidenceItem(
+                    "requirement_fact",
+                    "read_file",
+                    "policy.md",
+                    "primary",
+                    "root_local",
+                    "ok",
+                    "Document A says blank.",
+                ),
+                ClaimEvidenceItem(
+                    "visual_observation",
+                    "inspect_image",
+                    "example.png",
+                    "primary",
+                    "root_local",
+                    "ok",
+                    "Image B shows a value.",
+                ),
+                ClaimEvidenceItem(
+                    "document_reconciliation_support",
+                    "read_file",
+                    "lifecycle.md",
+                    "primary",
+                    "root_local",
+                    "ok",
+                    "This screenshot is captured after manual completion.",
+                ),
+                ClaimEvidenceItem(
+                    "observed_candidate",
+                    "search_code",
+                    "search.log",
+                    "primary",
+                    "root_local",
+                    "ok",
+                    "SHOULD_NOT_APPEAR as a conflict observation.",
+                ),
+            ),
+        )
+        supported = ReviewerResult(
+            "revise",
+            0.7,
+            findings=(),
+            reason="supported",
+            document_consistency=DocumentConsistencyAssessment(
+                "explicitly_supported_reconciliation",
+                ("e001", "e002"),
+                ("e003",),
+            ),
+        )
+
+        message = reviewer_rewrite_message(supported, profile="document_consistency", handoff=handoff)
+
+        self.assertIn("evidence_id=e003", message)
+        self.assertIn("captured after manual completion", message)
+        self.assertIn("Any reconciliation may use only the cited support observations", message)
+        self.assertNotIn("Do not describe either artifact as mockup", message)
+
+        stale = ReviewerResult(
+            "revise",
+            0.7,
+            findings=(),
+            reason="stale",
+            document_consistency=DocumentConsistencyAssessment("reported_unresolved", ("e001", "e999"), ()),
+        )
+        stale_message = reviewer_rewrite_message(stale, profile="document_consistency", handoff=handoff)
+        self.assertNotIn("e999", stale_message)
+        self.assertIn("evidence_id=e001", stale_message)
+
+        invalid_conflict = ReviewerResult(
+            "revise",
+            0.7,
+            findings=(),
+            reason="invalid conflict",
+            document_consistency=DocumentConsistencyAssessment("reported_unresolved", ("e001", "e004"), ()),
+        )
+        invalid_message = reviewer_rewrite_message(invalid_conflict, profile="document_consistency", handoff=handoff)
+        self.assertIn("evidence_id=e001", invalid_message)
+        self.assertNotIn("evidence_id=e004", invalid_message)
+        self.assertNotIn("SHOULD_NOT_APPEAR", invalid_message)
+
+    def test_document_consistency_rewrite_ignores_invalid_support_for_revise(self) -> None:
+        contract = generate_requirement_contract(
+            "Compare artifacts without inventing lifecycle."
+        )
+        handoff = ExploreHandoff(
+            request="Compare artifacts without inventing lifecycle.",
+            contract=contract,
+            items=(
+                ClaimEvidenceItem(
+                    "requirement_fact",
+                    "read_file",
+                    "policy.md",
+                    "primary",
+                    "root_local",
+                    "ok",
+                    "Document A says blank.",
+                ),
+                ClaimEvidenceItem(
+                    "visual_observation",
+                    "inspect_image",
+                    "example.png",
+                    "primary",
+                    "root_local",
+                    "ok",
+                    "Image B shows a value.",
+                ),
+                ClaimEvidenceItem(
+                    "requirement_fact",
+                    "read_file",
+                    "notes.md",
+                    "primary",
+                    "root_local",
+                    "ok",
+                    "General notes mention both artifacts but no lifecycle or precedence.",
+                ),
+            ),
+        )
+        result = ReviewerResult(
+            "revise",
+            0.7,
+            findings=(),
+            reason="invalid support",
+            document_consistency=DocumentConsistencyAssessment(
+                "explicitly_supported_reconciliation",
+                ("e001", "e002"),
+                ("e003",),
+            ),
+        )
+
+        message = reviewer_rewrite_message(result, profile="document_consistency", handoff=handoff)
+
+        self.assertIn("evidence_id=e001", message)
+        self.assertIn("evidence_id=e002", message)
+        self.assertNotIn("evidence_id=e003", message)
+        self.assertNotIn("may use only the cited support observations", message)
+        self.assertIn("No valid supporting evidence", message)
+        self.assertIn("role/lifecycle/precedence is not established", message)
 
     def test_document_consistency_overlap_repair_requires_empty_support_for_unresolved(self) -> None:
         contract = generate_requirement_contract(

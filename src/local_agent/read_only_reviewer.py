@@ -8,6 +8,7 @@ from typing import Any, Literal, Mapping
 
 from .document_consistency import DocumentConsistencyAssessment
 from .document_consistency import DocumentConsistencyValidationError
+from .document_consistency import document_consistency_rewrite_context
 from .document_consistency import parse_document_consistency_assessment
 from .explore_handoff import ExploreHandoff
 from .task_contract import RequirementContract
@@ -647,7 +648,12 @@ def parse_reviewer_payload(
     )
 
 
-def reviewer_rewrite_message(result: ReviewerResult, *, profile: str | None = None) -> str:
+def reviewer_rewrite_message(
+    result: ReviewerResult,
+    *,
+    profile: str | None = None,
+    handoff: ExploreHandoff | None = None,
+) -> str:
     """Render a bounded runtime instruction, not the reviewer's raw transcript."""
 
     disposition = (
@@ -681,10 +687,14 @@ def reviewer_rewrite_message(result: ReviewerResult, *, profile: str | None = No
             "precedence is not established when no supporting evidence id exists, and present any reconciliation only as a "
             f"conditional option. Reviewer stance={stance}. Do not apply reviewer action text as an authoritative source."
         )
+        if handoff is not None and result.document_consistency is not None:
+            lines.extend(document_consistency_rewrite_context(handoff, result.document_consistency))
         for finding in result.findings:
             claim = f": {finding.claim}" if finding.claim else ""
             lines.append(
-                f"- Address claim {finding.claim_id}{claim}; remove unsupported reconciliation or restate it as unresolved/conditional."
+                f"- Address claim {finding.claim_id}{claim}; if this claim lacks direct handoff support, remove it or downgrade it "
+                "to unlocated/unverified/proposal. If it concerns an artifact conflict, restate it using the typed "
+                "document-consistency disposition above. Do not invent replacement facts."
             )
         return "\n".join(lines)
     for finding in result.findings:

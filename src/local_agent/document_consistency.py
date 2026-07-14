@@ -41,6 +41,11 @@ class DocumentConsistencyValidationError(ValueError):
         super().__init__(code)
 
 
+MAX_REWRITE_CONTEXT_CHARS = 4200
+MAX_REWRITE_REQUEST_CHARS = 700
+MAX_REWRITE_ITEM_CHARS = 520
+
+
 def parse_document_consistency_assessment(
     raw: object,
     *,
@@ -122,6 +127,58 @@ def unresolved_document_conflict_items(
     return tuple(by_id[item_id] for item_id in assessment.conflict_evidence_ids if item_id in by_id)
 
 
+def document_consistency_rewrite_context(
+    handoff: "ExploreHandoff",
+    assessment: DocumentConsistencyAssessment,
+) -> tuple[str, ...]:
+    """Render bounded typed context for a document-consistency rewrite.
+
+    Evidence ids are only meaningful within the handoff that produced the
+    assessment.  This helper projects the cited observations back to the
+    primary model without trusting reviewer free-text actions as facts.
+    """
+
+    by_id = {item.evidence_id: item for item in handoff.items}
+    conflict_items = tuple(
+        by_id[item_id]
+        for item_id in assessment.conflict_evidence_ids
+        if item_id in by_id and _is_document_observation(by_id[item_id])
+    )
+    support_items = tuple(
+        by_id[item_id]
+        for item_id in assessment.supporting_evidence_ids
+        if item_id in by_id and _is_explicit_reconciliation_support(by_id[item_id])
+    )
+    lines = [
+        "Typed document-consistency context from the same reviewer handoff:",
+        f"- Mandatory user request excerpt: {_clip_for_rewrite(handoff.request, MAX_REWRITE_REQUEST_CHARS)}",
+        "- Treat that request as a hard constraint; do not invent source precedence, artifact lifecycle, or artifact role.",
+        (
+            f"- Reviewer stance: {assessment.stance}; cited conflict observations={len(conflict_items)}; "
+            f"valid lifecycle/precedence support observations={len(support_items)}."
+        ),
+    ]
+    if conflict_items:
+        lines.append("- Cited conflict observations:")
+        lines.extend(f"  * {_format_rewrite_item(item)}" for item in conflict_items)
+    if support_items:
+        lines.append("- Cited lifecycle/precedence support observations:")
+        lines.extend(f"  * {_format_rewrite_item(item)}" for item in support_items)
+        lines.append("- Any reconciliation may use only the cited support observations and only within their stated scope.")
+    else:
+        lines.append("- No valid supporting evidence in this handoff establishes artifact lifecycle, role, or precedence.")
+    if not support_items:
+        lines.append(
+            "- Required disposition: restate each cited side as an observation, state that artifact role/lifecycle/precedence "
+            "is not established, and keep the discrepancy unresolved or pending confirmation."
+        )
+        lines.append(
+            "- Do not describe either artifact as mockup, reference-only, example-only, historical, later, final, "
+            "offline-filled, authoritative, stronger, or the source of truth unless a cited support id explicitly says so."
+        )
+    return _bounded_rewrite_lines(lines)
+
+
 def explicit_reconciliation_excerpt(value: str) -> str | None:
     """Return a bounded visible excerpt only for explicit lifecycle/precedence text."""
 
@@ -193,6 +250,38 @@ def _is_explicit_reconciliation_support(item: ClaimEvidenceItem) -> bool:
     if item.classification != "document_reconciliation_support" or item.tool != "read_file" or item.outcome != "ok":
         return False
     return explicit_reconciliation_excerpt(item.summary) is not None
+
+
+def _format_rewrite_item(item: ClaimEvidenceItem) -> str:
+    parts = [
+        f"evidence_id={item.evidence_id}",
+        f"tool={item.tool}",
+        f"path={item.path or '(unknown)'}",
+        f"root={item.root or '(unknown)'}",
+        f"scope={item.scope or '(unknown)'}",
+        f"summary={_clip_for_rewrite(item.summary, MAX_REWRITE_ITEM_CHARS)}",
+    ]
+    return "; ".join(parts)
+
+
+def _clip_for_rewrite(value: str, limit: int) -> str:
+    compact = " ".join((value or "").split())
+    if len(compact) <= limit:
+        return compact
+    return compact[: max(0, limit - 1)].rstrip() + "..."
+
+
+def _bounded_rewrite_lines(lines: list[str]) -> tuple[str, ...]:
+    total = 0
+    rendered: list[str] = []
+    for line in lines:
+        remaining = MAX_REWRITE_CONTEXT_CHARS - total
+        if remaining <= 0:
+            break
+        bounded = line if len(line) <= remaining else line[: max(0, remaining - 1)].rstrip() + "..."
+        rendered.append(bounded)
+        total += len(bounded) + 1
+    return tuple(rendered)
 
 
 _RECONCILIATION_SUPPORT_PATTERNS = (
