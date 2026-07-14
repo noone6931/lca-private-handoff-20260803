@@ -185,7 +185,11 @@ def parse_reviewer_output_turn(
             prior_finding = finding_by_claim_id.get(raw_claim_id) if isinstance(raw_claim_id, str) else None
             if prior_finding is not None:
                 try:
-                    finding = parse_reviewer_finding_payload(payload, claim_units=claim_units)
+                    finding = parse_reviewer_finding_payload(
+                        payload,
+                        claim_units=claim_units,
+                        document_consistency=document_consistency,
+                    )
                 except ReviewerValidationError as exc:
                     events.append(_event("finding_rejected", call_id, exc.code, index, exc.diagnostics))
                     continue
@@ -217,7 +221,11 @@ def parse_reviewer_output_turn(
                 )
                 continue
             try:
-                finding = parse_reviewer_finding_payload(payload, claim_units=claim_units)
+                finding = parse_reviewer_finding_payload(
+                    payload,
+                    claim_units=claim_units,
+                    document_consistency=document_consistency,
+                )
             except ReviewerValidationError as exc:
                 events.append(_event("finding_rejected", call_id, exc.code, index, exc.diagnostics))
                 continue

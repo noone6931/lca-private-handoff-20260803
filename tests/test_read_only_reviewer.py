@@ -3156,8 +3156,27 @@ class ReadOnlyReviewerTests(unittest.TestCase):
                 units,
                 raised.exception.diagnostics,
             )[-1]["content"]
-            self.assertIn("proposal or pending", repair)
-            self.assertIn("outside this reviewer's factual-evidence ownership", repair)
+            self.assertIn("outside this reviewer role", repair)
+            self.assertIn("Proposal and pending", repair)
+
+    def test_requirement_fact_findings_belong_only_to_document_consistency_review(self) -> None:
+        units = candidate_claim_units("## 需求明确事实\n- 编号格式由需求文档定义。\n")
+        payload = {
+            "claim_id": units[0].claim_id,
+            "finding_scope": "candidate_defect",
+            "issue": "current repository source does not implement this requirement",
+            "action": "move the requirement fact into design proposals",
+        }
+
+        with self.assertRaises(ReviewerValidationError) as raised:
+            parse_reviewer_finding_payload(payload, claim_units=units)
+        self.assertEqual(raised.exception.code, "claim_role_out_of_scope")
+        accepted = parse_reviewer_finding_payload(
+            payload,
+            claim_units=units,
+            document_consistency=True,
+        )
+        self.assertEqual(accepted.claim_id, units[0].claim_id)
 
     def test_pending_transport_directive_owns_candidate_before_other_final_steerers(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

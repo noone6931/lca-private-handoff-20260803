@@ -18,14 +18,14 @@
       ]
     },
     {
-      "content": "## 源码当前事实\n- src/Owner.java:1 proves Owner owns settlement.\n\n## 设计建议\n- 建议新增 settlement API。\n\n## 尚待确认项\n- 是否复用旧字段。"
+      "content": "## 需求明确事实\n- 需求要求新增结算流程。\n\n## 源码当前事实\n- src/Owner.java:1 proves Owner owns settlement.\n\n## 设计建议\n- 建议新增 settlement API。\n\n## 尚待确认项\n- 是否复用旧字段。"
     },
     {
       "tool_calls": [
         {
           "name": "report_read_only_finding",
           "arguments": {
-            "claim_id": "c001",
+            "claim_id": "c002",
             "finding_scope": "candidate_defect",
             "issue": "line 1 declares a class but does not prove settlement ownership",
             "action": "limit the source fact to the observed class declaration"
@@ -34,7 +34,16 @@
         {
           "name": "report_read_only_finding",
           "arguments": {
-            "claim_id": "c002",
+            "claim_id": "c001",
+            "finding_scope": "candidate_defect",
+            "issue": "current repository source does not implement this requirement",
+            "action": "move the requirement fact into design proposals"
+          }
+        },
+        {
+          "name": "report_read_only_finding",
+          "arguments": {
+            "claim_id": "c003",
             "finding_scope": "candidate_defect",
             "issue": "the proposal needs another route and state",
             "action": "add the missing route and state"
@@ -51,7 +60,7 @@
       ]
     },
     {
-      "content": "## 源码当前事实\n- src/Owner.java:1 declares class Owner only; settlement ownership remains unlocated.\n\n## 设计建议\n- 建议新增 settlement API。\n\n## 尚待确认项\n- 是否复用旧字段。"
+      "content": "## 需求明确事实\n- 需求要求新增结算流程。\n\n## 源码当前事实\n- src/Owner.java:1 declares class Owner only; settlement ownership remains unlocated.\n\n## 设计建议\n- 建议新增 settlement API。\n\n## 尚待确认项\n- 是否复用旧字段。"
     },
     {
       "tool_calls": [
@@ -93,7 +102,7 @@
     "read_only_reviewer": {
       "triggers": 2,
       "attempts": 2,
-      "rejected_finding_submits": 1,
+      "rejected_finding_submits": 2,
       "rejected_final_submits": 0,
       "typed_submits": 3,
       "rewrites": 1,
