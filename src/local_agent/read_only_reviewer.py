@@ -250,6 +250,7 @@ def _extract_candidate_claim_units(candidate: str) -> tuple[tuple[CandidateClaim
     paragraph: list[str] = []
     locator_context = ""
     section_context = ""
+    section_context_by_level: dict[int, str] = {}
     pending_structural_group: list[int] = []
     active_source_path = ""
 
@@ -310,7 +311,14 @@ def _extract_candidate_claim_units(candidate: str) -> tuple[tuple[CandidateClaim
             continue
         if _is_markdown_heading(line):
             flush_paragraph()
-            section_context = _heading_context(line)
+            heading_level = _heading_level(line)
+            section_context_by_level[heading_level] = _heading_context(line)
+            for nested_level in tuple(level for level in section_context_by_level if level > heading_level):
+                section_context_by_level.pop(nested_level, None)
+            section_context = " > ".join(
+                section_context_by_level[level]
+                for level in sorted(section_context_by_level)
+            )
             pending_structural_group.clear()
             locator_context = line if _line_has_path_bound_locator(line) else ""
             active_source_path = _source_path_context(line)
@@ -1205,6 +1213,11 @@ def _heading_context(line: str) -> str:
     value = re.sub(r"^#{1,6}\s+", "", line or "").strip()
     value = re.sub(r"\s+", " ", value)
     return value[:180]
+
+
+def _heading_level(line: str) -> int:
+    match = re.match(r"^(#{1,6})\s+", line or "")
+    return len(match.group(1)) if match is not None else 1
 
 
 def _is_markdown_horizontal_rule(line: str) -> bool:

@@ -3561,6 +3561,38 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertIn(source_claim_id, handoff.transport_omitted_claim_ids)
         self.assertNotIn(proposal_claim_id, handoff.transport_omitted_claim_ids)
 
+    def test_nested_source_fact_section_retains_parent_context_and_fails_closed(self) -> None:
+        contract = generate_requirement_contract("读取源码并输出证据化技术设计。")
+        source_path = "/workspace/backend/src/Processor.java"
+        candidate = (
+            "## 源码当前事实\n"
+            "### 后端 Processor\n"
+            "- 当前文件超过 14500 行，并实现完整结算能力。\n"
+            "## 设计建议\n"
+            "### 后端建议\n"
+            "- 建议新增协调层。\n"
+        )
+        units = candidate_claim_units(candidate)
+        handoff = build_explore_handoff(
+            request="读取源码并输出证据化技术设计。",
+            contract=contract,
+            requirement_evidence=(),
+            source_evidence=(
+                SourceEvidence(source_path, "1: class Processor {}", root="/workspace/backend"),
+            ),
+            records=(),
+            tool_results=(),
+            candidate=candidate,
+            claim_units=units,
+        )
+        source_claim = next(unit for unit in units if "14500" in unit.text)
+        proposal_claim = next(unit for unit in units if "协调层" in unit.text)
+
+        self.assertEqual(source_claim.section_context, "源码当前事实 > 后端 Processor")
+        self.assertEqual(proposal_claim.section_context, "设计建议 > 后端建议")
+        self.assertIn(source_claim.claim_id, handoff.transport_omitted_claim_ids)
+        self.assertNotIn(proposal_claim.claim_id, handoff.transport_omitted_claim_ids)
+
     def test_source_fact_section_with_claim_locator_is_transportable(self) -> None:
         contract = generate_requirement_contract("读取源码并输出证据化技术设计。")
         source_path = "/workspace/backend/src/Processor.java"
