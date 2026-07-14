@@ -585,11 +585,26 @@ def evaluate_tool_choice_state(
                 missing_requirements=tuple(f"code_read:{root}" for root in missing),
                 force_final_answer_without_tools=True,
             )
+        closure_candidate_read = (
+            explore_decision.observation_calls >= explore_decision.hard_budget
+            and bool(explore_decision.read_candidates)
+        )
+        inventory_candidate_read = bool(explore_decision.inventory_read_candidates) and not bool(
+            explore_decision.discovery_patterns
+        )
+        if explore_decision.exact_read_candidates:
+            bounded_read_paths = explore_decision.exact_read_candidates[:1]
+        elif closure_candidate_read:
+            bounded_read_paths = explore_decision.read_candidates[:1]
+        elif inventory_candidate_read:
+            bounded_read_paths = explore_decision.inventory_read_candidates
+        else:
+            bounded_read_paths = ()
         return ToolChoiceDecision(
             steering_required=True,
             allowed_tool_names=_allowed_subset(
                 {"read_file"}
-                if explore_decision.exact_read_candidates
+                if explore_decision.exact_read_candidates or closure_candidate_read or inventory_candidate_read
                 else PRECISE_EVIDENCE_TOOLS
                 if explore_decision.read_candidates
                 else {"glob_files"}
@@ -602,6 +617,8 @@ def evaluate_tool_choice_state(
                 + (
                     "prefer reading typed search/LSP candidates, or continue bounded precise search when needed; "
                     if explore_decision.read_candidates
+                    else "read one source candidate from the model-selected glob before any new broad discovery; "
+                    if inventory_candidate_read
                     else "retry the exact source path once in the current missing workspace root; "
                     if explore_decision.discovery_patterns
                     else "run one root-scoped fallback discovery for the current missing root before finalizing; "
@@ -614,6 +631,10 @@ def evaluate_tool_choice_state(
             rule_id=(
                 "read_only_profile_explore_candidate_read"
                 if explore_decision.exact_read_candidates
+                else "read_only_profile_explore_closure_read"
+                if closure_candidate_read
+                else "read_only_profile_explore_inventory_read"
+                if inventory_candidate_read
                 else "read_only_profile_explore_exact_cross_root"
                 if explore_decision.discovery_patterns
                 else "read_only_profile_explore_soft"
@@ -623,7 +644,7 @@ def evaluate_tool_choice_state(
             missing_requirements=tuple(f"code_read:{root}" for root in missing),
             preferred_tool_names=(
                 ("read_file",)
-                if explore_decision.read_candidates
+                if explore_decision.read_candidates or inventory_candidate_read
                 else ("glob_files",)
                 if explore_decision.discovery_roots
                 else ("search_code", "read_file", "glob_files")
@@ -631,6 +652,11 @@ def evaluate_tool_choice_state(
             tool_call_hints=(
                 ("read_file candidates: " + ", ".join(explore_decision.read_candidates),)
                 if explore_decision.read_candidates
+                else (
+                    "Choose and read the most relevant source candidate from this completed glob: "
+                    + ", ".join(explore_decision.inventory_read_candidates),
+                )
+                if inventory_candidate_read
                 else (_precise_glob_call_hint(explore_decision.discovery_patterns),)
                 if explore_decision.discovery_patterns
                 else (inventory_glob_call_hint(explore_decision.discovery_roots),)
@@ -650,12 +676,14 @@ def evaluate_tool_choice_state(
             required_tool_arguments_json=(
                 _read_file_arguments_json(explore_decision.exact_read_candidates[0])
                 if explore_decision.exact_read_candidates
+                else _read_file_arguments_json(explore_decision.read_candidates[0])
+                if closure_candidate_read
                 else _precise_glob_arguments_json(explore_decision.discovery_patterns)
                 if explore_decision.discovery_patterns
                 else _inventory_glob_arguments_json(explore_decision.discovery_roots)
             ),
-            scoped_read_paths=explore_decision.exact_read_candidates[:1],
-            scoped_read_budget=1 if explore_decision.exact_read_candidates else None,
+            scoped_read_paths=bounded_read_paths,
+            scoped_read_budget=1 if bounded_read_paths else None,
         )
 
     evidence_preferred = _preferred_evidence_tools(results)

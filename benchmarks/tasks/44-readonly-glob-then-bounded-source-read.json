@@ -1,0 +1,86 @@
+{
+  "id": "readonly-glob-then-bounded-source-read",
+  "title": "OMP-style explore reads one model-selected source candidate after a completed source-only glob",
+  "prompt": "请只读分析 OwnerApplication 的 Owner 和调用入口，结论必须基于源码证据，不要修改文件。",
+  "budget_seconds": 90,
+  "workspace_files": {
+    "src/OwnerApplication.java": "class OwnerApplication { void execute() {} }\n",
+    "src/OwnerController.java": "class OwnerController { private OwnerApplication application; }\n"
+  },
+  "scripted_responses": [
+    {
+      "tool_calls": [
+        {
+          "name": "glob_files",
+          "arguments": {
+            "paths": [
+              "**/*Owner*.java"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "src/OwnerApplication.java"
+          }
+        }
+      ]
+    },
+    {
+      "content": "## 源码事实\n- `src/OwnerApplication.java` 定义 `OwnerApplication.execute`。\n\n## Owner 与调用入口\n- 该类是当前直接读取到的应用层候选；完整 Owner 与调用入口未定位。"
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "submit_read_only_review",
+          "arguments": {
+            "verdict": "pass",
+            "confidence": 0.98,
+            "reason": "The candidate is limited to the directly read source and keeps the unobserved call entry unlocated."
+          }
+        }
+      ]
+    }
+  ],
+  "acceptance": {
+    "required_tools": [
+      "glob_files",
+      "read_file"
+    ],
+    "forbidden_tools": [
+      "search_code",
+      "list_files",
+      "apply_patch",
+      "write_file",
+      "shell",
+      "run_tests"
+    ],
+    "changed_files": [],
+    "answer_all_of": [
+      "源码事实",
+      "OwnerApplication.execute",
+      "完整 Owner 与调用入口未定位"
+    ],
+    "termination_reason": "final",
+    "run_summary": {
+      "tool_calls": 2,
+      "tool_errors": 0,
+      "provider_schema_violations": 0,
+      "provider_protocol_violations": 0
+    },
+    "read_only_reviewer": {
+      "triggers": 1,
+      "rewrites": 0,
+      "typed_submits": 1
+    },
+    "safe_partial_report": {
+      "emitted": 0
+    },
+    "max_tool_errors": 0
+  },
+  "residual_risk": "The fixture proves locate-then-read sequencing for a completed source-only glob; relevance selection still belongs to the model and semantic reviewer."
+}

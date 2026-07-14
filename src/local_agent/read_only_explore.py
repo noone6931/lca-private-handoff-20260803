@@ -31,6 +31,7 @@ OBSERVATION_TOOLS = CANDIDATE_EVIDENCE_TOOLS | {"glob_files", "list_files"}
 MAX_OWNER_DESIGN_EXPLORE_CALLS = 12
 SOFT_EXPLORE_CALLS_PER_ROOT = 2
 HARD_EXPLORE_CALLS_PER_ROOT = 4
+MAX_SOURCE_INVENTORY_READ_CHOICES_PER_ROOT = 16
 SOURCE_FILE_SUFFIXES = frozenset(
     {
         ".c",
@@ -70,6 +71,7 @@ class ReadOnlyExploreDecision:
     hard_budget: int = 0
     read_candidates: tuple[str, ...] = ()
     exact_read_candidates: tuple[str, ...] = ()
+    inventory_read_candidates: tuple[str, ...] = ()
     preferred_roots: tuple[str, ...] = ()
     discovery_roots: tuple[str, ...] = ()
     discovery_patterns: tuple[str, ...] = ()
@@ -112,19 +114,30 @@ def evaluate_read_only_explore(
     semantic_candidates = _semantic_candidate_paths_by_root(results, roots)
     inventory_paths = _inventory_paths_by_root(results, roots)
     precise_source_inventory = _precise_source_inventory_paths_by_root(results, roots)
+    source_inventory = _model_selected_source_inventory_paths_by_root(results, roots)
     candidate_paths = _merge_candidate_paths(roots, semantic_candidates, precise_source_inventory)
-    covered = _covered_roots(results, roots, candidate_paths, inventory_paths)
+    covered_candidate_paths = _merge_candidate_paths(roots, candidate_paths, source_inventory)
+    covered = _covered_roots(results, roots, covered_candidate_paths, inventory_paths)
     missing = tuple(root for root in roots if root not in covered)
     read_candidates = _read_candidates_for_missing_roots(candidate_paths, missing)
     exact_read_candidates = _read_candidates_for_missing_roots(precise_source_inventory, missing)
+    inventory_read_candidates = _read_candidates_for_missing_roots(
+        source_inventory,
+        missing,
+        per_root_limit=MAX_SOURCE_INVENTORY_READ_CHOICES_PER_ROOT,
+    )
     root_attempts = _root_attempts(results, roots)
     preferred_roots = _least_observed_roots(missing, root_attempts)
     exact_discovery_roots, exact_discovery_patterns = _cross_root_exact_glob_retry(results, roots, missing)
-    discovery_roots = exact_discovery_roots or _roots_needing_fallback_discovery(
-        results,
-        missing,
-        read_candidates,
-        root_attempts,
+    discovery_roots = exact_discovery_roots or (
+        ()
+        if inventory_read_candidates
+        else _roots_needing_fallback_discovery(
+            results,
+            missing,
+            read_candidates,
+            root_attempts,
+        )
     )
     if not missing:
         return ReadOnlyExploreDecision(
@@ -136,11 +149,14 @@ def evaluate_read_only_explore(
             hard_budget=hard_budget,
             read_candidates=read_candidates,
             exact_read_candidates=exact_read_candidates,
+            inventory_read_candidates=inventory_read_candidates,
             preferred_roots=preferred_roots,
             discovery_roots=discovery_roots,
             discovery_patterns=exact_discovery_patterns,
         )
-    if observation_calls >= hard_budget:
+    if observation_calls >= hard_budget and not (
+        read_candidates or exact_read_candidates or inventory_read_candidates
+    ):
         return ReadOnlyExploreDecision(
             "finalize",
             roots=roots,
@@ -151,6 +167,7 @@ def evaluate_read_only_explore(
             hard_budget=hard_budget,
             read_candidates=read_candidates,
             exact_read_candidates=exact_read_candidates,
+            inventory_read_candidates=inventory_read_candidates,
             preferred_roots=preferred_roots,
             discovery_roots=discovery_roots,
             discovery_patterns=exact_discovery_patterns,
@@ -167,6 +184,7 @@ def evaluate_read_only_explore(
             hard_budget=hard_budget,
             read_candidates=read_candidates,
             exact_read_candidates=exact_read_candidates,
+            inventory_read_candidates=inventory_read_candidates,
             preferred_roots=preferred_roots,
             discovery_roots=discovery_roots,
             discovery_patterns=exact_discovery_patterns,
@@ -181,6 +199,7 @@ def evaluate_read_only_explore(
         hard_budget=hard_budget,
         read_candidates=read_candidates,
         exact_read_candidates=exact_read_candidates,
+        inventory_read_candidates=inventory_read_candidates,
         preferred_roots=preferred_roots,
         discovery_roots=discovery_roots,
         discovery_patterns=exact_discovery_patterns,
@@ -278,6 +297,8 @@ def _canonical_path(result: ToolResultSummary) -> str | None:
 def _read_candidates_for_missing_roots(
     semantic_candidates: dict[str, tuple[str, ...]],
     missing_roots: tuple[str, ...],
+    *,
+    per_root_limit: int = 2,
 ) -> tuple[str, ...]:
     """Return only existing, typed search/LSP paths for the next direct read."""
 
@@ -286,7 +307,7 @@ def _read_candidates_for_missing_roots(
     per_root: dict[str, int] = {root: 0 for root in missing_roots}
     for root in missing_roots:
         for rendered in semantic_candidates.get(root, ()):
-            if per_root[root] >= 2 or rendered in seen:
+            if per_root[root] >= per_root_limit or rendered in seen:
                 continue
             seen.add(rendered)
             per_root[root] += 1
@@ -370,6 +391,56 @@ def _precise_source_inventory_paths_by_root(
             seen.add((root, rendered))
             candidates[root].append(rendered)
     return {root: tuple(paths) for root, paths in candidates.items()}
+
+
+def _model_selected_source_inventory_paths_by_root(
+    results: Iterable[ToolResultSummary],
+    roots: tuple[str, ...],
+) -> dict[str, tuple[str, ...]]:
+    """Expose bounded choices from a completed source-only glob for one read.
+
+    The model already selected these glob patterns as its discovery strategy.
+    Requiring one subsequent read mirrors OMP's locate-then-read explore flow;
+    generic manifest/tree inventory and truncated results are deliberately
+    excluded so an arbitrary listing cannot become source evidence.
+    """
+
+    candidates: dict[str, list[str]] = {root: [] for root in roots}
+    seen: set[tuple[str, str]] = set()
+    for result in results:
+        if (
+            result.name != "glob_files"
+            or not _is_executed_explore_attempt(result)
+            or result.is_error
+            or result.metadata.get("truncated")
+            or result.metadata.get("evidence_paths_overflow")
+        ):
+            continue
+        patterns = result.metadata.get("patterns")
+        files = result.metadata.get("files")
+        if (
+            not isinstance(patterns, (list, tuple))
+            or not patterns
+            or not isinstance(files, (list, tuple))
+            or not files
+            or any(not _is_source_only_glob_pattern(pattern) for pattern in patterns)
+        ):
+            continue
+        for root, rendered in _scoped_file_list_paths(result, roots, files):
+            if (
+                (root, rendered) in seen
+                or len(candidates[root]) >= MAX_SOURCE_INVENTORY_READ_CHOICES_PER_ROOT
+            ):
+                continue
+            seen.add((root, rendered))
+            candidates[root].append(rendered)
+    return {root: tuple(paths) for root, paths in candidates.items()}
+
+
+def _is_source_only_glob_pattern(raw: object) -> bool:
+    if not isinstance(raw, str) or not raw.strip():
+        return False
+    return Path(raw.strip()).suffix.lower() in SOURCE_FILE_SUFFIXES
 
 
 def _exact_source_basename(raw_pattern: object) -> str | None:

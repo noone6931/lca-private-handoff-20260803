@@ -359,6 +359,131 @@ class ToolChoiceQueueTests(unittest.TestCase):
         self.assertEqual(json.loads(decision.required_tool_arguments_json), {"path": str(source)})
         self.assertIn(str(source), decision.tool_call_hints[0])
 
+    def test_completed_source_only_glob_requires_one_model_selected_source_read(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            application = root / "src" / "OwnerApplication.java"
+            controller = root / "src" / "OwnerController.java"
+            application.parent.mkdir()
+            application.write_text("class OwnerApplication {}\n", encoding="utf-8")
+            controller.write_text("class OwnerController {}\n", encoding="utf-8")
+            broad_glob = ToolResultSummary(
+                "glob_files",
+                f"{application}\n{controller}",
+                metadata={
+                    "evidence_root": str(root),
+                    "searched_roots": [str(root)],
+                    "files": [str(application), str(controller)],
+                    "patterns": ["**/*Owner*.java"],
+                    "negative_evidence_type": "path_match",
+                    "truncated": False,
+                },
+            )
+            decision = evaluate_tool_choice_state(
+                task_kind="read-only",
+                prompt="只读定位 owner 和调用链。",
+                tool_results=(broad_glob,),
+                workspace_roots=(str(root),),
+                read_only_review_profile="owner_impact",
+            )
+
+        self.assertEqual(decision.rule_id, "read_only_profile_explore_inventory_read")
+        self.assertEqual(decision.allowed_tool_names, frozenset({"read_file"}))
+        self.assertEqual(decision.scoped_read_paths, (str(application), str(controller)))
+        self.assertEqual(decision.scoped_read_budget, 1)
+        self.assertIn("OwnerApplication.java", decision.tool_call_hints[0])
+
+    def test_model_selected_source_read_completes_root_coverage(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            source = root / "src" / "OwnerApplication.java"
+            source.parent.mkdir()
+            source.write_text("class OwnerApplication {}\n", encoding="utf-8")
+            broad_glob = ToolResultSummary(
+                "glob_files",
+                str(source),
+                metadata={
+                    "evidence_root": str(root),
+                    "searched_roots": [str(root)],
+                    "files": [str(source)],
+                    "patterns": ["**/*Owner*.java"],
+                    "negative_evidence_type": "path_match",
+                    "truncated": False,
+                },
+            )
+            source_read = ToolResultSummary(
+                "read_file",
+                "class OwnerApplication {}",
+                path=str(source),
+                metadata={"resolved_path": str(source)},
+            )
+            decision = evaluate_read_only_explore(
+                profile="owner_impact",
+                tool_results=(broad_glob, source_read),
+                code_roots=(str(root),),
+            )
+
+        self.assertEqual(decision.action, "finalize")
+        self.assertEqual(decision.missing_roots, ())
+
+    def test_generic_mixed_inventory_does_not_become_a_source_read_choice(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            source = root / "src" / "Owner.java"
+            manifest = root / "package.json"
+            source.parent.mkdir()
+            source.write_text("class Owner {}\n", encoding="utf-8")
+            manifest.write_text("{}\n", encoding="utf-8")
+            inventory = ToolResultSummary(
+                "glob_files",
+                f"{manifest}\n{source}",
+                metadata={
+                    "evidence_root": str(root),
+                    "searched_roots": [str(root)],
+                    "files": [str(manifest), str(source)],
+                    "patterns": ["**/package.json", "**/src/**/*.*"],
+                    "negative_evidence_type": "path_match",
+                    "truncated": False,
+                },
+            )
+            decision = evaluate_read_only_explore(
+                profile="owner_impact",
+                tool_results=(inventory,),
+                code_roots=(str(root),),
+            )
+
+        self.assertEqual(decision.inventory_read_candidates, ())
+
+    def test_hard_budget_keeps_one_typed_candidate_read_closure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            source = root / "src" / "Owner.java"
+            source.parent.mkdir()
+            source.write_text("class Owner {}\n", encoding="utf-8")
+            no_match = ToolResultSummary(
+                "search_code",
+                "No matches.",
+                useless=True,
+                metadata={"evidence_root": str(root), "negative_evidence_type": "content_no_match"},
+            )
+            candidate = ToolResultSummary(
+                "search_code",
+                f"{source}:1: class Owner",
+                metadata={"evidence_root": str(root), "evidence_paths": [str(source)]},
+            )
+            decision = evaluate_tool_choice_state(
+                task_kind="read-only",
+                prompt="只读定位 owner 和调用链。",
+                tool_results=(no_match, no_match, no_match, candidate),
+                workspace_roots=(str(root),),
+                read_only_review_profile="owner_impact",
+            )
+
+        self.assertEqual(decision.rule_id, "read_only_profile_explore_closure_read")
+        self.assertEqual(decision.allowed_tool_names, frozenset({"read_file"}))
+        self.assertEqual(decision.scoped_read_paths, (str(source),))
+        self.assertEqual(json.loads(decision.required_tool_arguments_json), {"path": str(source)})
+
     def test_exact_source_glob_candidate_keeps_root_provenance(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             first = Path(tmp, "first").resolve()
