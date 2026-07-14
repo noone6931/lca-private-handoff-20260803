@@ -374,58 +374,28 @@ def reviewer_rewrite_verification_messages(
     handoff: ExploreHandoff,
     claim_units: tuple[CandidateClaimUnit, ...],
     original_findings: tuple[ReviewerFinding, ...],
-    *,
-    historical_claim_ids: tuple[str, ...] = (),
 ) -> list[dict[str, str]]:
     """Return reviewer messages for validating a rewritten candidate."""
 
     messages = reviewer_messages(handoff, claim_units)
-    historical_claim_ids = tuple(
-        dict.fromkeys((*historical_claim_ids, *(finding.claim_id for finding in original_findings)))
-    )
     closure_payload = {
         "kind": "LCA_READ_ONLY_REWRITE_VERIFICATION",
         "instruction": (
-            "This is a bounded verification of a primary rewrite after an earlier revise verdict. "
-            "Submit pass only if the rewritten candidate closes the original candidate defects: each addressed original "
-            "claim must now be removed, downgraded to unverified/unlocated/proposal/pending confirmation, or supported by "
-            "the current handoff. Prior candidate claim IDs are intentionally omitted from both fields and prose because "
-            "they are invalid for this rewritten candidate. Historical finding numbers and order have no relationship to "
-            "current claim IDs. Do not pair a historical finding with a current claim by ordinal or position. First inspect "
-            "the current claim text independently; report a finding only when its issue and action describe that exact "
-            "current claim. If any original blocking defect remains under paraphrase, report revise using only IDs from "
-            "current candidate_claims."
+            "This is a fresh, bounded, independent review of a candidate rewritten after an earlier revise verdict. "
+            "Historical finding text and claim IDs are deliberately unavailable because they belong to a superseded "
+            "candidate and can anchor defects onto unrelated current claims. Evaluate only the current candidate_claims "
+            "against the exact user request and current handoff. Do not infer a defect merely because an earlier review "
+            "revised a different candidate. Submit pass when the current candidate is compliant. Submit revise only for "
+            "a defect whose issue and action both describe the exact current claim_id you report."
         ),
-        "original_findings": [
-            {
-                "finding_ordinal": index,
-                "source_round": "prior_reviewer_round",
-                "claim": _clip(_scrub_historical_claim_ids(finding.claim, historical_claim_ids), 360),
-                "finding_scope": finding.finding_scope,
-                "issue": _clip(_scrub_historical_claim_ids(finding.issue, historical_claim_ids), 360),
-                "action": _clip(_scrub_historical_claim_ids(finding.action, historical_claim_ids), 360),
-            }
-            for index, finding in enumerate(original_findings, start=1)
-        ],
+        "prior_review": {
+            "verdict": "revise",
+            "blocking_finding_count": len(original_findings),
+            "historical_details_withheld": True,
+        },
     }
     messages.append({"role": "user", "content": json.dumps(closure_payload, ensure_ascii=False, sort_keys=True)})
     return messages
-
-
-def _scrub_historical_claim_ids(value: str, claim_ids: tuple[str, ...]) -> str:
-    """Remove superseded candidate IDs from rewrite-verification prose."""
-
-    scrubbed = value
-    for claim_id in sorted(set(claim_ids), key=len, reverse=True):
-        if not claim_id:
-            continue
-        scrubbed = re.sub(
-            rf"(?<![A-Za-z0-9_]){re.escape(claim_id)}(?![A-Za-z0-9_])",
-            "the prior claim",
-            scrubbed,
-            flags=re.IGNORECASE,
-        )
-    return scrubbed
 
 
 def reviewer_transport_rewrite_message(

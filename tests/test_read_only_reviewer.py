@@ -916,12 +916,15 @@ class _RewriteVerificationSameClaimIdClient:
                     if message.get("role") == "user"
                     and "LCA_READ_ONLY_REWRITE_VERIFICATION" in str(message.get("content"))
                 ]
-                originals = closure_payloads[-1]["original_findings"]
-                issues = {item["issue"] for item in originals}
-                if len(originals) != 1 or issues != {"the prior claim paraphrased owner absence still overstates evidence"}:
-                    raise AssertionError(f"current closure findings were not isolated: {originals!r}")
-                if "c001" in json.dumps(originals, ensure_ascii=False):
-                    raise AssertionError(f"stale candidate id leaked through historical prose: {originals!r}")
+                closure = closure_payloads[-1]
+                if closure.get("prior_review") != {
+                    "verdict": "revise",
+                    "blocking_finding_count": 1,
+                    "historical_details_withheld": True,
+                }:
+                    raise AssertionError(f"prior review summary was not bounded: {closure!r}")
+                if "original_findings" in closure or "c001 paraphrased" in json.dumps(closure, ensure_ascii=False):
+                    raise AssertionError(f"superseded finding details leaked into fresh review: {closure!r}")
                 return _review_tool_calls_response([
                     _final_call("verification-pass", {"verdict": "pass", "confidence": 0.95, "reason": "all closure findings scoped"})
                 ])
@@ -5278,7 +5281,7 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertEqual(summary["rewrite_acceptances"], 1)
         self.assertEqual(summary["verdicts"], {"pass": 1, "revise": 2})
 
-    def test_rewrite_verification_uses_only_current_candidate_findings(self) -> None:
+    def test_rewrite_verification_withholds_superseded_finding_details(self) -> None:
         _RewriteVerificationSameClaimIdClient.calls = []
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp).resolve()
@@ -5299,14 +5302,17 @@ class ReadOnlyReviewerTests(unittest.TestCase):
             if message.get("role") == "user"
             and "LCA_READ_ONLY_REWRITE_VERIFICATION" in str(message.get("content"))
         ]
-        current_findings = verification_payloads[-1]["original_findings"]
-        self.assertEqual(len(current_findings), 1)
+        closure = verification_payloads[-1]
         self.assertEqual(
-            current_findings[0]["issue"],
-            "the prior claim paraphrased owner absence still overstates evidence",
+            closure["prior_review"],
+            {
+                "verdict": "revise",
+                "blocking_finding_count": 1,
+                "historical_details_withheld": True,
+            },
         )
-        self.assertNotIn("claim_id", current_findings[0])
-        self.assertNotIn("c001", json.dumps(current_findings, ensure_ascii=False))
+        self.assertNotIn("original_findings", closure)
+        self.assertNotIn("c001 paraphrased", json.dumps(closure, ensure_ascii=False))
 
     def test_explicit_design_proposal_with_pending_reuse_check_can_pass_review(self) -> None:
         _ProposalSemanticsClient.calls = []
