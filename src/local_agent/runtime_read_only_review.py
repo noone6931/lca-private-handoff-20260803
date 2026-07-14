@@ -11,6 +11,7 @@ from .read_only_reviewer import candidate_claim_units
 from .read_only_reviewer import candidate_claim_projection_issues
 from .read_only_reviewer import MAX_REVIEWER_FINDINGS
 from .read_only_reviewer import MAX_REVIEWER_SCHEMA_REPAIRS
+from .read_only_reviewer import prune_exact_transport_residual_claim_lines
 from .read_only_reviewer import ReviewerFinding
 from .read_only_reviewer import ReviewerPhaseOutcome
 from .read_only_reviewer import ReviewerResult
@@ -98,9 +99,11 @@ class ReadOnlyReviewPhase:
         if not claim_units:
             return self._unverified("invalid_output", "candidate_has_no_addressable_claim_units")
         handoff = self._handoff(candidate, claim_units=claim_units)
-        omitted_claim_ids = set(getattr(handoff, "transport_omitted_claim_ids", ()) or ())
-        if omitted_claim_ids:
-            return self._request_transport_rewrite_or_unverified(handoff, omitted_claim_ids, claim_units)
+        candidate, claim_units, handoff, transport_outcome, projected = self._resolve_transport_candidate(
+            candidate, claim_units, handoff
+        )
+        if transport_outcome is not None:
+            return transport_outcome
         skip_reason = runtime._run.finalization_rewrite_skip_reason()
         if skip_reason is not None:
             return self._unverified("deadline_or_finalization_budget", skip_reason, handoff=handoff)
@@ -172,7 +175,7 @@ class ReadOnlyReviewPhase:
             },
         )
         if result.verdict == "pass":
-            return ReviewerPhaseOutcome("pass")
+            return ReviewerPhaseOutcome("pass", final_candidate=candidate if projected else "")
         state.rewrite_closure_findings = result.findings
         if not runtime._run.queue_finalization_rewrite(kind="read_only_reviewer"):
             return self._unverified(
@@ -201,6 +204,7 @@ class ReadOnlyReviewPhase:
         if not state.transport_rewrite_requested and not state.transport_rewrite_accepted:
             if runtime._run.queue_finalization_rewrite(kind="read_only_reviewer_claim_transport"):
                 state.transport_rewrite_requested = True
+                state.transport_original_omitted_count = len(omitted_claim_ids)
                 runtime._run.collector.record_read_only_review_claim_transport_rewrite()
                 runtime._session.append(
                     "read_only_reviewer",
@@ -272,9 +276,11 @@ class ReadOnlyReviewPhase:
         if not claim_units:
             return self._unverified("invalid_output", "candidate_has_no_addressable_claim_units")
         handoff = self._handoff(candidate, claim_units=claim_units)
-        omitted_claim_ids = set(getattr(handoff, "transport_omitted_claim_ids", ()) or ())
-        if omitted_claim_ids:
-            return self._request_transport_rewrite_or_unverified(handoff, omitted_claim_ids, claim_units)
+        candidate, claim_units, handoff, transport_outcome, projected = self._resolve_transport_candidate(
+            candidate, claim_units, handoff
+        )
+        if transport_outcome is not None:
+            return transport_outcome
         self._accept_transport_rewrite(handoff, claim_units)
         artifact = classify_provider_content_artifact(runtime._config.provider, candidate)
         if artifact is not None:
@@ -353,7 +359,46 @@ class ReadOnlyReviewPhase:
             "ContextUpdated",
             {"kind": "read_only_reviewer_rewrite_accepted", "items": len(handoff.items)},
         )
-        return ReviewerPhaseOutcome("pass")
+        return ReviewerPhaseOutcome("pass", final_candidate=candidate if projected else "")
+
+    def _resolve_transport_candidate(
+        self,
+        candidate: str,
+        claim_units: tuple[Any, ...],
+        handoff: Any,
+    ) -> tuple[str, tuple[Any, ...], Any, ReviewerPhaseOutcome | None, bool]:
+        runtime = self._runtime
+        state = runtime._run.read_only_review
+        omitted_claim_ids = set(getattr(handoff, "transport_omitted_claim_ids", ()) or ())
+        if not omitted_claim_ids:
+            return candidate, claim_units, handoff, None, False
+        can_project = (
+            state.transport_rewrite_requested
+            and state.transport_original_omitted_count > len(omitted_claim_ids)
+        )
+        if can_project:
+            projected_candidate, pruned_ids = prune_exact_transport_residual_claim_lines(
+                candidate,
+                claim_units,
+                omitted_claim_ids,
+            )
+            if pruned_ids:
+                projected_units = candidate_claim_units(projected_candidate)
+                projected_handoff = self._handoff(projected_candidate, claim_units=projected_units)
+                if not getattr(projected_handoff, "transport_omitted_claim_ids", ()):
+                    state.transport_pruned_claim_ids = pruned_ids
+                    runtime._run.collector.record_read_only_review_claim_transport_pruned(len(pruned_ids))
+                    runtime._session.append(
+                        "read_only_reviewer",
+                        {"event": "claim_transport_residual_pruned", "claim_ids": list(pruned_ids)},
+                    )
+                    runtime._events.emit(
+                        "ContextUpdated",
+                        {"kind": "read_only_reviewer_claim_transport_residual_pruned", "claims": len(pruned_ids)},
+                    )
+                    return projected_candidate, projected_units, projected_handoff, None, True
+        outcome = self._request_transport_rewrite_or_unverified(handoff, omitted_claim_ids, claim_units)
+        return candidate, claim_units, handoff, outcome, False
 
     def _queue_rewrite_correction_or_unverified(
         self,

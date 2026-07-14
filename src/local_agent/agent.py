@@ -738,7 +738,7 @@ class AgentRuntime:
                     self._run.force_final_answer_without_tools = True
                     step += 1
                     continue
-                return self._finish_run(content, deadline, run_start_index)
+                return self._finish_run(review_outcome.final_candidate or content, deadline, run_start_index)
 
             synthetic_paired_tool_ids: set[str] = set()
             for index, tool_call in enumerate(tool_calls):

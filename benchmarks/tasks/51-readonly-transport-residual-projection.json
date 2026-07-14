@@ -1,0 +1,81 @@
+{
+  "id": "readonly-transport-residual-projection",
+  "title": "A tiny exact-line transport residual is pruned before isolated review",
+  "prompt": "读取 src/Owner.java 并输出证据化技术设计，不要修改文件。",
+  "budget_seconds": 90,
+  "workspace_files": {
+    "src/Owner.java": "class Owner {}\n"
+  },
+  "scripted_responses": [
+    {
+      "tool_calls": [
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "src/Owner.java"
+          }
+        }
+      ]
+    },
+    {
+      "content": "## 源码当前事实\n- src/Owner.java:1 defines Owner.\n- Owner currently owns settlement.\n- Owner integrates payment.\n- Owner proves the complete lifecycle.\n\n## 设计建议\n- Add a separate settlement workflow."
+    },
+    {
+      "content": "## 源码当前事实\n- src/Owner.java:1 defines Owner.\n- src/Owner.java:1-999 is the verified settlement owner.\n- src/Owner.java:1-999 proves the complete settlement lifecycle.\n\n## 设计建议\n- Add a separate settlement workflow."
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "submit_read_only_review",
+          "arguments": {
+            "verdict": "pass",
+            "confidence": 0.99,
+            "reason": "The residual unsupported list claims were removed and the remaining source claim is line-bound."
+          }
+        }
+      ]
+    }
+  ],
+  "acceptance": {
+    "required_tools": [
+      "read_file"
+    ],
+    "forbidden_tools": [
+      "glob_files",
+      "search_code",
+      "list_files",
+      "apply_patch",
+      "write_file",
+      "shell",
+      "run_tests"
+    ],
+    "changed_files": [],
+    "answer_all_of": [
+      "src/Owner.java:1 defines Owner",
+      "Add a separate settlement workflow"
+    ],
+    "answer_forbidden_regex": [
+      "1-999",
+      "verified settlement owner",
+      "complete settlement lifecycle"
+    ],
+    "termination_reason": "final",
+    "run_summary": {
+      "tool_calls": 1,
+      "tool_errors": 0
+    },
+    "read_only_reviewer": {
+      "claim_transport_rewrites": 1,
+      "claim_transport_rewrite_acceptances": 1,
+      "claim_transport_pruned_claims": 2,
+      "claim_transport_rewrite_exhausted": 0,
+      "triggers": 1,
+      "typed_submits": 1
+    },
+    "safe_partial_report": {
+      "emitted": 0
+    },
+    "max_tool_errors": 0
+  },
+  "residual_risk": "The projection is deletion-only, limited to two exact Markdown list lines after one improving rewrite; prose, tables, ambiguous duplicates, and non-improving rewrites still fail closed."
+}

@@ -2396,6 +2396,84 @@ class _TransportOmittedClaimClient:
         return type("Response", (), {"message": {"content": "\n".join(claim_lines)}})()
 
 
+class _TransportResidualPruneClient:
+    calls: list[dict] = []
+
+    def __init__(self, config: AgentConfig):
+        self._primary_calls = 0
+
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
+        if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages):
+            payload = next(
+                json.loads(message["content"])
+                for message in messages
+                if message.get("role") == "user" and "LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content"))
+            )
+            claims = "\n".join(str(item.get("text") or "") for item in payload.get("candidate_claims") or ())
+            if "1-999" in claims or "verified settlement owner" in claims or "complete settlement lifecycle" in claims:
+                raise AssertionError("residual unsupported claim reached reviewer")
+            return _review_tool_calls_response(
+                [_final_call("residual-pass", {"verdict": "pass", "confidence": 0.99, "reason": "remaining claim is scoped"})]
+            )
+        self._primary_calls += 1
+        if self._primary_calls == 1:
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "read-owner",
+                                "type": "function",
+                                "function": {"name": "read_file", "arguments": '{"path":"src/Owner.java"}'},
+                            }
+                        ],
+                    }
+                },
+            )()
+        latest_user = next(
+            (str(message.get("content") or "") for message in reversed(messages) if message.get("role") == "user"),
+            "",
+        )
+        if "bounded transport recovery" in latest_user:
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": (
+                            "## 源码当前事实\n"
+                            "- src/Owner.java:1 defines Owner.\n"
+                            "- src/Owner.java:1-999 is the verified settlement owner.\n\n"
+                            "- src/Owner.java:1-999 proves the complete settlement lifecycle.\n\n"
+                            "## 设计建议\n"
+                            "- Add a separate settlement workflow."
+                        )
+                    }
+                },
+            )()
+        return type(
+            "Response",
+            (),
+            {
+                "message": {
+                    "content": (
+                        "## 源码当前事实\n"
+                        "- src/Owner.java:1 defines Owner.\n"
+                        "- Owner currently owns settlement.\n"
+                        "- Owner integrates payment.\n"
+                        "- Owner proves the complete lifecycle.\n\n"
+                        "## 设计建议\n"
+                        "- Add a separate settlement workflow."
+                    )
+                }
+            },
+        )()
+
+
 class _TransportRecoveryDocumentClient:
     calls: list[dict] = []
 
@@ -4117,6 +4195,31 @@ class ReadOnlyReviewerTests(unittest.TestCase):
             if any("bounded transport recovery" in str(message.get("content")) for message in call["messages"])
         ]
         self.assertEqual(len(transport_rewrite_calls), 1)
+
+    def test_transport_rewrite_can_prune_two_exact_residual_list_claims_before_review(self) -> None:
+        _TransportResidualPruneClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            (workspace / "src").mkdir()
+            (workspace / "src/Owner.java").write_text("class Owner {}\n", encoding="utf-8")
+            with patch("local_agent.agent.OpenAICompatibleClient", _TransportResidualPruneClient):
+                runtime = AgentRuntime(_config(workspace), show_tool_logs=False)
+                answer = runtime.run("读取 src/Owner.java 并输出证据化技术设计，不要修改文件。")
+
+        self.assertEqual(runtime._last_run_summary["termination_reason"], "final")
+        self.assertIn("src/Owner.java:1 defines Owner", answer)
+        self.assertIn("Add a separate settlement workflow", answer)
+        self.assertNotIn("1-999", answer)
+        self.assertNotIn("verified settlement owner", answer)
+        self.assertNotIn("complete settlement lifecycle", answer)
+        summary = runtime._last_run_summary["read_only_reviewer"]
+        self.assertEqual(summary["claim_transport_rewrites"], 1)
+        self.assertEqual(summary["claim_transport_rewrite_acceptances"], 1)
+        self.assertEqual(summary["claim_transport_pruned_claims"], 2)
+        self.assertEqual(summary["claim_transport_rewrite_exhausted"], 0)
+        self.assertEqual(summary["triggers"], 1)
+        self.assertEqual(summary["verdicts"], {"pass": 1})
+        self.assertEqual(runtime._run.read_only_review.transport_pruned_claim_ids, ("c002", "c003"))
 
     def test_transport_omission_without_finalization_budget_keeps_safe_partial(self) -> None:
         _TransportOmittedClaimClient.calls = []

@@ -30,6 +30,7 @@ REVIEWER_FINDING_TOOL_NAME = "report_read_only_finding"
 MAX_CLAIM_UNITS = 100
 MAX_CLAIM_UNIT_CHARS = 500
 MAX_CLAIM_TOTAL_CHARS = 40000
+MAX_TRANSPORT_RESIDUAL_PRUNE_CLAIMS = 2
 
 
 @dataclass(frozen=True)
@@ -115,6 +116,8 @@ class ReadOnlyReviewState:
     transport_rewrite_requested: bool = False
     transport_rewrite_accepted: bool = False
     transport_rewrite_exhausted: bool = False
+    transport_original_omitted_count: int = 0
+    transport_pruned_claim_ids: tuple[str, ...] = ()
     verdict: str | None = None
     reason: str | None = None
     findings: tuple[ReviewerFinding, ...] = ()
@@ -147,6 +150,8 @@ class ReadOnlyReviewState:
         self.transport_rewrite_requested = False
         self.transport_rewrite_accepted = False
         self.transport_rewrite_exhausted = False
+        self.transport_original_omitted_count = 0
+        self.transport_pruned_claim_ids = ()
         self.verdict = None
         self.reason = None
         self.findings = ()
@@ -180,6 +185,8 @@ class ReadOnlyReviewState:
             "transport_rewrite_requested": self.transport_rewrite_requested,
             "transport_rewrite_accepted": self.transport_rewrite_accepted,
             "transport_rewrite_exhausted": self.transport_rewrite_exhausted,
+            "transport_original_omitted_count": self.transport_original_omitted_count,
+            "transport_pruned_claim_ids": list(self.transport_pruned_claim_ids),
             "verdict": self.verdict,
             "reason": self.reason,
             "reviewed_claim_ids": [item.claim_id for item in self.findings],
@@ -213,6 +220,7 @@ class ReviewerPhaseOutcome:
     terminal_message: str = ""
     reason: str = ""
     safe_partial_report: str = ""
+    final_candidate: str = ""
 
 
 def should_review_read_only_candidate(contract: RequirementContract | None, request: str | None) -> bool:
@@ -233,6 +241,41 @@ def candidate_claim_units(candidate: str) -> tuple[CandidateClaimUnit, ...]:
 
 def candidate_claim_projection_issues(candidate: str) -> tuple[CandidateClaimProjectionIssue, ...]:
     return _extract_candidate_claim_units(candidate)[1]
+
+
+def prune_exact_transport_residual_claim_lines(
+    candidate: str,
+    claim_units: tuple[CandidateClaimUnit, ...],
+    omitted_claim_ids: set[str],
+) -> tuple[str, tuple[str, ...]]:
+    """Delete a tiny residual only when every omitted claim is one exact list line.
+
+    The primary model already received one bounded transport rewrite. This
+    projection cannot rewrite prose or infer a replacement; it only removes
+    whole unsupported list items before handoff reconstruction and review.
+    """
+
+    if not omitted_claim_ids or len(omitted_claim_ids) > MAX_TRANSPORT_RESIDUAL_PRUNE_CLAIMS:
+        return candidate, ()
+    omitted_units = {unit.claim_id: unit.text.strip() for unit in claim_units if unit.claim_id in omitted_claim_ids}
+    if set(omitted_units) != omitted_claim_ids:
+        return candidate, ()
+    lines = candidate.splitlines()
+    removed_indexes: set[int] = set()
+    removed_ids: list[str] = []
+    for claim_id in sorted(omitted_claim_ids):
+        target = omitted_units[claim_id]
+        if not re.match(r"^(?:[-*+]\s+|\d+[.)]\s+)", target):
+            return candidate, ()
+        matches = [index for index, line in enumerate(lines) if index not in removed_indexes and line.strip() == target]
+        if len(matches) != 1:
+            return candidate, ()
+        removed_indexes.add(matches[0])
+        removed_ids.append(claim_id)
+    projected = "\n".join(line for index, line in enumerate(lines) if index not in removed_indexes)
+    if candidate.endswith("\n"):
+        projected += "\n"
+    return projected, tuple(removed_ids)
 
 
 def _extract_candidate_claim_units(candidate: str) -> tuple[tuple[CandidateClaimUnit, ...], tuple[CandidateClaimProjectionIssue, ...]]:
