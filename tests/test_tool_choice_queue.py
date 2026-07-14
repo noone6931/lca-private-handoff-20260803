@@ -420,6 +420,84 @@ class ToolChoiceQueueTests(unittest.TestCase):
         self.assertEqual(decision.required_glob_roots, ())
         self.assertEqual(required["paths"], [str(target)])
 
+    def test_precise_filename_glob_miss_retries_same_pattern_in_uncovered_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            first = Path(tmp, "backend").resolve()
+            second = Path(tmp, "frontend").resolve()
+            first.mkdir()
+            target = second / "src" / "views" / "preOrderManagement" / "list.vue"
+            target.parent.mkdir(parents=True)
+            target.write_text("<template />\n", encoding="utf-8")
+            precise_miss = ToolResultSummary(
+                "glob_files",
+                '{"files":[]}',
+                useless=True,
+                metadata={
+                    "searched_roots": [str(first)],
+                    "patterns": ["**/list.vue"],
+                    "negative_evidence_type": "path_no_match",
+                },
+            )
+            decision = evaluate_tool_choice_state(
+                task_kind="read-only",
+                prompt="只读分析 owner 和设计影响。",
+                tool_results=(precise_miss,),
+                workspace_roots=(str(first), str(second)),
+                read_only_review_profile="design",
+            )
+
+        required = json.loads(decision.required_tool_arguments_json)
+        self.assertEqual(decision.rule_id, "read_only_profile_explore_exact_cross_root")
+        self.assertEqual(decision.allowed_tool_names, frozenset({"glob_files"}))
+        self.assertEqual(required["paths"], [str(second / "**" / "list.vue")])
+
+    def test_broad_filename_glob_miss_does_not_trigger_exact_cross_root_retry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            first = Path(tmp, "backend").resolve()
+            second = Path(tmp, "frontend").resolve()
+            first.mkdir()
+            second.mkdir()
+            broad_miss = ToolResultSummary(
+                "glob_files",
+                '{"files":[]}',
+                useless=True,
+                metadata={
+                    "searched_roots": [str(first)],
+                    "patterns": ["**/*.vue"],
+                    "negative_evidence_type": "path_no_match",
+                },
+            )
+            decision = evaluate_read_only_explore(
+                profile="design",
+                tool_results=(broad_miss,),
+                code_roots=(str(first), str(second)),
+            )
+
+        self.assertEqual(decision.discovery_patterns, ())
+
+    def test_failed_read_consumes_budget_without_advancing_root_discovery(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            first = Path(tmp, "backend").resolve()
+            second = Path(tmp, "frontend").resolve()
+            first.mkdir()
+            second.mkdir()
+            failed_read = ToolResultSummary(
+                "read_file",
+                "File not found.",
+                is_error=True,
+                path=str(second / "src" / "Owner.java"),
+            )
+            decision = evaluate_read_only_explore(
+                profile="design",
+                tool_results=(failed_read,),
+                code_roots=(str(first), str(second)),
+            )
+
+        self.assertEqual(decision.observation_calls, 1)
+        self.assertEqual(decision.successful_observations, 0)
+        self.assertEqual(decision.discovery_roots, ())
+        self.assertEqual(decision.preferred_roots, (str(first), str(second)))
+
     def test_owner_explore_fallback_discovery_advances_one_missing_root_at_a_time(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp).resolve()

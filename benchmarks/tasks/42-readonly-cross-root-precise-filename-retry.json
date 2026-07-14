@@ -1,0 +1,134 @@
+{
+  "id": "readonly-cross-root-precise-filename-retry",
+  "title": "A root-local precise filename glob miss is retried once with the same pattern in an uncovered workspace root",
+  "prompt": "请读取 requirements.md、后端 src/Processor.java 和前端 list.vue，输出需求事实、源码事实、设计建议和尚待确认项，不要修改文件。",
+  "budget_seconds": 90,
+  "workspace_files": {
+    "requirements.md": "# Requirement\nDesign a settlement flow using the existing backend and frontend entry.\n",
+    "src/Processor.java": "class Processor { void settle() {} }\n"
+  },
+  "additional_roots": {
+    "frontend": {
+      "src/views/preOrderManagement/list.vue": "<template><div>pre-order</div></template>\n"
+    }
+  },
+  "scripted_responses": [
+    {
+      "tool_calls": [
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "requirements.md"
+          }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "src/Processor.java"
+          }
+        },
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "src/views/preOrderManagement/list.vue"
+          }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "glob_files",
+          "arguments": {
+            "paths": [
+              "**/list.vue"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "glob_files",
+          "arguments": {
+            "paths": [
+              "{{root:frontend}}/**/list.vue"
+            ],
+            "limit": 200,
+            "hidden": false,
+            "gitignore": true
+          }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "{{root:frontend}}/src/views/preOrderManagement/list.vue"
+          }
+        }
+      ]
+    },
+    {
+      "content": "## 需求事实\n- requirements.md 要求基于既有前后端入口设计结算流程。\n\n## 源码事实\n- `src/Processor.java` 定义 `Processor.settle`。\n- `{{root:frontend}}/src/views/preOrderManagement/list.vue` 是已直接读取的前端入口。\n\n## 设计建议\n- 建议由该页面调用候选结算接口；这是建议，不是当前调用链事实。\n\n## 尚待确认项\n- 当前接口、数据表与完整 Owner 尚未定位。"
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "submit_read_only_review",
+          "arguments": {
+            "verdict": "pass",
+            "confidence": 0.98,
+            "reason": "Both named source files were read and the candidate preserves source/proposal boundaries."
+          }
+        }
+      ]
+    }
+  ],
+  "acceptance": {
+    "required_tools": [
+      "read_file",
+      "glob_files"
+    ],
+    "forbidden_tools": [
+      "search_code",
+      "list_files",
+      "apply_patch",
+      "write_file",
+      "shell",
+      "run_tests"
+    ],
+    "changed_files": [],
+    "answer_all_of": [
+      "需求事实",
+      "源码事实",
+      "Processor.settle",
+      "不是当前调用链事实",
+      "尚未定位"
+    ],
+    "termination_reason": "final",
+    "run_summary": {
+      "tool_calls": 6,
+      "tool_errors": 1,
+      "provider_schema_violations": 0,
+      "provider_protocol_violations": 0
+    },
+    "read_only_reviewer": {
+      "triggers": 1,
+      "rewrites": 0,
+      "typed_submits": 1
+    },
+    "safe_partial_report": {
+      "emitted": 0
+    },
+    "max_tool_errors": 1
+  },
+  "residual_risk": "The fixture proves one typed precise-filename glob rebase across authorized roots; broad filename globs remain in the bounded fallback path."
+}

@@ -20,7 +20,7 @@ class BenchmarkTests(unittest.TestCase):
         tasks = load_benchmark_tasks()
         identifiers = {task.identifier for task in tasks}
 
-        self.assertEqual(len(tasks), 41)
+        self.assertEqual(len(tasks), 42)
         self.assertEqual(
             identifiers,
             {
@@ -65,6 +65,7 @@ class BenchmarkTests(unittest.TestCase):
                 "reviewer-provable-finding-boundary",
                 "readonly-initial-precise-glob",
                 "readonly-cross-root-exact-path-retry",
+                "readonly-cross-root-precise-filename-retry",
             },
         )
         self.assertTrue(DEFAULT_TASKS_DIR.is_dir())
@@ -76,9 +77,9 @@ class BenchmarkTests(unittest.TestCase):
             payload = json.loads((output_dir / "benchmark-report.json").read_text(encoding="utf-8"))
             markdown = (output_dir / "benchmark-report.md").read_text(encoding="utf-8")
 
-            self.assertEqual(len(results), 41)
+            self.assertEqual(len(results), 42)
         self.assertTrue(all(result.passed for result in results))
-        self.assertEqual(payload["passed"], 41)
+        self.assertEqual(payload["passed"], 42)
         self.assertEqual(payload["failed"], 0)
         self.assertIn("small-code-change-test-diff", markdown)
         self.assertIn("budget-exhausted-incomplete", markdown)
@@ -116,6 +117,7 @@ class BenchmarkTests(unittest.TestCase):
         self.assertIn("reviewer-provable-finding-boundary", markdown)
         self.assertIn("readonly-initial-precise-glob", markdown)
         self.assertIn("readonly-cross-root-exact-path-retry", markdown)
+        self.assertIn("readonly-cross-root-precise-filename-retry", markdown)
 
     def test_scripted_tool_call_can_emit_raw_malformed_arguments(self) -> None:
         client = ScriptedBenchmarkClient(

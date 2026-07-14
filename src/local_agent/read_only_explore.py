@@ -505,11 +505,12 @@ def _cross_root_exact_glob_retry(
     roots: tuple[str, ...],
     missing_roots: tuple[str, ...],
 ) -> tuple[tuple[str, ...], tuple[str, ...]]:
-    """Rebase one failed exact source path onto an unvisited workspace root.
+    """Rebase one failed precise source pattern onto an unvisited root.
 
     The failed glob is already a typed observation from an authorized root. A
-    single exact retry preserves the user's path intent across `/add-dir`
-    roots without turning the miss into broad inventory or semantic guessing.
+    single retry preserves the user's path intent across `/add-dir` roots
+    without turning the miss into broad inventory or semantic guessing. A
+    pattern may vary parent directories, but its source filename stays exact.
     """
 
     attempted: set[tuple[str, str]] = set()
@@ -522,11 +523,11 @@ def _cross_root_exact_glob_retry(
             continue
         scoped_roots = _typed_scope_roots(result, roots)
         for raw in patterns:
-            relative = _exact_relative_source_path(raw)
+            relative = _precise_relative_source_pattern(raw)
             if relative is None:
                 continue
             attempted.update((root, relative) for root in scoped_roots)
-            if result.metadata.get("negative_evidence_type") == "exact_path_missing":
+            if result.metadata.get("negative_evidence_type") in {"exact_path_missing", "path_no_match"}:
                 failed_relative_paths.append(relative)
     for root in missing_roots:
         patterns = tuple(
@@ -539,14 +540,15 @@ def _cross_root_exact_glob_retry(
     return (), ()
 
 
-def _exact_relative_source_path(raw: object) -> str | None:
+def _precise_relative_source_pattern(raw: object) -> str | None:
     if not isinstance(raw, str) or not raw.strip():
         return None
     rendered = raw.strip()
     path = Path(rendered)
     if path.is_absolute() or any(part == ".." for part in path.parts):
         return None
-    if any(char in rendered for char in "*?[") or path.suffix.lower() not in SOURCE_FILE_SUFFIXES:
+    filename = path.name
+    if any(char in filename for char in "*?[") or path.suffix.lower() not in SOURCE_FILE_SUFFIXES:
         return None
     return path.as_posix()
 
@@ -643,7 +645,7 @@ def _glob_result_is_complete_root_local_no_match(result: ToolResultSummary, root
 def _root_attempts(results: Iterable[ToolResultSummary], roots: tuple[str, ...]) -> dict[str, int]:
     counts = {root: 0 for root in roots}
     for result in results:
-        if not _is_executed_explore_attempt(result):
+        if not _is_executed_explore_attempt(result) or not _is_typed_explore_progress(result):
             continue
         for root in _result_roots(result, roots):
             counts[root] += 1
