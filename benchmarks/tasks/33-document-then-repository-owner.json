@@ -1,0 +1,116 @@
+{
+  "id": "document-then-repository-owner",
+  "title": "A requirement read followed by explicit repository owner inspection keeps the code evidence domain",
+  "prompt": "只读 owner 定位。先 read_file 读取 requirements.md；随后在 {{root:backend}} 和 {{root:web}} 中用 search_code/read_file 验证真实 owner 路径。不要修改文件；不要把相似代码说成已证实 owner。",
+  "budget_seconds": 90,
+  "workspace_files": {
+    "requirements.md": "# Requirement\nThe requested behavior needs a backend and web owner.\n"
+  },
+  "additional_roots": {
+    "backend": {
+      "src/PaymentCandidate.java": "class PaymentCandidate { void existingCapability() {} }\n"
+    },
+    "web": {
+      "src/paymentCandidate.js": "export const paymentCandidate = '/existing-capability';\n"
+    }
+  },
+  "scripted_responses": [
+    {
+      "tool_calls": [
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "requirements.md"
+          }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "search_code",
+          "arguments": {
+            "path": "{{root:backend}}/src",
+            "pattern": "existingCapability"
+          }
+        },
+        {
+          "name": "search_code",
+          "arguments": {
+            "path": "{{root:web}}/src",
+            "pattern": "existing-capability"
+          }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "{{root:backend}}/src/PaymentCandidate.java"
+          }
+        },
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "{{root:web}}/src/paymentCandidate.js"
+          }
+        }
+      ]
+    },
+    {
+      "content": "已验证证据：requirements.md 已读取；backend/src/PaymentCandidate.java 与 web/src/paymentCandidate.js 存在相邻能力。合理候选：这两个路径仅是候选。仍缺证据：真实 owner 与请求行为的直接调用链仍未定位。"
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "submit_read_only_review",
+          "arguments": {
+            "verdict": "pass",
+            "confidence": 0.96,
+            "reason": "The candidate cites both roots and keeps the actual owner unlocated."
+          }
+        }
+      ]
+    }
+  ],
+  "acceptance": {
+    "required_tools": [
+      "read_file",
+      "search_code"
+    ],
+    "forbidden_tools": [
+      "apply_patch",
+      "write_file",
+      "shell",
+      "run_tests",
+      "git_diff",
+      "git_status"
+    ],
+    "changed_files": [],
+    "answer_all_of": [
+      "PaymentCandidate.java",
+      "paymentCandidate.js",
+      "合理候选",
+      "仍未定位"
+    ],
+    "answer_forbidden_regex": [
+      "已证实.*owner",
+      "document-only"
+    ],
+    "termination_reason": "final",
+    "run_summary": {
+      "tool_errors": 0
+    },
+    "read_only_reviewer": {
+      "triggers": 1,
+      "typed_submits": 1
+    },
+    "safe_partial_report": {
+      "emitted": 0
+    },
+    "max_tool_errors": 0
+  },
+  "residual_risk": "The fixture proves mixed document and repository intent routing; it does not establish a real business owner without direct behavior binding."
+}

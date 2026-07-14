@@ -165,6 +165,16 @@ _EXPLICIT_REPOSITORY_CODE_MARKERS = (
     "repository",
 )
 
+_REPOSITORY_INSPECTION_TOOL_MARKERS = (
+    "search_code",
+    "lsp_symbols",
+    "lsp_workspace_symbols",
+    "lsp_document_symbols",
+    "lsp_definition",
+    "lsp_references",
+    "lsp_diagnostics",
+)
+
 _IMPLEMENTATION_MARKERS = (
     "实现",
     "开发",
@@ -561,7 +571,25 @@ def _has_positive_repository_code_context(lower_prompt: str) -> bool:
         " ",
         lower_prompt,
     )
-    return _contains_any(text, _EXPLICIT_REPOSITORY_CODE_MARKERS)
+    text = re.sub(
+        r"(?:(?:不要|不|无需|禁止|不得)\s*(?:再?使用|调用|运行|执行)|"
+        r"(?:do\s+not|don't|must\s+not)\s+(?:use|call|run|invoke))\s*"
+        r"(?:search_code|lsp_(?:symbols|workspace_symbols|document_symbols|definition|references|diagnostics))",
+        " ",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if _contains_any(text, _EXPLICIT_REPOSITORY_CODE_MARKERS):
+        return True
+    if _contains_any(text, _REPOSITORY_INSPECTION_TOOL_MARKERS):
+        return True
+    return bool(
+        re.search(
+            r"(?:后端|前端|服务|模块|项目).{0,64}(?:owner|归属|实现位置|候选文件|真实路径|源码路径|代码路径)",
+            text,
+            flags=re.IGNORECASE,
+        )
+    )
 
 
 def _read_only_review_profile(

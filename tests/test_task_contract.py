@@ -160,6 +160,32 @@ class RequirementContractTests(unittest.TestCase):
         self.assertEqual(contract.task_kind, "read-only")
         self.assertEqual(contract.evidence_domain, "repository_code")
 
+    def test_document_then_explicit_repository_tools_stays_repository_code(self) -> None:
+        contract = generate_requirement_contract(
+            "先 read_file 读取需求文档；随后在后端和前端中用 glob_files 发现候选文件，"
+            "再用 search_code/read_file 验证真实 owner 路径。只读且不要修改。"
+        )
+
+        self.assertEqual(contract.task_kind, "read-only")
+        self.assertEqual(contract.evidence_domain, "repository_code")
+        self.assertEqual(contract.read_only_review_profile, "owner_impact")
+
+    def test_negated_repository_tool_does_not_escape_document_only_scope(self) -> None:
+        contract = generate_requirement_contract(
+            "只根据 requirements.md 分析需求；不要检查代码，不要使用 search_code，也不要推测系统归属。"
+        )
+
+        self.assertEqual(contract.task_kind, "read-only")
+        self.assertEqual(contract.evidence_domain, "requirement_documents")
+
+    def test_no_write_then_positive_repository_tool_keeps_repository_scope(self) -> None:
+        contract = generate_requirement_contract(
+            "阅读 requirements.md，不要修改文件，然后用 search_code 定位实现；只读输出证据。"
+        )
+
+        self.assertEqual(contract.task_kind, "read-only")
+        self.assertEqual(contract.evidence_domain, "repository_code")
+
     def test_html_document_and_image_do_not_imply_markdown_artifact(self) -> None:
         contract = generate_requirement_contract("只读分析 HTML 文档和示例图片，给出证据。")
 
