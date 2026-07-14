@@ -386,14 +386,16 @@ def _unsupported_derived_count_claim_ids(
             continue
         asserted_counts = {
             _normalized_count(match.group("number"))
-            for match in _EXPLICIT_COUNT_PATTERN.finditer(str(getattr(unit, "text", "") or ""))
+            for match in _EXPLICIT_COUNT_PATTERN.finditer(
+                _count_assertion_text(str(getattr(unit, "text", "") or ""))
+            )
         }
         if not asserted_counts:
             continue
         supported_counts = {
             _normalized_count(match.group("number"))
             for summary in summaries_by_claim[claim_id]
-            for match in _EXPLICIT_COUNT_PATTERN.finditer(summary)
+            for match in _EXPLICIT_COUNT_PATTERN.finditer(_count_assertion_text(summary))
         }
         if not asserted_counts.issubset(supported_counts):
             unsupported.append(claim_id)
@@ -402,6 +404,22 @@ def _unsupported_derived_count_claim_ids(
 
 def _normalized_count(value: str) -> str:
     return re.sub(r"\s+", "", value or "").casefold()
+
+
+def _count_assertion_text(value: str) -> str:
+    """Remove locator line numbers before looking for semantic count claims."""
+
+    without_path_locators = re.sub(
+        r"\.[A-Za-z0-9]{1,12}(?::\s*L?\d+(?:\s*[-–]\s*L?\d+)?|#L\d+(?:\s*[-–]\s*L?\d+)?)",
+        " ",
+        value or "",
+        flags=re.IGNORECASE,
+    )
+    return re.sub(
+        r"(?im)^\s*(?:line\s+)?\d+(?:\s*[-–]\s*\d+)?\s*[:：]",
+        "",
+        without_path_locators,
+    )
 
 
 def _is_source_path_context_only(text: str) -> bool:

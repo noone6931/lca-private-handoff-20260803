@@ -498,6 +498,8 @@ def reviewer_transport_rewrite_message(
         "- Delete global `未找到` / `未发现` / missing-implementation claims unless an existing typed negative observation "
         "directly supports that exact scope. If the point still matters, move it to the pending-confirmation section as "
         "a neutral `本轮未验证...` question, not a current-source fact.\n"
+        "- Delete tool-process narration such as `patterns=...`, glob/search attempts, workspace labels, truncation notes, "
+        "and statements that a file was read. They are not user-requested current-source conclusions.\n"
         "- Use a small number of precise, already-observed locators per conclusion; prefer narrow shared ranges over one citation per row.\n"
         "- Do not add new facts, paths, artifacts, owners, lifecycle explanations, source priority, or inferred workflow state.\n"
         "- Treat failed guessed paths in other roots only as scoped inspection failures. Do not infer that roots are branches, versions, mirrors, paired repositories, or expected to contain the same relative paths; omit irrelevant failed guesses from the design answer.\n"

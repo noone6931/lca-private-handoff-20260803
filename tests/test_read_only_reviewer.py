@@ -3635,6 +3635,25 @@ class ReadOnlyReviewerTests(unittest.TestCase):
 
         self.assertEqual(handoff.transport_omitted_claim_ids, ())
 
+    def test_source_locator_line_number_is_not_misread_as_a_chinese_count(self) -> None:
+        contract = generate_requirement_contract("读取源码并输出证据化技术设计。")
+        source_path = "/workspace/backend/src/Processor.java"
+        candidate = f"## 源码当前事实\n- {source_path}:106 处理取消时使用状态枚举。"
+        units = candidate_claim_units(candidate)
+        content = "\n".join(f"{number}: source line {number}" for number in range(1, 120))
+        handoff = build_explore_handoff(
+            request="读取源码并输出证据化技术设计。",
+            contract=contract,
+            requirement_evidence=(),
+            source_evidence=(SourceEvidence(source_path, content, root="/workspace/backend"),),
+            records=(),
+            tool_results=(),
+            candidate=candidate,
+            claim_units=units,
+        )
+
+        self.assertEqual(handoff.transport_omitted_claim_ids, ())
+
     def test_source_fact_section_with_claim_locator_is_transportable(self) -> None:
         contract = generate_requirement_contract("读取源码并输出证据化技术设计。")
         source_path = "/workspace/backend/src/Processor.java"
@@ -3777,6 +3796,7 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertIn("one supported factual predicate and its locator in the same text", message)
         self.assertIn("Never use `+`", message)
         self.assertIn("Delete global `未找到` / `未发现`", message)
+        self.assertIn("Delete tool-process narration such as `patterns=...`", message)
 
     def test_rewrite_treats_reviewer_action_as_advisory_not_source_evidence(self) -> None:
         result = ReviewerResult(
