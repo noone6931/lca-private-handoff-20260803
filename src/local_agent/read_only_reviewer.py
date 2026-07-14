@@ -495,6 +495,8 @@ def reviewer_transport_rewrite_message(
         "`- /exact/source/File.java:42 defines methodName.`\n"
         "- A locator must use an exact observed path plus an integer line or bounded integer range. Never use `+`, "
         "`etc.`, comma-separated bare line numbers, a path in another table column, or a range outside the observed excerpt.\n"
+        "- Tool-result character counts such as `ok (16493 chars)` are transport metadata, never source line numbers. "
+        "Do not copy them into `path:line` locators or use them to claim whole-file coverage.\n"
         "- Delete global `未找到` / `未发现` / missing-implementation claims unless an existing typed negative observation "
         "directly supports that exact scope. If the point still matters, move it to the pending-confirmation section as "
         "a neutral `本轮未验证...` question, not a current-source fact.\n"

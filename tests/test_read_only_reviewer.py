@@ -3705,6 +3705,41 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertIn("copy one verbatim", rewrite_message)
         self.assertIn("do not shorten it to a class name or basename", rewrite_message)
 
+    def test_transport_recovery_rejects_character_count_as_whole_file_line_range(self) -> None:
+        contract = generate_requirement_contract("读取源码并输出证据化技术设计。")
+        source_path = "/workspace/frontend/src/views/list.vue"
+        candidate = (
+            "## 源码当前事实\n"
+            f"- `{source_path}`：当前逻辑未体现结算字段（`list.vue:1-16493`）\n"
+        )
+        units = candidate_claim_units(candidate)
+        handoff = build_explore_handoff(
+            request="读取源码并输出证据化技术设计。",
+            contract=contract,
+            requirement_evidence=(),
+            source_evidence=(
+                SourceEvidence(
+                    source_path,
+                    "1: <template>\n2:   <div>existing page</div>\n3: </template>",
+                    root="/workspace/frontend",
+                ),
+            ),
+            records=(),
+            tool_results=(),
+            candidate=candidate,
+            claim_units=units,
+        )
+
+        self.assertEqual(handoff.transport_omitted_claim_ids, (units[0].claim_id,))
+        message = reviewer_transport_rewrite_message(
+            handoff=handoff,
+            omitted_claim_ids=handoff.transport_omitted_claim_ids,
+            claim_units=units,
+        )
+        self.assertIn("list.vue:1-16493", message)
+        self.assertIn("character counts", message)
+        self.assertIn("whole-file coverage", message)
+
     def test_path_bullet_binds_following_line_bullets_to_repository_source(self) -> None:
         contract = generate_requirement_contract("读取源码并输出证据化技术设计。")
         source_path = "/workspace/backend/src/Processor.java"
@@ -3802,6 +3837,9 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertIn("source facts only as short bullets, never as tables or blockquotes", message)
         self.assertIn("one supported factual predicate and its locator in the same text", message)
         self.assertIn("Never use `+`", message)
+        self.assertIn("character counts", message)
+        self.assertIn("never source line numbers", message)
+        self.assertIn("whole-file coverage", message)
         self.assertIn("Delete global `未找到` / `未发现`", message)
         self.assertIn("Delete tool-process narration such as `patterns=...`", message)
 
