@@ -5315,10 +5315,10 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         )
         units = candidate_claim_units(candidate)
         ids = [unit.claim_id for unit in units]
-        self.assertEqual(len(units), 80)
+        self.assertEqual(len(units), 100)
         self.assertEqual(ids[0], "c001")
         self.assertTrue(any(45 <= int(claim_id[1:]) <= 60 for claim_id in ids))
-        self.assertNotIn("c100", ids)
+        self.assertIn("c100", ids)
         self.assertIn("c101", ids)
         self.assertIn("c102", ids)
         tail_unit = next(unit for unit in units if unit.claim_id == "c101")
@@ -5329,6 +5329,14 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertIn("platformPayment", tail_unit.text)
         rewritten = candidate.replace("**platformPayment** is verified owner", "analogous candidate").replace("platformPayment is the true owner", "the true owner is unlocated")
         self.assertTrue(rewrite_complies_with_review(rewritten, units, result.findings))
+
+    def test_normal_technical_design_keeps_all_claims_below_transport_cap(self) -> None:
+        candidate = "\n".join(f"- source fact {index}" for index in range(1, 86))
+
+        units = candidate_claim_units(candidate)
+
+        self.assertEqual(len(units), 85)
+        self.assertEqual([unit.claim_id for unit in units], [f"c{index:03d}" for index in range(1, 86)])
 
     def test_claim_unit_sampling_preserves_high_risk_document_consistency_windows(self) -> None:
         lines = [f"- filler claim {index}" for index in range(1, 121)]
@@ -5343,7 +5351,7 @@ class ReadOnlyReviewerTests(unittest.TestCase):
 
         units = candidate_claim_units("\n".join(lines))
         text_by_id = {unit.claim_id: unit.text for unit in units}
-        self.assertLessEqual(len(units), 80)
+        self.assertLessEqual(len(units), 100)
         for claim_id in (
             "c039",
             "c040",
