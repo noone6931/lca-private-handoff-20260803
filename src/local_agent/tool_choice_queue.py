@@ -596,8 +596,6 @@ def evaluate_tool_choice_state(
             bounded_read_paths = explore_decision.exact_read_candidates[:1]
         elif closure_candidate_read:
             bounded_read_paths = explore_decision.read_candidates[:1]
-        elif inventory_candidate_read:
-            bounded_read_paths = explore_decision.inventory_read_candidates
         else:
             bounded_read_paths = ()
         return ToolChoiceDecision(

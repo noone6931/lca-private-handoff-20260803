@@ -326,7 +326,7 @@ class ToolChoiceQueueTests(unittest.TestCase):
             )
 
         self.assertEqual(decision.allowed_tool_names, frozenset({"read_file"}))
-        self.assertEqual(decision.scoped_read_paths, (str(source),))
+        self.assertEqual(decision.scoped_read_paths, ())
         self.assertIn(str(source), decision.tool_call_hints[0])
 
     def test_exact_source_filename_glob_becomes_a_bounded_read_candidate(self) -> None:
@@ -389,8 +389,8 @@ class ToolChoiceQueueTests(unittest.TestCase):
 
         self.assertEqual(decision.rule_id, "read_only_profile_explore_inventory_read")
         self.assertEqual(decision.allowed_tool_names, frozenset({"read_file"}))
-        self.assertEqual(decision.scoped_read_paths, (str(application), str(controller)))
-        self.assertEqual(decision.scoped_read_budget, 1)
+        self.assertEqual(decision.scoped_read_paths, ())
+        self.assertIsNone(decision.scoped_read_budget)
         self.assertIn("OwnerApplication.java", decision.tool_call_hints[0])
 
     def test_model_selected_source_read_completes_root_coverage(self) -> None:
@@ -756,7 +756,7 @@ class ToolChoiceQueueTests(unittest.TestCase):
             )
 
         self.assertEqual(decision.allowed_tool_names, frozenset({"read_file"}))
-        self.assertEqual(decision.scoped_read_paths, (str(source),))
+        self.assertEqual(decision.scoped_read_paths, ())
         # After the first root is read, the second root must still be eligible
         # for its own fallback; a positive candidate from a truncated listing
         # is useful without pretending the other root was inspected.
