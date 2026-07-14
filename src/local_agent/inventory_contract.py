@@ -9,37 +9,48 @@ from typing import Any, Iterable
 
 INVENTORY_GLOB_MARKERS = (
     "pom.xml",
-    "build.gradle",
-    "build.gradle.kts",
     "package.json",
     "pyproject.toml",
+    "build.gradle",
+    "build.gradle.kts",
     "go.mod",
     "Cargo.toml",
-    "src/main/java/**/*.java",
-    "src/**/*.py",
-    "src/**/*.js",
-    "src/**/*.ts",
-    "src/**/*.vue",
+    "src/**/*.*",
+    "app/**/*.*",
+    "lib/**/*.*",
+    "routes/**/*.*",
+    "templates/**/*.*",
 )
+MAX_INVENTORY_GLOB_PATHS = 32
 
 
 def inventory_glob_patterns_for_roots(roots: Iterable[str]) -> list[str]:
+    cleaned_roots = _clean_roots(roots)
+    if not cleaned_roots:
+        return []
+    per_root = max(1, MAX_INVENTORY_GLOB_PATHS // len(cleaned_roots))
+    markers = INVENTORY_GLOB_MARKERS[:per_root]
     patterns: list[str] = []
-    for root in roots:
-        cleaned = str(root).rstrip("/")
-        if not cleaned:
-            continue
-        patterns.extend(f"{cleaned}/**/{marker}" for marker in INVENTORY_GLOB_MARKERS)
-    return patterns
+    for cleaned in cleaned_roots[:MAX_INVENTORY_GLOB_PATHS]:
+        patterns.extend(f"{cleaned}/**/{marker}" for marker in markers)
+    return patterns[:MAX_INVENTORY_GLOB_PATHS]
 
 
 def inventory_glob_call_hint(roots: Iterable[str]) -> str:
+    cleaned_roots = _clean_roots(roots)
     arguments = {
-        "paths": inventory_glob_patterns_for_roots(roots),
+        "paths": inventory_glob_patterns_for_roots(cleaned_roots),
         "limit": 200,
         "hidden": False,
         "gitignore": True,
     }
+    if len(cleaned_roots) > MAX_INVENTORY_GLOB_PATHS:
+        return (
+            f"Too many required roots for one glob_files call ({len(cleaned_roots)} > "
+            f"{MAX_INVENTORY_GLOB_PATHS}). The current single-call inventory contract cannot represent every "
+            "active root within the glob_files schema; do not emit a glob_files call for this directive. "
+            "Stop and report that bounded inventory discovery needs a smaller active-root batch."
+        )
     return (
         "Use this bounded inventory discovery call exactly (do not send an empty paths entry or bare directory): "
         f"glob_files({json.dumps(arguments, ensure_ascii=False)})"
@@ -58,6 +69,12 @@ def glob_inventory_denial_reason(
     if not isinstance(raw_paths, list) or not all(isinstance(path, str) for path in raw_paths):
         return None
     roots = tuple(str(Path(root).resolve()) for root in required_roots if str(root).strip())
+    if len(roots) > MAX_INVENTORY_GLOB_PATHS:
+        return (
+            f"Runtime workspace inventory restriction: {len(roots)} required roots cannot fit in one "
+            f"glob_files call with max {MAX_INVENTORY_GLOB_PATHS} paths. The current directive cannot proceed "
+            "as a single runtime inventory call; reduce the active root set before retrying."
+        )
     missing = [
         root
         for root in roots
@@ -71,6 +88,18 @@ def glob_inventory_denial_reason(
         f"currently uncovered workspace root. Missing bounded root scopes: {rendered}. "
         "Use root-prefixed manifest/source patterns, not a bare directory or recursive all-files glob."
     )
+
+
+def _clean_roots(roots: Iterable[str]) -> tuple[str, ...]:
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for root in roots:
+        value = str(root).rstrip("/")
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        cleaned.append(value)
+    return tuple(cleaned)
 
 
 def _path_is_bounded_inventory_pattern(raw_path: str, root: str, workspace: Path) -> bool:

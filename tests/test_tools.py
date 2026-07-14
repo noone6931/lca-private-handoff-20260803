@@ -9,6 +9,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from local_agent.inventory_contract import MAX_INVENTORY_GLOB_PATHS, inventory_glob_call_hint
 from local_agent.lsp.client import StdioLspClient
 from local_agent.lsp.client import close_all_clients
 from local_agent.lsp.config import LspServerConfig
@@ -844,6 +845,61 @@ class ToolTests(unittest.TestCase):
         self.assertTrue(bare_roots.is_error)
         self.assertTrue(broad_roots.is_error)
         self.assertFalse(bounded_terms.is_error)
+
+    def test_inventory_glob_hint_stays_within_schema_for_three_roots(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            roots = tuple(root / f"repo-{index}" for index in range(3))
+            for repo in roots:
+                repo.mkdir()
+                (repo / "src").mkdir()
+                (repo / "src" / "owner.sql").write_text("select 1;\n", encoding="utf-8")
+            hint = inventory_glob_call_hint(str(repo) for repo in roots)
+            start = hint.index("glob_files(") + len("glob_files(")
+            args = json.loads(hint[start:-1])
+            paths = args["paths"]
+            registry = ToolRegistry(search_tools())
+            context = ToolContext(
+                workspace=roots[0],
+                allowed_dirs=roots[1:],
+                approval_mode="yolo",
+                runtime_glob_required_roots=frozenset(str(repo) for repo in roots),
+            )
+
+            result = registry.execute("glob_files", args, context)
+
+        self.assertLessEqual(len(paths), MAX_INVENTORY_GLOB_PATHS)
+        for repo in roots:
+            self.assertTrue(
+                any(path.startswith(f"{repo}/") for path in paths),
+                f"missing bounded selector for {repo}: {paths}",
+            )
+        self.assertFalse(result.is_error, result.content)
+
+    def test_inventory_glob_hint_reports_single_call_limit_when_roots_exceed_schema(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            roots = tuple(root / f"repo-{index}" for index in range(MAX_INVENTORY_GLOB_PATHS + 1))
+            for repo in roots:
+                repo.mkdir()
+            hint = inventory_glob_call_hint(str(repo) for repo in roots)
+            registry = ToolRegistry(search_tools())
+            context = ToolContext(
+                workspace=roots[0],
+                allowed_dirs=roots[1:],
+                approval_mode="yolo",
+                runtime_glob_required_roots=frozenset(str(repo) for repo in roots),
+            )
+
+            result = registry.execute("glob_files", {"paths": [f"{roots[0]}/**/pom.xml"]}, context)
+
+        self.assertIn("single-call inventory contract cannot represent", hint)
+        self.assertNotIn("glob_files(", hint)
+        self.assertNotIn("Split", hint)
+        self.assertNotIn("Split", result.content)
+        self.assertTrue(result.is_error)
+        self.assertIn("cannot fit in one glob_files call", result.content)
+        self.assertIn("reduce the active root set", result.content)
 
     def test_registry_normalizes_search_code_camel_case_string_result_limit(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
