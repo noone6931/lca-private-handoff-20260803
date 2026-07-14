@@ -35,6 +35,12 @@ class DocumentConsistencyAssessment:
         }
 
 
+@dataclass(frozen=True)
+class DocumentConsistencyFindingIssue:
+    code: str
+    claim_ids: tuple[str, ...] = ()
+
+
 class DocumentConsistencyValidationError(ValueError):
     def __init__(self, code: str) -> None:
         self.code = code
@@ -84,6 +90,14 @@ def validate_document_consistency_findings(
     assessment: DocumentConsistencyAssessment,
     findings: Iterable[Mapping[str, str]],
 ) -> str | None:
+    issue = validate_document_consistency_finding_issue(assessment, findings)
+    return issue.code if issue is not None else None
+
+
+def validate_document_consistency_finding_issue(
+    assessment: DocumentConsistencyAssessment,
+    findings: Iterable[Mapping[str, str]],
+) -> DocumentConsistencyFindingIssue | None:
     """Reject reviewer actions that contradict a typed unresolved conflict.
 
     Findings are advisory repair instructions, not evidence.  For unresolved
@@ -94,6 +108,8 @@ def validate_document_consistency_findings(
 
     if assessment.stance == "explicitly_supported_reconciliation":
         return None
+    invalid_claim_ids: list[str] = []
+    saw_invalid_finding = False
     for finding in findings:
         claim = str(finding.get("claim") or "")
         issue = str(finding.get("issue") or "")
@@ -101,7 +117,15 @@ def validate_document_consistency_findings(
         if not _finding_targets_artifact_conflict(claim, issue):
             continue
         if _finding_reconciles_unresolved_conflict(issue, action):
-            return "document_consistency_finding_reconciles_conflict"
+            saw_invalid_finding = True
+            claim_id = str(finding.get("claim_id") or "").strip()
+            if claim_id:
+                invalid_claim_ids.append(claim_id)
+    if saw_invalid_finding:
+        return DocumentConsistencyFindingIssue(
+            "document_consistency_finding_reconciles_conflict",
+            tuple(dict.fromkeys(invalid_claim_ids)),
+        )
     return None
 
 
@@ -404,7 +428,7 @@ _ARTIFACT_FAMILY_PATTERNS = (
     ("image", re.compile(r"\b(?:image|screenshot|picture|photo|png|jpg|jpeg)\b|图片|图像|截图|示例图", re.IGNORECASE)),
 )
 _EXPLICIT_CONFLICT_MARKER = re.compile(
-    r"(?:\b(?:not\s+consistent|in\s+conflict|inconsistent|conflict\s+remains|source\s+differen(?:ce|ces)|artifact\s+differen(?:ce|ces)|discrepanc(?:y|ies)|(?:document|image|artifact|source)s?.{0,32}\bdiffer(?:s|ent)?)\b|"
+    r"(?:\b(?:not\s+consistent|in\s+conflict|inconsistent|conflicts?\s+with|conflict\s+remains|source\s+differen(?:ce|ces)|artifact\s+differen(?:ce|ces)|discrepanc(?:y|ies)|(?:document|image|artifact|source)s?.{0,32}\bdiffer(?:s|ent)?)\b|"
     r"不一致|存在冲突|仍.{0,8}(?:冲突|矛盾)|(?:冲突|矛盾).{0,8}(?:未消解|未解决|待确认|不明确)|"
     r"(?:资料|来源|文档|图片|图像|原型).{0,16}(?:差异|不一致)|差异.{0,16}(?:未消解|待确认|不明确))",
     flags=re.IGNORECASE,
@@ -490,7 +514,13 @@ def _finding_reconciles_unresolved_conflict(issue: str, action: str) -> bool:
 
 
 def _finding_instruction_clauses(value: str) -> tuple[str, ...]:
-    return tuple(piece.strip() for piece in re.split(r"[。；;，,、\n]+", " ".join((value or "").split())) if piece.strip())
+    clauses: list[str] = []
+    for piece in re.split(r"[。；;，,、\n]+", " ".join((value or "").split())):
+        for clause in re.split(r"\b(?:and|then)\b|(?:并且|并将|并|然后|再将)", piece):
+            stripped = clause.strip()
+            if stripped:
+                clauses.append(stripped)
+    return tuple(clauses)
 
 
 def _finding_targets_artifact_conflict(claim: str, issue: str) -> bool:

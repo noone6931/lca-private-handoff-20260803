@@ -10,7 +10,7 @@ from .document_consistency import DocumentConsistencyAssessment
 from .document_consistency import DocumentConsistencyValidationError
 from .document_consistency import document_consistency_rewrite_context
 from .document_consistency import parse_document_consistency_assessment
-from .document_consistency import validate_document_consistency_findings
+from .document_consistency import validate_document_consistency_finding_issue
 from .explore_handoff import ExploreHandoff
 from .task_contract import RequirementContract
 
@@ -121,6 +121,7 @@ class ReadOnlyReviewState:
     rejected_finding_submits: int = 0
     rejected_final_submits: int = 0
     finding_limit_hits: int = 0
+    invalidated_finding_submits: int = 0
     output_lifecycle_exhausted: bool = False
     rewrite_accepted: bool = False
     rewrite_corrections: int = 0
@@ -147,6 +148,7 @@ class ReadOnlyReviewState:
         self.rejected_finding_submits = 0
         self.rejected_final_submits = 0
         self.finding_limit_hits = 0
+        self.invalidated_finding_submits = 0
         self.output_lifecycle_exhausted = False
         self.rewrite_accepted = False
         self.rewrite_corrections = 0
@@ -174,6 +176,7 @@ class ReadOnlyReviewState:
             "rejected_finding_submits": self.rejected_finding_submits,
             "rejected_final_submits": self.rejected_final_submits,
             "finding_limit_hits": self.finding_limit_hits,
+            "invalidated_finding_submits": self.invalidated_finding_submits,
             "output_lifecycle_exhausted": self.output_lifecycle_exhausted,
             "rewrite_corrections": self.rewrite_corrections,
         }
@@ -686,10 +689,11 @@ def parse_reviewer_payload(
             )
         except DocumentConsistencyValidationError as exc:
             raise ReviewerValidationError(exc.code, diagnostics) from None
-        finding_code = validate_document_consistency_findings(
+        finding_issue = validate_document_consistency_finding_issue(
             assessment,
             (
                 {
+                    "claim_id": finding.claim_id,
                     "claim": finding.claim,
                     "issue": finding.issue,
                     "action": finding.action,
@@ -698,8 +702,16 @@ def parse_reviewer_payload(
                 for finding in findings
             ),
         )
-        if finding_code is not None:
-            raise ReviewerValidationError(finding_code, diagnostics)
+        if finding_issue is not None:
+            raise ReviewerValidationError(
+                finding_issue.code,
+                {
+                    **diagnostics,
+                    "invalid_document_finding_count": len(finding_issue.claim_ids),
+                    "invalid_document_finding_claim_ids": list(finding_issue.claim_ids),
+                },
+                pending_candidate_claim_ids=finding_issue.claim_ids,
+            )
     return ReviewerResult(
         verdict=verdict,
         confidence=float(confidence),

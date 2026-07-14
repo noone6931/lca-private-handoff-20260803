@@ -63,6 +63,7 @@ class RunStats:
     read_only_reviewer_rejected_finding_submits: int = 0
     read_only_reviewer_rejected_final_submits: int = 0
     read_only_reviewer_finding_limit_hits: int = 0
+    read_only_reviewer_invalidated_finding_submits: int = 0
     read_only_reviewer_output_lifecycle_exhausted: int = 0
     read_only_reviewer_verdicts: dict[str, int] = field(default_factory=dict)
     read_only_reviewer_errors: dict[str, int] = field(default_factory=dict)
@@ -331,6 +332,10 @@ class RunCollector:
         if self._stats is not None:
             self._stats.read_only_reviewer_finding_limit_hits += 1
 
+    def record_read_only_review_invalidated_finding_submit(self, count: int = 1) -> None:
+        if self._stats is not None:
+            self._stats.read_only_reviewer_invalidated_finding_submits += count
+
     def record_read_only_review_output_lifecycle_exhausted(self) -> None:
         if self._stats is not None:
             self._stats.read_only_reviewer_output_lifecycle_exhausted += 1
@@ -446,6 +451,7 @@ class RunCollector:
                 "rejected_finding_submits": stats.read_only_reviewer_rejected_finding_submits,
                 "rejected_final_submits": stats.read_only_reviewer_rejected_final_submits,
                 "finding_limit_hits": stats.read_only_reviewer_finding_limit_hits,
+                "invalidated_finding_submits": stats.read_only_reviewer_invalidated_finding_submits,
                 "output_lifecycle_exhausted": stats.read_only_reviewer_output_lifecycle_exhausted,
                 "verdicts": dict(sorted(stats.read_only_reviewer_verdicts.items())),
                 "errors": dict(sorted(stats.read_only_reviewer_errors.items())),

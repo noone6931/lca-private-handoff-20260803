@@ -35,7 +35,36 @@
             "claim_id": "c002",
             "finding_scope": "candidate_defect",
             "issue": "the candidate asserts a lifecycle reconciliation without direct support",
-            "action": "retain the conflict as unresolved"
+            "action": "Treat the prototype as the completed state."
+          }
+        },
+        {
+          "name": "submit_read_only_review",
+          "arguments": {
+            "verdict": "revise",
+            "confidence": 0.9,
+            "reason": "artifact role is not established",
+            "document_consistency": {
+              "stance": "asserted_reconciled",
+              "conflict_evidence_ids": [
+                "e001",
+                "e002"
+              ],
+              "supporting_evidence_ids": []
+            }
+          }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "report_read_only_finding",
+          "arguments": {
+            "claim_id": "c002",
+            "finding_scope": "candidate_defect",
+            "issue": "the candidate asserts a lifecycle reconciliation without direct support",
+            "action": "Remove the unsupported reconciliation and keep the artifact role unresolved."
           }
         },
         {
@@ -107,9 +136,11 @@
       "triggers": 1,
       "rewrites": 1,
       "rewrite_acceptances": 1,
-      "typed_submits": 2,
-      "finding_submits": 1,
-      "final_submits": 1
+      "typed_submits": 3,
+      "finding_submits": 2,
+      "final_submits": 1,
+      "rejected_final_submits": 1,
+      "invalidated_finding_submits": 1
     },
     "max_tool_errors": 0
   },

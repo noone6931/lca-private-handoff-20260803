@@ -481,9 +481,35 @@ class DocumentConsistencyTests(unittest.TestCase):
                 assessment,
                 (
                     {
+                        "claim": "example image conflict remains unresolved",
+                        "issue": "candidate needs clarification",
+                        "action": "Treat the prototype as the completed state and remove the unresolved wording.",
+                    },
+                ),
+            ),
+            "document_consistency_finding_reconciles_conflict",
+        )
+        self.assertEqual(
+            validate_document_consistency_findings(
+                assessment,
+                (
+                    {
                         "claim": "Automatic sending is current scope.",
                         "issue": "Requirement says this is later phase.",
                         "action": "Classify automatic sending as later.",
+                    },
+                ),
+            ),
+            None,
+        )
+        self.assertEqual(
+            validate_document_consistency_findings(
+                assessment,
+                (
+                    {
+                        "claim": "example image conflict remains unresolved",
+                        "issue": "candidate invented an image lifecycle",
+                        "action": "Remove unsupported reconciliation and keep unresolved.",
                     },
                 ),
             ),

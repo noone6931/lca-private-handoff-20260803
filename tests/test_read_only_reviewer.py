@@ -1366,6 +1366,151 @@ class _DocumentConsistencyTwoStageReviewerClient:
         return type("Response", (), {"message": {"content": "policy.md 要求字段留空；prototype.html 显示有值。两份资料表面存在差异，资料角色未说明，因此当前仍未消解。"}})()
 
 
+class _DocumentConsistencyInvalidFindingRecoveryClient:
+    calls: list[dict] = []
+
+    def __init__(self, config: AgentConfig):
+        self._primary_calls = 0
+        self._review_calls = 0
+
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
+        reviewer = any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages)
+        if reviewer:
+            self._review_calls += 1
+            final_payload = {
+                "verdict": "revise",
+                "confidence": 0.9,
+                "reason": "document conflict remains bounded",
+                "document_consistency": {
+                    "stance": "reported_unresolved",
+                    "conflict_evidence_ids": ["e001", "e002"],
+                    "supporting_evidence_ids": [],
+                },
+            }
+            if self._review_calls == 1:
+                findings = [
+                    _finding_call(
+                        f"scope-{index}",
+                        f"c{index:03d}",
+                        _candidate_claim(messages, f"c{index:03d}"),
+                        issue="ordinary unsupported scope detail",
+                        action="mark this detail unverified",
+                    )
+                    for index in range(1, 8)
+                ]
+                findings.append(
+                    _finding_call(
+                        "bad-conflict",
+                        "c008",
+                        _candidate_claim(messages, "c008"),
+                        issue="the candidate discusses the artifact conflict",
+                        action="Treat the prototype as the later completed state.",
+                    )
+                )
+                return _review_tool_calls_response([*findings, _final_call("bad-final", final_payload)])
+            if self._review_calls == 2:
+                return _review_tool_calls_response(
+                    [
+                        _finding_call(
+                            "fixed-conflict",
+                            "c008",
+                            _candidate_claim(messages, "c008"),
+                            issue="the candidate discusses the artifact conflict",
+                            action="Delete the unsupported reconciliation and state that artifact role remains unresolved.",
+                        ),
+                        _final_call("valid-final", final_payload),
+                    ]
+                )
+            raise AssertionError("second open-ended reviewer call should not be reached")
+        self._primary_calls += 1
+        if self._primary_calls == 1:
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "read-policy",
+                                "type": "function",
+                                "function": {"name": "read_file", "arguments": '{"path":"policy.md"}'},
+                            },
+                            {
+                                "id": "read-prototype",
+                                "type": "function",
+                                "function": {"name": "read_file", "arguments": '{"path":"prototype.html"}'},
+                            },
+                        ],
+                    }
+                },
+            )()
+        if self._review_calls == 0:
+            content = "\n\n".join(
+                [f"Requirement claim {index} is verified." for index in range(1, 8)]
+                + ["The document and prototype conflict remains unresolved."]
+            )
+            return type("Response", (), {"message": {"content": content}})()
+        return type(
+            "Response",
+            (),
+            {
+                "message": {
+                    "content": (
+                        "Requirement claims 1-7 are unverified. "
+                        "policy.md:1 says the field is blank; prototype.html:1 shows a value. "
+                        "The policy/prototype discrepancy remains unresolved because artifact role is not established."
+                    )
+                }
+            },
+        )()
+
+
+class _DocumentConsistencyRepeatedInvalidFindingClient(_DocumentConsistencyInvalidFindingRecoveryClient):
+    calls: list[dict] = []
+
+    def chat(self, messages, tools, *, timeout=None):
+        reviewer = any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages)
+        if reviewer:
+            type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
+            self._review_calls += 1
+            final_payload = {
+                "verdict": "revise",
+                "confidence": 0.9,
+                "reason": "bad conflict finding repeats",
+                "document_consistency": {
+                    "stance": "reported_unresolved",
+                    "conflict_evidence_ids": ["e001", "e002"],
+                    "supporting_evidence_ids": [],
+                },
+            }
+            calls = []
+            if self._review_calls == 1:
+                calls.extend(
+                    _finding_call(
+                        f"scope-{index}",
+                        f"c{index:03d}",
+                        _candidate_claim(messages, f"c{index:03d}"),
+                        issue="ordinary unsupported scope detail",
+                        action="mark this detail unverified",
+                    )
+                    for index in range(1, 8)
+                )
+            calls.append(
+                _finding_call(
+                    f"bad-conflict-{self._review_calls}",
+                    "c008",
+                    _candidate_claim(messages, "c008"),
+                    issue="the candidate discusses the artifact conflict",
+                    action="Treat the prototype as the later completed state.",
+                )
+            )
+            calls.append(_final_call(f"bad-final-{self._review_calls}", final_payload))
+            return _review_tool_calls_response(calls)
+        return super().chat(messages, tools, timeout=timeout)
+
+
 class _DocumentConsistencyRewriteContextClient:
     calls: list[dict] = []
     rewrite_directives: list[str] = []
@@ -2138,6 +2283,68 @@ class ReadOnlyReviewerTests(unittest.TestCase):
             [REVIEWER_FINDING_TOOL_NAME, REVIEWER_OUTPUT_TOOL_NAME],
         )
         self.assertEqual(len(review_calls), 2)
+
+    def test_document_consistency_invalid_finding_is_revoked_and_can_be_resubmitted(self) -> None:
+        _DocumentConsistencyInvalidFindingRecoveryClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            (workspace / "policy.md").write_text("Field must remain blank.\n", encoding="utf-8")
+            (workspace / "prototype.html").write_text("<p>Field has a value.</p>\n", encoding="utf-8")
+            with patch("local_agent.agent.OpenAICompatibleClient", _DocumentConsistencyInvalidFindingRecoveryClient):
+                runtime = AgentRuntime(_config(workspace), show_tool_logs=False)
+                answer = runtime.run("只根据 Markdown 和 HTML 分析资料一致性，不要检查代码。资料角色未说明时保持未消解。")
+
+        self.assertIn("unresolved", answer)
+        summary = runtime._last_run_summary["read_only_reviewer"]
+        self.assertEqual(summary["finding_submits"], 9)
+        self.assertEqual(summary["invalidated_finding_submits"], 1)
+        self.assertEqual(summary["rejected_final_submits"], 1)
+        self.assertEqual(summary["final_submits"], 1)
+        self.assertEqual(summary["rewrites"], 1)
+        self.assertEqual(summary["rewrite_acceptances"], 1)
+        self.assertEqual(summary["output_lifecycle_exhausted"], 0)
+        self.assertEqual(summary["errors"], {})
+        final_findings = runtime._run.read_only_review.findings
+        self.assertEqual([finding.claim_id for finding in final_findings], [f"c{index:03d}" for index in range(1, 9)])
+        self.assertEqual(len([finding for finding in final_findings if finding.claim_id == "c008"]), 1)
+        corrected = next(finding for finding in final_findings if finding.claim_id == "c008")
+        self.assertNotIn("completed state", corrected.action)
+        self.assertNotIn("later", corrected.action.casefold())
+        self.assertIn("unresolved", corrected.action)
+        review_calls = [
+            call
+            for call in _DocumentConsistencyInvalidFindingRecoveryClient.calls
+            if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in call["messages"])
+        ]
+        self.assertEqual(len(review_calls), 2)
+        self.assertEqual(
+            [tool["function"]["name"] for tool in review_calls[1]["tools"]],
+            [REVIEWER_FINDING_TOOL_NAME, REVIEWER_OUTPUT_TOOL_NAME],
+        )
+        rejected_results = [
+            message
+            for message in review_calls[1]["messages"]
+            if message.get("role") == "tool" and message.get("tool_call_id") == "bad-final"
+        ]
+        self.assertEqual(len(rejected_results), 1)
+        self.assertIn("c008", str(rejected_results[0].get("content")))
+
+    def test_document_consistency_repeated_bad_finding_remains_bounded_unverified(self) -> None:
+        _DocumentConsistencyRepeatedInvalidFindingClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            (workspace / "policy.md").write_text("Field must remain blank.\n", encoding="utf-8")
+            (workspace / "prototype.html").write_text("<p>Field has a value.</p>\n", encoding="utf-8")
+            with patch("local_agent.agent.OpenAICompatibleClient", _DocumentConsistencyRepeatedInvalidFindingClient):
+                runtime = AgentRuntime(_config(workspace), show_tool_logs=False)
+                answer = runtime.run("只根据 Markdown 和 HTML 分析资料一致性，不要检查代码。资料角色未说明时保持未消解。")
+
+        self.assertIn("未完成/未验证", answer)
+        summary = runtime._last_run_summary["read_only_reviewer"]
+        self.assertEqual(summary["invalidated_finding_submits"], 3)
+        self.assertEqual(summary["rejected_final_submits"], 3)
+        self.assertEqual(summary["output_lifecycle_exhausted"], 1)
+        self.assertEqual(summary["errors"], {"invalid_output": 1})
 
     def test_document_consistency_rewrite_context_drives_runtime_rewrite_then_second_pass(self) -> None:
         _DocumentConsistencyRewriteContextClient.calls = []
@@ -3431,9 +3638,64 @@ class ReadOnlyReviewerTests(unittest.TestCase):
             )
 
         self.assertEqual(raised.exception.code, "document_consistency_finding_reconciles_conflict")
+        self.assertEqual(raised.exception.pending_candidate_claim_ids, ("c001",))
         repair = reviewer_repair_messages(handoff, units, raised.exception.diagnostics)
         self.assertIn("without inventing", repair[-1]["content"])
         self.assertIn("historical/current role", repair[-1]["content"])
+
+    def test_document_consistency_rejects_multiple_conflict_reconciling_findings_with_ids(self) -> None:
+        handoff = build_explore_handoff(
+            request="compare the requested documents",
+            contract=generate_requirement_contract("只根据 Markdown 和图片分析资料一致性，不要检查代码。"),
+            requirement_evidence=(),
+            source_evidence=(),
+            records=(),
+            tool_results=(
+                type("Tool", (), {"name": "read_file", "content": "A says blank.", "path": "policy.md", "is_error": False, "useless": False, "metadata": {}})(),
+                type("Tool", (), {"name": "inspect_image", "content": "B shows a value.", "path": "example.png", "is_error": False, "useless": False, "metadata": {}})(),
+            ),
+        )
+        units = candidate_claim_units(
+            "The document and image conflict remains unresolved.\n\n"
+            "The screenshot value conflicts with the document and remains unresolved."
+        )
+        with self.assertRaises(ReviewerValidationError) as raised:
+            parse_reviewer_payload(
+                {
+                    "verdict": "revise",
+                    "confidence": 0.8,
+                    "findings": [
+                        {
+                            "claim_id": "c001",
+                            "finding_scope": "candidate_defect",
+                            "issue": "candidate discusses the artifact conflict",
+                            "action": "Treat the image as the later completed state.",
+                        },
+                        {
+                            "claim_id": "c002",
+                            "finding_scope": "candidate_defect",
+                            "issue": "candidate discusses the artifact conflict",
+                            "action": "以需求文档为准，示例图仅作参考。",
+                        },
+                    ],
+                    "reason": "bad actions",
+                    "document_consistency": {
+                        "stance": "reported_unresolved",
+                        "conflict_evidence_ids": ["e001", "e002"],
+                        "supporting_evidence_ids": [],
+                    },
+                },
+                claim_units=units,
+                document_consistency=True,
+                evidence_ids=handoff.evidence_ids,
+            )
+
+        self.assertEqual(raised.exception.code, "document_consistency_finding_reconciles_conflict")
+        self.assertEqual(raised.exception.pending_candidate_claim_ids, ("c001", "c002"))
+        self.assertEqual(
+            raised.exception.diagnostics["invalid_document_finding_claim_ids"],
+            ["c001", "c002"],
+        )
 
     def test_document_consistency_preserves_unrelated_scope_findings(self) -> None:
         contract = generate_requirement_contract(

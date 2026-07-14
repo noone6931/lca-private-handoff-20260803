@@ -83,6 +83,21 @@ class ReviewerOutputTurn:
         return self.result is not None and not self.blocking_rejections
 
 
+def invalidated_document_finding_claim_ids(events: tuple[ReviewerOutputEvent, ...]) -> tuple[str, ...]:
+    claim_ids: list[str] = []
+    for event in events:
+        if event.kind != "final_rejected" or event.code != "document_consistency_finding_reconciles_conflict":
+            continue
+        diagnostics = event.diagnostics or {}
+        value = diagnostics.get("invalid_document_finding_claim_ids")
+        if not isinstance(value, list):
+            continue
+        for claim_id in value:
+            if isinstance(claim_id, str) and claim_id.strip():
+                claim_ids.append(claim_id)
+    return tuple(dict.fromkeys(claim_ids))
+
+
 def parse_reviewer_output_turn(
     *,
     response: Any,
@@ -248,6 +263,13 @@ def reviewer_tool_result_content(event: ReviewerOutputEvent) -> str:
             return "finding rejected: findings are closed; call submit_read_only_review now"
         return f"finding rejected: {event.code}; correct that finding or submit the final verdict"
     if event.kind == "final_rejected":
+        invalidated = invalidated_document_finding_claim_ids((event,))
+        if invalidated:
+            return (
+                f"final review rejected: {event.code}; previously recorded findings for claim_ids "
+                f"{','.join(invalidated)} were invalidated; resubmit corrected findings for those claim_ids, "
+                "then submit the final verdict"
+            )
         return f"final review rejected: {event.code}; submit a corrected final verdict"
     return f"output call rejected: {event.code}; use only the reviewer output tools"
 

@@ -9,6 +9,7 @@ from .explore_handoff import build_explore_handoff
 from .llm import LlmError
 from .llm import LlmTimeoutError
 from .provider_protocol import classify_provider_content_artifact
+from .reviewer_output_lifecycle import invalidated_document_finding_claim_ids
 from .reviewer_output_lifecycle import parse_reviewer_output_turn
 from .reviewer_output_lifecycle import reviewer_assistant_tool_message
 from .reviewer_output_lifecycle import reviewer_tool_result_messages
@@ -293,7 +294,31 @@ class ReadOnlyReviewPhase:
                     blocking_lifecycle_errors += 1
                 if capacity_rejected_events:
                     capacity_directives += 1
+                invalidated_claim_ids = invalidated_document_finding_claim_ids(turn.events)
                 collected_findings = (*collected_findings, *turn.accepted_findings)
+                if invalidated_claim_ids:
+                    invalidated_set = set(invalidated_claim_ids)
+                    before_count = len(collected_findings)
+                    collected_findings = tuple(
+                        finding for finding in collected_findings if finding.claim_id not in invalidated_set
+                    )
+                    invalidated_count = before_count - len(collected_findings)
+                    if invalidated_count:
+                        state.invalidated_finding_submits += invalidated_count
+                        runtime._run.collector.record_read_only_review_invalidated_finding_submit(invalidated_count)
+                        runtime._session.append(
+                            "read_only_reviewer",
+                            {
+                                "event": "finding_invalidated",
+                                "attempt": provider_turn,
+                                "code": "document_consistency_finding_reconciles_conflict",
+                                "claim_ids": list(invalidated_claim_ids),
+                            },
+                        )
+                    required_candidate_claim_ids = tuple(
+                        dict.fromkeys((*required_candidate_claim_ids, *invalidated_claim_ids))
+                    )
+                    finding_capacity_reached = False
                 if len(collected_findings) >= MAX_REVIEWER_FINDINGS:
                     finding_capacity_reached = True
                 messages.append(reviewer_assistant_tool_message(message, turn.events))
