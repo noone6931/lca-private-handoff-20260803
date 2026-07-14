@@ -3346,6 +3346,40 @@ class AgentRuntimeTests(unittest.TestCase):
             with self.subTest(content=content):
                 self.assertEqual(phantom_tool_evidence_claims(content, []), ())
 
+    def test_tool_usage_evidence_checks_successful_read_file_path_claims(self) -> None:
+        success = ToolResultSummary(
+            "read_file",
+            "class Foo {}",
+            path="/workspace/root/src/Foo.java",
+            metadata={"resolved_path": "/workspace/root/src/Foo.java"},
+        )
+        failed = ToolResultSummary(
+            "read_file",
+            "Path not found",
+            is_error=True,
+            path="/workspace/root/src/Bar.java",
+            metadata={"resolved_path": "/workspace/root/src/Bar.java"},
+        )
+
+        self.assertEqual(phantom_tool_evidence_claims("Foo.java 已读取。", [success]), ())
+        self.assertEqual(
+            phantom_tool_evidence_claims("NotFoo.java 已读取。", [success]),
+            ("read_file:NotFoo.java",),
+        )
+        self.assertEqual(
+            phantom_tool_evidence_claims("Foo.java 读取失败，但 Bar.java 已读取。", [failed]),
+            ("read_file:Bar.java",),
+        )
+        self.assertEqual(
+            phantom_tool_evidence_claims(
+                "Java文件ResponseBillTx.java、CloudPayConvert.java已检视。",
+                [],
+            ),
+            ("read_file:CloudPayConvert.java", "read_file:ResponseBillTx.java"),
+        )
+        self.assertEqual(phantom_tool_evidence_claims("Foo.java 读取失败，不能确认。", [failed]), ())
+        self.assertEqual(phantom_tool_evidence_claims("建议后续读取 Foo.java。", []), ())
+
     def test_bare_observed_no_match_cannot_finalize_without_discovery_evidence(self) -> None:
         _BareObservedNoMatchClient.calls = []
         with tempfile.TemporaryDirectory() as tmp:
@@ -4950,7 +4984,7 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertGreater(summary["session_evidence"]["invalidations"], 0)
         self.assertEqual(reuse.hit_count, 0)
 
-    def test_workspace_root_change_clears_session_evidence_cache(self) -> None:
+    def test_workspace_root_change_preserves_still_authorized_session_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp).resolve() / "workspace"
             extra = Path(tmp).resolve() / "extra"
@@ -4980,15 +5014,15 @@ class AgentRuntimeTests(unittest.TestCase):
             seed()
             self.assertEqual(runtime._session_evidence.snapshot()["entries"], 1)
             runtime.add_workspace_root(str(extra))
-            self.assertEqual(runtime._session_evidence.snapshot()["entries"], 0)
+            self.assertEqual(runtime._session_evidence.snapshot()["entries"], 1)
             seed()
             runtime.remove_workspace_root(str(extra))
-            self.assertEqual(runtime._session_evidence.snapshot()["entries"], 0)
+            self.assertEqual(runtime._session_evidence.snapshot()["entries"], 1)
             runtime.add_workspace_root(str(extra))
             seed()
             runtime.reset_workspace_roots()
 
-        self.assertEqual(runtime._session_evidence.snapshot()["entries"], 0)
+        self.assertEqual(runtime._session_evidence.snapshot()["entries"], 1)
 
     def test_workspace_root_evidence_is_sent_on_first_model_request(self) -> None:
         _MessageRecordingClient.messages = []

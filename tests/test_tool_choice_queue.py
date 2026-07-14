@@ -167,6 +167,78 @@ class ToolChoiceQueueTests(unittest.TestCase):
         self.assertEqual(decision.successful_observations, 1)
         self.assertEqual(decision.missing_roots, (str(root),))
 
+    def test_owner_explore_fallback_discovery_is_once_and_hard_cap_wins(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            no_match = ToolResultSummary(
+                "search_code",
+                "No matches.",
+                useless=True,
+                metadata={"evidence_root": str(root), "negative_evidence_type": "content_no_match"},
+            )
+            fallback = evaluate_tool_choice_state(
+                task_kind="read-only",
+                prompt="只读分析 owner 和设计影响。",
+                tool_results=(no_match, no_match, no_match),
+                workspace_roots=(str(root),),
+                read_only_review_profile="owner_impact",
+            )
+            self.assertEqual(fallback.allowed_tool_names, frozenset({"glob_files"}))
+            self.assertEqual(fallback.required_glob_roots, (str(root),))
+
+            glob_no_match = ToolResultSummary(
+                "glob_files",
+                '{"files":[]}',
+                useless=True,
+                metadata={
+                    "evidence_root": str(root),
+                    "searched_roots": [str(root)],
+                    "negative_evidence_type": "path_no_match",
+                },
+            )
+            final = evaluate_read_only_explore(
+                profile="owner_impact",
+                tool_results=(no_match, no_match, no_match, glob_no_match),
+                code_roots=(str(root),),
+            )
+
+        self.assertEqual(final.observation_calls, final.hard_budget)
+        self.assertEqual(final.action, "finalize")
+        self.assertEqual(final.discovery_roots, ())
+
+    def test_owner_explore_fallback_glob_candidate_transitions_to_direct_read(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            source = root / "src" / "Owner.java"
+            source.parent.mkdir()
+            source.write_text("class Owner {}\n", encoding="utf-8")
+            no_match = ToolResultSummary(
+                "search_code",
+                "No matches.",
+                useless=True,
+                metadata={"evidence_root": str(root), "negative_evidence_type": "content_no_match"},
+            )
+            glob_match = ToolResultSummary(
+                "glob_files",
+                str(source),
+                metadata={
+                    "evidence_root": str(root),
+                    "searched_roots": [str(root)],
+                    "files": [str(source)],
+                    "negative_evidence_type": "path_match",
+                },
+            )
+            decision = evaluate_tool_choice_state(
+                task_kind="read-only",
+                prompt="只读分析 owner 和设计影响。",
+                tool_results=(no_match, no_match, glob_match),
+                workspace_roots=(str(root),),
+                read_only_review_profile="owner_impact",
+            )
+
+        self.assertEqual(decision.allowed_tool_names, frozenset({"read_file"}))
+        self.assertEqual(decision.scoped_read_paths, (str(source),))
+
     def test_owner_explore_projects_typed_search_candidates_as_read_only_schema(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp).resolve()

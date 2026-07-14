@@ -42,6 +42,7 @@ class ReadOnlyExploreDecision:
     hard_budget: int = 0
     read_candidates: tuple[str, ...] = ()
     preferred_roots: tuple[str, ...] = ()
+    discovery_roots: tuple[str, ...] = ()
 
     @property
     def is_applicable(self) -> bool:
@@ -87,6 +88,7 @@ def evaluate_read_only_explore(
     read_candidates = _read_candidates_for_missing_roots(results, missing)
     root_attempts = _root_attempts(results, roots)
     preferred_roots = _least_observed_roots(missing, root_attempts)
+    discovery_roots = _roots_needing_fallback_discovery(results, missing, read_candidates, root_attempts)
     if not missing:
         return ReadOnlyExploreDecision(
             "finalize",
@@ -97,6 +99,7 @@ def evaluate_read_only_explore(
             hard_budget=hard_budget,
             read_candidates=read_candidates,
             preferred_roots=preferred_roots,
+            discovery_roots=discovery_roots,
         )
     if observation_calls >= hard_budget:
         return ReadOnlyExploreDecision(
@@ -109,6 +112,21 @@ def evaluate_read_only_explore(
             hard_budget=hard_budget,
             read_candidates=read_candidates,
             preferred_roots=preferred_roots,
+            discovery_roots=discovery_roots,
+        )
+    fallback_reserve = min(hard_budget, max(0, len(discovery_roots) * 2))
+    if discovery_roots and observation_calls >= hard_budget - fallback_reserve:
+        return ReadOnlyExploreDecision(
+            "precise",
+            roots=roots,
+            missing_roots=missing,
+            observation_calls=observation_calls,
+            successful_observations=successful_observations,
+            soft_budget=soft_budget,
+            hard_budget=hard_budget,
+            read_candidates=read_candidates,
+            preferred_roots=preferred_roots,
+            discovery_roots=discovery_roots,
         )
     return ReadOnlyExploreDecision(
         "precise",
@@ -120,6 +138,7 @@ def evaluate_read_only_explore(
         hard_budget=hard_budget,
         read_candidates=read_candidates,
         preferred_roots=preferred_roots,
+        discovery_roots=discovery_roots,
     )
 
 
@@ -199,7 +218,78 @@ def _read_candidates_for_missing_roots(
                 seen.add(rendered)
                 per_root[root] += 1
                 candidates.append(rendered)
+    for rendered, root in _discovery_read_candidates(results, missing_roots):
+        if per_root[root] >= 1 or rendered in seen:
+            continue
+        seen.add(rendered)
+        per_root[root] += 1
+        candidates.append(rendered)
     return tuple(candidates)
+
+
+def _discovery_read_candidates(
+    results: Iterable[ToolResultSummary],
+    missing_roots: tuple[str, ...],
+) -> tuple[tuple[str, str], ...]:
+    candidates: list[tuple[str, str]] = []
+    for result in results:
+        if result.name != "glob_files" or result.is_error or result.useless or result.metadata.get("evidence_paths_overflow"):
+            continue
+        files = result.metadata.get("files")
+        if not isinstance(files, (list, tuple)):
+            continue
+        for raw in files:
+            if not isinstance(raw, str) or not raw.strip():
+                continue
+            raw_path = Path(raw)
+            possible = (raw_path,) if raw_path.is_absolute() else tuple(Path(root) / raw_path for root in missing_roots)
+            for path in possible:
+                try:
+                    resolved = path.resolve(strict=True)
+                except OSError:
+                    continue
+                rendered = str(resolved)
+                root = next((item for item in missing_roots if rendered == item or rendered.startswith(item + "/")), None)
+                if root is not None and resolved.is_file():
+                    candidates.append((rendered, root))
+                    break
+    return tuple(candidates)
+
+
+def _roots_needing_fallback_discovery(
+    results: Iterable[ToolResultSummary],
+    missing_roots: tuple[str, ...],
+    read_candidates: tuple[str, ...],
+    root_attempts: dict[str, int],
+) -> tuple[str, ...]:
+    if not missing_roots:
+        return ()
+    if any(root_attempts.get(root, 0) <= 0 for root in missing_roots):
+        return ()
+    candidate_roots = {
+        root
+        for path in read_candidates
+        for root in missing_roots
+        if path == root or path.startswith(root + "/")
+    }
+    return tuple(
+        root
+        for root in missing_roots
+        if root not in candidate_roots and root_attempts.get(root, 0) > 0
+        and not _fallback_discovery_attempted(results, root)
+    )
+
+
+def _fallback_discovery_attempted(results: Iterable[ToolResultSummary], root: str) -> bool:
+    for result in results:
+        if result.name != "glob_files" or result.metadata.get("evidence_origin") == "session_cached":
+            continue
+        searched_roots = result.metadata.get("searched_roots")
+        if isinstance(searched_roots, (list, tuple)) and root in {str(item) for item in searched_roots}:
+            return True
+        if str(result.metadata.get("evidence_root") or "") == root:
+            return True
+    return False
 
 
 def _root_attempts(results: Iterable[ToolResultSummary], roots: tuple[str, ...]) -> dict[str, int]:

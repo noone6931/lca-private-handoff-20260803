@@ -93,7 +93,7 @@
       "content": "已证实真实 owner 是 InventedOwner，现有 InventedTable 和 /invented API 已实现。"
     },
     {
-      "content": "unused scripted response after deterministic noncompliance"
+      "content": "已证实真实 owner 是 InventedOwner，现有 InventedTable 和 /invented API 已实现。"
     }
   ],
   "acceptance": {
@@ -126,7 +126,7 @@
     },
     "read_only_reviewer": {
       "triggers": 1,
-      "rewrites": 1,
+      "rewrites": 2,
       "rewrite_acceptances": 0,
       "typed_submits": 2,
       "finding_submits": 1,

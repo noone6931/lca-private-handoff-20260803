@@ -212,7 +212,7 @@ def _runtime_read_file_scope_denial_reason(
     if context.runtime_read_file_remaining is not None and context.runtime_read_file_remaining <= 0:
         return (
             "Runtime candidate read budget exhausted: use the source/test evidence and hash tags already collected, "
-            "then apply_patch dry_run=true. Do not continue splitting the candidate files into more reads."
+            "then answer from the evidence already collected. Do not continue splitting the candidate files into more reads."
         )
     raw_path = arguments.get("path")
     if not isinstance(raw_path, str) or not raw_path.strip():
@@ -225,7 +225,7 @@ def _runtime_read_file_scope_denial_reason(
     allowed = ", ".join(sorted(context.runtime_read_file_paths)) or "(none)"
     return (
         "Runtime candidate read restriction: read_file may only revisit the selected candidate paths at this step. "
-        f"Allowed paths: {allowed}. Use apply_patch, or retry a listed path with a narrower range."
+        f"Allowed paths: {allowed}. Retry a listed path with a narrower range, or answer from existing evidence."
     )
 
 

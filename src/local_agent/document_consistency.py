@@ -80,6 +80,28 @@ def parse_document_consistency_assessment(
     return DocumentConsistencyAssessment(stance, conflicts, supports)
 
 
+def validate_document_consistency_findings(
+    assessment: DocumentConsistencyAssessment,
+    findings: Iterable[Mapping[str, str]],
+) -> str | None:
+    """Reject reviewer actions that contradict a typed unresolved conflict.
+
+    Findings are advisory repair instructions, not evidence.  For unresolved
+    or conditional artifact conflicts, an action may remove or downgrade a bad
+    candidate claim, but it must not tell the primary model to invent a source
+    priority, lifecycle, historical/current role, or resolution.
+    """
+
+    if assessment.stance == "explicitly_supported_reconciliation":
+        return None
+    for finding in findings:
+        issue = str(finding.get("issue") or "")
+        action = str(finding.get("action") or "")
+        if _finding_reconciles_unresolved_conflict(issue, action):
+            return "document_consistency_finding_reconciles_conflict"
+    return None
+
+
 def validate_document_consistency_assessment(
     assessment: DocumentConsistencyAssessment,
     handoff: "ExploreHandoff",
@@ -433,3 +455,36 @@ def _assertion_is_document_scoped(clause: str, match: re.Match[str]) -> bool:
 
 def _artifact_families(clause: str) -> set[str]:
     return {family for family, pattern in _ARTIFACT_FAMILY_PATTERNS if pattern.search(clause)}
+
+
+_FINDING_RECONCILIATION_ACTION_MARKER = re.compile(
+    r"(?:\b(?:treat|describe|classify|assume|use|mark|call|make|consider)\b.{0,80}"
+    r"\b(?:historical|history|current|mockup|reference|example-only|preview|completed|final|later|authoritative|precedence|priority)\b|"
+    r"\b(?:authoritative|source\s+of\s+truth|takes\s+precedence|supersedes|overrides)\b|"
+    r"(?:视为|当作|作为|认定|判定|说明为|解释为|属于).{0,50}(?:历史|当前|参考|示意|样例|预留|完成态|最终态|后期|优先|为准)|"
+    r"(?:不影响|不构成).{0,50}(?:待确认|冲突|矛盾)|"
+    r"(?:以.{0,24}为准|优先于|最高优先级|权威来源|最终依据|冲突.{0,12}(?:已解决|已消解)|不(?:冲突|矛盾)|整体一致))",
+    flags=re.IGNORECASE,
+)
+_FINDING_REMOVAL_QUALIFIER = re.compile(
+    r"(?:\b(?:remove|delete|downgrade|avoid|do\s+not|must\s+not|cannot|unsupported|unverified)\b|"
+    r"删除|移除|降级|不要|不能|不得|未支持|未验证|无证据)",
+    flags=re.IGNORECASE,
+)
+
+
+def _finding_reconciles_unresolved_conflict(issue: str, action: str) -> bool:
+    for clause in _finding_instruction_clauses(action):
+        if _FINDING_RECONCILIATION_ACTION_MARKER.search(clause) and not _FINDING_REMOVAL_QUALIFIER.search(clause):
+            return True
+    # Some reviewers put the actionable instruction in the issue field and a
+    # vague "fix it" in action.  Keep this narrow: only reject issue text that
+    # itself has an imperative reconciliation marker.
+    return any(
+        _FINDING_RECONCILIATION_ACTION_MARKER.search(clause) and not _FINDING_REMOVAL_QUALIFIER.search(clause)
+        for clause in _finding_instruction_clauses(issue)
+    )
+
+
+def _finding_instruction_clauses(value: str) -> tuple[str, ...]:
+    return tuple(piece.strip() for piece in re.split(r"[。；;，,、\n]+", " ".join((value or "").split())) if piece.strip())

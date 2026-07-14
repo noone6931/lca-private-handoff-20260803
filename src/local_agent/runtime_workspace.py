@@ -209,7 +209,7 @@ class WorkspaceLifecycle:
         )
         runtime._session_guards = SessionGuardState()
         runtime._summary_cache = {}
-        self.invalidate_session_evidence_for_workspace_change("workspace_roots_changed")
+        self.revalidate_session_evidence_for_workspace_roots_change("workspace_roots_changed")
         self.refresh_path_rules()
         self.emit_post_commit_event("WorkspaceRootsChanged", payload)
 
@@ -220,6 +220,15 @@ class WorkspaceLifecycle:
     def invalidate_session_evidence_for_workspace_change(self, reason: str) -> None:
         runtime = self._runtime
         removed = runtime._session_evidence.invalidate_workspace_revision()
+        if removed:
+            runtime._evidence_phase.record_session_evidence_event("invalidated", {"reason": reason, "count": removed})
+
+    def revalidate_session_evidence_for_workspace_roots_change(self, reason: str) -> None:
+        runtime = self._runtime
+        removed = runtime._session_evidence.revalidate_authorized_roots(
+            workspace_revision=runtime._workspace_context.revision,
+            authorized_roots=runtime._workspace_context.all_roots,
+        )
         if removed:
             runtime._evidence_phase.record_session_evidence_event("invalidated", {"reason": reason, "count": removed})
 

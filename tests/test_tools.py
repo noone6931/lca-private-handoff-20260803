@@ -671,6 +671,7 @@ class ToolTests(unittest.TestCase):
         self.assertFalse(permitted.is_error)
         self.assertTrue(denied.is_error)
         self.assertIn("Runtime candidate read restriction", denied.content)
+        self.assertNotIn("apply_patch", denied.content)
 
     def test_registry_rejects_candidate_read_after_revisit_budget_is_exhausted(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -688,6 +689,7 @@ class ToolTests(unittest.TestCase):
 
         self.assertTrue(result.is_error)
         self.assertIn("Runtime candidate read budget exhausted", result.content)
+        self.assertNotIn("apply_patch", result.content)
 
     def test_list_files_skips_agent_and_cache_dirs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -20,6 +20,7 @@ from .read_only_reviewer import MAX_REVIEWER_OUTPUT_LIFECYCLE_ERRORS
 from .read_only_reviewer import MAX_REVIEWER_SCHEMA_REPAIRS
 from .read_only_reviewer import ReviewerFinding
 from .read_only_reviewer import ReviewerPhaseOutcome
+from .read_only_reviewer import ReviewerResult
 from .read_only_reviewer import ReviewerValidationError
 from .read_only_reviewer import reviewer_messages
 from .read_only_reviewer import reviewer_output_tool_schemas
@@ -395,6 +396,22 @@ class ReadOnlyReviewPhase:
         if artifact is not None:
             return self._unverified("protocol_error", f"provider_markup_artifact:{artifact.kind}", handoff=handoff)
         if state.findings and not rewrite_changes_any_reviewed_claim(candidate, state.claim_units, state.findings):
+            if state.rewrite_corrections < 1 and runtime._run.queue_finalization_rewrite(kind="read_only_reviewer_rewrite_correction"):
+                state.rewrite_corrections += 1
+                runtime._run.collector.record_read_only_review_rewrite()
+                runtime._session.append(
+                    "read_only_reviewer",
+                    {
+                        "event": "rewrite_correction_queued",
+                        "reason": "no_reviewed_claim_changed",
+                        "correction": state.rewrite_corrections,
+                    },
+                )
+                return ReviewerPhaseOutcome(
+                    "rewrite",
+                    rewrite_message=self._rewrite_correction_message(),
+                    reason="no_reviewed_claim_changed",
+                )
             return self._unverified("rewrite_noncompliant", "no_reviewed_claim_changed", handoff=handoff)
         if state.document_consistency is not None:
             original_handoff = state.review_handoff
@@ -427,6 +444,28 @@ class ReadOnlyReviewPhase:
             {"kind": "read_only_reviewer_rewrite_accepted", "items": len(handoff.items)},
         )
         return ReviewerPhaseOutcome("pass")
+
+    def _rewrite_correction_message(self) -> str:
+        state = self._runtime._run.read_only_review
+        result = ReviewerResult(
+            verdict="revise",
+            confidence=1.0,
+            findings=state.findings,
+            reason=state.reason or "rewrite_correction",
+            document_consistency=state.document_consistency,
+        )
+        base = reviewer_rewrite_message(
+            result,
+            profile=self._runtime._run.requirement_contract.read_only_review_profile,
+            handoff=state.review_handoff,
+        )
+        return (
+            base
+            + "\n\n[Rewrite correction]\n"
+            "The previous rewrite did not change any addressed reviewed claim. Rewrite again without tools and materially "
+            "change at least one addressed claim: remove it, downgrade it to unverified/unlocated/proposal, or restate it "
+            "with the typed unresolved artifact disposition. Do not return the same wording."
+        )
 
     def _validate_document_consistency(self, result: Any, handoff: Any, candidate: str) -> None:
         if result.document_consistency is None:

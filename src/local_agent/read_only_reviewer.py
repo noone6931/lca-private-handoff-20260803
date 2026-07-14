@@ -10,6 +10,7 @@ from .document_consistency import DocumentConsistencyAssessment
 from .document_consistency import DocumentConsistencyValidationError
 from .document_consistency import document_consistency_rewrite_context
 from .document_consistency import parse_document_consistency_assessment
+from .document_consistency import validate_document_consistency_findings
 from .explore_handoff import ExploreHandoff
 from .task_contract import RequirementContract
 
@@ -122,6 +123,7 @@ class ReadOnlyReviewState:
     finding_limit_hits: int = 0
     output_lifecycle_exhausted: bool = False
     rewrite_accepted: bool = False
+    rewrite_corrections: int = 0
     safe_partial_emitted: bool = False
 
     def reset(self) -> None:
@@ -147,6 +149,7 @@ class ReadOnlyReviewState:
         self.finding_limit_hits = 0
         self.output_lifecycle_exhausted = False
         self.rewrite_accepted = False
+        self.rewrite_corrections = 0
         self.safe_partial_emitted = False
 
     def snapshot(self) -> dict[str, Any]:
@@ -172,6 +175,7 @@ class ReadOnlyReviewState:
             "rejected_final_submits": self.rejected_final_submits,
             "finding_limit_hits": self.finding_limit_hits,
             "output_lifecycle_exhausted": self.output_lifecycle_exhausted,
+            "rewrite_corrections": self.rewrite_corrections,
         }
 
 
@@ -682,6 +686,20 @@ def parse_reviewer_payload(
             )
         except DocumentConsistencyValidationError as exc:
             raise ReviewerValidationError(exc.code, diagnostics) from None
+        finding_code = validate_document_consistency_findings(
+            assessment,
+            (
+                {
+                    "claim": finding.claim,
+                    "issue": finding.issue,
+                    "action": finding.action,
+                    "finding_scope": finding.finding_scope,
+                }
+                for finding in findings
+            ),
+        )
+        if finding_code is not None:
+            raise ReviewerValidationError(finding_code, diagnostics)
     return ReviewerResult(
         verdict=verdict,
         confidence=float(confidence),
@@ -923,6 +941,13 @@ def _repair_shape_instruction(diagnostics: Mapping[str, Any]) -> str:
         return (
             "For document_consistency, keep supporting_evidence_ids empty unless the stance is explicitly_supported_reconciliation "
             "and the ids cite independent non-visual read_file lifecycle or precedence support. "
+            + common
+        )
+    if code == "document_consistency_finding_reconciles_conflict":
+        return (
+            "For document_consistency with unresolved or conditional conflict stance, finding issue/action must change "
+            "the candidate answer without inventing artifact priority, lifecycle, historical/current role, or a resolved "
+            "conflict. Keep valid unrelated candidate_defect findings, but remove or rewrite the contradictory finding. "
             + common
         )
     return "Use the shallow finding tool and final submit tool with the required verdict/finding cardinality. " + common

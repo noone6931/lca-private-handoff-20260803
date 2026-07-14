@@ -620,6 +620,62 @@ class SessionEvidenceCacheTests(unittest.TestCase):
 
         self.assertEqual(reuse.hit_count, 0)
 
+    def test_root_authorization_change_preserves_still_authorized_fresh_entries(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp).resolve()
+            primary = base / "primary"
+            secondary = base / "secondary"
+            primary.mkdir()
+            secondary.mkdir()
+            primary_source = primary / "requirements.md"
+            secondary_source = secondary / "service.py"
+            primary_source.write_text("requirement says rollback\n", encoding="utf-8")
+            secondary_source.write_text("class Service: pass\n", encoding="utf-8")
+            cache = _cache_read(cache_root=primary, source=primary_source, request="rollback")
+            _capture_read(cache, secondary, secondary_source, request="service", run_id="run-2")
+
+            removed = cache.revalidate_authorized_roots(
+                workspace_revision=1,
+                authorized_roots=(primary, secondary),
+            )
+            self.assertEqual(removed, 0)
+            reuse = cache.reuse_for_request(
+                prompt="rollback",
+                workspace_revision=1,
+                authorized_roots=(primary, secondary),
+            )
+            self.assertEqual(reuse.hit_count, 1)
+            self.assertTrue(reuse.entries[0].tool_result.path.endswith("requirements.md"))
+
+            removed = cache.revalidate_authorized_roots(
+                workspace_revision=2,
+                authorized_roots=(secondary,),
+            )
+            self.assertEqual(removed, 1)
+            reuse = cache.reuse_for_request(
+                prompt="rollback",
+                workspace_revision=2,
+                authorized_roots=(secondary,),
+            )
+
+        self.assertEqual(reuse.hit_count, 0)
+
+    def test_root_authorization_revalidation_evicts_changed_hash(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            source = root / "requirements.md"
+            source.write_text("requirement v1\n", encoding="utf-8")
+            cache = _cache_read(cache_root=root, source=source, request="requirement")
+            source.write_text("requirement v2\n", encoding="utf-8")
+
+            removed = cache.revalidate_authorized_roots(
+                workspace_revision=1,
+                authorized_roots=(root,),
+            )
+
+        self.assertEqual(removed, 1)
+        self.assertEqual(cache.snapshot()["entries"], 0)
+
 
 def _cache_read(
     *,

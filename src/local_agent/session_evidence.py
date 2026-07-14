@@ -213,12 +213,14 @@ class SessionEvidenceCache:
         misses = 0
         stale = 0
         for entry in self._entries:
-            if entry.workspace_revision != workspace_revision or entry.root not in roots:
+            if entry.root not in roots:
                 stale += 1
                 continue
             if not _content_tags_are_fresh(entry.content_tags):
                 stale += 1
                 continue
+            if entry.workspace_revision != workspace_revision:
+                entry = replace(entry, workspace_revision=workspace_revision)
             retained.append(entry)
             if not _is_relevant(entry, prompt_tokens, self._last_request_tokens, self._last_origin_run_id):
                 misses += 1
@@ -254,6 +256,35 @@ class SessionEvidenceCache:
         removed = len(self._entries)
         self._entries.clear()
         self._invalidations += removed
+        return removed
+
+    def revalidate_authorized_roots(
+        self,
+        *,
+        workspace_revision: int,
+        authorized_roots: Iterable[Path],
+    ) -> int:
+        """Evict only no-longer-authorized/stale entries and rebase the rest.
+
+        Session-root changes adjust authorization. Evidence from roots that
+        remain authorized is still usable when its content hash is fresh. A
+        workspace move is intentionally handled by the workspace lifecycle as a
+        conservative full reset because it changes the primary workspace/state
+        partition.
+        """
+
+        roots = {str(root.resolve()) for root in authorized_roots}
+        retained: list[CachedEvidenceEntry] = []
+        for entry in self._entries:
+            if entry.root not in roots:
+                continue
+            if not _content_tags_are_fresh(entry.content_tags):
+                continue
+            retained.append(replace(entry, workspace_revision=workspace_revision))
+        removed = len(self._entries) - len(retained)
+        self._entries = retained
+        if removed:
+            self._invalidations += removed
         return removed
 
     def snapshot(self) -> dict[str, object]:

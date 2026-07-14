@@ -2191,7 +2191,7 @@ class ReadOnlyReviewerTests(unittest.TestCase):
 
         self.assertIn("安全部分交付", answer)
         summary = runtime._last_run_summary["read_only_reviewer"]
-        self.assertEqual(summary["rewrites"], 1)
+        self.assertEqual(summary["rewrites"], 2)
         self.assertEqual(summary["rewrite_acceptances"], 0)
         self.assertEqual(summary["errors"], {"rewrite_noncompliant": 1})
         review_calls = [
@@ -2216,7 +2216,7 @@ class ReadOnlyReviewerTests(unittest.TestCase):
 
         self.assertIn("安全部分交付", answer)
         summary = runtime._last_run_summary["read_only_reviewer"]
-        self.assertEqual(summary["rewrites"], 1)
+        self.assertEqual(summary["rewrites"], 2)
         self.assertEqual(summary["rewrite_acceptances"], 0)
         self.assertEqual(summary["errors"], {"rewrite_noncompliant": 1})
         review_calls = [
@@ -3389,6 +3389,52 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         )
         self.assertEqual(parsed.document_consistency.stance, "conditional_reconciliation")
 
+    def test_document_consistency_rejects_finding_action_that_resolves_unresolved_conflict(self) -> None:
+        contract = generate_requirement_contract(
+            "只根据需求 Markdown、原型 HTML 和示例图分析需求，不要检查代码。"
+        )
+        handoff = build_explore_handoff(
+            request="compare the requested documents",
+            contract=contract,
+            requirement_evidence=(),
+            source_evidence=(),
+            records=(),
+            tool_results=(
+                type("Tool", (), {"name": "read_file", "content": "A says blank.", "path": "policy.md", "is_error": False, "useless": False, "metadata": {}})(),
+                type("Tool", (), {"name": "inspect_image", "content": "B shows a value.", "path": "example.png", "is_error": False, "useless": False, "metadata": {}})(),
+            ),
+        )
+        units = candidate_claim_units("The document and image conflict remains unresolved.")
+        with self.assertRaises(ReviewerValidationError) as raised:
+            parse_reviewer_payload(
+                {
+                    "verdict": "revise",
+                    "confidence": 0.8,
+                    "findings": [
+                        {
+                            "claim_id": "c001",
+                            "finding_scope": "candidate_defect",
+                            "issue": "candidate should explain the conflict",
+                            "action": "示例图中的复核人信息属于历史示例或预留字段展示，不影响本期范围，也不构成待确认项。",
+                        }
+                    ],
+                    "reason": "bad action",
+                    "document_consistency": {
+                        "stance": "reported_unresolved",
+                        "conflict_evidence_ids": ["e001", "e002"],
+                        "supporting_evidence_ids": [],
+                    },
+                },
+                claim_units=units,
+                document_consistency=True,
+                evidence_ids=handoff.evidence_ids,
+            )
+
+        self.assertEqual(raised.exception.code, "document_consistency_finding_reconciles_conflict")
+        repair = reviewer_repair_messages(handoff, units, raised.exception.diagnostics)
+        self.assertIn("without inventing", repair[-1]["content"])
+        self.assertIn("historical/current role", repair[-1]["content"])
+
     def test_source_material_gap_finding_requires_repair_not_silent_normalization(self) -> None:
         units = candidate_claim_units("The document and image are not consistent; artifact role remains unresolved.")
         with self.assertRaises(ReviewerValidationError) as raised:
@@ -4224,7 +4270,7 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertIn("安全部分交付", answer)
         self.assertEqual(runtime._last_run_summary["termination_reason"], "read_only_reviewer_unverified")
         summary = runtime._last_run_summary["read_only_reviewer"]
-        self.assertEqual(summary["rewrites"], 1)
+        self.assertEqual(summary["rewrites"], 2)
         self.assertEqual(summary["rewrite_acceptances"], 0)
         self.assertEqual(summary["errors"], {"rewrite_noncompliant": 1})
         review_calls = [

@@ -68,7 +68,7 @@
       "content": "需求事实：requirements.md:2 要求状态留空；prototype.html:1 出现审核状态。待确认：图片当前不可用。这些资料没有矛盾，因为审核状态是后续流程。"
     },
     {
-      "content": "unused scripted response after deterministic noncompliance"
+      "content": "需求事实：requirements.md:2 要求状态留空；prototype.html:1 出现审核状态。待确认：图片当前不可用。这些资料没有矛盾，因为审核状态是后续流程。"
     }
   ],
   "acceptance": {
@@ -97,7 +97,7 @@
     "termination_reason": "read_only_reviewer_unverified",
     "read_only_reviewer": {
       "triggers": 1,
-      "rewrites": 1,
+      "rewrites": 2,
       "rewrite_acceptances": 0,
       "typed_submits": 2,
       "finding_submits": 1,

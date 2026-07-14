@@ -57,7 +57,7 @@
     },
     "read_only_reviewer": {
       "triggers": 1,
-      "rewrites": 1,
+      "rewrites": 2,
       "rewrite_acceptances": 0,
       "typed_submits": 2,
       "finding_submits": 1,

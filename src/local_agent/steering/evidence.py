@@ -430,6 +430,7 @@ def phantom_tool_evidence_claims(
     if not content.strip():
         return ()
     claimed: set[str] = set()
+    claimed.update(_unsupported_read_file_path_claims(content, tool_results))
     for segment in re.split(r"[\n。！？!?;]+", content.lower()):
         if not segment.strip() or not _looks_like_tool_evidence_claim(segment):
             continue
@@ -447,6 +448,138 @@ def phantom_tool_evidence_claims(
         ):
             claimed.add("lsp_*")
     return tuple(sorted(claimed))
+
+
+def _unsupported_read_file_path_claims(content: str, tool_results: list[ToolResultSummary]) -> set[str]:
+    successful_paths = _successful_read_file_paths(tool_results)
+    failed_paths = _failed_read_file_paths(tool_results)
+    unsupported: set[str] = set()
+    for segment in re.split(r"[\n。！？!?;]+", content):
+        if not segment.strip():
+            continue
+        segment_claims_successful_read = _claims_successful_read(segment)
+        for path, start, end in _path_like_mentions(segment):
+            clause = _path_reference_clause(segment, start, end)
+            if _explicit_read_failure_claim(clause) or _future_read_recommendation(clause):
+                continue
+            if not (_claims_successful_read(clause) or segment_claims_successful_read):
+                continue
+            if _path_matches_observed(path, successful_paths):
+                continue
+            if _path_matches_observed(path, failed_paths) or path:
+                unsupported.add(f"read_file:{path}")
+    return unsupported
+
+
+def _successful_read_file_paths(tool_results: list[ToolResultSummary]) -> set[str]:
+    return {
+        _normalize_evidence_path(path)
+        for result in tool_results
+        for path in (result.path, str(result.metadata.get("resolved_path") or ""))
+        if result.name == "read_file"
+        and path
+        and not result.is_error
+        and not result.metadata.get("suppressed")
+        and "tool call was not executed" not in result.content.lower()
+    }
+
+
+def _failed_read_file_paths(tool_results: list[ToolResultSummary]) -> set[str]:
+    return {
+        _normalize_evidence_path(path)
+        for result in tool_results
+        for path in (result.path, str(result.metadata.get("resolved_path") or ""))
+        if result.name == "read_file"
+        and path
+        and (
+            result.is_error
+            or result.metadata.get("suppressed")
+            or "tool call was not executed" in result.content.lower()
+        )
+    }
+
+
+def _claims_successful_read(segment: str) -> bool:
+    return bool(
+        re.search(
+            r"(?:已(?:经)?(?:读|读取|检视|检查|查看)|已(?:被)?read|read_file.{0,24}(?:成功|结果|输出)|"
+            r"\b(?:read|inspected|checked)\b.{0,24}\b(?:file|path|source)\b)",
+            segment,
+            flags=re.IGNORECASE,
+        )
+    )
+
+
+def _explicit_read_failure_claim(segment: str) -> bool:
+    return bool(
+        re.search(
+            r"(?:读取|读|检视|检查|read|inspect|check).{0,20}(?:失败|未成功|被拒|无法|不能|没有|not|failed|denied|unable)|"
+            r"(?:未(?:读|读取|检视|检查)|not\s+(?:read|inspected|checked))",
+            segment,
+            flags=re.IGNORECASE,
+        )
+    )
+
+
+def _future_read_recommendation(segment: str) -> bool:
+    return bool(
+        re.search(
+            r"(?:建议|后续|下一步|可以|需要|应当|should|could|next).{0,24}(?:read_file|读取|检视|检查|read|inspect)",
+            segment,
+            flags=re.IGNORECASE,
+        )
+    )
+
+
+def _path_like_mentions(segment: str) -> tuple[tuple[str, int, int], ...]:
+    matches = re.finditer(
+        r"(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+\.(?:java|js|ts|tsx|jsx|vue|py|go|kt|xml|md|html|htm|json|yml|yaml)",
+        segment,
+        flags=re.IGNORECASE,
+    )
+    seen: set[str] = set()
+    found: list[tuple[str, int, int]] = []
+    for match in matches:
+        value = match.group(0)
+        key = _normalize_evidence_path(value)
+        if key in seen:
+            continue
+        seen.add(key)
+        found.append((value, match.start(), match.end()))
+    return tuple(found)
+
+
+def _normalize_evidence_path(path: str) -> str:
+    return path.strip().replace("\\", "/").casefold()
+
+
+def _path_reference_clause(segment: str, start: int, end: int) -> str:
+    left = max(
+        segment.rfind(marker, 0, start)
+        for marker in (",", "，", "、", "。", ";", "；", "!", "！", "?", "？")
+    )
+    right_candidates = [
+        index
+        for marker in (",", "，", "、", "。", ";", "；", "!", "！", "?", "？")
+        if (index := segment.find(marker, end)) != -1
+    ]
+    right = min(right_candidates) if right_candidates else len(segment)
+    return segment[left + 1 : right]
+
+
+def _path_matches_observed(claim_path: str, observed_paths: set[str]) -> bool:
+    claim_parts = _path_parts(_normalize_evidence_path(claim_path))
+    if not claim_parts:
+        return False
+    for observed in observed_paths:
+        observed_parts = _path_parts(observed)
+        if len(observed_parts) >= len(claim_parts) and observed_parts[-len(claim_parts) :] == claim_parts:
+            return True
+    return False
+
+
+def _path_parts(path: str) -> tuple[str, ...]:
+    return tuple(part for part in path.split("/") if part and part != ".")
 
 
 def _looks_like_tool_evidence_claim(segment: str) -> bool:

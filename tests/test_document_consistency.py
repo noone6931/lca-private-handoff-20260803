@@ -7,6 +7,7 @@ from local_agent.document_consistency import candidate_reconciliation_stance
 from local_agent.document_consistency import DocumentConsistencyValidationError
 from local_agent.document_consistency import parse_document_consistency_assessment
 from local_agent.document_consistency import validate_document_consistency_assessment
+from local_agent.document_consistency import validate_document_consistency_findings
 from local_agent.explore_handoff import ClaimEvidenceItem, ExploreHandoff, build_explore_handoff
 from local_agent.requirement_evidence import RequirementEvidence
 from local_agent.task_contract import generate_requirement_contract
@@ -459,6 +460,61 @@ class DocumentConsistencyTests(unittest.TestCase):
                 },
                 evidence_ids=handoff.evidence_ids,
             )
+
+    def test_unresolved_assessment_rejects_finding_action_that_invents_lifecycle(self) -> None:
+        assessment = DocumentConsistencyAssessment("reported_unresolved", ("e001", "e002"), ())
+        self.assertEqual(
+            validate_document_consistency_findings(
+                assessment,
+                (
+                    {
+                        "claim": "example image conflict remains unresolved",
+                        "issue": "candidate needs clarification",
+                        "action": "示例图中的复核人信息属于历史示例或预留字段展示，不影响本期范围，也不构成待确认项。",
+                    },
+                ),
+            ),
+            "document_consistency_finding_reconciles_conflict",
+        )
+        self.assertEqual(
+            validate_document_consistency_findings(
+                assessment,
+                (
+                    {
+                        "claim": "example image conflict remains unresolved",
+                        "issue": "candidate invented an image lifecycle",
+                        "action": "删除“图片属于历史示例”这一无证据推断，并保留冲突未消解。",
+                    },
+                ),
+            ),
+            None,
+        )
+        self.assertEqual(
+            validate_document_consistency_findings(
+                assessment,
+                (
+                    {
+                        "claim": "example image conflict remains unresolved",
+                        "issue": "candidate is vague",
+                        "action": "删除未解决表述，并将图片视为历史示例。",
+                    },
+                ),
+            ),
+            "document_consistency_finding_reconciles_conflict",
+        )
+        self.assertEqual(
+            validate_document_consistency_findings(
+                assessment,
+                (
+                    {
+                        "claim": "example image conflict remains unresolved",
+                        "issue": "candidate is vague",
+                        "action": "remove the unresolved wording, treat the image as historical evidence.",
+                    },
+                ),
+            ),
+            "document_consistency_finding_reconciles_conflict",
+        )
 
     def test_only_visible_late_support_excerpt_can_authorize_reconciliation(self) -> None:
         long_content = "Header. " + ("filler " * 200) + "This screenshot is captured after manual completion."

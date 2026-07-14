@@ -531,7 +531,11 @@ def evaluate_tool_choice_state(
         return ToolChoiceDecision(
             steering_required=True,
             allowed_tool_names=_allowed_subset(
-                {"read_file"} if explore_decision.read_candidates else PRECISE_EVIDENCE_TOOLS,
+                {"read_file"}
+                if explore_decision.read_candidates
+                else {"glob_files"}
+                if explore_decision.discovery_roots
+                else PRECISE_EVIDENCE_TOOLS,
                 allowed_tools,
             ),
             reason=(
@@ -539,6 +543,8 @@ def evaluate_tool_choice_state(
                 + (
                     "read the typed search/LSP candidates before continuing discovery; "
                     if explore_decision.read_candidates
+                    else "run one root-scoped fallback discovery for missing roots before finalizing; "
+                    if explore_decision.discovery_roots
                     else "use only precise source evidence to cover each remaining code root; "
                 )
                 + "do not continue broad directory inventory. "
@@ -550,10 +556,21 @@ def evaluate_tool_choice_state(
                 else "read_only_profile_explore"
             ),
             missing_requirements=tuple(f"code_read:{root}" for root in missing),
-            preferred_tool_names=("read_file",) if explore_decision.read_candidates else ("search_code", "read_file"),
+            preferred_tool_names=(
+                ("read_file",)
+                if explore_decision.read_candidates
+                else ("glob_files",)
+                if explore_decision.discovery_roots
+                else ("search_code", "read_file")
+            ),
             tool_call_hints=(
                 ("read_file candidates: " + ", ".join(explore_decision.read_candidates),)
                 if explore_decision.read_candidates
+                else (
+                    "Run one bounded glob_files discovery rooted at the missing root(s): "
+                    + ", ".join(explore_decision.discovery_roots),
+                )
+                if explore_decision.discovery_roots
                 else (
                     (
                         "Cover the least-observed required root(s) before repeating discovery elsewhere: "
@@ -563,6 +580,7 @@ def evaluate_tool_choice_state(
                     else ()
                 )
             ),
+            required_glob_roots=explore_decision.discovery_roots,
             scoped_read_paths=explore_decision.read_candidates,
             scoped_read_budget=(len(explore_decision.read_candidates) if explore_decision.read_candidates else None),
         )
