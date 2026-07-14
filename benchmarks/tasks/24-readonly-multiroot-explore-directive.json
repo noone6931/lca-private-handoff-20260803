@@ -1,0 +1,179 @@
+{
+  "id": "readonly-multiroot-explore-directive",
+  "title": "Read-only multi-root explore keeps directive noise out of evidence budget",
+  "prompt": "只读分析当前服务 owner、调用链和影响范围，不要修改文件。",
+  "budget_seconds": 90,
+  "workspace_files": {
+    "src/Primary.java": "class PrimaryOwner {}\n"
+  },
+  "additional_roots": {
+    "service-b": {
+      "src/Additional.java": "class AdditionalOwner {}\n"
+    }
+  },
+  "scripted_responses": [
+    {
+      "tool_calls": [
+        {
+          "name": "list_files",
+          "arguments": {
+            "path": "."
+          }
+        },
+        {
+          "name": "list_files",
+          "arguments": {
+            "path": "."
+          }
+        },
+        {
+          "name": "list_files",
+          "arguments": {
+            "path": "."
+          }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "search_code",
+          "arguments": {
+            "path": "src",
+            "pattern": "NoSuchOwnerToken"
+          }
+        },
+        {
+          "name": "search_code",
+          "arguments": {
+            "path": "{{root:service-b}}/src",
+            "pattern": "NoSuchOwnerToken"
+          }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "search_code",
+          "arguments": {
+            "path": "src",
+            "pattern": "PrimaryOwner"
+          }
+        },
+        {
+          "name": "search_code",
+          "arguments": {
+            "path": "{{root:service-b}}/src",
+            "pattern": "AdditionalOwner"
+          }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+            "name": "glob_files",
+            "arguments": {
+              "paths": [
+              "{{root:service-b}}/src/*.java"
+              ],
+              "limit": 100
+            }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+            "name": "read_file",
+            "arguments": {
+            "path": "{{root:service-b}}/src/Additional.java"
+            }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+            "name": "glob_files",
+            "arguments": {
+              "paths": [
+              "{{workspace}}/src/*.java"
+              ],
+              "limit": 100
+            }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+            "name": "read_file",
+            "arguments": {
+            "path": "src/Primary.java"
+            }
+        }
+      ]
+    },
+    {
+      "content": "Primary.java 和 Additional.java 都已直接读取；真实 owner 仍按证据限定，调用链需要后续绑定确认。"
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "submit_read_only_review",
+          "arguments": {
+            "verdict": "pass",
+            "confidence": 0.95,
+            "reason": "Both requested roots have direct read evidence and the owner conclusion is bounded."
+          }
+        }
+      ]
+    }
+  ],
+  "acceptance": {
+    "required_tools": [
+      "search_code",
+      "glob_files",
+      "read_file"
+    ],
+    "forbidden_tools": [
+      "apply_patch",
+      "write_file",
+      "shell",
+      "run_tests"
+    ],
+    "changed_files": [],
+    "answer_all_of": [
+      "Primary.java",
+      "Additional.java",
+      "调用链"
+    ],
+    "answer_forbidden_regex": [
+      "已证实真实 owner",
+      "out of scope",
+      "不在.*检查范围"
+    ],
+    "termination_reason": "final",
+    "run_summary": {
+      "tool_calls": 9,
+      "tool_errors": 3,
+      "provider_schema_violations": 5,
+      "suppressed_tool_executions": 2
+    },
+    "tool_choice_exact": {
+      "forces": 1,
+      "exhausted": 0
+    },
+    "read_only_reviewer": {
+      "triggers": 1,
+      "typed_submits": 1
+    },
+    "safe_partial_report": {
+      "emitted": 0
+    },
+    "max_tool_errors": 3
+  },
+  "residual_risk": "This fixture proves directive/protocol noise is audited without consuming the typed explore evidence budget; it remains a bounded synthetic multi-root scenario rather than a full live provider run."
+}

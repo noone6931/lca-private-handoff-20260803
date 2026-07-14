@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Iterable, Literal
 
 from .tool_observation import ToolResultSummary
+from .tool_observation import tool_result_is_executed_attempt
 
 
 ReadOnlyExploreAction = Literal["none", "precise", "finalize"]
@@ -63,23 +64,19 @@ def evaluate_read_only_explore(
     if not roots:
         return ReadOnlyExploreDecision("none")
     results = tuple(tool_results)
-    # Attempts intentionally include errors and synthetic/schema-rejected
-    # observations: they consume the hard budget so a provider cannot loop by
-    # varying invalid calls. Progress is reported separately: it accepts a
-    # real successful observation or a typed no-match, never an error or a
-    # suppressed/not-executed result. Direct root coverage remains stricter
-    # and only accepts a successful read below that root.
+    # Explore observations are evidence-tool attempts that actually reached
+    # execution. Provider-schema violations, exact-tool suppressed calls, and
+    # active-tool rejections remain bounded by their directive owners; counting
+    # them here would let protocol noise consume the evidence budget.
     observation_calls = sum(
         1
         for result in results
-        if result.name in OBSERVATION_TOOLS and result.metadata.get("evidence_origin") != "session_cached"
+        if _is_executed_explore_attempt(result)
     )
     successful_observations = sum(
         1
         for result in results
-        if result.name in OBSERVATION_TOOLS
-        and result.metadata.get("evidence_origin") != "session_cached"
-        and _is_typed_explore_progress(result)
+        if _is_executed_explore_attempt(result) and _is_typed_explore_progress(result)
     )
     soft_budget = max(2, len(roots) * SOFT_EXPLORE_CALLS_PER_ROOT)
     hard_budget = min(MAX_OWNER_DESIGN_EXPLORE_CALLS, max(4, len(roots) * HARD_EXPLORE_CALLS_PER_ROOT))
@@ -145,8 +142,6 @@ def evaluate_read_only_explore(
 def _is_typed_explore_progress(result: ToolResultSummary) -> bool:
     if result.is_error:
         return False
-    if result.metadata.get("suppressed") or "tool call was not executed" in result.content.lower():
-        return False
     if not result.useless:
         return True
     return result.metadata.get("negative_evidence_type") in {
@@ -154,6 +149,12 @@ def _is_typed_explore_progress(result: ToolResultSummary) -> bool:
         "path_no_match",
         "exact_path_missing",
     }
+
+
+def _is_executed_explore_attempt(result: ToolResultSummary) -> bool:
+    if result.name not in OBSERVATION_TOOLS:
+        return False
+    return tool_result_is_executed_attempt(result)
 
 
 def _covered_roots(results: Iterable[ToolResultSummary], roots: tuple[str, ...]) -> set[str]:
@@ -193,7 +194,11 @@ def _read_candidates_for_missing_roots(
     seen: set[str] = set()
     per_root: dict[str, int] = {root: 0 for root in missing_roots}
     for result in results:
-        if result.name not in CANDIDATE_EVIDENCE_TOOLS - {"read_file"} or result.is_error:
+        if (
+            result.name not in CANDIDATE_EVIDENCE_TOOLS - {"read_file"}
+            or not _is_executed_explore_attempt(result)
+            or result.is_error
+        ):
             continue
         metadata = result.metadata
         if metadata.get("evidence_paths_overflow"):
@@ -233,7 +238,13 @@ def _discovery_read_candidates(
 ) -> tuple[tuple[str, str], ...]:
     candidates: list[tuple[str, str]] = []
     for result in results:
-        if result.name != "glob_files" or result.is_error or result.useless or result.metadata.get("evidence_paths_overflow"):
+        if (
+            result.name != "glob_files"
+            or not _is_executed_explore_attempt(result)
+            or result.is_error
+            or result.useless
+            or result.metadata.get("evidence_paths_overflow")
+        ):
             continue
         files = result.metadata.get("files")
         if not isinstance(files, (list, tuple)):
@@ -272,30 +283,68 @@ def _roots_needing_fallback_discovery(
         for root in missing_roots
         if path == root or path.startswith(root + "/")
     }
-    return tuple(
+    roots = tuple(
         root
         for root in missing_roots
         if root not in candidate_roots and root_attempts.get(root, 0) > 0
         and not _fallback_discovery_attempted(results, root)
     )
+    if not roots:
+        return ()
+    preferred = _least_observed_roots(roots, root_attempts)
+    return preferred[:1]
 
 
 def _fallback_discovery_attempted(results: Iterable[ToolResultSummary], root: str) -> bool:
     for result in results:
-        if result.name != "glob_files" or result.metadata.get("evidence_origin") == "session_cached":
+        if result.name != "glob_files" or not _is_executed_explore_attempt(result):
             continue
-        searched_roots = result.metadata.get("searched_roots")
-        if isinstance(searched_roots, (list, tuple)) and root in {str(item) for item in searched_roots}:
+        if _glob_result_has_root_local_candidate(result, root):
             return True
-        if str(result.metadata.get("evidence_root") or "") == root:
+        if _glob_result_is_complete_root_local_no_match(result, root):
             return True
     return False
+
+
+def _glob_result_has_root_local_candidate(result: ToolResultSummary, root: str) -> bool:
+    files = result.metadata.get("files")
+    if not isinstance(files, (list, tuple)):
+        return False
+    for raw in files:
+        if not isinstance(raw, str) or not raw.strip():
+            continue
+        path = Path(raw)
+        candidates = (path,) if path.is_absolute() else (Path(root) / path,)
+        for candidate in candidates:
+            try:
+                resolved = str(candidate.resolve(strict=True))
+            except OSError:
+                continue
+            if resolved == root or resolved.startswith(root + "/"):
+                return True
+    return False
+
+
+def _glob_result_is_complete_root_local_no_match(result: ToolResultSummary, root: str) -> bool:
+    if not result.useless:
+        return False
+    if result.metadata.get("truncated") or result.metadata.get("evidence_paths_overflow"):
+        return False
+    searched_roots = result.metadata.get("searched_roots")
+    root_local = (
+        isinstance(searched_roots, (list, tuple))
+        and len(searched_roots) == 1
+        and str(searched_roots[0]) == root
+    ) or str(result.metadata.get("evidence_root") or "") == root
+    if not root_local:
+        return False
+    return result.metadata.get("negative_evidence_type") in {"path_no_match", "content_no_match"}
 
 
 def _root_attempts(results: Iterable[ToolResultSummary], roots: tuple[str, ...]) -> dict[str, int]:
     counts = {root: 0 for root in roots}
     for result in results:
-        if result.name not in OBSERVATION_TOOLS or result.metadata.get("evidence_origin") == "session_cached":
+        if not _is_executed_explore_attempt(result):
             continue
         root = str(result.metadata.get("evidence_root") or "")
         if root in counts:

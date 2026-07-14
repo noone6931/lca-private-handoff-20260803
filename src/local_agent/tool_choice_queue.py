@@ -12,7 +12,6 @@ from .document_artifacts import document_artifact_coverage
 from .document_artifacts import missing_document_artifacts
 from .negative_evidence import allowed_tools_for_negative_claims, parse_negative_evidence_claims, unsupported_negative_existence_claims
 from .read_only_explore import PRECISE_EVIDENCE_TOOLS, evaluate_read_only_explore
-from .runtime_prompt import _one_line
 from .task_contract import is_inspection_forbidden
 from .tool_observation import ToolResultSummary
 from .verification_timeline import last_workspace_write_index
@@ -275,6 +274,15 @@ CANNOT_TEST_MARKERS = frozenset(
         "无法运行测试",
     }
 )
+
+
+def _one_line(content: str, *, max_chars: int = 240) -> str:
+    normalized = " ".join(content.split())
+    if len(normalized) <= max_chars:
+        return normalized
+    return normalized[: max_chars - 14] + "...<truncated>"
+
+
 @dataclass(frozen=True)
 class ToolChoiceDecision:
     steering_required: bool
@@ -543,7 +551,7 @@ def evaluate_tool_choice_state(
                 + (
                     "read the typed search/LSP candidates before continuing discovery; "
                     if explore_decision.read_candidates
-                    else "run one root-scoped fallback discovery for missing roots before finalizing; "
+                    else "run one root-scoped fallback discovery for the current missing root before finalizing; "
                     if explore_decision.discovery_roots
                     else "use only precise source evidence to cover each remaining code root; "
                 )
@@ -567,7 +575,7 @@ def evaluate_tool_choice_state(
                 ("read_file candidates: " + ", ".join(explore_decision.read_candidates),)
                 if explore_decision.read_candidates
                 else (
-                    "Run one bounded glob_files discovery rooted at the missing root(s): "
+                    "Run one bounded glob_files discovery rooted at this missing root: "
                     + ", ".join(explore_decision.discovery_roots),
                 )
                 if explore_decision.discovery_roots

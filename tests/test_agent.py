@@ -384,6 +384,177 @@ class _OwnerExploreRootFairBatchClient:
         )()
 
 
+class _OwnerExploreFallbackRootFairClient:
+    calls: list[dict] = []
+
+    def __init__(self, config: AgentConfig):
+        self.config = config
+        self._primary_calls = 0
+
+    def chat(self, messages, tools, *, timeout=None, tool_choice=None):
+        type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout, "tool_choice": tool_choice})
+        if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages):
+            return _review_pass_response("both roots have direct reads")
+        self._primary_calls += 1
+        additional = self.config.allowed_dirs[0]
+        if self._primary_calls == 1:
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": f"detour-list-{index}",
+                                "type": "function",
+                                "function": {"name": "list_files", "arguments": json.dumps({"path": "."})},
+                            }
+                            for index in range(3)
+                        ],
+                    }
+                },
+            )()
+        if self._primary_calls == 2:
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "search-primary-none",
+                                "type": "function",
+                                "function": {
+                                    "name": "search_code",
+                                    "arguments": json.dumps({"path": "src", "pattern": "NoSuchOwnerToken"}),
+                                },
+                            },
+                            {
+                                "id": "search-additional-none",
+                                "type": "function",
+                                "function": {
+                                    "name": "search_code",
+                                    "arguments": json.dumps({"path": str(additional / "src"), "pattern": "NoSuchOwnerToken"}),
+                                },
+                            },
+                        ],
+                    }
+                },
+            )()
+        if self._primary_calls == 3:
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "detour-search-primary",
+                                "type": "function",
+                                "function": {
+                                    "name": "search_code",
+                                    "arguments": json.dumps({"path": "src", "pattern": "PrimaryOwner"}),
+                                },
+                            },
+                            {
+                                "id": "detour-search-additional",
+                                "type": "function",
+                                "function": {
+                                    "name": "search_code",
+                                    "arguments": json.dumps({"path": str(additional / "src"), "pattern": "AdditionalOwner"}),
+                                },
+                            },
+                        ],
+                    }
+                },
+            )()
+        if self._primary_calls == 4:
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "glob-primary",
+                                "type": "function",
+                                "function": {
+                                    "name": "glob_files",
+                                    "arguments": json.dumps({"paths": [str(self.config.workspace / "src" / "*.java")], "limit": 100}),
+                                },
+                            }
+                        ],
+                    }
+                },
+            )()
+        if self._primary_calls == 5:
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "read-primary",
+                                "type": "function",
+                                "function": {"name": "read_file", "arguments": json.dumps({"path": "src/Primary.java"})},
+                            }
+                        ],
+                    }
+                },
+            )()
+        if self._primary_calls == 6:
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "glob-additional",
+                                "type": "function",
+                                "function": {
+                                    "name": "glob_files",
+                                    "arguments": json.dumps({"paths": [str(additional / "src" / "*.java")], "limit": 100}),
+                                },
+                            }
+                        ],
+                    }
+                },
+            )()
+        if self._primary_calls == 7:
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "read-additional",
+                                "type": "function",
+                                "function": {
+                                    "name": "read_file",
+                                    "arguments": json.dumps({"path": str(additional / "src" / "Additional.java")}),
+                                },
+                            }
+                        ],
+                    }
+                },
+            )()
+        return type(
+            "Response",
+            (),
+            {"message": {"content": "Primary.java 和 Additional.java 都已直接读取；owner 仍按证据限定。"}},
+        )()
+
+
 class _ExactToolChoicePairingClient:
     calls: list[dict] = []
 
@@ -3795,6 +3966,66 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertTrue(
             next(payload for payload in tool_results if payload.get("tool_call_id") == "search-primary-duplicate")["is_error"]
         )
+
+    def test_owner_explore_protocol_noise_does_not_starve_root_fair_fallback_reads(self) -> None:
+        _OwnerExploreFallbackRootFairClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve() / "primary"
+            additional = Path(tmp).resolve() / "service-b"
+            (workspace / "src").mkdir(parents=True)
+            (additional / "src").mkdir(parents=True)
+            (workspace / "src" / "Primary.java").write_text("class PrimaryOwner {}\n", encoding="utf-8")
+            (additional / "src" / "Additional.java").write_text("class AdditionalOwner {}\n", encoding="utf-8")
+            with patch("local_agent.agent.OpenAICompatibleClient", _OwnerExploreFallbackRootFairClient):
+                runtime = AgentRuntime(
+                    AgentConfig(
+                        provider="openai-compatible",
+                        api_base_url="https://example.invalid/v1",
+                        api_key="token",
+                        model="model",
+                        workspace=workspace,
+                        allowed_dirs=(additional,),
+                        max_steps=0,
+                        budget_seconds=None,
+                        approval_mode="yolo",
+                    ),
+                    show_tool_logs=False,
+                )
+                result = runtime.run("只读分析当前服务 owner 和影响范围，不要修改。")
+                records = [
+                    json.loads(line)
+                    for line in runtime._session.path.read_text(encoding="utf-8").splitlines()
+                    if line.strip()
+                ]
+
+        self.assertIn("Primary.java", result)
+        self.assertIn("Additional.java", result)
+        summary = runtime._last_run_summary
+        self.assertEqual(summary["termination_reason"], "final")
+        self.assertEqual(summary["tool_counts"], {"glob_files": 2, "list_files": 3, "read_file": 2, "search_code": 2})
+        self.assertEqual(summary["provider_schema_violations"], 5)
+        self.assertEqual(summary["suppressed_tool_executions"], 2)
+        self.assertEqual(summary["read_only_reviewer"]["triggers"], 1)
+        self.assertEqual(
+            {
+                str(item.metadata.get("resolved_path") or item.path)
+                for item in runtime._run.tool_choice_results
+                if item.name == "read_file" and not item.is_error
+            },
+            {str(workspace / "src" / "Primary.java"), str(additional / "src" / "Additional.java")},
+        )
+        glob_schema_calls = [
+            call for call in _OwnerExploreFallbackRootFairClient.calls
+            if _tool_names_from_schema_call(call["tools"]) == {"glob_files"}
+        ]
+        self.assertGreaterEqual(len(glob_schema_calls), 2)
+        suppressed_results = [
+            record["payload"]
+            for record in records
+            if record.get("event") == "tool_result"
+            and "Tool call was not executed" in str(record.get("payload", {}).get("content") or "")
+        ]
+        self.assertEqual(len(suppressed_results), 2)
 
     def test_exact_tool_choice_skipped_detour_keeps_transcript_pairing(self) -> None:
         _ExactToolChoicePairingClient.calls = []

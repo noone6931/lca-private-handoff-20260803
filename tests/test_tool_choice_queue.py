@@ -130,21 +130,76 @@ class ToolChoiceQueueTests(unittest.TestCase):
         self.assertIn("lsp_symbols", decision.allowed_tool_names)
         self.assertIn("lsp_definition", decision.allowed_tool_names)
 
-    def test_suppressed_or_failed_observations_do_not_cover_a_root_or_count_as_success(self) -> None:
+    def test_suppressed_or_rejected_observations_do_not_consume_explore_budget(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp).resolve()
             results = (
-                ToolResultSummary("search_code", "Tool call was not executed", is_error=True, path=str(root / "A.java")),
-                ToolResultSummary("read_file", "Tool call was not executed", is_error=True, path=str(root / "B.java")),
-                ToolResultSummary("glob_files", "Tool call was not executed", is_error=True, path=str(root)),
+                ToolResultSummary(
+                    "list_files",
+                    "Tool call was rejected by active schema.",
+                    is_error=True,
+                    metadata={"provider_schema_violation": True, "evidence_root": str(root)},
+                ),
+                ToolResultSummary(
+                    "search_code",
+                    "Tool call was not executed",
+                    is_error=True,
+                    path=str(root / "A.java"),
+                    metadata={"provider_schema_violation": True, "evidence_root": str(root)},
+                ),
+                ToolResultSummary(
+                    "glob_files",
+                    "Tool call was not executed",
+                    is_error=True,
+                    path=str(root),
+                    metadata={"suppressed": True, "evidence_root": str(root)},
+                ),
             )
             decision = evaluate_read_only_explore(
                 profile="owner_impact", tool_results=results, code_roots=(str(root),)
             )
 
-        self.assertEqual(decision.observation_calls, 3)
+        self.assertEqual(decision.observation_calls, 0)
         self.assertEqual(decision.successful_observations, 0)
         self.assertEqual(decision.missing_roots, (str(root),))
+        self.assertEqual(decision.discovery_roots, ())
+
+    def test_legal_executed_tool_error_consumes_one_explore_attempt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            result = ToolResultSummary(
+                "read_file",
+                "Permission denied.",
+                is_error=True,
+                path=str(root / "Owner.java"),
+                metadata={"evidence_root": str(root)},
+            )
+            decision = evaluate_read_only_explore(
+                profile="owner_impact", tool_results=(result,), code_roots=(str(root),)
+            )
+
+        self.assertEqual(decision.observation_calls, 1)
+        self.assertEqual(decision.successful_observations, 0)
+        self.assertEqual(decision.missing_roots, (str(root),))
+
+    def test_executed_error_does_not_contribute_read_candidates(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            source = root / "src" / "Owner.java"
+            source.parent.mkdir()
+            source.write_text("class Owner {}\n", encoding="utf-8")
+            result = ToolResultSummary(
+                "search_code",
+                "Search backend failed.",
+                is_error=True,
+                metadata={"evidence_root": str(root), "evidence_paths": [str(source)]},
+            )
+            decision = evaluate_read_only_explore(
+                profile="owner_impact", tool_results=(result,), code_roots=(str(root),)
+            )
+
+        self.assertEqual(decision.observation_calls, 1)
+        self.assertEqual(decision.read_candidates, ())
 
     def test_typed_no_match_counts_as_progress_but_not_direct_root_coverage(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -163,7 +218,7 @@ class ToolChoiceQueueTests(unittest.TestCase):
                 profile="owner_impact", tool_results=results, code_roots=(str(root),)
             )
 
-        self.assertEqual(decision.observation_calls, 3)
+        self.assertEqual(decision.observation_calls, 2)
         self.assertEqual(decision.successful_observations, 1)
         self.assertEqual(decision.missing_roots, (str(root),))
 
@@ -238,6 +293,116 @@ class ToolChoiceQueueTests(unittest.TestCase):
 
         self.assertEqual(decision.allowed_tool_names, frozenset({"read_file"}))
         self.assertEqual(decision.scoped_read_paths, (str(source),))
+
+    def test_owner_explore_fallback_discovery_advances_one_missing_root_at_a_time(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            first = root / "service-a"
+            second = root / "service-b"
+            first.mkdir()
+            second.mkdir()
+            first_no_match = ToolResultSummary(
+                "search_code",
+                "No matches.",
+                useless=True,
+                metadata={"evidence_root": str(first), "negative_evidence_type": "content_no_match"},
+            )
+            second_no_match = ToolResultSummary(
+                "search_code",
+                "No matches.",
+                useless=True,
+                metadata={"evidence_root": str(second), "negative_evidence_type": "content_no_match"},
+            )
+            first_fallback = evaluate_tool_choice_state(
+                task_kind="read-only",
+                prompt="只读分析 owner 和设计影响。",
+                tool_results=(first_no_match, second_no_match),
+                workspace_roots=(str(first), str(second)),
+                read_only_review_profile="owner_impact",
+            )
+            first_glob_no_match = ToolResultSummary(
+                "glob_files",
+                '{"files":[]}',
+                useless=True,
+                metadata={
+                    "evidence_root": str(first),
+                    "searched_roots": [str(first)],
+                    "negative_evidence_type": "path_no_match",
+                },
+            )
+            second_fallback = evaluate_tool_choice_state(
+                task_kind="read-only",
+                prompt="只读分析 owner 和设计影响。",
+                tool_results=(first_no_match, second_no_match, first_glob_no_match),
+                workspace_roots=(str(first), str(second)),
+                read_only_review_profile="owner_impact",
+            )
+
+        self.assertEqual(first_fallback.allowed_tool_names, frozenset({"glob_files"}))
+        self.assertEqual(len(first_fallback.required_glob_roots), 1)
+        self.assertIn(first_fallback.required_glob_roots[0], {str(first), str(second)})
+        self.assertEqual(second_fallback.allowed_tool_names, frozenset({"glob_files"}))
+        self.assertEqual(second_fallback.required_glob_roots, (str(second),))
+        self.assertIn(str(second), second_fallback.tool_call_hints[0])
+        self.assertNotIn(str(first), second_fallback.tool_call_hints[0])
+
+    def test_combined_glob_with_results_from_one_root_does_not_mark_other_root_discovered(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            first = root / "service-a"
+            second = root / "service-b"
+            source = first / "src" / "Owner.java"
+            source.parent.mkdir(parents=True)
+            second.mkdir()
+            source.write_text("class Owner {}\n", encoding="utf-8")
+            first_no_match = ToolResultSummary(
+                "search_code",
+                "No matches.",
+                useless=True,
+                metadata={"evidence_root": str(first), "negative_evidence_type": "content_no_match"},
+            )
+            second_no_match = ToolResultSummary(
+                "search_code",
+                "No matches.",
+                useless=True,
+                metadata={"evidence_root": str(second), "negative_evidence_type": "content_no_match"},
+            )
+            combined_glob = ToolResultSummary(
+                "glob_files",
+                str(source),
+                metadata={
+                    "searched_roots": [str(first), str(second)],
+                    "files": [str(source)],
+                    "truncated": True,
+                },
+            )
+            decision = evaluate_tool_choice_state(
+                task_kind="read-only",
+                prompt="只读分析 owner 和设计影响。",
+                tool_results=(first_no_match, second_no_match, combined_glob),
+                workspace_roots=(str(first), str(second)),
+                read_only_review_profile="owner_impact",
+            )
+
+        self.assertEqual(decision.allowed_tool_names, frozenset({"read_file"}))
+        self.assertIn(str(source), decision.scoped_read_paths)
+        # After the first root is read, the second root must still be eligible
+        # for its own fallback; the combined truncated request alone is not an
+        # effective second-root discovery.
+        after_first_read = evaluate_tool_choice_state(
+            task_kind="read-only",
+            prompt="只读分析 owner 和设计影响。",
+            tool_results=(
+                first_no_match,
+                second_no_match,
+                combined_glob,
+                ToolResultSummary("read_file", "class Owner {}", path=str(source), metadata={"resolved_path": str(source)}),
+            ),
+            workspace_roots=(str(first), str(second)),
+            read_only_review_profile="owner_impact",
+        )
+        self.assertEqual(after_first_read.allowed_tool_names, frozenset({"glob_files"}))
+        self.assertEqual(after_first_read.required_glob_roots, (str(second),))
 
     def test_owner_explore_projects_typed_search_candidates_as_read_only_schema(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

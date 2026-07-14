@@ -208,9 +208,10 @@ class SafePartialReportTests(unittest.TestCase):
 
         by_root = {item.root: item for item in coverage}
         self.assertIn("/Workspace/Backend", by_root)
-        self.assertEqual(by_root["/Workspace/Backend"].search_attempts, 2)
+        self.assertEqual(by_root["/Workspace/Backend"].search_attempts, 1)
         self.assertEqual(by_root["/Workspace/Backend"].successful_searches, 0)
         self.assertEqual(by_root["/Workspace/Backend"].no_match, 0)
+        self.assertEqual(by_root["/Workspace/Backend"].failures, 1)
         self.assertEqual(by_root["/Workspace/Backend"].suppressed, 1)
         self.assertFalse(by_root["/Workspace/Backend"].searched_without_direct_read)
         self.assertEqual(by_root["/Workspace/Frontend"].search_attempts, 1)

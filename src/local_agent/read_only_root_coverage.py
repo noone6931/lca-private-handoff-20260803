@@ -4,6 +4,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .tool_observation import ToolResultSummary
+from .tool_observation import tool_result_is_executed_attempt
+from .tool_observation import tool_result_was_not_executed
 
 
 @dataclass(frozen=True)
@@ -49,13 +51,14 @@ def read_only_root_coverage(results: list[ToolResultSummary] | tuple[ToolResultS
         aliases = bucket["aliases"]
         if isinstance(aliases, set):
             aliases.update(_root_aliases(root, result))
+        if tool_result_was_not_executed(result):
+            bucket["suppressed"] = int(bucket["suppressed"]) + 1
+            continue
         if result.is_error:
             bucket["failures"] = int(bucket["failures"]) + 1
-        if _is_suppressed(result):
-            bucket["suppressed"] = int(bucket["suppressed"]) + 1
         if result.name in {"search_code", "glob_files"} or result.name.startswith("lsp_"):
             bucket["search_attempts"] = int(bucket["search_attempts"]) + 1
-            if result.is_error or _is_suppressed(result):
+            if result.is_error or not tool_result_is_executed_attempt(result):
                 continue
             bucket["successful_searches"] = int(bucket["successful_searches"]) + 1
             if result.useless or result.metadata.get("negative_evidence_type") in {"content_no_match", "path_no_match"}:
@@ -104,11 +107,7 @@ def _root_aliases(root: str, result: ToolResultSummary) -> set[str]:
 
 
 def _is_successful_direct_read_result(result: ToolResultSummary) -> bool:
-    return result.name == "read_file" and not result.is_error and not _is_suppressed(result)
-
-
-def _is_suppressed(result: ToolResultSummary) -> bool:
-    return bool(result.metadata.get("suppressed")) or "tool call was not executed" in result.content.lower()
+    return result.name == "read_file" and not result.is_error and tool_result_is_executed_attempt(result)
 
 
 def _normalize_root_identity(path: str) -> str:
