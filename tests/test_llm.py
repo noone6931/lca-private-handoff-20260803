@@ -91,6 +91,30 @@ class LlmClientTests(unittest.TestCase):
         self.assertNotIn("tools", captured_payload)
         self.assertNotIn("tool_choice", captured_payload)
 
+    def test_chat_can_override_the_model_for_a_runtime_role(self) -> None:
+        captured_payload: dict = {}
+
+        def fake_urlopen(request, timeout):
+            captured_payload.update(json.loads(request.data.decode("utf-8")))
+            body = json.dumps({"choices": [{"message": {"content": "reviewed"}}]}).encode("utf-8")
+            return _FakeResponse(body)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="main-model",
+                reviewer_model="review-model",
+                workspace=Path(tmp).resolve(),
+            )
+            client = OpenAICompatibleClient(config)
+            with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+                response = client.chat([], [], model=config.reviewer_model)
+
+        self.assertEqual(response.message["content"], "reviewed")
+        self.assertEqual(captured_payload["model"], "review-model")
+
     def test_inspect_image_uses_a_vision_model_and_keeps_image_payload_in_provider_request(self) -> None:
         captured_payload: dict = {}
 

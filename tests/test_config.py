@@ -41,6 +41,51 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.memory_scope, "state")
         self.assertEqual(config.approval_mode, "always-ask")
         self.assertEqual(config.allowed_dirs, ())
+        self.assertEqual(config.reviewer_model, "")
+
+    def test_reviewer_model_role_resolves_from_env(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.dict(
+                "os.environ",
+                {"DASHSCOPE_API_KEY": "token", "AI_REVIEWER_MODEL": "qwen-reviewer"},
+                clear=True,
+            ):
+                config = load_config(
+                    config_path=None,
+                    cwd=tmp,
+                    provider="bailian",
+                    api_base_url=None,
+                    api_key=None,
+                    model=None,
+                    max_steps=None,
+                    budget_seconds=None,
+                    approval_mode=None,
+                )
+
+        self.assertEqual(config.model, "qwen-plus")
+        self.assertEqual(config.reviewer_model, "qwen-reviewer")
+
+    def test_reviewer_model_role_resolves_from_models_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "agent.json"
+            config_path.write_text(
+                json.dumps({"models": {"reviewer": "slow-reviewer"}}),
+                encoding="utf-8",
+            )
+            with patch.dict("os.environ", {"DASHSCOPE_API_KEY": "token"}, clear=True):
+                config = load_config(
+                    config_path=str(config_path),
+                    cwd=tmp,
+                    provider="bailian",
+                    api_base_url=None,
+                    api_key=None,
+                    model=None,
+                    max_steps=None,
+                    budget_seconds=None,
+                    approval_mode=None,
+                )
+
+        self.assertEqual(config.reviewer_model, "slow-reviewer")
 
     def test_dashscope_env_auto_selects_bailian(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

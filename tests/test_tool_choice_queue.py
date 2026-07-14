@@ -385,6 +385,38 @@ class ToolChoiceQueueTests(unittest.TestCase):
         self.assertEqual(decision.read_candidates, (str(first_source),))
         self.assertNotIn(str(second_source), decision.read_candidates)
 
+    def test_exact_path_miss_retries_same_relative_source_in_uncovered_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            first = Path(tmp, "backend").resolve()
+            second = Path(tmp, "frontend").resolve()
+            first.mkdir()
+            target = second / "src" / "views" / "preOrderManagement" / "list.vue"
+            target.parent.mkdir(parents=True)
+            target.write_text("<template />\n", encoding="utf-8")
+            exact_miss = ToolResultSummary(
+                "glob_files",
+                "Exact path was not found.",
+                is_error=True,
+                metadata={
+                    "searched_roots": [str(first)],
+                    "patterns": ["src/views/preOrderManagement/list.vue"],
+                    "negative_evidence_type": "exact_path_missing",
+                },
+            )
+            decision = evaluate_tool_choice_state(
+                task_kind="read-only",
+                prompt="只读分析 owner 和设计影响。",
+                tool_results=(exact_miss,),
+                workspace_roots=(str(first), str(second)),
+                read_only_review_profile="design",
+            )
+
+        required = json.loads(decision.required_tool_arguments_json)
+        self.assertEqual(decision.rule_id, "read_only_profile_explore_exact_cross_root")
+        self.assertEqual(decision.allowed_tool_names, frozenset({"glob_files"}))
+        self.assertEqual(decision.required_glob_roots, ())
+        self.assertEqual(required["paths"], [str(target)])
+
     def test_owner_explore_fallback_discovery_advances_one_missing_root_at_a_time(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp).resolve()

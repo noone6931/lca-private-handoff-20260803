@@ -49,6 +49,7 @@ class AgentConfig:
     memory_consolidation: str = "off"
     memory_scope: str = "state"
     vision_model: str = ""
+    reviewer_model: str = ""
 
 
 def load_config(
@@ -73,6 +74,7 @@ def load_config(
     memory_consolidation: str | None = None,
     memory_scope: str | None = None,
     allowed_dirs: object | None = None,
+    reviewer_model: str | None = None,
 ) -> AgentConfig:
     file_config = _load_json_config(config_path)
     workspace = Path(cwd or file_config.get("workspace") or os.getcwd()).expanduser().resolve()
@@ -108,6 +110,16 @@ def load_config(
     )
     resolved_vision_model = str(
         file_config.get("vision_model") or os.environ.get("AI_VISION_MODEL") or ""
+    ).strip()
+    model_roles = file_config.get("models") or {}
+    if not isinstance(model_roles, dict):
+        raise ConfigError("models must be an object.")
+    resolved_reviewer_model = str(
+        reviewer_model
+        or model_roles.get("reviewer")
+        or file_config.get("reviewer_model")
+        or os.environ.get("AI_REVIEWER_MODEL")
+        or ""
     ).strip()
     tools_config = _tools_config(file_config)
     raw_approval_mode = (
@@ -236,6 +248,7 @@ def load_config(
         memory_consolidation=resolved_memory_consolidation,
         memory_scope=resolved_memory_scope,
         vision_model=resolved_vision_model,
+        reviewer_model=resolved_reviewer_model,
     )
 
 

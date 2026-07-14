@@ -48,9 +48,10 @@ class OpenAICompatibleClient:
         tools: list[dict[str, Any]],
         *,
         timeout: float | None = None,
+        model: str | None = None,
         tool_choice: dict[str, Any] | str | None = None,
     ) -> ChatResponse:
-        return self._complete(messages, tools, timeout=timeout, tool_choice=tool_choice)
+        return self._complete(messages, tools, timeout=timeout, model=model, tool_choice=tool_choice)
 
     def inspect_image(
         self,

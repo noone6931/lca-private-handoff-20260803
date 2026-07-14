@@ -31,6 +31,7 @@ from .reviewer_output_lifecycle import reviewer_tool_result_messages
 class ReviewRoundPort:
     client: Any
     provider: str
+    model: str | None
     state: Any
     collector: Any
     session: Any
@@ -92,7 +93,13 @@ def run_review_round(
             ),
         )
         try:
-            response = call_chat_with_timeout(port.client, messages, output_schemas, timeout=timeout)
+            response = call_chat_with_timeout(
+                port.client,
+                messages,
+                output_schemas,
+                timeout=timeout,
+                model=port.model,
+            )
         except LlmError as exc:
             return _failure(
                 "timeout" if isinstance(exc, LlmTimeoutError) else "provider_error",

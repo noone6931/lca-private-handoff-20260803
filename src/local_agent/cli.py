@@ -56,6 +56,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--api-key", help="API key.")
     parser.add_argument("--model", help="Model name.")
     parser.add_argument(
+        "--reviewer-model",
+        help="Optional model for the isolated reviewer role. Defaults to the main model.",
+    )
+    parser.add_argument(
         "--max-steps",
         type=int,
         help="Safety cap for model/tool iterations. 0 means unlimited; use budget seconds for normal limits.",
@@ -144,6 +148,7 @@ def main(argv: list[str] | None = None) -> int:
             memory_consolidation=args.memory_consolidation,
             memory_scope=args.memory_scope,
             allowed_dirs=args.allowed_dirs,
+            reviewer_model=args.reviewer_model,
         )
         chat_requested = args.chat or _is_chat_prompt(args.prompt)
         event_sink = (

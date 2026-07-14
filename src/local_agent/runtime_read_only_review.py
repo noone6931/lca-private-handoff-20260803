@@ -113,6 +113,8 @@ class ReadOnlyReviewPhase:
                 "items": len(handoff.items),
                 "timeout_seconds": timeout,
                 "review_round": state.review_round,
+                "model_role": "reviewer",
+                "model": runtime._config.reviewer_model or runtime._config.model,
             },
         )
         runtime._events.emit(
@@ -489,6 +491,7 @@ class ReadOnlyReviewPhase:
         return ReviewRoundPort(
             client=runtime._client,
             provider=runtime._config.provider,
+            model=runtime._config.reviewer_model or None,
             state=runtime._run.read_only_review,
             collector=runtime._run.collector,
             session=runtime._session,

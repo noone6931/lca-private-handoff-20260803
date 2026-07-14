@@ -600,6 +600,8 @@ def evaluate_tool_choice_state(
                 + (
                     "prefer reading typed search/LSP candidates, or continue bounded precise search when needed; "
                     if explore_decision.read_candidates
+                    else "retry the exact source path once in the current missing workspace root; "
+                    if explore_decision.discovery_patterns
                     else "run one root-scoped fallback discovery for the current missing root before finalizing; "
                     if explore_decision.discovery_roots
                     else "use bounded source search/read or a precise filename glob to cover each remaining code root; "
@@ -608,7 +610,9 @@ def evaluate_tool_choice_state(
                 f"observations={explore_decision.observation_calls}/{explore_decision.hard_budget}."
             ),
             rule_id=(
-                "read_only_profile_explore_soft"
+                "read_only_profile_explore_exact_cross_root"
+                if explore_decision.discovery_patterns
+                else "read_only_profile_explore_soft"
                 if explore_decision.observation_calls >= explore_decision.soft_budget
                 else "read_only_profile_explore"
             ),
@@ -623,6 +627,8 @@ def evaluate_tool_choice_state(
             tool_call_hints=(
                 ("read_file candidates: " + ", ".join(explore_decision.read_candidates),)
                 if explore_decision.read_candidates
+                else (_precise_glob_call_hint(explore_decision.discovery_patterns),)
+                if explore_decision.discovery_patterns
                 else (inventory_glob_call_hint(explore_decision.discovery_roots),)
                 if explore_decision.discovery_roots
                 else (
@@ -634,8 +640,14 @@ def evaluate_tool_choice_state(
                     else ()
                 )
             ),
-            required_glob_roots=explore_decision.discovery_roots,
-            required_tool_arguments_json=_inventory_glob_arguments_json(explore_decision.discovery_roots),
+            required_glob_roots=(
+                () if explore_decision.discovery_patterns else explore_decision.discovery_roots
+            ),
+            required_tool_arguments_json=(
+                _precise_glob_arguments_json(explore_decision.discovery_patterns)
+                if explore_decision.discovery_patterns
+                else _inventory_glob_arguments_json(explore_decision.discovery_roots)
+            ),
         )
 
     evidence_preferred = _preferred_evidence_tools(results)
@@ -1058,6 +1070,22 @@ def _inventory_glob_call_hint(roots: Iterable[str]) -> str:
 def _inventory_glob_arguments_json(roots: Iterable[str]) -> str:
     arguments = inventory_glob_arguments_for_roots(roots)
     return json.dumps(arguments, ensure_ascii=False, sort_keys=True) if arguments is not None else ""
+
+
+def _precise_glob_arguments_json(patterns: Iterable[str]) -> str:
+    cleaned = tuple(dict.fromkeys(str(pattern).strip() for pattern in patterns if str(pattern).strip()))
+    if not cleaned:
+        return ""
+    return json.dumps(
+        {"paths": list(cleaned), "limit": 200, "hidden": False, "gitignore": True},
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+
+
+def _precise_glob_call_hint(patterns: Iterable[str]) -> str:
+    arguments = _precise_glob_arguments_json(patterns)
+    return f"Use this exact cross-root glob_files call once: glob_files({arguments})"
 
 
 def _is_implementation_task(task_kind: str, prompt: str) -> bool:

@@ -71,6 +71,7 @@ class ReadOnlyExploreDecision:
     read_candidates: tuple[str, ...] = ()
     preferred_roots: tuple[str, ...] = ()
     discovery_roots: tuple[str, ...] = ()
+    discovery_patterns: tuple[str, ...] = ()
 
     @property
     def is_applicable(self) -> bool:
@@ -116,7 +117,13 @@ def evaluate_read_only_explore(
     read_candidates = _read_candidates_for_missing_roots(candidate_paths, missing)
     root_attempts = _root_attempts(results, roots)
     preferred_roots = _least_observed_roots(missing, root_attempts)
-    discovery_roots = _roots_needing_fallback_discovery(results, missing, read_candidates, root_attempts)
+    exact_discovery_roots, exact_discovery_patterns = _cross_root_exact_glob_retry(results, roots, missing)
+    discovery_roots = exact_discovery_roots or _roots_needing_fallback_discovery(
+        results,
+        missing,
+        read_candidates,
+        root_attempts,
+    )
     if not missing:
         return ReadOnlyExploreDecision(
             "finalize",
@@ -128,6 +135,7 @@ def evaluate_read_only_explore(
             read_candidates=read_candidates,
             preferred_roots=preferred_roots,
             discovery_roots=discovery_roots,
+            discovery_patterns=exact_discovery_patterns,
         )
     if observation_calls >= hard_budget:
         return ReadOnlyExploreDecision(
@@ -141,6 +149,7 @@ def evaluate_read_only_explore(
             read_candidates=read_candidates,
             preferred_roots=preferred_roots,
             discovery_roots=discovery_roots,
+            discovery_patterns=exact_discovery_patterns,
         )
     fallback_reserve = min(hard_budget, max(0, len(discovery_roots) * 2))
     if discovery_roots and observation_calls >= hard_budget - fallback_reserve:
@@ -155,6 +164,7 @@ def evaluate_read_only_explore(
             read_candidates=read_candidates,
             preferred_roots=preferred_roots,
             discovery_roots=discovery_roots,
+            discovery_patterns=exact_discovery_patterns,
         )
     return ReadOnlyExploreDecision(
         "precise",
@@ -167,6 +177,7 @@ def evaluate_read_only_explore(
         read_candidates=read_candidates,
         preferred_roots=preferred_roots,
         discovery_roots=discovery_roots,
+        discovery_patterns=exact_discovery_patterns,
     )
 
 
@@ -481,6 +492,57 @@ def _typed_scope_roots(result: ToolResultSummary, roots: tuple[str, ...]) -> tup
         if scoped:
             return scoped
     return roots
+
+
+def _cross_root_exact_glob_retry(
+    results: Iterable[ToolResultSummary],
+    roots: tuple[str, ...],
+    missing_roots: tuple[str, ...],
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Rebase one failed exact source path onto an unvisited workspace root.
+
+    The failed glob is already a typed observation from an authorized root. A
+    single exact retry preserves the user's path intent across `/add-dir`
+    roots without turning the miss into broad inventory or semantic guessing.
+    """
+
+    attempted: set[tuple[str, str]] = set()
+    failed_relative_paths: list[str] = []
+    for result in results:
+        if result.name != "glob_files" or not _is_executed_explore_attempt(result):
+            continue
+        patterns = result.metadata.get("patterns")
+        if not isinstance(patterns, (list, tuple)):
+            continue
+        scoped_roots = _typed_scope_roots(result, roots)
+        for raw in patterns:
+            relative = _exact_relative_source_path(raw)
+            if relative is None:
+                continue
+            attempted.update((root, relative) for root in scoped_roots)
+            if result.metadata.get("negative_evidence_type") == "exact_path_missing":
+                failed_relative_paths.append(relative)
+    for root in missing_roots:
+        patterns = tuple(
+            str(Path(root) / relative)
+            for relative in dict.fromkeys(failed_relative_paths)
+            if (root, relative) not in attempted
+        )
+        if patterns:
+            return (root,), patterns[:2]
+    return (), ()
+
+
+def _exact_relative_source_path(raw: object) -> str | None:
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    rendered = raw.strip()
+    path = Path(rendered)
+    if path.is_absolute() or any(part == ".." for part in path.parts):
+        return None
+    if any(char in rendered for char in "*?[") or path.suffix.lower() not in SOURCE_FILE_SUFFIXES:
+        return None
+    return path.as_posix()
 
 
 def _roots_needing_fallback_discovery(
