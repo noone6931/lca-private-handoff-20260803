@@ -343,13 +343,45 @@ _ASSERTED_RECONCILIATION_MARKER = re.compile(
     r"(?:\b(?:no\s+conflict|not\s+(?:a\s+)?conflict|consistent|reconciled|resolved|aligned)\b|"
     r"\b(?:is|are)\b.{0,48}\b(?:completed|final|demonstration|later)\s+state\b|"
     r"\b(?:highest\s+priority|takes\s+precedence|supersedes|overrides|authoritative\s+source|source\s+of\s+truth)\b|"
-    r"(?:无|没有|并非).{0,12}(?:冲突|矛盾)|不矛盾|整体一致|已解决|(?:完成态|最终态|演示态|后期完成态)|"
+    r"(?:无|没有|并非).{0,12}(?:冲突|矛盾)|不矛盾|(?:整体)?一致|已解决|(?:完成态|最终态|演示态|后期完成态)|"
     r"(?:最高优先级|优先于|以.{0,24}为准|权威来源|最终依据|覆盖其他来源))",
     flags=re.IGNORECASE,
 )
+_SCOPED_RECONCILIATION_MARKER = re.compile(
+    r"(?:\b(?:completed|final|demonstration|later)\s+state\b|"
+    r"\b(?:highest\s+priority|takes\s+precedence|supersedes|overrides|authoritative\s+source|source\s+of\s+truth)\b|"
+    r"(?:完成态|最终态|演示态|后期完成态|最高优先级|优先于|以.{0,24}为准|权威来源|最终依据|覆盖其他来源))",
+    flags=re.IGNORECASE,
+)
+_INTRINSIC_RECONCILIATION_MARKER = re.compile(
+    r"(?:\b(?:no\s+conflict|not\s+(?:a\s+)?conflict|consistent|reconciled)\b|"
+    r"(?:无|没有|并非).{0,12}(?:冲突|矛盾)|不矛盾)",
+    flags=re.IGNORECASE,
+)
+_RELATIONAL_RECONCILIATION_MARKER = re.compile(
+    r"(?:\b(?:resolved|aligned)\b|(?:整体)?一致|已解决)",
+    flags=re.IGNORECASE,
+)
+_TWO_ARTIFACT_RELATION_MARKER = re.compile(
+    r"(?:\b(?:A\s+and\s+B|(?:both|two|the\s+two|multiple)\s+(?:artifacts|sources|documents|materials))\b|"
+    r"\b(?:document|markdown|html|prototype|image|screenshot|artifact|source|spec|policy)\b"
+    r".{0,24}\b(?:and|vs\.?|versus)\b.{0,24}"
+    r"\b(?:document|markdown|html|prototype|image|screenshot|artifact|source|spec|policy)\b|"
+    r"两份(?:资料|文档)|两个(?:资料|文档|来源)|二者|两者|"
+    r"(?:文档|需求|规范|说明|资料|来源|原型|页面|图片|图像|截图|示例图|HTML|Markdown)"
+    r".{0,16}(?:和|与|及|以及|、|/|对比|相比).{0,16}"
+    r"(?:文档|需求|规范|说明|资料|来源|原型|页面|图片|图像|截图|示例图|HTML|Markdown))",
+    flags=re.IGNORECASE,
+)
+_ARTIFACT_FAMILY_PATTERNS = (
+    ("document", re.compile(r"\b(?:document|markdown|md|spec|policy|requirement|requirements)\b|需求文档|文档|需求|规范|说明", re.IGNORECASE)),
+    ("prototype", re.compile(r"\b(?:html|prototype|page)\b|原型|页面", re.IGNORECASE)),
+    ("image", re.compile(r"\b(?:image|screenshot|picture|photo|png|jpg|jpeg)\b|图片|图像|截图|示例图", re.IGNORECASE)),
+)
 _EXPLICIT_CONFLICT_MARKER = re.compile(
     r"(?:\b(?:not\s+consistent|in\s+conflict|inconsistent|conflict\s+remains|source\s+differen(?:ce|ces)|artifact\s+differen(?:ce|ces)|discrepanc(?:y|ies)|(?:document|image|artifact|source)s?.{0,32}\bdiffer(?:s|ent)?)\b|"
-    r"不一致|存在冲突|仍.{0,8}(?:冲突|矛盾)|(?:资料|来源|文档|图片|图像|原型).{0,16}(?:差异|不一致)|差异.{0,16}(?:未消解|待确认|不明确))",
+    r"不一致|存在冲突|仍.{0,8}(?:冲突|矛盾)|(?:冲突|矛盾).{0,8}(?:未消解|未解决|待确认|不明确)|"
+    r"(?:资料|来源|文档|图片|图像|原型).{0,16}(?:差异|不一致)|差异.{0,16}(?:未消解|待确认|不明确))",
     flags=re.IGNORECASE,
 )
 _CONDITIONAL_MARKER = re.compile(r"(?:\b(?:if|may|might|could|perhaps)\b|如果|若|可能|或许|可由|可以)", flags=re.IGNORECASE)
@@ -380,4 +412,24 @@ def _positive_reconciliation_matches(clause: str) -> tuple[re.Match[str], ...]:
         match
         for match in _ASSERTED_RECONCILIATION_MARKER.finditer(clause)
         if not any(match.start() < conflict.end() and conflict.start() < match.end() for conflict in conflicts)
+        and _assertion_is_document_scoped(clause, match)
     )
+
+
+def _assertion_is_document_scoped(clause: str, match: re.Match[str]) -> bool:
+    if _INTRINSIC_RECONCILIATION_MARKER.search(match.group(0)):
+        return True
+    if (
+        _SCOPED_RECONCILIATION_MARKER.search(match.group(0)) is None
+        and _RELATIONAL_RECONCILIATION_MARKER.search(match.group(0)) is None
+    ):
+        return True
+    if _EXPLICIT_CONFLICT_MARKER.search(clause):
+        return True
+    if _TWO_ARTIFACT_RELATION_MARKER.search(clause):
+        return True
+    return len(_artifact_families(clause)) >= 2
+
+
+def _artifact_families(clause: str) -> set[str]:
+    return {family for family, pattern in _ARTIFACT_FAMILY_PATTERNS if pattern.search(clause)}

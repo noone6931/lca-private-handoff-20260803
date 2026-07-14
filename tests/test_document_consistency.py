@@ -58,6 +58,18 @@ class DocumentConsistencyTests(unittest.TestCase):
             "asserted_reconciled",
         )
         self.assertEqual(
+            candidate_reconciliation_stance(
+                "需求文档写复核人不填；示例图显示复核人有值。两份资料角色/生命周期/优先级未建立，冲突未消解。状态码以研发为准。"
+            ),
+            "reported_unresolved",
+        )
+        self.assertIsNone(candidate_reconciliation_stance("状态码以研发为准。"))
+        self.assertIsNone(candidate_reconciliation_stance("需求文档标注状态码以研发为准。"))
+        self.assertIsNone(candidate_reconciliation_stance("The Markdown document is the authoritative source for status codes."))
+        self.assertIsNone(candidate_reconciliation_stance("问题已解决。"))
+        self.assertIsNone(candidate_reconciliation_stance("They are resolved."))
+        self.assertIsNone(candidate_reconciliation_stance("双方问题已解决。"))
+        self.assertEqual(
             candidate_reconciliation_stance("The Markdown document is the highest priority source of truth, so the image cannot override it."),
             "asserted_reconciled",
         )

@@ -57,7 +57,7 @@
       ]
     },
     {
-      "content": "Requirement fact: policy.md states the field must remain blank; prototype.html shows it visible. To confirm: If the prototype were a completed state they might coexist, but the artifact role is not specified, so the conflict remains unresolved."
+      "content": "Requirement fact: policy.md states the field must remain blank; prototype.html shows it visible. To confirm: If the prototype were a completed state they might coexist, but the artifact role is not specified, so the conflict remains unresolved. 状态码以研发为准。"
     },
     {
       "tool_calls": [
