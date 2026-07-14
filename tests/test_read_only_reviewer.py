@@ -3773,6 +3773,10 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertIn("后端 Processor.java", message)
         self.assertIn("当前没有找到任何结算实现", message)
         self.assertIn("converting a presentation-only label into a Markdown heading", message)
+        self.assertIn("source facts only as short bullets, never as tables or blockquotes", message)
+        self.assertIn("one supported factual predicate and its locator in the same text", message)
+        self.assertIn("Never use `+`", message)
+        self.assertIn("Delete global `未找到` / `未发现`", message)
 
     def test_rewrite_treats_reviewer_action_as_advisory_not_source_evidence(self) -> None:
         result = ReviewerResult(
