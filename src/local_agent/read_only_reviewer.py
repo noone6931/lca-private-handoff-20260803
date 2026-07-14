@@ -20,6 +20,7 @@ from .task_contract import RequirementContract
 
 ReviewerVerdict = Literal["pass", "revise", "unverified"]
 ReviewerFindingScope = Literal["candidate_defect", "source_material_gap"]
+CandidateClaimRole = Literal["requirement_fact", "source_fact", "proposal", "pending", "other"]
 MAX_REVIEWER_FINDINGS = 8
 MAX_REVIEWER_RESPONSE_CHARS = 9000
 MAX_REVIEWER_SCHEMA_REPAIRS = 2
@@ -42,9 +43,10 @@ class CandidateClaimUnit:
     text: str
     locator_context: str = ""
     section_context: str = ""
+    claim_role: CandidateClaimRole = "other"
 
     def to_dict(self) -> dict[str, str]:
-        payload = {"claim_id": self.claim_id, "text": self.text}
+        payload = {"claim_id": self.claim_id, "text": self.text, "claim_role": self.claim_role}
         if self.section_context:
             payload["section_context"] = self.section_context
         if self.locator_context:
@@ -282,6 +284,19 @@ def prune_exact_transport_residual_claim_lines(
     return projected, tuple(removed_ids)
 
 
+def _candidate_claim_role(section_context: str) -> CandidateClaimRole:
+    context = section_context.casefold()
+    if any(marker in context for marker in ("尚待确认", "待确认", "开放问题", "open question", "pending confirmation")):
+        return "pending"
+    if any(marker in context for marker in ("设计建议", "实施建议", "方案建议", "design proposal", "recommendation")):
+        return "proposal"
+    if any(marker in context for marker in ("需求明确事实", "需求事实", "requirement fact")):
+        return "requirement_fact"
+    if any(marker in context for marker in ("源码当前事实", "源码事实", "repository fact", "source fact")):
+        return "source_fact"
+    return "other"
+
+
 def _extract_candidate_claim_units(candidate: str) -> tuple[tuple[CandidateClaimUnit, ...], tuple[CandidateClaimProjectionIssue, ...]]:
     """Index Markdown claims, then deterministically sample both head and tail.
 
@@ -320,6 +335,7 @@ def _extract_candidate_claim_units(candidate: str) -> tuple[tuple[CandidateClaim
                 unit,
                 effective_locator_context,
                 section_context,
+                _candidate_claim_role(section_context),
             )
         )
 
@@ -394,7 +410,14 @@ def _extract_candidate_claim_units(candidate: str) -> tuple[tuple[CandidateClaim
         paragraph.append(raw_line)
     flush_paragraph()
     if not indexed and candidate.strip() and not issues:
-        indexed.append(CandidateClaimUnit("c001", _clip_unit(candidate), section_context=section_context))
+        indexed.append(
+            CandidateClaimUnit(
+                "c001",
+                _clip_unit(candidate),
+                section_context=section_context,
+                claim_role=_candidate_claim_role(section_context),
+            )
+        )
     return _sample_claim_units(indexed), tuple(issues)
 
 
@@ -410,6 +433,7 @@ Review contract:
 - Similar names, same-domain payment/order/fee capabilities, and general reusable code are analogous candidates, never verified owners.
 - Missing or incomplete searches mean unlocated within their stated scope, not absent everywhere.
 - Requirement facts, repository facts, proposals, and open questions must remain distinct.
+- Each candidate_claim has a typed claim_role derived from its Markdown section. This evidence reviewer owns factual grounding, not proposal quality: never report findings for claim_role `proposal` or `pending`. Those claims are explicitly non-current; a later design/implementation reviewer may assess them. Imperative wording, a proposed identifier, an unanswered prerequisite, or an optional missing detail does not change that ownership.
 - Some handoff claim_matrix items include claim_ids. Those are claim-scoped evidence excerpts for those candidate claims only; check that the addressed claim_id is a member of claim_ids before using the excerpt, and do not use an image observation to prove a Markdown requirement rule or vice versa.
 - `requirement_locator` excerpts bind requirement/document claims; `source_locator` excerpts bind repository-source claims. Prefer these claim-scoped excerpts over generic summaries. A failed or missing path in one root never invalidates a successful read in another root, even when basenames match.
 - For owner/design profiles, every candidate statement presented as a current repository/source fact must be bound by a claim-scoped `source_locator`. Generic source items establish inspected artifacts and may help locate evidence, but they never substitute for claim-scoped support. A bare path, symbol name, or assertion that files were read is not evidence for the claimed behavior. When that binding is absent, report the claim as unsupported evidence scope; this proves an answer defect without asserting that the repository fact itself is false. Clearly labeled requirement facts, proposals, and open questions are not current-source claims and do not require `source_locator` support.
@@ -417,7 +441,7 @@ Review contract:
 - Validate asserted counts against the claim-scoped excerpt instead of trusting the candidate's arithmetic. In template or configuration syntax, an event/callback/handler reference proves only that the name is referenced there; do not treat it as a method/function definition unless the cited lines contain the definition.
 - A failed guessed path in an additional root is only a scoped inspection failure. It does not prove that the roots are branches, versions, mirrors, paired frontend/backend repositories, or expected to contain the same relative paths. Report candidate wording that turns such a failure into a repository relationship, coverage conclusion, or missing-implementation fact.
 - A proposal must not be worded as an existing table, class, endpoint, service, approval flow, numbering prefix, or integration unless the handoff explicitly supports it.
-- A clearly labeled design proposal, suggested new table/class/API, candidate option, or pending-confirmation plan is allowed without proving that every old asset is impossible to reuse. It must stay labeled as proposal/pending confirmation and list the prerequisite reuse/owner checks; report a defect only when the candidate presents the proposed name as current implementation, existing fact, verified owner, or proven absence.
+- A clearly labeled design proposal, suggested new table/class/API, candidate option, or pending-confirmation plan is allowed without proving that every old asset is impossible to reuse. Do not demand optional prerequisites, alternatives, fields, routes, states, or implementation detail from this evidence-review role.
 - When the handoff has no explicit direct binding, do not say a main owner/module judgment is correct or mostly correct. Treat same-domain code as observed or analogous and leave the owner unlocated.
 - Report a finding only when it is provable from the exact request, a claim-scoped handoff excerpt, or an internal contradiction in the candidate. Do not invent acceptance criteria, business semantics, source behavior, dynamic binding, holiday handling, or possible hidden implementations merely because they could exist.
 - A finding must be actionable, free of unstated assumptions, and proportionate to the user's requested rigor. If a concern depends on unseen code or a hypothetical alternative, stay silent about it. Requirement facts do not need to be observed in repository source when the candidate keeps them in the requirement-fact section; clearly labeled proposals do not need to exist in current source.
@@ -831,7 +855,8 @@ def parse_reviewer_payload(
     if len(findings_value) > MAX_REVIEWER_FINDINGS:
         raise ReviewerValidationError("findings_too_many", diagnostics)
     findings: list[ReviewerFinding] = []
-    claim_text_by_id = {unit.claim_id: unit.text for unit in claim_units}
+    claim_unit_by_id = {unit.claim_id: unit for unit in claim_units}
+    claim_text_by_id = {claim_id: unit.text for claim_id, unit in claim_unit_by_id.items()}
     known_claim_ids = set(claim_text_by_id)
     used_claim_ids: set[str] = set()
     source_material_gap_count = 0
@@ -867,6 +892,12 @@ def parse_reviewer_payload(
                 raise ReviewerValidationError("finding_claim_mismatch", {**diagnostics, "claim_mismatch_count": 1})
         if finding_scope not in {"candidate_defect", "source_material_gap"}:
             raise ReviewerValidationError("finding_scope_invalid", diagnostics)
+        claim_role = claim_unit_by_id[claim_id].claim_role
+        if claim_role in {"proposal", "pending"}:
+            raise ReviewerValidationError(
+                "claim_role_out_of_scope",
+                {**diagnostics, "out_of_scope_claim_role": claim_role},
+            )
         if finding_scope == "source_material_gap":
             source_material_gap_count += 1
         else:
@@ -1101,6 +1132,7 @@ def _sanitize_diagnostics(diagnostics: Mapping[str, Any]) -> dict[str, Any]:
         "rejected_candidate_defect_count",
         "document_consistency_keys",
         "expected_document_consistency_keys",
+        "out_of_scope_claim_role",
     }
     return {key: diagnostics[key] for key in allowed if key in diagnostics}
 
@@ -1133,6 +1165,13 @@ def _repair_shape_instruction(diagnostics: Mapping[str, Any]) -> str:
             "Do not submit source_material_gap findings. Findings must be candidate_defect items whose action changes "
             "the candidate answer. If only source materials need an owner decision and the candidate already reports that "
             "gap accurately, submit pass with no reported findings; otherwise keep only candidate_defect findings. "
+            + common
+        )
+    if code == "claim_role_out_of_scope":
+        return (
+            "Do not report evidence-review findings for candidate claims whose claim_role is proposal or pending. "
+            "Those roles are explicitly non-current and outside this reviewer's factual-evidence ownership. Keep only "
+            "provable defects in requirement_fact, source_fact, or other claims; submit pass when none remain. "
             + common
         )
     if code == "candidate_defect_findings_missing":

@@ -1,0 +1,95 @@
+{
+  "id": "readonly-reviewer-claim-role-ownership",
+  "title": "Evidence reviewer rejects proposal and pending findings as another role's responsibility",
+  "prompt": "读取 src/Owner.java 并输出需求事实、源码事实、设计建议和尚待确认项，不要修改文件。",
+  "budget_seconds": 90,
+  "workspace_files": {
+    "src/Owner.java": "class Owner {}\n"
+  },
+  "scripted_responses": [
+    {
+      "tool_calls": [
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "src/Owner.java"
+          }
+        }
+      ]
+    },
+    {
+      "content": "## 源码当前事实\n- src/Owner.java:1 declares Owner.\n\n## 设计建议\n- 建议新增 settlement API。\n\n## 尚待确认项\n- 是否复用旧字段。"
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "report_read_only_finding",
+          "arguments": {
+            "claim_id": "c002",
+            "finding_scope": "candidate_defect",
+            "issue": "the proposal needs another route and state",
+            "action": "add the missing route and state"
+          }
+        },
+        {
+          "name": "submit_read_only_review",
+          "arguments": {
+            "verdict": "revise",
+            "confidence": 0.9,
+            "reason": "expand the proposal"
+          }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "submit_read_only_review",
+          "arguments": {
+            "verdict": "pass",
+            "confidence": 0.99,
+            "reason": "the source fact is grounded and proposal or pending quality belongs to another reviewer role"
+          }
+        }
+      ]
+    }
+  ],
+  "acceptance": {
+    "required_tools": [
+      "read_file"
+    ],
+    "forbidden_tools": [
+      "glob_files",
+      "search_code",
+      "list_files",
+      "apply_patch",
+      "write_file",
+      "shell",
+      "run_tests"
+    ],
+    "changed_files": [],
+    "answer_all_of": [
+      "src/Owner.java:1 declares Owner",
+      "建议新增 settlement API",
+      "是否复用旧字段"
+    ],
+    "termination_reason": "final",
+    "run_summary": {
+      "tool_calls": 1,
+      "tool_errors": 0
+    },
+    "read_only_reviewer": {
+      "triggers": 1,
+      "attempts": 2,
+      "rejected_finding_submits": 1,
+      "rejected_final_submits": 1,
+      "typed_submits": 1,
+      "rewrites": 0
+    },
+    "safe_partial_report": {
+      "emitted": 0
+    },
+    "max_tool_errors": 0
+  },
+  "residual_risk": "This evidence reviewer intentionally does not judge proposal quality; a future design or implementation reviewer must own that separate concern."
+}

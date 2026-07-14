@@ -21,6 +21,7 @@ from local_agent.read_only_reviewer import candidate_claim_projection_issues
 from local_agent.read_only_reviewer import candidate_claim_units
 from local_agent.read_only_reviewer import rewrite_complies_with_review
 from local_agent.read_only_reviewer import parse_reviewer_payload
+from local_agent.read_only_reviewer import parse_reviewer_finding_payload
 from local_agent.read_only_reviewer import parse_reviewer_result
 from local_agent.read_only_reviewer import ReviewerValidationError
 from local_agent.read_only_reviewer import reviewer_repair_messages
@@ -3105,6 +3106,59 @@ def _config(workspace: Path, *, provider: str = "openai-compatible", vision_mode
 
 
 class ReadOnlyReviewerTests(unittest.TestCase):
+    def test_candidate_claim_roles_follow_markdown_section_ownership(self) -> None:
+        units = candidate_claim_units(
+            "## 需求明确事实\n- Requirement fact.\n"
+            "## 源码当前事实\n- Source fact.\n"
+            "## 设计建议\n- Proposed API.\n"
+            "## 尚待确认项\n- Open question.\n"
+        )
+
+        self.assertEqual(
+            {unit.text: unit.claim_role for unit in units},
+            {
+                "- Requirement fact.": "requirement_fact",
+                "- Source fact.": "source_fact",
+                "- Proposed API.": "proposal",
+                "- Open question.": "pending",
+            },
+        )
+        self.assertEqual([unit.to_dict()["claim_role"] for unit in units], [
+            "requirement_fact", "source_fact", "proposal", "pending"
+        ])
+
+    def test_evidence_reviewer_rejects_findings_owned_by_proposal_or_pending_roles(self) -> None:
+        units = candidate_claim_units(
+            "## 设计建议\n- 建议新增 settlement API。\n"
+            "## 尚待确认项\n- 是否复用旧字段。\n"
+        )
+        for unit in units:
+            with self.subTest(role=unit.claim_role), self.assertRaises(ReviewerValidationError) as raised:
+                parse_reviewer_finding_payload(
+                    {
+                        "claim_id": unit.claim_id,
+                        "finding_scope": "candidate_defect",
+                        "issue": "proposal needs more implementation detail",
+                        "action": "add another field and route",
+                    },
+                    claim_units=units,
+                )
+            self.assertEqual(raised.exception.code, "claim_role_out_of_scope")
+            repair = reviewer_repair_messages(
+                build_explore_handoff(
+                    request="review",
+                    contract=generate_requirement_contract("读取源码并输出证据化技术设计。"),
+                    requirement_evidence=(),
+                    source_evidence=(),
+                    records=(),
+                    tool_results=(),
+                ),
+                units,
+                raised.exception.diagnostics,
+            )[-1]["content"]
+            self.assertIn("proposal or pending", repair)
+            self.assertIn("outside this reviewer's factual-evidence ownership", repair)
+
     def test_pending_transport_directive_owns_candidate_before_other_final_steerers(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             runtime = AgentRuntime(_config(Path(tmp).resolve()), show_tool_logs=False)
