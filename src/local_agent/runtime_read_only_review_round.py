@@ -25,6 +25,31 @@ from .reviewer_output_lifecycle import reviewer_assistant_tool_message
 from .reviewer_output_lifecycle import reviewer_tool_result_messages
 
 
+DOCUMENT_CONSISTENCY_REJECTION_CODES = frozenset(
+    {
+        "document_consistency_missing",
+        "document_consistency_keys_invalid",
+        "document_consistency_stance_invalid",
+        "document_consistency_evidence_roles_overlap",
+        "document_consistency_support_requires_explicit_stance",
+        "document_consistency_finding_reconciles_conflict",
+        "document_conflict_evidence_invalid",
+        "document_conflict_evidence_unknown",
+        "document_conflict_evidence_duplicate",
+        "document_conflict_evidence_not_observation",
+        "document_conflict_evidence_insufficient",
+        "document_conflict_disposition_missing",
+        "document_consistency_stance_mismatch",
+        "document_reconciliation_unsupported",
+        "document_reconciliation_support_missing",
+        "document_reconciliation_support_invalid",
+        "document_supporting_evidence_invalid",
+        "document_supporting_evidence_unknown",
+        "document_supporting_evidence_duplicate",
+    }
+)
+
+
 @dataclass(frozen=True)
 class ReviewRoundPort:
     client: Any
@@ -71,7 +96,7 @@ def run_review_round(
     collected_findings: tuple[ReviewerFinding, ...] = ()
     provider_turn = 0
     repairs_used = 0
-    blocking_lifecycle_errors = 0
+    blocking_lifecycle_corrections: dict[str, int] = {}
     capacity_directives = 0
     finding_capacity_reached = False
     while provider_turn < max_provider_turns:
@@ -231,7 +256,9 @@ def run_review_round(
                 )
         if result is None:
             if turn.blocking_rejections:
-                blocking_lifecycle_errors += 1
+                for category in _blocking_rejection_categories(turn.blocking_rejections):
+                    blocking_lifecycle_corrections[category] = blocking_lifecycle_corrections.get(category, 0) + 1
+                    port.collector.record_read_only_review_output_lifecycle_correction(category)
             if turn.capacity_rejections:
                 capacity_directives += 1
             invalidated_claim_ids = invalidated_document_finding_claim_ids(turn.events)
@@ -275,15 +302,18 @@ def run_review_round(
                     },
                 )
                 return _failure("invalid_output", "output_lifecycle_exhausted", handoff)
-            if blocking_lifecycle_errors > MAX_REVIEWER_OUTPUT_LIFECYCLE_ERRORS:
+            exhausted_category = _exhausted_lifecycle_category(blocking_lifecycle_corrections)
+            if exhausted_category is not None:
                 state.output_lifecycle_exhausted = True
                 port.collector.record_read_only_review_output_lifecycle_exhausted()
+                port.collector.record_read_only_review_output_lifecycle_exhausted_category(exhausted_category)
                 port.session.append(
                     "read_only_reviewer",
                     {
                         "event": f"{event_prefix}output_lifecycle_exhausted",
                         "attempts": provider_turn,
-                        "rejected_events": blocking_lifecycle_errors,
+                        "category": exhausted_category,
+                        "corrections": dict(sorted(blocking_lifecycle_corrections.items())),
                     },
                 )
                 return _failure(
@@ -306,3 +336,34 @@ def run_review_round(
 
 def _failure(reason: str, detail: str, handoff: Any) -> ReviewRoundOutcome:
     return ReviewRoundOutcome(failure=ReviewRoundFailure(reason, detail, handoff))
+
+
+def _blocking_rejection_categories(events: tuple[Any, ...]) -> tuple[str, ...]:
+    categories: list[str] = []
+    for event in events:
+        category = _blocking_rejection_category(event)
+        if category not in categories:
+            categories.append(category)
+    return tuple(categories)
+
+
+def _blocking_rejection_category(event: Any) -> str:
+    code = getattr(event, "code", "") or ""
+    if code.startswith("output_tool_arguments_"):
+        return "arguments"
+    if _is_document_consistency_rejection_code(code):
+        return "document_consistency"
+    return "protocol"
+
+
+def _is_document_consistency_rejection_code(code: str) -> bool:
+    return code in DOCUMENT_CONSISTENCY_REJECTION_CODES
+
+
+def _exhausted_lifecycle_category(corrections: dict[str, int]) -> str | None:
+    exhausted = [
+        category
+        for category, count in sorted(corrections.items())
+        if count > MAX_REVIEWER_OUTPUT_LIFECYCLE_ERRORS
+    ]
+    return exhausted[0] if exhausted else None

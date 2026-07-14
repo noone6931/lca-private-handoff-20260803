@@ -5,6 +5,9 @@ import time
 from typing import Any, Mapping
 
 
+READ_ONLY_REVIEWER_LIFECYCLE_CATEGORIES = frozenset({"arguments", "document_consistency", "protocol"})
+
+
 @dataclass
 class RunStats:
     run_id: str
@@ -70,6 +73,10 @@ class RunStats:
     read_only_reviewer_finding_limit_hits: int = 0
     read_only_reviewer_invalidated_finding_submits: int = 0
     read_only_reviewer_output_lifecycle_exhausted: int = 0
+    read_only_reviewer_argument_lifecycle_corrections: int = 0
+    read_only_reviewer_document_lifecycle_corrections: int = 0
+    read_only_reviewer_protocol_lifecycle_corrections: int = 0
+    read_only_reviewer_lifecycle_exhausted_categories: dict[str, int] = field(default_factory=dict)
     read_only_reviewer_verdicts: dict[str, int] = field(default_factory=dict)
     read_only_reviewer_errors: dict[str, int] = field(default_factory=dict)
     pre_review_audit_rounds: int = 0
@@ -365,6 +372,27 @@ class RunCollector:
         if self._stats is not None:
             self._stats.read_only_reviewer_output_lifecycle_exhausted += 1
 
+    def record_read_only_review_output_lifecycle_correction(self, category: str) -> None:
+        if self._stats is None:
+            return
+        if category not in READ_ONLY_REVIEWER_LIFECYCLE_CATEGORIES:
+            raise ValueError(f"unknown read-only reviewer lifecycle category: {category}")
+        if category == "arguments":
+            self._stats.read_only_reviewer_argument_lifecycle_corrections += 1
+        elif category == "document_consistency":
+            self._stats.read_only_reviewer_document_lifecycle_corrections += 1
+        else:
+            self._stats.read_only_reviewer_protocol_lifecycle_corrections += 1
+
+    def record_read_only_review_output_lifecycle_exhausted_category(self, category: str) -> None:
+        if self._stats is None:
+            return
+        if category not in READ_ONLY_REVIEWER_LIFECYCLE_CATEGORIES:
+            raise ValueError(f"unknown read-only reviewer lifecycle category: {category}")
+        self._stats.read_only_reviewer_lifecycle_exhausted_categories[category] = (
+            self._stats.read_only_reviewer_lifecycle_exhausted_categories.get(category, 0) + 1
+        )
+
     def record_pre_review_audit(self, *, categories: tuple[str, ...], exhausted: bool) -> None:
         if self._stats is None:
             return
@@ -483,6 +511,14 @@ class RunCollector:
                 "finding_limit_hits": stats.read_only_reviewer_finding_limit_hits,
                 "invalidated_finding_submits": stats.read_only_reviewer_invalidated_finding_submits,
                 "output_lifecycle_exhausted": stats.read_only_reviewer_output_lifecycle_exhausted,
+                "output_lifecycle_corrections": {
+                    "arguments": stats.read_only_reviewer_argument_lifecycle_corrections,
+                    "document_consistency": stats.read_only_reviewer_document_lifecycle_corrections,
+                    "protocol": stats.read_only_reviewer_protocol_lifecycle_corrections,
+                },
+                "output_lifecycle_exhausted_categories": dict(
+                    sorted(stats.read_only_reviewer_lifecycle_exhausted_categories.items())
+                ),
                 "verdicts": dict(sorted(stats.read_only_reviewer_verdicts.items())),
                 "errors": dict(sorted(stats.read_only_reviewer_errors.items())),
             },

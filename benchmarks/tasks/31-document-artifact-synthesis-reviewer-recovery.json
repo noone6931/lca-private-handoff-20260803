@@ -1,0 +1,237 @@
+{
+  "id": "document-artifact-synthesis-reviewer-recovery",
+  "title": "Document artifact synthesis uses no-tool final and reviewer separates malformed final from semantic correction",
+  "prompt": "只读分析 Markdown、HTML 和示例图片，说明本期范围、关键规则，以及资料之间是否有冲突。每项结论给出证据；证据不足不要推测。",
+  "budget_seconds": 90,
+  "workspace_files": {
+    "policy.md": "Field must remain blank in this phase.\n",
+    "prototype.html": "<p>Prototype form shows the same field area.</p>\n",
+    "example.png": "GIF89a\n"
+  },
+  "scripted_image_observations": [
+    {
+      "observations": [
+        "The example image visibly shows the field filled."
+      ],
+      "uncertainties": [],
+      "inferences": []
+    }
+  ],
+  "scripted_responses": [
+    {
+      "tool_calls": [
+        {
+          "name": "list_files",
+          "arguments": {
+            "path": "."
+          }
+        },
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "policy.md"
+          }
+        },
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "prototype.html"
+          }
+        },
+        {
+          "name": "inspect_image",
+          "arguments": {
+            "path": "example.png",
+            "question": "Describe visible field state."
+          }
+        }
+      ]
+    },
+    {
+      "content": "Requirement claim 1 is verified.\n\nRequirement claim 2 is verified.\n\nRequirement claim 3 is verified.\n\nRequirement claim 4 is verified.\n\nRequirement claim 5 is verified.\n\nRequirement claim 6 is verified.\n\nRequirement claim 7 is verified.\n\npolicy.md:1 says the field is blank; prototype.html:1 identifies the form; example.png shows the field filled, but the example image is the later completed state so there is no conflict."
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "report_read_only_finding",
+          "arguments": {
+            "claim_id": "c001",
+            "finding_scope": "candidate_defect",
+            "issue": "candidate fact needs qualification",
+            "action": "mark this reviewed claim unverified"
+          }
+        },
+        {
+          "name": "report_read_only_finding",
+          "arguments": {
+            "claim_id": "c002",
+            "finding_scope": "candidate_defect",
+            "issue": "candidate fact needs qualification",
+            "action": "mark this reviewed claim unverified"
+          }
+        },
+        {
+          "name": "report_read_only_finding",
+          "arguments": {
+            "claim_id": "c003",
+            "finding_scope": "candidate_defect",
+            "issue": "candidate fact needs qualification",
+            "action": "mark this reviewed claim unverified"
+          }
+        },
+        {
+          "name": "report_read_only_finding",
+          "arguments": {
+            "claim_id": "c004",
+            "finding_scope": "candidate_defect",
+            "issue": "candidate fact needs qualification",
+            "action": "mark this reviewed claim unverified"
+          }
+        },
+        {
+          "name": "report_read_only_finding",
+          "arguments": {
+            "claim_id": "c005",
+            "finding_scope": "candidate_defect",
+            "issue": "candidate fact needs qualification",
+            "action": "mark this reviewed claim unverified"
+          }
+        },
+        {
+          "name": "report_read_only_finding",
+          "arguments": {
+            "claim_id": "c006",
+            "finding_scope": "candidate_defect",
+            "issue": "candidate fact needs qualification",
+            "action": "mark this reviewed claim unverified"
+          }
+        },
+        {
+          "name": "report_read_only_finding",
+          "arguments": {
+            "claim_id": "c007",
+            "finding_scope": "candidate_defect",
+            "issue": "candidate fact needs qualification",
+            "action": "mark this reviewed claim unverified"
+          }
+        },
+        {
+          "name": "report_read_only_finding",
+          "arguments": {
+            "claim_id": "c008",
+            "finding_scope": "candidate_defect",
+            "issue": "the candidate discusses an artifact conflict",
+            "action": "Treat the image as the later completed state."
+          }
+        },
+        {
+          "name": "submit_read_only_review",
+          "arguments_raw": "{"
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "submit_read_only_review",
+          "arguments_raw": "{"
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "submit_read_only_review",
+          "arguments": {
+            "verdict": "revise",
+            "confidence": 0.9,
+            "reason": "artifact conflict needs unresolved rewrite",
+            "document_consistency": {
+              "stance": "reported_unresolved",
+              "conflict_evidence_ids": [
+                "e001",
+                "e005"
+              ],
+              "supporting_evidence_ids": []
+            }
+          }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "report_read_only_finding",
+          "arguments": {
+            "claim_id": "c008",
+            "finding_scope": "candidate_defect",
+            "issue": "the candidate discusses an artifact conflict",
+            "action": "Remove unsupported reconciliation and keep artifact role/lifecycle unresolved."
+          }
+        },
+        {
+          "name": "submit_read_only_review",
+          "arguments": {
+            "verdict": "revise",
+            "confidence": 0.9,
+            "reason": "artifact conflict needs unresolved rewrite",
+            "document_consistency": {
+              "stance": "reported_unresolved",
+              "conflict_evidence_ids": [
+                "e001",
+                "e005"
+              ],
+              "supporting_evidence_ids": []
+            }
+          }
+        }
+      ]
+    },
+    {
+      "content": "Requirement claims 1-7 are unverified. policy.md:1 says the field is blank; prototype.html:1 identifies the form area; example.png visibly shows the field filled. The policy/image discrepancy remains unresolved because artifact role, lifecycle, and precedence are not established."
+    }
+  ],
+  "acceptance": {
+    "required_tools": [
+      "read_file",
+      "inspect_image"
+    ],
+    "forbidden_tools": [
+      "apply_patch",
+      "write_file",
+      "shell",
+      "run_tests",
+      "search_code"
+    ],
+    "changed_files": [],
+    "answer_all_of": [
+      "policy.md",
+      "prototype.html",
+      "example.png",
+      "unresolved"
+    ],
+    "answer_forbidden_regex": [
+      "later completed state so there is no conflict"
+    ],
+    "termination_reason": "final",
+    "run_summary": {
+      "tool_calls": 4,
+      "tool_errors": 0
+    },
+    "read_only_reviewer": {
+      "triggers": 1,
+      "finding_submits": 9,
+      "invalidated_finding_submits": 1,
+      "rejected_final_submits": 3,
+      "final_submits": 1,
+      "rewrites": 1,
+      "rewrite_acceptances": 1,
+      "output_lifecycle_exhausted": 0
+    },
+    "safe_partial_report": {
+      "emitted": 0
+    },
+    "max_tool_errors": 0
+  },
+  "residual_risk": "The fixture proves no-tool synthesis after explicit artifacts and separated reviewer correction budgets; live provider wording can still vary."
+}

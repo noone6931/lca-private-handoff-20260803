@@ -137,16 +137,21 @@ class ScriptedBenchmarkClient:
                 if not isinstance(call, Mapping):
                     continue
                 name = str(call.get("name") or "")
-                arguments = call.get("arguments")
-                if not isinstance(arguments, Mapping):
-                    arguments = {}
+                raw_arguments = call.get("arguments_raw")
+                if isinstance(raw_arguments, str):
+                    rendered_arguments = raw_arguments
+                else:
+                    arguments = call.get("arguments")
+                    if not isinstance(arguments, Mapping):
+                        arguments = {}
+                    rendered_arguments = json.dumps(arguments, ensure_ascii=False)
                 rendered_calls.append(
                     {
                         "id": f"benchmark-{len(self.calls)}-{index}",
                         "type": "function",
                         "function": {
                             "name": name,
-                            "arguments": json.dumps(arguments, ensure_ascii=False),
+                            "arguments": rendered_arguments,
                         },
                     }
                 )

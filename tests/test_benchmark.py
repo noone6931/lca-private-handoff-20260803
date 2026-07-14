@@ -7,6 +7,7 @@ from pathlib import Path
 
 from local_agent.benchmark import DEFAULT_TASKS_DIR
 from local_agent.benchmark import BenchmarkResult
+from local_agent.benchmark import ScriptedBenchmarkClient
 from local_agent.benchmark import _acceptance_for_mode
 from local_agent.benchmark import _matches_answer_regex
 from local_agent.benchmark import load_benchmark_tasks
@@ -19,7 +20,7 @@ class BenchmarkTests(unittest.TestCase):
         tasks = load_benchmark_tasks()
         identifiers = {task.identifier for task in tasks}
 
-        self.assertEqual(len(tasks), 30)
+        self.assertEqual(len(tasks), 31)
         self.assertEqual(
             identifiers,
             {
@@ -53,6 +54,7 @@ class BenchmarkTests(unittest.TestCase):
                 "readonly-transport-recovery",
                 "readonly-rewrite-verification-closure",
                 "readonly-design-proposal-semantics",
+                "document-artifact-synthesis-reviewer-recovery",
             },
         )
         self.assertTrue(DEFAULT_TASKS_DIR.is_dir())
@@ -64,9 +66,9 @@ class BenchmarkTests(unittest.TestCase):
             payload = json.loads((output_dir / "benchmark-report.json").read_text(encoding="utf-8"))
             markdown = (output_dir / "benchmark-report.md").read_text(encoding="utf-8")
 
-            self.assertEqual(len(results), 30)
+            self.assertEqual(len(results), 31)
         self.assertTrue(all(result.passed for result in results))
-        self.assertEqual(payload["passed"], 30)
+        self.assertEqual(payload["passed"], 31)
         self.assertEqual(payload["failed"], 0)
         self.assertIn("small-code-change-test-diff", markdown)
         self.assertIn("budget-exhausted-incomplete", markdown)
@@ -93,6 +95,28 @@ class BenchmarkTests(unittest.TestCase):
         self.assertIn("readonly-transport-recovery", markdown)
         self.assertIn("readonly-rewrite-verification-closure", markdown)
         self.assertIn("readonly-design-proposal-semantics", markdown)
+        self.assertIn("document-artifact-synthesis-reviewer-recovery", markdown)
+
+    def test_scripted_tool_call_can_emit_raw_malformed_arguments(self) -> None:
+        client = ScriptedBenchmarkClient(
+            (
+                {
+                    "tool_calls": [
+                        {
+                            "name": "submit_read_only_review",
+                            "arguments_raw": "{",
+                        }
+                    ]
+                },
+            ),
+            workspace=Path("/tmp/workspace"),
+            named_roots={},
+        )
+        response = client.chat([], [])
+        tool_call = response.message["tool_calls"][0]
+
+        self.assertEqual(tool_call["function"]["name"], "submit_read_only_review")
+        self.assertEqual(tool_call["function"]["arguments"], "{")
 
     def test_mapping_acceptance_requires_explicit_metric_values(self) -> None:
         from local_agent.benchmark import _mapping_integer_values_match

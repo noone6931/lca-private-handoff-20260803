@@ -158,6 +158,37 @@ class _DocumentOnlyRequirementClient:
 
     def chat(self, messages, tools, *, timeout=None):
         type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
+        if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages):
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "review-pass",
+                                "type": "function",
+                                "function": {
+                                    "name": "submit_read_only_review",
+                                    "arguments": json.dumps(
+                                        {
+                                            "verdict": "pass",
+                                            "confidence": 0.95,
+                                            "reason": "all requested artifacts are observed and discrepancy remains unresolved",
+                                            "document_consistency": {
+                                                "stance": "reported_unresolved",
+                                                "conflict_evidence_ids": ["e001", "e003"],
+                                                "supporting_evidence_ids": [],
+                                            },
+                                        }
+                                    ),
+                                },
+                            }
+                        ],
+                    }
+                },
+            )()
         if len(type(self).calls) == 1:
             return type(
                 "Response",
@@ -205,6 +236,98 @@ class _DocumentOnlyAnalysisWithNoEditLanguageClient(_DocumentOnlyRequirementClie
                 "待确认项：图片中的字段、页面交互和现有实现归属需另行验证。"
             )
         return response
+
+
+class _DocumentThreeArtifactSynthesisClient:
+    calls: list[dict] = []
+
+    def __init__(self, config: AgentConfig):
+        self.config = config
+
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
+        if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages):
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "review-pass",
+                                "type": "function",
+                                "function": {
+                                    "name": "submit_read_only_review",
+                                    "arguments": json.dumps(
+                                        {
+                                            "verdict": "pass",
+                                            "confidence": 0.95,
+                                            "reason": "document and image evidence remain explicitly unresolved",
+                                            "document_consistency": {
+                                                "stance": "reported_unresolved",
+                                                "conflict_evidence_ids": ["e001", "e003"],
+                                                "supporting_evidence_ids": [],
+                                            },
+                                        }
+                                    ),
+                                },
+                            }
+                        ],
+                    }
+                },
+            )()
+        if len(type(self).calls) == 1:
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "list-docs",
+                                "type": "function",
+                                "function": {"name": "list_files", "arguments": json.dumps({"path": "."})},
+                            },
+                            {
+                                "id": "read-md",
+                                "type": "function",
+                                "function": {"name": "read_file", "arguments": json.dumps({"path": "requirements.md"})},
+                            },
+                            {
+                                "id": "read-html",
+                                "type": "function",
+                                "function": {"name": "read_file", "arguments": json.dumps({"path": "prototype.html"})},
+                            },
+                            {
+                                "id": "inspect-image",
+                                "type": "function",
+                                "function": {
+                                    "name": "inspect_image",
+                                    "arguments": json.dumps({"path": "example.png", "question": "Describe visible fields."}),
+                                },
+                            },
+                        ],
+                    }
+                },
+            )()
+        if tools:
+            raise AssertionError("explicit document artifact synthesis must be a no-tools turn")
+        return type(
+            "Response",
+            (),
+            {"message": {"content": "requirements.md、prototype.html 和 example.png 均已观察；资料差异保持未消解。"}},
+        )()
+
+    def inspect_image(self, **_kwargs):
+        return json.dumps(
+            {
+                "observations": ["The image visibly shows a filled example field."],
+                "uncertainties": [],
+                "inferences": [],
+            }
+        )
 
 
 class _DirectiveExhaustionClient:
@@ -3814,14 +3937,70 @@ class AgentRuntimeTests(unittest.TestCase):
 
         self.assertIn("requirements.md:1", result)
         self.assertEqual(len(_DocumentOnlyRequirementClient.calls), 2)
-        for call in _DocumentOnlyRequirementClient.calls:
-            self.assertEqual(
-                _tool_names_from_schema_call(call["tools"]),
-                {"inspect_image", "list_files", "read_file"},
-            )
+        self.assertEqual(
+            _tool_names_from_schema_call(_DocumentOnlyRequirementClient.calls[0]["tools"]),
+            {"inspect_image", "list_files", "read_file"},
+        )
+        self.assertEqual(_DocumentOnlyRequirementClient.calls[1]["tools"], [])
         self.assertEqual(runtime._last_run_summary["tool_counts"], {"read_file": 1})
         self.assertNotIn("read_only_evidence", runtime._last_run_summary["steering_counts"])
         self.assertNotIn("negative_existence", runtime._last_run_summary["steering_counts"])
+        self.assertEqual(runtime._last_run_summary["termination_reason"], "final")
+
+    def test_explicit_document_artifacts_force_synthesis_after_all_modalities_observed(self) -> None:
+        _DocumentThreeArtifactSynthesisClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            (workspace / "requirements.md").write_text("Generated document leaves field blank.\n", encoding="utf-8")
+            (workspace / "prototype.html").write_text("<p>Prototype scope.</p>\n", encoding="utf-8")
+            (workspace / "example.png").write_bytes(
+                b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
+                b"\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc```\x00\x00\x00\x04\x00\x01"
+                b"\xf6\x178U\x00\x00\x00\x00IEND\xaeB`\x82"
+            )
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                vision_model="vision-model",
+                workspace=workspace,
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _DocumentThreeArtifactSynthesisClient):
+                runtime = AgentRuntime(config, show_tool_logs=False)
+                result = runtime.run("只根据 Markdown、HTML 和示例图片分析资料差异；不要检查代码。")
+
+        self.assertIn("资料差异保持未消解", result)
+        primary_calls = [
+            call
+            for call in _DocumentThreeArtifactSynthesisClient.calls
+            if not any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in call["messages"])
+        ]
+        reviewer_calls = [
+            call
+            for call in _DocumentThreeArtifactSynthesisClient.calls
+            if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in call["messages"])
+        ]
+        self.assertEqual(len(primary_calls), 2)
+        self.assertEqual(len(reviewer_calls), 1)
+        self.assertEqual(
+            _tool_names_from_schema_call(primary_calls[0]["tools"]),
+            {"inspect_image", "list_files", "read_file"},
+        )
+        self.assertEqual(primary_calls[1]["tools"], [])
+        self.assertEqual(
+            _tool_names_from_schema_call(reviewer_calls[0]["tools"]),
+            {"report_read_only_finding", "submit_read_only_review"},
+        )
+        self.assertEqual(
+            runtime._last_run_summary["tool_counts"],
+            {"inspect_image": 1, "list_files": 1, "read_file": 2},
+        )
+        self.assertEqual(runtime._last_run_summary["read_only_reviewer"]["triggers"], 1)
+        self.assertEqual(runtime._last_run_summary["read_only_reviewer"]["verdicts"], {"pass": 1})
         self.assertEqual(runtime._last_run_summary["termination_reason"], "final")
 
     def test_document_only_analysis_with_no_edit_language_keeps_the_analysis(self) -> None:

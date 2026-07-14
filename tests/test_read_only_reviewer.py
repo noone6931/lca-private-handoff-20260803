@@ -1797,6 +1797,107 @@ class _DocumentConsistencyFinalSubmitRecoveryClient:
         )()
 
 
+class _DocumentConsistencyMixedCorrectionRecoveryClient:
+    calls: list[dict] = []
+
+    def __init__(self, config: AgentConfig):
+        self._primary_calls = 0
+        self._review_calls = 0
+
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
+        reviewer = any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages)
+        if reviewer:
+            self._review_calls += 1
+            final_payload = {
+                "verdict": "revise",
+                "confidence": 0.9,
+                "reason": "document conflict remains unresolved",
+                "document_consistency": {
+                    "stance": "reported_unresolved",
+                    "conflict_evidence_ids": ["e001", "e002"],
+                    "supporting_evidence_ids": [],
+                },
+            }
+            if self._review_calls == 1:
+                findings = [
+                    _finding_call(
+                        f"finding-{index}",
+                        f"c{index:03d}",
+                        _candidate_claim(messages, f"c{index:03d}"),
+                        issue="candidate fact needs qualification",
+                        action="mark this reviewed claim unverified",
+                    )
+                    for index in range(1, 8)
+                ]
+                findings.append(
+                    _finding_call(
+                        "bad-conflict",
+                        "c008",
+                        _candidate_claim(messages, "c008"),
+                        issue="the candidate discusses an artifact conflict",
+                        action="Treat the prototype as the later completed state.",
+                    )
+                )
+                return _review_tool_calls_response([*findings, _final_call("malformed-final-1", "{")])
+            if self._review_calls == 2:
+                return _review_tool_calls_response([_final_call("malformed-final-2", "{")])
+            if self._review_calls == 3:
+                return _review_tool_calls_response([_final_call("invalid-document-final", final_payload)])
+            if self._review_calls == 4:
+                return _review_tool_calls_response(
+                    [
+                        _finding_call(
+                            "fixed-conflict",
+                            "c008",
+                            _candidate_claim(messages, "c008"),
+                            issue="the candidate discusses an artifact conflict",
+                            action="Remove the unsupported reconciliation and keep artifact role/lifecycle unresolved.",
+                        ),
+                        _final_call("valid-final", final_payload),
+                    ]
+                )
+            raise AssertionError("unexpected reviewer turn")
+        self._primary_calls += 1
+        if self._primary_calls == 1:
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "read-policy",
+                                "type": "function",
+                                "function": {"name": "read_file", "arguments": '{"path":"policy.md"}'},
+                            },
+                            {
+                                "id": "read-prototype",
+                                "type": "function",
+                                "function": {"name": "read_file", "arguments": '{"path":"prototype.html"}'},
+                            },
+                        ],
+                    }
+                },
+            )()
+        if self._review_calls >= 4:
+            content = (
+                "Requirement claims 1-7 are unverified. policy.md:1 says the field is blank; "
+                "prototype.html:1 shows a value. The policy/prototype discrepancy remains unresolved because "
+                "artifact role and lifecycle are not established."
+            )
+        else:
+            content = "\n\n".join(
+                [f"Requirement claim {index} is verified." for index in range(1, 8)]
+                + [
+                    "policy.md:1 says the field is blank; prototype.html:1 shows a value, "
+                    "but the prototype is a later completed state so there is no conflict."
+                ]
+            )
+        return type("Response", (), {"message": {"content": content}})()
+
+
 class _DocumentConsistencyRepeatedInvalidFindingClient(_DocumentConsistencyInvalidFindingRecoveryClient):
     calls: list[dict] = []
 
@@ -2838,6 +2939,50 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         ]
         self.assertEqual(len(one_side_result), 1)
         self.assertIn("Accepted findings remain recorded", str(one_side_result[0].get("content")))
+        self.assertEqual(
+            summary["output_lifecycle_corrections"],
+            {"arguments": 0, "document_consistency": 2, "protocol": 0},
+        )
+
+    def test_document_consistency_reviewer_separates_argument_and_semantic_corrections(self) -> None:
+        _DocumentConsistencyMixedCorrectionRecoveryClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            (workspace / "policy.md").write_text("Field must remain blank.\n", encoding="utf-8")
+            (workspace / "prototype.html").write_text("<p>Field has a value.</p>\n", encoding="utf-8")
+            with patch("local_agent.agent.OpenAICompatibleClient", _DocumentConsistencyMixedCorrectionRecoveryClient):
+                runtime = AgentRuntime(_config(workspace), show_tool_logs=False)
+                answer = runtime.run("只根据 Markdown 和 HTML 分析资料一致性，不要检查代码。资料角色未说明时保持未消解。")
+
+        self.assertIn("unresolved", answer)
+        summary = runtime._last_run_summary["read_only_reviewer"]
+        self.assertEqual(summary["finding_submits"], 9)
+        self.assertEqual(summary["invalidated_finding_submits"], 1)
+        self.assertEqual(summary["rejected_final_submits"], 3)
+        self.assertEqual(summary["final_submits"], 1)
+        self.assertEqual(summary["rewrites"], 1)
+        self.assertEqual(summary["rewrite_acceptances"], 1)
+        self.assertEqual(summary["output_lifecycle_exhausted"], 0)
+        self.assertEqual(summary["output_lifecycle_exhausted_categories"], {})
+        self.assertEqual(
+            summary["output_lifecycle_corrections"],
+            {"arguments": 2, "document_consistency": 1, "protocol": 0},
+        )
+        final_findings = runtime._run.read_only_review.findings
+        self.assertEqual([finding.claim_id for finding in final_findings], [f"c{index:03d}" for index in range(1, 9)])
+        corrected = next(finding for finding in final_findings if finding.claim_id == "c008")
+        self.assertNotIn("completed state", corrected.action)
+        self.assertIn("unresolved", corrected.action)
+        review_calls = [
+            call
+            for call in _DocumentConsistencyMixedCorrectionRecoveryClient.calls
+            if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in call["messages"])
+        ]
+        self.assertEqual(len(review_calls), 4)
+        self.assertEqual(
+            [tool["function"]["name"] for tool in review_calls[3]["tools"]],
+            [REVIEWER_FINDING_TOOL_NAME, REVIEWER_OUTPUT_TOOL_NAME],
+        )
 
     def test_document_consistency_repeated_bad_finding_remains_bounded_unverified(self) -> None:
         _DocumentConsistencyRepeatedInvalidFindingClient.calls = []
@@ -2854,6 +2999,7 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertEqual(summary["invalidated_finding_submits"], 3)
         self.assertEqual(summary["rejected_final_submits"], 3)
         self.assertEqual(summary["output_lifecycle_exhausted"], 1)
+        self.assertEqual(summary["output_lifecycle_exhausted_categories"], {"document_consistency": 1})
         self.assertEqual(summary["errors"], {"invalid_output": 1})
 
     def test_document_consistency_rewrite_context_drives_runtime_rewrite_then_second_pass(self) -> None:
@@ -5107,6 +5253,7 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertEqual(summary["repair_exhausted"], 0)
         self.assertEqual(summary["rejected_final_submits"], 3)
         self.assertEqual(summary["output_lifecycle_exhausted"], 1)
+        self.assertEqual(summary["output_lifecycle_exhausted_categories"], {"protocol": 1})
         self.assertNotIn('"findings":"wrong"', answer)
 
     def test_schema_diagnostics_are_typed_and_do_not_echo_claim_text(self) -> None:
@@ -5187,6 +5334,11 @@ class ReadOnlyReviewerTests(unittest.TestCase):
                 self.assertEqual(runtime._last_run_summary["read_only_reviewer"]["errors"], {expected: 1})
                 self.assertEqual(runtime._last_run_summary["provider_protocol_violations"], 0)
                 self.assertEqual(runtime._last_run_summary["read_only_reviewer"]["protocol_failures"], protocol_count)
+                if client is _ReviewerMalformedOutputClient:
+                    self.assertEqual(
+                        runtime._last_run_summary["read_only_reviewer"]["output_lifecycle_exhausted_categories"],
+                        {"arguments": 1},
+                    )
 
     def test_reviewer_repair_turn_timeout_and_protocol_violations_are_terminal_and_redacted(self) -> None:
         cases = (

@@ -9,7 +9,6 @@ from typing import Any
 from .design_evidence import missing_design_evidence_roots
 from .document_artifacts import DocumentArtifactRequirement
 from .document_artifacts import document_artifact_coverage
-from .document_artifacts import missing_document_artifacts
 from .inventory_contract import inventory_glob_call_hint
 from .negative_evidence import allowed_tools_for_negative_claims, parse_negative_evidence_claims, unsupported_negative_existence_claims
 from .read_only_explore import PRECISE_EVIDENCE_TOOLS, evaluate_read_only_explore
@@ -333,6 +332,27 @@ def tool_choice_steering_message(decision: ToolChoiceDecision, current_user_requ
     hints = "\n".join(f"- call hint: {hint}" for hint in decision.tool_call_hints)
     request = _one_line(current_user_request or "", max_chars=800)
     if decision.force_final_answer_without_tools:
+        if decision.rule_id == "document_artifacts_synthesis":
+            return (
+                "[Runtime tool choice queue]\n"
+                "The explicitly requested document/image artifacts are now covered by successful observations. "
+                "Your next response must be the final synthesis without tool calls: use only the collected evidence, "
+                "cite the observed artifacts, preserve unresolved document discrepancies, and do not inspect paths "
+                "outside the requested material set.\n"
+                f"- rule: {decision.rule_id or 'unknown'}\n"
+                f"- reason: {decision.reason}\n"
+                f"- original request: {request}"
+            )
+        if decision.rule_id == "document_artifacts_limited_synthesis":
+            return (
+                "[Runtime tool choice queue]\n"
+                "At least one explicitly requested document/image artifact is typed unavailable, and no missing "
+                "artifact remains to retry. Your next response must be the final limited synthesis without tool calls: "
+                "use only collected evidence, state the unavailable artifact as a limitation, and do not infer its contents.\n"
+                f"- rule: {decision.rule_id or 'unknown'}\n"
+                f"- reason: {decision.reason}\n"
+                f"- original request: {request}"
+            )
         return (
             "[Runtime tool choice queue]\n"
             "The bounded exploration budget is exhausted. Your next response must be the final answer without tool calls. "
@@ -466,9 +486,34 @@ def evaluate_tool_choice_state(
     if evidence_domain == "requirement_documents":
         artifacts = tuple(document_artifacts)
         coverage = document_artifact_coverage(artifacts, results)
-        missing = missing_document_artifacts(coverage)
+        missing = tuple(item.requirement for item in coverage if item.status == "missing")
+        unavailable = tuple(item for item in coverage if item.status == "unavailable")
         has_document_read = _has_requirement_doc_read(prompt, results)
-        complete = not missing and (bool(artifacts) or has_document_read)
+        explicit_artifacts_complete = bool(artifacts) and not missing
+        if explicit_artifacts_complete and not unavailable:
+            return ToolChoiceDecision(
+                steering_required=True,
+                allowed_tool_names=frozenset(),
+                reason=(
+                    "document_artifacts_complete: all explicitly requested document/image modalities have "
+                    "successful observations; synthesize from the collected evidence without more tools."
+                ),
+                rule_id="document_artifacts_synthesis",
+                force_final_answer_without_tools=True,
+            )
+        if artifacts and not missing and unavailable:
+            return ToolChoiceDecision(
+                steering_required=True,
+                allowed_tool_names=frozenset(),
+                reason=(
+                    "document_artifacts_unavailable: at least one explicitly requested artifact is typed unavailable; "
+                    "synthesize a limited answer from observed artifacts and state the unavailable coverage boundary."
+                ),
+                rule_id="document_artifacts_limited_synthesis",
+                missing_requirements=tuple(f"document_artifact_unavailable:{item.requirement.label}" for item in unavailable),
+                force_final_answer_without_tools=True,
+            )
+        complete = not artifacts and has_document_read
         return ToolChoiceDecision(
             steering_required=not complete,
             allowed_tool_names=_allowed_subset(DOCUMENT_ONLY_TOOL_NAMES, allowed_tools),

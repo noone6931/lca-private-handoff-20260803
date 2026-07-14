@@ -657,7 +657,69 @@ class ToolChoiceQueueTests(unittest.TestCase):
             evidence_domain="requirement_documents",
             document_artifacts=artifacts,
         )
-        self.assertFalse(complete.steering_required)
+        self.assertTrue(complete.steering_required)
+        self.assertTrue(complete.force_final_answer_without_tools)
+        self.assertEqual(complete.allowed_tool_names, frozenset())
+        self.assertEqual(complete.rule_id, "document_artifacts_synthesis")
+        message = tool_choice_steering_message(complete, "只根据 Markdown、HTML 和图片分析需求；不要检查代码。")
+        self.assertIn("explicitly requested document/image artifacts", message)
+        self.assertNotIn("budget is exhausted", message)
+
+    def test_document_artifact_completion_requires_successful_observation(self) -> None:
+        artifacts = (
+            DocumentArtifactRequirement("markdown", "markdown"),
+            DocumentArtifactRequirement("html", "html"),
+            DocumentArtifactRequirement("image", "image"),
+        )
+        failed_image = evaluate_tool_choice_state(
+            task_kind="read-only",
+            prompt="只根据 Markdown、HTML 和图片分析需求；不要检查代码。",
+            tool_results=[
+                ToolResultSummary("read_file", "spec", path="requirements.md"),
+                ToolResultSummary("read_file", "prototype", path="prototype.html"),
+                ToolResultSummary("inspect_image", "provider failed", path="example.png", is_error=True),
+            ],
+            evidence_domain="requirement_documents",
+            document_artifacts=artifacts,
+        )
+
+        self.assertTrue(failed_image.steering_required)
+        self.assertFalse(failed_image.force_final_answer_without_tools)
+        self.assertIn("document_artifact:image", failed_image.missing_requirements)
+        self.assertIn("inspect_image", failed_image.allowed_tool_names)
+
+    def test_document_artifact_unavailable_finishes_with_limited_synthesis(self) -> None:
+        artifacts = (
+            DocumentArtifactRequirement("markdown", "markdown"),
+            DocumentArtifactRequirement("html", "html"),
+            DocumentArtifactRequirement("image", "image"),
+        )
+        decision = evaluate_tool_choice_state(
+            task_kind="read-only",
+            prompt="只根据 Markdown、HTML 和图片分析需求；不要检查代码。",
+            tool_results=[
+                ToolResultSummary("read_file", "spec", path="requirements.md"),
+                ToolResultSummary("read_file", "prototype", path="prototype.html"),
+                ToolResultSummary(
+                    "inspect_image",
+                    "Image inspection is unavailable.",
+                    path="example.png",
+                    is_error=True,
+                    metadata={"image_inspection_unavailable": True},
+                ),
+            ],
+            evidence_domain="requirement_documents",
+            document_artifacts=artifacts,
+        )
+
+        self.assertTrue(decision.steering_required)
+        self.assertTrue(decision.force_final_answer_without_tools)
+        self.assertEqual(decision.allowed_tool_names, frozenset())
+        self.assertEqual(decision.rule_id, "document_artifacts_limited_synthesis")
+        self.assertEqual(decision.missing_requirements, ("document_artifact_unavailable:image",))
+        message = tool_choice_steering_message(decision, "只根据 Markdown、HTML 和图片分析需求；不要检查代码。")
+        self.assertIn("typed unavailable", message)
+        self.assertNotIn("budget is exhausted", message)
 
     def test_observed_negative_prompt_requires_glob_when_available(self) -> None:
         decision = evaluate_tool_choice_state(
