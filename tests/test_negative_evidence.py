@@ -160,6 +160,49 @@ class NegativeEvidenceTests(unittest.TestCase):
         self.assertEqual((claims[0].kind, claims[0].subject, claims[0].stance), ("entity", "Foo", ASSERTED_ABSENCE))
         self.assertEqual(len(unsupported_negative_existence_claims("无法读取 README，但这里不存在 Foo。", [])), 1)
 
+    def test_repository_wide_entity_absence_is_asserted_absence(self) -> None:
+        for content, subject_fragment in (
+            ("The repository conclusively lacks database schema, service API, and menu route.", "database schema"),
+            ("The repository proves no other owner exists.", "other owner"),
+            ("当前代码库已证明缺少数据表、接口和菜单路由。", "数据表"),
+            ("当前仓库证明不存在直接 owner。", "直接 owner"),
+        ):
+            with self.subTest(content=content):
+                claims = parse_negative_evidence_claims(content)
+                self.assertEqual(len(claims), 1)
+                self.assertEqual(claims[0].kind, "repository_entity")
+                self.assertEqual(claims[0].stance, ASSERTED_ABSENCE)
+                self.assertIn(subject_fragment, claims[0].subject)
+                self.assertEqual(len(unsupported_negative_existence_claims(content, [])), 1)
+
+    def test_repository_wide_entity_absence_respects_qualification_and_examples(self) -> None:
+        for content, expected_stance in (
+            ("If the repository lacks an API, propose one as an option.", QUOTED_OR_HYPOTHETICAL),
+            ("Do not claim the repository lacks an API; evidence is insufficient.", EPISTEMICALLY_QUALIFIED),
+            ("缺少证据不能断言当前代码库不存在接口。", EPISTEMICALLY_QUALIFIED),
+            ("`The repository lacks an API` is only an example.", None),
+        ):
+            with self.subTest(content=content):
+                claims = parse_negative_evidence_claims(content)
+                if expected_stance is None:
+                    self.assertEqual(claims, ())
+                else:
+                    self.assertEqual(len(claims), 1)
+                    self.assertEqual(claims[0].stance, expected_stance)
+                    self.assertEqual(unsupported_negative_existence_claims(content, []), ())
+
+    def test_repository_wide_entity_absence_ignores_modal_obligation_phrases(self) -> None:
+        for content in (
+            "The codebase does not have to add a new API for the first milestone.",
+            "The repository has no obligation to add a new table in this option.",
+            "当前代码库没有必要新增接口。",
+            "当前仓库没有义务新增数据表。",
+            "当前源码没有要求新增菜单。",
+        ):
+            with self.subTest(content=content):
+                self.assertEqual(parse_negative_evidence_claims(content), ())
+                self.assertEqual(unsupported_negative_existence_claims(content, []), ())
+
     def test_meta_negative_statements_do_not_become_existence_claims(self) -> None:
         issues = unsupported_negative_existence_claims(
             "不能推导出无 Java 源码；未验证，不能陈述无源码。",
@@ -523,6 +566,29 @@ class NegativeEvidenceTests(unittest.TestCase):
             decision.payload["unlocated_escalations"],
             ["结论：无直接影响", "需要从零开发"],
         )
+
+    def test_repository_entity_absence_rewrites_without_reopening_discovery(self) -> None:
+        request = "只读给出证据化技术设计；没有证据的结论标记未定位。"
+        context = FinalAnswerContext(
+            request=request,
+            content="The repository conclusively lacks database schema, service API, and menu route.",
+            messages=[],
+            run_start_index=0,
+            requirement_contract=generate_requirement_contract(request),
+            tool_results=[],
+            read_file_evidence_paths=[],
+            source_evidence=[],
+            open_todos=[],
+            is_code_implementation_request=False,
+            steer_counts={},
+        )
+
+        decision = NegativeExistenceSteerer(max_steers=2).decide(context)
+
+        self.assertIsNotNone(decision)
+        self.assertTrue(decision.force_final_answer_without_tools)
+        self.assertIsNone(decision.temporary_tool_allowlist)
+        self.assertEqual(decision.payload["claim_metrics"]["blocked_assertions"], 1)
 
     def test_negative_existence_steerer_respects_its_bounded_retry_cap(self) -> None:
         request = "只读确认当前目录是否有 Java 文件。"

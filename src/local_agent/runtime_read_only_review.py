@@ -13,15 +13,12 @@ from .read_only_reviewer import MAX_REVIEWER_FINDINGS
 from .read_only_reviewer import MAX_REVIEWER_SCHEMA_REPAIRS
 from .read_only_reviewer import MAX_TRANSPORT_RESIDUAL_PROJECTION_ROUNDS
 from .read_only_reviewer import prune_exact_transport_residual_claim_lines
-from .read_only_reviewer import ReviewerFinding
 from .read_only_reviewer import ReviewerPhaseOutcome
 from .read_only_reviewer import ReviewerResult
 from .read_only_reviewer import ReviewerValidationError
 from .read_only_reviewer import reviewer_messages
 from .read_only_reviewer import reviewer_transport_rewrite_message
-from .read_only_reviewer import reviewer_rewrite_verification_messages
 from .read_only_reviewer import reviewer_rewrite_message
-from .read_only_reviewer import rewrite_changes_any_reviewed_claim
 from .read_only_reviewer import rewrite_complies_with_review
 from .read_only_reviewer import should_review_read_only_candidate
 from .runtime_read_only_review_round import ReviewRoundPort
@@ -286,6 +283,8 @@ class ReadOnlyReviewPhase:
         artifact = classify_provider_content_artifact(runtime._config.provider, candidate)
         if artifact is not None:
             return self._unverified("protocol_error", f"provider_markup_artifact:{artifact.kind}", handoff=handoff)
+        state.rewrite_closure_checks += 1
+        runtime._run.collector.record_read_only_review_rewrite_closure_check()
         if state.document_consistency is not None:
             if state.findings and not rewrite_complies_with_review(candidate, state.claim_units, state.findings):
                 return self._queue_rewrite_correction_or_unverified(
@@ -306,46 +305,17 @@ class ReadOnlyReviewPhase:
                 return self._unverified("rewrite_noncompliant", code, handoff=original_handoff)
         elif state.findings:
             closure_findings = state.rewrite_closure_findings or state.findings
-            if not rewrite_changes_any_reviewed_claim(candidate, state.claim_units, closure_findings):
+            if not rewrite_complies_with_review(candidate, state.claim_units, closure_findings):
                 return self._queue_rewrite_correction_or_unverified(
                     "reviewed_claim_not_closed",
                     handoff=handoff,
                     rewrite_message=self._rewrite_correction_message(),
                 )
-            verification = self._run_rewrite_verification(
-                candidate,
-                handoff,
-                claim_units,
-                closure_findings,
-            )
-            if isinstance(verification, ReviewerPhaseOutcome):
-                return verification
-            if verification.verdict != "pass":
-                # The verification findings are bound to this rewritten
-                # candidate. Older claim IDs belong to a superseded candidate
-                # and must not leak into the next correction round.
-                state.claim_units = claim_units
-                state.rewrite_closure_findings = verification.findings
-                message = (
-                    reviewer_rewrite_message(
-                        verification,
-                        profile=runtime._run.requirement_contract.read_only_review_profile,
-                        handoff=handoff,
-                    )
-                    + "\n\n[Rewrite verification]\n"
-                    "A bounded verification review still found blocking defects in the rewritten answer. Correct these "
-                    "without tools, preserving proposal/unlocated/pending-confirmation boundaries."
-                )
-                return self._queue_rewrite_correction_or_unverified(
-                    "rewrite_verification_nonpass",
-                    handoff=handoff,
-                    result=verification,
-                    rewrite_message=message,
-                )
         state.rewrite_accepted = True
         state.rewrite_requested = False
-        state.verdict = "pass"
-        state.reason = "rewrite_accepted"
+        state.rewrite_closure_acceptances += 1
+        state.reason = "deterministic_closure_accepted"
+        runtime._run.collector.record_read_only_review_rewrite_closure_acceptance()
         runtime._run.collector.record_read_only_review_rewrite_acceptance()
         runtime._session.append(
             "read_only_reviewer",
@@ -443,85 +413,6 @@ class ReadOnlyReviewPhase:
                 reason=reason,
             )
         return self._unverified("rewrite_noncompliant", reason, result=result, handoff=handoff)
-
-    def _run_rewrite_verification(
-        self,
-        candidate: str,
-        handoff: Any,
-        claim_units: tuple[Any, ...],
-        closure_findings: tuple[ReviewerFinding, ...],
-    ) -> ReviewerResult | ReviewerPhaseOutcome:
-        runtime = self._runtime
-        state = runtime._run.read_only_review
-        contract = runtime._run.requirement_contract
-        timeout = self._review_timeout()
-        max_provider_turns = MAX_REVIEWER_FINDINGS + 1 + MAX_REVIEWER_SCHEMA_REPAIRS
-        document_consistency = (
-            contract.evidence_domain == "requirement_documents"
-            and contract.read_only_review_profile == "document_consistency"
-        )
-        state.review_round += 1
-        state.rewrite_verification_rounds += 1
-        runtime._run.collector.record_read_only_review_trigger()
-        runtime._run.collector.record_read_only_review_rewrite_verification_round()
-        runtime._session.append(
-            "read_only_reviewer",
-            {
-                "event": "rewrite_verification_triggered",
-                "run_id": runtime._run.run_id,
-                "items": len(handoff.items),
-                "timeout_seconds": timeout,
-                "review_round": state.review_round,
-                "closure_findings": len(closure_findings),
-            },
-        )
-        runtime._events.emit(
-            "ContextUpdated",
-            {"kind": "read_only_reviewer_rewrite_verification_triggered", "items": len(handoff.items)},
-        )
-        messages = reviewer_rewrite_verification_messages(handoff, claim_units, closure_findings)
-        round_outcome = run_review_round(
-            self._round_port(),
-            messages=messages,
-            candidate=candidate,
-            claim_units=claim_units,
-            handoff=handoff,
-            document_consistency=document_consistency,
-            timeout=timeout,
-            max_provider_turns=max_provider_turns,
-            validate_document_consistency=self._validate_document_consistency,
-            has_time_for_repair=self._has_reviewer_time_for_repair,
-            refresh_timeout=self._review_timeout,
-            event_prefix="rewrite_verification_",
-        )
-        if round_outcome.failure is not None:
-            failure = round_outcome.failure
-            return self._unverified(failure.reason, failure.detail, handoff=failure.handoff)
-        result = round_outcome.result
-        if result is None:
-            return self._unverified("invalid_output", "schema_repair_exhausted", handoff=handoff)
-        if round_outcome.repaired:
-            state.repair_success = True
-            runtime._run.collector.record_read_only_review_repair_success()
-        state.verdict = result.verdict
-        state.reason = result.reason
-        state.findings = result.findings
-        state.review_handoff = handoff
-        runtime._run.collector.record_read_only_review_result(result.verdict, len(result.findings))
-        runtime._session.append(
-            "read_only_reviewer",
-            {"event": "rewrite_verification_result", **result.to_dict()},
-        )
-        runtime._events.emit(
-            "ContextUpdated",
-            {
-                "kind": "read_only_reviewer_rewrite_verification_result",
-                "verdict": result.verdict,
-                "findings": len(result.findings),
-                "review_round": state.review_round,
-            },
-        )
-        return result
 
     def _rewrite_correction_message(self) -> str:
         state = self._runtime._run.read_only_review

@@ -728,7 +728,7 @@ class _ReviewerNoClaimFindingsClient(_ReviewerFindingMalformedFinalThenPassClien
         content = (
             "- Owner evidence remains unlocated.\n- DDL remains unverified.\n- API path is only a proposal."
             if self._review_calls
-            else "- Owner remains unlocated.\n- DDL is unverified.\n- API path is only a proposal."
+            else "- PayServiceImpl is verified owner.\n- Existing DDL is complete.\n- API path is implemented."
         )
         return type("Response", (), {"message": {"content": content}})()
 
@@ -743,45 +743,24 @@ class _RewriteVerificationParaphraseClient:
     def chat(self, messages, tools, *, timeout=None):
         type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
         is_reviewer = any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages)
-        is_verification = any("LCA_READ_ONLY_REWRITE_VERIFICATION" in str(message.get("content")) for message in messages)
         if is_reviewer:
             self._review_calls += 1
-            if not is_verification:
-                findings = [
-                    _finding_call(
-                        f"finding-{index}",
-                        f"c{index:03d}",
-                        _candidate_claim(messages, f"c{index:03d}"),
-                        issue="claim overstates bounded evidence",
-                        action="downgrade to unlocated or proposal",
-                        include_claim=False,
-                    )
-                    for index in range(1, 9)
-                ]
-                return _review_tool_calls_response([
-                    *findings,
-                    _final_call("initial-revise", {"verdict": "revise", "confidence": 0.9, "reason": "eight blockers"}),
-                ])
-            candidate_text = " ".join(
-                str(claim.get("text") or "")
-                for message in messages
-                if message.get("role") == "user" and "LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content"))
-                for claim in json.loads(message["content"]).get("candidate_claims", ())
-            )
-            if "repository conclusively lacks" in candidate_text:
-                return _review_tool_calls_response([
-                    _finding_call(
-                        "verify-finding",
-                        "c001",
-                        _candidate_claim(messages, "c001"),
-                        issue="paraphrased absence claim is still beyond bounded evidence",
-                        action="make it a proposal or pending confirmation",
-                        include_claim=False,
-                    ),
-                    _final_call("verify-revise", {"verdict": "revise", "confidence": 0.9, "reason": "paraphrase still blocks"}),
-                ])
+            if self._review_calls > 1:
+                raise AssertionError("fresh rewrite verification reviewer must not be called")
+            findings = [
+                _finding_call(
+                    f"finding-{index}",
+                    f"c{index:03d}",
+                    _candidate_claim(messages, f"c{index:03d}"),
+                    issue="claim overstates bounded evidence",
+                    action="downgrade to unlocated or proposal",
+                    include_claim=False,
+                )
+                for index in range(1, 9)
+            ]
             return _review_tool_calls_response([
-                _final_call("verify-pass", {"verdict": "pass", "confidence": 0.95, "reason": "all blockers downgraded"})
+                *findings,
+                _final_call("initial-revise", {"verdict": "revise", "confidence": 0.9, "reason": "eight blockers"}),
             ])
         self._primary_calls += 1
         if self._primary_calls == 1:
@@ -803,14 +782,14 @@ class _RewriteVerificationParaphraseClient:
             )()
         if self._primary_calls == 2:
             claims = [
-                "Current code proves no settlement DDL exists.",
-                "Current code proves no settlement API exists.",
-                "Current code proves no menu route exists.",
-                "Current code proves no template engine exists.",
-                "Current code proves no owner class exists.",
-                "Current code proves no status field exists.",
-                "Current code proves no rollback flow exists.",
-                "Current code proves no export mapping exists.",
+                "Evidence.java proves the settlement DDL owner.",
+                "Evidence.java proves the settlement API owner.",
+                "Evidence.java proves the menu route owner.",
+                "Evidence.java proves the template engine owner.",
+                "Evidence.java proves the service owner class.",
+                "Evidence.java proves the status field owner.",
+                "Evidence.java proves the rollback flow owner.",
+                "Evidence.java proves the export mapping owner.",
             ]
             return type("Response", (), {"message": {"content": "\n".join(f"- {claim}" for claim in claims)}})()
         if self._primary_calls == 3:
@@ -884,7 +863,6 @@ class _RewriteVerificationSameClaimIdClient:
     def chat(self, messages, tools, *, timeout=None):
         type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
         is_reviewer = any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages)
-        is_verification = any("LCA_READ_ONLY_REWRITE_VERIFICATION" in str(message.get("content")) for message in messages)
         if is_reviewer:
             self._review_calls += 1
             if self._review_calls == 1:
@@ -899,40 +877,7 @@ class _RewriteVerificationSameClaimIdClient:
                     ),
                     _final_call("initial-final", {"verdict": "revise", "confidence": 0.9, "reason": "initial blocker"}),
                 ])
-            if self._review_calls == 2 and is_verification:
-                return _review_tool_calls_response([
-                    _finding_call(
-                        "verification-finding",
-                        "c001",
-                        _candidate_claim(messages, "c001"),
-                        issue="c001 paraphrased owner absence still overstates evidence",
-                        action="make owner absence pending confirmation",
-                        include_claim=False,
-                    ),
-                    _final_call("verification-final", {"verdict": "revise", "confidence": 0.9, "reason": "verification blocker"}),
-                ])
-            if self._review_calls == 3 and is_verification:
-                closure_payloads = [
-                    json.loads(message["content"])
-                    for message in messages
-                    if message.get("role") == "user"
-                    and "LCA_READ_ONLY_REWRITE_VERIFICATION" in str(message.get("content"))
-                ]
-                closure = closure_payloads[-1]
-                if closure.get("prior_review") != {
-                    "verdict": "revise",
-                    "blocking_finding_count": 1,
-                    "historical_details_withheld": True,
-                }:
-                    raise AssertionError(f"prior review summary was not bounded: {closure!r}")
-                if "original_findings" in closure or "c001 paraphrased" in json.dumps(closure, ensure_ascii=False):
-                    raise AssertionError(f"superseded finding details leaked into fresh review: {closure!r}")
-                return _review_tool_calls_response([
-                    _final_call("verification-pass", {"verdict": "pass", "confidence": 0.95, "reason": "all closure findings scoped"})
-                ])
-            return _review_tool_calls_response([
-                _final_call("fallback-pass", {"verdict": "pass", "confidence": 0.95, "reason": "fallback"})
-            ])
+            raise AssertionError("fresh rewrite verification reviewer must not be called")
         self._primary_calls += 1
         if self._primary_calls == 1:
             return type("Response", (), {"message": {"content": None, "tool_calls": [
@@ -1364,19 +1309,11 @@ class _NoncompliantRewriteClient(_ReviewerFlowClient):
 class _PartialProgressRewriteClient(_ReviewerFlowClient):
     def chat(self, messages, tools, *, timeout=None):
         is_reviewer = any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages)
-        is_verification = any("LCA_READ_ONLY_REWRITE_VERIFICATION" in str(message.get("content")) for message in messages)
         if is_reviewer:
             type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
             self._review_calls += 1
-            if is_verification:
-                return _review_submit(
-                    {
-                        "verdict": "pass",
-                        "confidence": 0.9,
-                        "findings": [],
-                        "reason": "one blocking owner claim was downgraded and remaining advice is non-blocking",
-                    }
-                )
+            if self._review_calls > 1:
+                raise AssertionError("fresh rewrite verification reviewer must not be called")
             first_claim = _candidate_claim(messages, "c001")
             second_claim = _candidate_claim(messages, "c002")
             return _review_submit(
@@ -1403,22 +1340,31 @@ class _PartialProgressRewriteClient(_ReviewerFlowClient):
                 }
             )
         self._primary_calls += 1
-        if self._primary_calls == 1:
+        type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
+        if self._review_calls == 0:
             return type(
                 "Response",
                 (),
                 {"message": {"content": "- 已证实真实 owner 是 PayServiceImpl。\n- 导出接口已经实现。"}},
+            )()
+        post_review_calls = getattr(self, "_post_review_primary_calls", 0) + 1
+        self._post_review_primary_calls = post_review_calls
+        if post_review_calls == 1:
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": "- Owner evidence remains unlocated.\n- 导出接口已经实现。"
+                    }
+                },
             )()
         return type(
             "Response",
             (),
             {
                 "message": {
-                    "content": (
-                        "- Owner evidence remains unlocated.\n- 导出接口已经实现。"
-                        if self._review_calls
-                        else "- Owner remains unlocated.\n- 导出接口已经实现。"
-                    )
+                    "content": "- Owner evidence remains unlocated.\n- Export API evidence remains unverified."
                 }
             },
         )()
@@ -1435,11 +1381,10 @@ class _ReviewerLastGateClient:
     def chat(self, messages, tools, *, timeout=None):
         type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
         reviewer = any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages)
-        is_verification = any("LCA_READ_ONLY_REWRITE_VERIFICATION" in str(message.get("content")) for message in messages)
         if reviewer:
             self._review_calls += 1
-            if is_verification:
-                return _review_submit({"verdict": "pass", "confidence": 0.9, "findings": [], "reason": "rewrite downgraded unsupported repository detail"})
+            if self._review_calls > 1:
+                raise AssertionError("fresh rewrite verification reviewer must not be called")
             return _review_submit(
                 {
                     "verdict": "revise",
@@ -3420,6 +3365,7 @@ class ReadOnlyReviewerTests(unittest.TestCase):
             [REVIEWER_FINDING_TOOL_NAME, REVIEWER_OUTPUT_TOOL_NAME],
         )
         self.assertEqual(len(review_calls), 2)
+        self.assertNotIn("LCA_READ_ONLY_" + "REWRITE_VERIFICATION", json.dumps(review_calls, ensure_ascii=False))
 
     def test_document_consistency_invalid_finding_is_revoked_and_can_be_resubmitted(self) -> None:
         _DocumentConsistencyInvalidFindingRecoveryClient.calls = []
@@ -3454,6 +3400,7 @@ class ReadOnlyReviewerTests(unittest.TestCase):
             if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in call["messages"])
         ]
         self.assertEqual(len(review_calls), 2)
+        self.assertNotIn("LCA_READ_ONLY_" + "REWRITE_VERIFICATION", json.dumps(review_calls, ensure_ascii=False))
         self.assertEqual(
             [tool["function"]["name"] for tool in review_calls[1]["tools"]],
             [REVIEWER_FINDING_TOOL_NAME, REVIEWER_OUTPUT_TOOL_NAME],
@@ -3587,9 +3534,11 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertNotIn("final state", answer)
         summary = runtime._last_run_summary["read_only_reviewer"]
         self.assertEqual(summary["rewrites"], 1)
-        self.assertEqual(runtime._run.read_only_review.verdict, "pass")
+        self.assertEqual(runtime._run.read_only_review.verdict, "revise")
+        self.assertEqual(runtime._run.read_only_review.reason, "deterministic_closure_accepted")
         self.assertEqual(summary["verdicts"], {"revise": 1})
         self.assertEqual(summary["rewrite_acceptances"], 1)
+        self.assertEqual(summary["rewrite_closure_acceptances"], 1)
         self.assertEqual(summary["errors"], {})
         self.assertEqual(runtime._last_run_summary["termination_reason"], "final")
         self.assertEqual(len(_DocumentConsistencyRewriteContextClient.rewrite_directives), 1)
@@ -4403,8 +4352,9 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertEqual(summary["claim_transport_projection_rounds"], 2)
         self.assertEqual(summary["rewrites"], 1)
         self.assertEqual(summary["rewrite_acceptances"], 1)
-        self.assertEqual(summary["rewrite_verification_rounds"], 1)
-        self.assertEqual(summary["verdicts"], {"revise": 1, "pass": 1})
+        self.assertEqual(summary["rewrite_closure_acceptances"], 1)
+        self.assertEqual(summary["rewrite_verification_rounds"], 0)
+        self.assertEqual(summary["verdicts"], {"revise": 1})
 
     def test_transport_omission_without_finalization_budget_keeps_safe_partial(self) -> None:
         _TransportOmittedClaimClient.calls = []
@@ -5959,7 +5909,7 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertIn("可复用候选", answer)
         self.assertIn("仍未定位", answer)
         review_calls = [call for call in _ReviewerFlowClient.calls if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(m.get("content")) for m in call["messages"])]
-        self.assertEqual(len(review_calls), 2)
+        self.assertEqual(len(review_calls), 1)
         self.assertTrue(
             all(
                 [tool["function"]["name"] for tool in call["tools"]]
@@ -5969,13 +5919,18 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         )
         self.assertEqual(runtime._last_run_summary["read_only_reviewer"]["rewrites"], 1)
         self.assertEqual(runtime._last_run_summary["read_only_reviewer"]["rewrite_acceptances"], 1)
-        self.assertEqual(runtime._last_run_summary["read_only_reviewer"]["rewrite_verification_rounds"], 1)
-        self.assertEqual(runtime._last_run_summary["read_only_reviewer"]["typed_submits"], 3)
+        self.assertEqual(runtime._last_run_summary["read_only_reviewer"]["rewrite_closure_checks"], 1)
+        self.assertEqual(runtime._last_run_summary["read_only_reviewer"]["rewrite_closure_acceptances"], 1)
+        self.assertEqual(runtime._last_run_summary["read_only_reviewer"]["rewrite_verification_rounds"], 0)
+        self.assertEqual(runtime._last_run_summary["read_only_reviewer"]["typed_submits"], 2)
         self.assertEqual(runtime._last_run_summary["read_only_reviewer"]["finding_submits"], 1)
-        self.assertEqual(runtime._last_run_summary["read_only_reviewer"]["final_submits"], 2)
+        self.assertEqual(runtime._last_run_summary["read_only_reviewer"]["final_submits"], 1)
+        self.assertEqual(runtime._last_run_summary["read_only_reviewer"]["verdicts"], {"revise": 1})
+        self.assertEqual(runtime._run.read_only_review.verdict, "revise")
+        self.assertEqual(runtime._run.read_only_review.reason, "deterministic_closure_accepted")
         self.assertNotIn("LCA_READ_ONLY_EVIDENCE_REVIEW", "\n".join(str(m) for m in runtime._messages))
 
-    def test_rewrite_verification_rejects_paraphrased_blocking_claims_then_accepts_downgrade(self) -> None:
+    def test_rewrite_closure_routes_paraphrased_global_absence_through_negative_evidence(self) -> None:
         _RewriteVerificationParaphraseClient.calls = []
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp).resolve()
@@ -5989,14 +5944,16 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertIn("待确认", answer)
         self.assertNotIn("conclusively lacks", answer)
         summary = runtime._last_run_summary["read_only_reviewer"]
-        self.assertEqual(summary["triggers"], 3)
-        self.assertEqual(summary["rewrites"], 2)
-        self.assertEqual(summary["rewrite_corrections"], 1)
-        self.assertEqual(summary["rewrite_verification_rounds"], 2)
+        self.assertEqual(summary["triggers"], 1)
+        self.assertEqual(summary["rewrites"], 1)
+        self.assertEqual(summary["rewrite_corrections"], 0)
+        self.assertEqual(summary["rewrite_closure_checks"], 1)
+        self.assertEqual(summary["rewrite_closure_acceptances"], 1)
+        self.assertEqual(summary["rewrite_verification_rounds"], 0)
         self.assertEqual(summary["rewrite_acceptances"], 1)
-        self.assertEqual(summary["verdicts"], {"pass": 1, "revise": 2})
+        self.assertEqual(summary["verdicts"], {"revise": 1})
 
-    def test_rewrite_verification_withholds_superseded_finding_details(self) -> None:
+    def test_rewrite_closure_does_not_build_superseded_verification_payload(self) -> None:
         _RewriteVerificationSameClaimIdClient.calls = []
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp).resolve()
@@ -6007,27 +5964,17 @@ class ReadOnlyReviewerTests(unittest.TestCase):
                 answer = runtime.run("只读分析当前服务 owner，不要修改。")
 
         self.assertIn("pending confirmation", answer)
+        self.assertNotIn("proves no other owner exists", answer)
+        self.assertNotIn("PayServiceImpl is the verified owner", answer)
         summary = runtime._last_run_summary["read_only_reviewer"]
-        self.assertEqual(summary["rewrite_verification_rounds"], 2)
+        self.assertEqual(summary["rewrite_verification_rounds"], 0)
         self.assertEqual(summary["rewrite_acceptances"], 1)
-        verification_payloads = [
-            json.loads(message["content"])
+        review_calls = [
+            call
             for call in _RewriteVerificationSameClaimIdClient.calls
-            for message in call["messages"]
-            if message.get("role") == "user"
-            and "LCA_READ_ONLY_REWRITE_VERIFICATION" in str(message.get("content"))
+            if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in call["messages"])
         ]
-        closure = verification_payloads[-1]
-        self.assertEqual(
-            closure["prior_review"],
-            {
-                "verdict": "revise",
-                "blocking_finding_count": 1,
-                "historical_details_withheld": True,
-            },
-        )
-        self.assertNotIn("original_findings", closure)
-        self.assertNotIn("c001 paraphrased", json.dumps(closure, ensure_ascii=False))
+        self.assertEqual(len(review_calls), 1)
 
     def test_explicit_design_proposal_with_pending_reuse_check_can_pass_review(self) -> None:
         _ProposalSemanticsClient.calls = []
@@ -6074,8 +6021,8 @@ class ReadOnlyReviewerTests(unittest.TestCase):
                 answer = runtime.run("只读分析当前服务 owner 和影响范围，不要修改文件。")
         self.assertIn("analogous candidate", answer)
         summary = runtime._last_run_summary["read_only_reviewer"]
-        self.assertEqual(summary["triggers"], 2)
-        self.assertEqual(summary["attempts"], 3)
+        self.assertEqual(summary["triggers"], 1)
+        self.assertEqual(summary["attempts"], 2)
         self.assertEqual(summary["schema_failures"], 0)
         self.assertEqual(summary["repairs"], 0)
         self.assertEqual(summary["repair_successes"], 0)
@@ -6084,7 +6031,7 @@ class ReadOnlyReviewerTests(unittest.TestCase):
             call for call in _ReviewerRepairClient.calls
             if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in call["messages"])
         ]
-        self.assertEqual(len(review_calls), 3)
+        self.assertEqual(len(review_calls), 2)
         self.assertTrue(
             all(
                 [tool["function"]["name"] for tool in call["tools"]]
@@ -6134,7 +6081,7 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertEqual(summary["finding_submits"], 1)
         self.assertEqual(summary["rejected_finding_submits"], 1)
         self.assertEqual(summary["rejected_final_submits"], 1)
-        self.assertEqual(summary["final_submits"], 2)
+        self.assertEqual(summary["final_submits"], 1)
         review_calls = [
             call for call in _ReviewerIncrementalRepairLifecycleClient.calls
             if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in call["messages"])
@@ -6183,7 +6130,7 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertEqual(summary["schema_failures"], 0)
         self.assertEqual(summary["repairs"], 0)
         self.assertEqual(summary["rejected_final_submits"], 1)
-        self.assertEqual(summary["verdicts"], {"revise": 1, "pass": 1})
+        self.assertEqual(summary["verdicts"], {"revise": 1})
         self.assertEqual(summary["rewrite_acceptances"], 1)
         self.assertEqual(summary["finding_submits"], 1)
 
@@ -6203,7 +6150,7 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertEqual(summary["finding_submits"], 1)
         self.assertEqual(summary["rejected_finding_submits"], 0)
         self.assertEqual(summary["rejected_final_submits"], 1)
-        self.assertEqual(summary["final_submits"], 2)
+        self.assertEqual(summary["final_submits"], 1)
         self.assertEqual(summary["output_lifecycle_exhausted"], 0)
         self.assertEqual(summary["errors"], {})
         self.assertIn('"event": "finding_replayed"', session)
@@ -6247,7 +6194,7 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertEqual(summary["finding_submits"], 1)
         self.assertEqual(summary["rejected_finding_submits"], 1)
         self.assertEqual(summary["rejected_final_submits"], 1)
-        self.assertEqual(summary["verdicts"], {"revise": 1, "pass": 1})
+        self.assertEqual(summary["verdicts"], {"revise": 1})
         self.assertEqual(summary["rewrite_acceptances"], 1)
         self.assertEqual(summary["errors"], {})
         review_calls = [
@@ -6332,7 +6279,7 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertEqual(summary["protocol_failures"], 0)
         self.assertEqual(summary["finding_limit_hits"], 1)
         self.assertEqual(summary["output_lifecycle_exhausted"], 0)
-        self.assertEqual(summary["final_submits"], 2)
+        self.assertEqual(summary["final_submits"], 1)
         review_calls = [
             call for call in _ReviewerMixedRejectedTurnThenFinalClient.calls
             if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in call["messages"])
@@ -6369,7 +6316,7 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertEqual(summary["findings"], 8)
         self.assertEqual(summary["rejected_finding_submits"], 1)
         self.assertEqual(summary["finding_limit_hits"], 1)
-        self.assertEqual(summary["final_submits"], 2)
+        self.assertEqual(summary["final_submits"], 1)
 
     def test_pass_after_accepted_finding_is_rejected_until_revise_preserves_it(self) -> None:
         _ReviewerAcceptedFindingThenPassClient.calls = []
@@ -6381,7 +6328,7 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         summary = runtime._last_run_summary["read_only_reviewer"]
         self.assertEqual(summary["finding_submits"], 1)
         self.assertEqual(summary["rejected_final_submits"], 1)
-        self.assertEqual(summary["verdicts"], {"revise": 1, "pass": 1})
+        self.assertEqual(summary["verdicts"], {"revise": 1})
         self.assertEqual(summary["rewrite_acceptances"], 1)
 
     def test_incremental_findings_without_claim_use_claim_id_anchor_binding(self) -> None:
@@ -6396,7 +6343,7 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertEqual(summary["rejected_finding_submits"], 0)
         self.assertEqual(summary["output_lifecycle_exhausted"], 0)
         self.assertEqual(summary["errors"], {})
-        self.assertEqual(summary["verdicts"], {"revise": 1, "pass": 1})
+        self.assertEqual(summary["verdicts"], {"revise": 1})
         self.assertEqual(summary["rewrite_acceptances"], 1)
         review_calls = [
             call for call in _ReviewerNoClaimFindingsClient.calls
@@ -6418,7 +6365,7 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         summary = runtime._last_run_summary["read_only_reviewer"]
         self.assertEqual(summary["finding_submits"], 1)
         self.assertEqual(summary["protocol_failures"], 1)
-        self.assertEqual(summary["verdicts"], {"revise": 1, "pass": 1})
+        self.assertEqual(summary["verdicts"], {"revise": 1})
         self.assertEqual(summary["rewrite_acceptances"], 1)
 
     def test_blocking_rejection_plus_valid_final_in_same_response_cannot_terminal(self) -> None:
@@ -6435,9 +6382,9 @@ class ReadOnlyReviewerTests(unittest.TestCase):
                     answer = runtime.run("只读分析当前服务 owner 和影响范围，不要修改文件。")
             self.assertIn("analogous candidate", answer)
             summary = runtime._last_run_summary["read_only_reviewer"]
-            self.assertEqual(summary["verdicts"], {"revise": 1, "pass": 1})
+            self.assertEqual(summary["verdicts"], {"revise": 1})
             self.assertEqual(summary["rewrite_acceptances"], 1)
-            self.assertEqual(summary["final_submits"], 2)
+            self.assertEqual(summary["final_submits"], 1)
             review_calls = [
                 call for call in client.calls
                 if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in call["messages"])
@@ -6506,7 +6453,7 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertIn("弱相关候选", answer)
         self.assertEqual(runtime._last_run_summary["termination_reason"], "final")
         summary = runtime._last_run_summary["read_only_reviewer"]
-        self.assertEqual(summary["verdicts"], {"unverified": 1, "pass": 1})
+        self.assertEqual(summary["verdicts"], {"unverified": 1})
         self.assertEqual(summary["rewrites"], 1)
         self.assertEqual(summary["rewrite_acceptances"], 1)
         review_calls = [
@@ -6514,7 +6461,7 @@ class ReadOnlyReviewerTests(unittest.TestCase):
             for call in _ReviewerUnverifiedRewriteClient.calls
             if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in call["messages"])
         ]
-        self.assertEqual(len(review_calls), 2)
+        self.assertEqual(len(review_calls), 1)
         self.assertTrue(runtime._run.read_only_review.rewrite_accepted)
         self.assertFalse(runtime._run.read_only_review.rewrite_requested)
         outcome = runtime._read_only_review_phase.review_candidate(answer)
@@ -6677,10 +6624,13 @@ class ReadOnlyReviewerTests(unittest.TestCase):
                 runtime = AgentRuntime(_config(Path(tmp).resolve()), show_tool_logs=False)
                 answer = runtime.run("只读分析当前服务 owner 和影响范围，不要修改。")
         self.assertIn("Owner evidence remains unlocated", answer)
-        self.assertIn("导出接口已经实现", answer)
+        self.assertIn("Export API evidence remains unverified", answer)
         self.assertEqual(runtime._last_run_summary["termination_reason"], "final")
         summary = runtime._last_run_summary["read_only_reviewer"]
-        self.assertEqual(summary["rewrites"], 1)
+        self.assertEqual(summary["rewrites"], 2)
+        self.assertEqual(summary["rewrite_corrections"], 1)
+        self.assertEqual(summary["rewrite_closure_checks"], 2)
+        self.assertEqual(summary["rewrite_closure_acceptances"], 1)
         self.assertEqual(summary["rewrite_acceptances"], 1)
         self.assertEqual(summary["errors"], {})
         review_calls = [
@@ -6688,7 +6638,7 @@ class ReadOnlyReviewerTests(unittest.TestCase):
             for call in _PartialProgressRewriteClient.calls
             if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in call["messages"])
         ]
-        self.assertEqual(len(review_calls), 2)
+        self.assertEqual(len(review_calls), 1)
 
     def test_deterministic_rewrite_after_first_review_does_not_call_second_reviewer(self) -> None:
         _ReviewerLastGateClient.calls = []
@@ -6701,19 +6651,22 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertIn("仅作为设计建议/待确认项", answer)
         self.assertNotIn("已经由 PayServiceImpl 实现", answer)
         summary = runtime._last_run_summary["read_only_reviewer"]
-        self.assertEqual(summary["triggers"], 2)
+        self.assertEqual(summary["triggers"], 1)
         self.assertEqual(summary["rewrites"], 1)
         self.assertEqual(summary["rewrite_acceptances"], 1)
-        self.assertEqual(summary["typed_submits"], 3)
+        self.assertEqual(summary["rewrite_closure_checks"], 1)
+        self.assertEqual(summary["rewrite_closure_acceptances"], 1)
+        self.assertEqual(summary["rewrite_verification_rounds"], 0)
+        self.assertEqual(summary["typed_submits"], 2)
         self.assertEqual(summary["finding_submits"], 1)
-        self.assertEqual(summary["final_submits"], 2)
+        self.assertEqual(summary["final_submits"], 1)
         self.assertEqual(summary["errors"], {})
         review_calls = [
             call
             for call in _ReviewerLastGateClient.calls
             if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in call["messages"])
         ]
-        self.assertEqual(len(review_calls), 2)
+        self.assertEqual(len(review_calls), 1)
         primary_calls = [
             call
             for call in _ReviewerLastGateClient.calls

@@ -47,18 +47,6 @@
     },
     {
       "content": "## 源码当前事实\n- src/Owner.java:1 declares Owner.\n- src/Owner.java:1-999 is an unlocated source statement.\n- src/Owner.java:1-999 is another unlocated source statement."
-    },
-    {
-      "tool_calls": [
-        {
-          "name": "submit_read_only_review",
-          "arguments": {
-            "verdict": "pass",
-            "confidence": 0.99,
-            "reason": "the rewritten declaration claim is scoped and its transport residuals are absent"
-          }
-        }
-      ]
     }
   ],
   "acceptance": {
@@ -95,11 +83,15 @@
       "claim_transport_pruned_claims": 4,
       "claim_transport_projection_rounds": 2,
       "claim_transport_rewrite_exhausted": 0,
-      "triggers": 2,
+      "triggers": 1,
       "rewrites": 1,
       "rewrite_acceptances": 1,
-      "rewrite_verification_rounds": 1,
-      "typed_submits": 3
+      "rewrite_verification_rounds": 0,
+      "typed_submits": 2,
+      "rewrite_closure_checks": 1,
+      "rewrite_closure_acceptances": 1,
+      "finding_submits": 1,
+      "final_submits": 1
     },
     "safe_partial_report": {
       "emitted": 0

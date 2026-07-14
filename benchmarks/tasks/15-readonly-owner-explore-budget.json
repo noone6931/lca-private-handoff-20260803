@@ -54,18 +54,6 @@
     },
     {
       "content": "已验证事实：src/PayServiceImpl.java 中存在 PayServiceImpl。推断/未验证：它仅是类似/可复用候选；真实 owner 仍未定位，需要直接调用链或符号绑定证据。"
-    },
-    {
-      "tool_calls": [
-        {
-          "name": "submit_read_only_review",
-          "arguments": {
-            "verdict": "pass",
-            "confidence": 0.95,
-            "reason": "rewrite keeps the owner unlocated"
-          }
-        }
-      ]
     }
   ],
   "acceptance": {
@@ -94,13 +82,15 @@
       "tool_errors": 0
     },
     "read_only_reviewer": {
-      "triggers": 2,
+      "triggers": 1,
       "rewrites": 1,
       "rewrite_acceptances": 1,
-      "rewrite_verification_rounds": 1,
-      "typed_submits": 3,
+      "rewrite_closure_checks": 1,
+      "rewrite_closure_acceptances": 1,
+      "rewrite_verification_rounds": 0,
+      "typed_submits": 2,
       "finding_submits": 1,
-      "final_submits": 2
+      "final_submits": 1
     },
     "max_tool_errors": 0
   },

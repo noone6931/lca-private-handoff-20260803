@@ -60,18 +60,6 @@
     },
     {
       "content": "Verified evidence: src/Evidence.java exists. PayServiceImpl is only an analogous candidate; the real owner remains unlocated."
-    },
-    {
-      "tool_calls": [
-        {
-          "name": "submit_read_only_review",
-          "arguments": {
-            "verdict": "pass",
-            "confidence": 0.97,
-            "reason": "the rewrite preserves the evidence boundary"
-          }
-        }
-      ]
     }
   ],
   "acceptance": {
@@ -99,13 +87,16 @@
       "tool_errors": 0
     },
     "read_only_reviewer": {
-      "triggers": 2,
+      "triggers": 1,
       "finding_submits": 1,
       "rejected_finding_submits": 0,
       "rejected_final_submits": 1,
-      "final_submits": 2,
+      "final_submits": 1,
       "rewrites": 1,
       "rewrite_acceptances": 1,
+      "rewrite_closure_checks": 1,
+      "rewrite_closure_acceptances": 1,
+      "rewrite_verification_rounds": 0,
       "output_lifecycle_exhausted": 0
     },
     "safe_partial_report": {

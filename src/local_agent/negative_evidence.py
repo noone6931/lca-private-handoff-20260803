@@ -58,6 +58,19 @@ _ENTITY_CLAIM = re.compile(
     r"|\bno\s+(?P<english>[A-Za-z_][A-Za-z0-9_.-]{1,})\s+exists\b",
     re.IGNORECASE,
 )
+_GLOBAL_ENTITY_ABSENCE = re.compile(
+    r"\b(?:the\s+)?(?:repository|repo|codebase|source(?:\s+tree)?|current\s+(?:code|source))\s+"
+    r"(?:(?:conclusively|definitively|clearly|verifiedly)\s+)?"
+    r"(?:lacks|contains\s+no|has\s+no(?!\s+(?:need|obligation|requirement)\s+to\b)|does\s+not\s+have(?!\s+to\b))\s+"
+    r"(?P<english>[^.。；;\n]{2,180})"
+    r"|\b(?:the\s+)?(?:repository|repo|codebase|source(?:\s+tree)?|current\s+(?:code|source))\s+"
+    r"(?:(?:conclusively|definitively|clearly)\s+)?(?:proves|confirms|shows|establishes)\s+"
+    r"(?:that\s+)?no\s+(?P<proven_english>[^.。；;\n]{2,160})"
+    r"|(?:仓库|代码库|源码|当前(?:代码|源码|仓库))(?:中|里)?\s*"
+    r"(?:(?:已(?:经)?)?(?:证明|证实|确认)|确定|明确)?\s*"
+    r"(?:缺少|没有(?!\s*(?:必要|义务|要求|需要))|不存在|未包含)\s*(?P<subject>[^。；;\n]{2,120})",
+    re.IGNORECASE,
+)
 _UNLOCATED_MARKER = re.compile(
     r"(?:未定位|未验证|尚未验证|未确认|尚未确认|证据不足)|"
     r"\b(?:unlocated|unverified|not\s+located|not\s+verified|not\s+confirmed|insufficient\s+evidence)\b",
@@ -153,6 +166,11 @@ def parse_negative_evidence_claims(content: str) -> tuple[NegativeExistenceClaim
             subject = (match.group("path") or match.group("reverse") or "").lower()
             if subject:
                 claims.append(_claim_from_match("exact_path", subject, match, clause, following_clause, start))
+        for match in _GLOBAL_ENTITY_ABSENCE.finditer(clause):
+            subject = (match.group("subject") or match.group("english") or match.group("proven_english") or "").strip()
+            subject = re.sub(r"\s+exists?\s*$", "", subject, flags=re.IGNORECASE).strip()
+            if subject:
+                claims.append(_claim_from_match("repository_entity", subject, match, clause, following_clause, start))
         for match in _ENTITY_CLAIM.finditer(clause):
             subject = match.group("subject") or match.group("english") or ""
             if subject.lower() not in {"java", "source", "code", "git"}:

@@ -145,6 +145,8 @@ class ReadOnlyReviewState:
     output_lifecycle_exhausted: bool = False
     rewrite_accepted: bool = False
     rewrite_corrections: int = 0
+    rewrite_closure_checks: int = 0
+    rewrite_closure_acceptances: int = 0
     rewrite_verification_rounds: int = 0
     safe_partial_emitted: bool = False
 
@@ -180,6 +182,8 @@ class ReadOnlyReviewState:
         self.output_lifecycle_exhausted = False
         self.rewrite_accepted = False
         self.rewrite_corrections = 0
+        self.rewrite_closure_checks = 0
+        self.rewrite_closure_acceptances = 0
         self.rewrite_verification_rounds = 0
         self.safe_partial_emitted = False
 
@@ -215,6 +219,8 @@ class ReadOnlyReviewState:
             "invalidated_finding_submits": self.invalidated_finding_submits,
             "output_lifecycle_exhausted": self.output_lifecycle_exhausted,
             "rewrite_corrections": self.rewrite_corrections,
+            "rewrite_closure_checks": self.rewrite_closure_checks,
+            "rewrite_closure_acceptances": self.rewrite_closure_acceptances,
             "rewrite_verification_rounds": self.rewrite_verification_rounds,
         }
 
@@ -445,7 +451,7 @@ Review contract:
 - When the handoff has no explicit direct binding, do not say a main owner/module judgment is correct or mostly correct. Treat same-domain code as observed or analogous and leave the owner unlocated.
 - Report a finding only when it is provable from the exact request, a claim-scoped handoff excerpt, or an internal contradiction in the candidate. Do not invent acceptance criteria, business semantics, source behavior, dynamic binding, holiday handling, or possible hidden implementations merely because they could exist.
 - A finding must be actionable, free of unstated assumptions, and proportionate to the user's requested rigor. If a concern depends on unseen code or a hypothetical alternative, stay silent about it. Requirement facts do not need to be observed in repository source when the candidate keeps them in the requirement-fact section; clearly labeled proposals do not need to exist in current source.
-- There is no target finding count. Prefer `pass` with zero findings over speculative review activity. `revise` is reserved for concrete candidate defects, not opportunities to request more investigation or stronger wording.
+- There is no target finding count. Prefer `pass` with zero findings over speculative review activity. `revise` is reserved for concrete, provable candidate defects introduced by this candidate, not opportunities to request more investigation, stronger wording, or optional design completeness.
 - Repository identifiers may legitimately be absent from the requirements. When a claim-scoped `source_locator` supports an identifier or condition, do not call it fabricated merely because the requirement document uses different words.
 - Do not review design taste, completeness, naming preference, alternative selection, or whether every requirement already has a proposed implementation. Labeled mutually exclusive options and pending-confirmation choices are allowed. Do not prescribe a new field, class, state, service, check, or implementation as a finding action.
 - A scoped phrase such as "not observed in this file/handoff/read range" is not a claim that the feature is globally missing. Do not upgrade it to "missing implementation" or require the candidate to do so. Conversely, report only the candidate's actual global absence wording when it exceeds the handoff.
@@ -477,34 +483,6 @@ Choose revise when the candidate can be corrected using the handoff. Choose unve
         {"role": "system", "content": system},
         {"role": "user", "content": json.dumps(payload, ensure_ascii=False, sort_keys=True)},
     ]
-
-
-def reviewer_rewrite_verification_messages(
-    handoff: ExploreHandoff,
-    claim_units: tuple[CandidateClaimUnit, ...],
-    original_findings: tuple[ReviewerFinding, ...],
-) -> list[dict[str, str]]:
-    """Return reviewer messages for validating a rewritten candidate."""
-
-    messages = reviewer_messages(handoff, claim_units)
-    closure_payload = {
-        "kind": "LCA_READ_ONLY_REWRITE_VERIFICATION",
-        "instruction": (
-            "This is a fresh, bounded, independent review of a candidate rewritten after an earlier revise verdict. "
-            "Historical finding text and claim IDs are deliberately unavailable because they belong to a superseded "
-            "candidate and can anchor defects onto unrelated current claims. Evaluate only the current candidate_claims "
-            "against the exact user request and current handoff. Do not infer a defect merely because an earlier review "
-            "revised a different candidate. Submit pass when the current candidate is compliant. Submit revise only for "
-            "a defect whose issue and action both describe the exact current claim_id you report."
-        ),
-        "prior_review": {
-            "verdict": "revise",
-            "blocking_finding_count": len(original_findings),
-            "historical_details_withheld": True,
-        },
-    }
-    messages.append({"role": "user", "content": json.dumps(closure_payload, ensure_ascii=False, sort_keys=True)})
-    return messages
 
 
 def reviewer_transport_rewrite_message(
@@ -1070,31 +1048,6 @@ def rewrite_complies_with_review(
         and _normalize_markdown(addressed[finding.claim_id].text) not in normalized_candidate
         for finding in findings
     )
-
-
-def rewrite_changes_any_reviewed_claim(
-    candidate: str,
-    original_claim_units: tuple[CandidateClaimUnit, ...],
-    findings: tuple[ReviewerFinding, ...],
-) -> bool:
-    """Require at least one addressed reviewer claim to change after the single rewrite.
-
-    Reviewer issue/action text is advisory, so the runtime does not require
-    every finding to be removed.  A rewrite that leaves every addressed claim
-    Markdown-normalized identical is a deterministic no-op and must fail closed.
-    """
-
-    normalized_candidate = _normalize_markdown(candidate)
-    original_by_id = {unit.claim_id: unit.text for unit in original_claim_units}
-    addressed_claims = tuple(
-        normalized
-        for finding in findings
-        for normalized in (_normalize_markdown(original_by_id.get(finding.claim_id, finding.claim)),)
-        if normalized
-    )
-    if not addressed_claims:
-        return True
-    return any(claim not in normalized_candidate for claim in addressed_claims)
 
 
 def _json_object(content: str) -> object:

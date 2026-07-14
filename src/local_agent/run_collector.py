@@ -54,6 +54,8 @@ class RunStats:
     read_only_reviewer_rewrites: int = 0
     read_only_reviewer_rewrite_acceptances: int = 0
     read_only_reviewer_rewrite_corrections: int = 0
+    read_only_reviewer_rewrite_closure_checks: int = 0
+    read_only_reviewer_rewrite_closure_acceptances: int = 0
     read_only_reviewer_rewrite_verification_rounds: int = 0
     read_only_reviewer_claim_transport_rewrites: int = 0
     read_only_reviewer_claim_transport_rewrite_acceptances: int = 0
@@ -305,6 +307,14 @@ class RunCollector:
         if self._stats is not None:
             self._stats.read_only_reviewer_rewrite_corrections += 1
 
+    def record_read_only_review_rewrite_closure_check(self) -> None:
+        if self._stats is not None:
+            self._stats.read_only_reviewer_rewrite_closure_checks += 1
+
+    def record_read_only_review_rewrite_closure_acceptance(self) -> None:
+        if self._stats is not None:
+            self._stats.read_only_reviewer_rewrite_closure_acceptances += 1
+
     def record_read_only_review_rewrite_verification_round(self) -> None:
         if self._stats is not None:
             self._stats.read_only_reviewer_rewrite_verification_rounds += 1
@@ -503,6 +513,8 @@ class RunCollector:
                 "rewrites": stats.read_only_reviewer_rewrites,
                 "rewrite_acceptances": stats.read_only_reviewer_rewrite_acceptances,
                 "rewrite_corrections": stats.read_only_reviewer_rewrite_corrections,
+                "rewrite_closure_checks": stats.read_only_reviewer_rewrite_closure_checks,
+                "rewrite_closure_acceptances": stats.read_only_reviewer_rewrite_closure_acceptances,
                 "rewrite_verification_rounds": stats.read_only_reviewer_rewrite_verification_rounds,
                 "claim_transport_rewrites": stats.read_only_reviewer_claim_transport_rewrites,
                 "claim_transport_rewrite_acceptances": stats.read_only_reviewer_claim_transport_rewrite_acceptances,

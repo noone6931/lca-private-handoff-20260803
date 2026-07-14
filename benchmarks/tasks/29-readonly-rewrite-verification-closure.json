@@ -1,6 +1,6 @@
 {
   "id": "readonly-rewrite-verification-closure",
-  "title": "Read-only rewrite requires bounded reviewer verification, not string-only paraphrase closure",
+  "title": "Read-only advisory closure uses deterministic finding closure and negative-evidence gates",
   "prompt": "只读分析当前服务 owner、表、接口和影响范围，不要修改。",
   "budget_seconds": 90,
   "workspace_files": {
@@ -18,7 +18,7 @@
       ]
     },
     {
-      "content": "- Current code proves no settlement DDL exists.\n- Current code proves no settlement API exists.\n- Current code proves no menu route exists.\n- Current code proves no template engine exists.\n- Current code proves no owner class exists.\n- Current code proves no status field exists.\n- Current code proves no rollback flow exists.\n- Current code proves no export mapping exists."
+      "content": "- Evidence.java proves the settlement DDL owner.\n- Evidence.java proves the settlement API owner.\n- Evidence.java proves the menu route owner.\n- Evidence.java proves the template engine owner.\n- Evidence.java proves the owner class.\n- Evidence.java proves the status field owner.\n- Evidence.java proves the rollback flow owner.\n- Evidence.java proves the export mapping owner."
     },
     {
       "tool_calls": [
@@ -108,40 +108,7 @@
       "content": "The repository conclusively lacks database schema, service API, menu route, template engine, owner class, status field, rollback flow, and export mapping."
     },
     {
-      "tool_calls": [
-        {
-          "name": "report_read_only_finding",
-          "arguments": {
-            "claim_id": "c001",
-            "finding_scope": "candidate_defect",
-            "issue": "paraphrased absence claim is still beyond bounded evidence",
-            "action": "make it a proposal or pending confirmation"
-          }
-        },
-        {
-          "name": "submit_read_only_review",
-          "arguments": {
-            "verdict": "revise",
-            "confidence": 0.9,
-            "reason": "paraphrase still blocks"
-          }
-        }
-      ]
-    },
-    {
       "content": "已读证据未定位直接 owner。设计建议：可提出新增 settlement model/API/menu/template 作为候选方案；待确认是否复用旧实体、字段和下载能力。"
-    },
-    {
-      "tool_calls": [
-        {
-          "name": "submit_read_only_review",
-          "arguments": {
-            "verdict": "pass",
-            "confidence": 0.95,
-            "reason": "all blockers are downgraded to proposal or pending confirmation"
-          }
-        }
-      ]
     }
   ],
   "acceptance": {
@@ -171,19 +138,21 @@
       "tool_errors": 0
     },
     "read_only_reviewer": {
-      "triggers": 3,
-      "rewrites": 2,
-      "rewrite_corrections": 1,
-      "rewrite_verification_rounds": 2,
+      "triggers": 1,
+      "rewrites": 1,
+      "rewrite_corrections": 0,
+      "rewrite_verification_rounds": 0,
       "rewrite_acceptances": 1,
-      "typed_submits": 12,
-      "finding_submits": 9,
-      "final_submits": 3
+      "rewrite_closure_checks": 1,
+      "rewrite_closure_acceptances": 1,
+      "typed_submits": 9,
+      "finding_submits": 8,
+      "final_submits": 1
     },
     "safe_partial_report": {
       "emitted": 0
     },
     "max_tool_errors": 0
   },
-  "residual_risk": "This fixture proves a bounded second reviewer verification round catches paraphrased overclaims; it does not prove every possible design-review nuance."
+  "residual_risk": "This fixture proves deterministic closure plus the negative-evidence steerer blocks paraphrased repository-wide absence without invoking a fresh reviewer."
 }

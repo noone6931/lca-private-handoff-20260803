@@ -61,18 +61,6 @@
     },
     {
       "content": "## 需求明确事实\n- 需求要求新增结算流程。\n\n## 源码当前事实\n- src/Owner.java:1 declares class Owner only; settlement ownership remains unlocated.\n\n## 设计建议\n- 建议新增 settlement API。\n\n## 尚待确认项\n- 是否复用旧字段。"
-    },
-    {
-      "tool_calls": [
-        {
-          "name": "submit_read_only_review",
-          "arguments": {
-            "verdict": "pass",
-            "confidence": 0.99,
-            "reason": "the source fact is grounded and proposal or pending quality belongs to another reviewer role"
-          }
-        }
-      ]
     }
   ],
   "acceptance": {
@@ -100,14 +88,18 @@
       "tool_errors": 0
     },
     "read_only_reviewer": {
-      "triggers": 2,
-      "attempts": 2,
+      "triggers": 1,
+      "attempts": 1,
       "rejected_finding_submits": 2,
       "rejected_final_submits": 0,
-      "typed_submits": 3,
+      "typed_submits": 2,
+      "finding_submits": 1,
+      "final_submits": 1,
       "rewrites": 1,
       "rewrite_acceptances": 1,
-      "rewrite_verification_rounds": 1
+      "rewrite_closure_checks": 1,
+      "rewrite_closure_acceptances": 1,
+      "rewrite_verification_rounds": 0
     },
     "safe_partial_report": {
       "emitted": 0
