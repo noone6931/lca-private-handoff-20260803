@@ -797,14 +797,14 @@ _ARTIFACT_FAMILY_PATTERNS = (
 _ARTIFACT_FAMILY_MARKERS = {family: pattern for family, pattern in _ARTIFACT_FAMILY_PATTERNS}
 _EXPLICIT_CONFLICT_MARKER = re.compile(
     r"(?:\b(?:not\s+consistent|in\s+conflict|inconsistent|conflicts?\s+with|conflict\s+remains|source\s+differen(?:ce|ces)|artifact\s+differen(?:ce|ces)|discrepanc(?:y|ies)|(?:document|image|artifact|source)s?.{0,32}\bdiffer(?:s|ent)?)\b|"
-    r"不一致|存在冲突|仍.{0,8}(?:冲突|矛盾)|(?:冲突|矛盾).{0,8}(?:未消解|未解决|待确认|不明确)|"
+    r"不一致|存在冲突|未解决.{0,4}(?:差异|冲突|矛盾)|仍.{0,8}(?:冲突|矛盾)|(?:冲突|矛盾).{0,8}(?:未消解|未解决|待确认|不明确)|"
     r"(?:资料|来源|文档|图片|图像|原型).{0,16}(?:差异|不一致)|差异.{0,16}(?:未消解|待确认|不明确))",
     flags=re.IGNORECASE,
 )
 _CONDITIONAL_MARKER = re.compile(r"(?:\b(?:if|may|might|could|perhaps)\b|如果|若|可能|或许|可由|可以)", flags=re.IGNORECASE)
 _UNRESOLVED_MARKER = re.compile(
     r"(?:\b(?:unresolved|unclear|not\s+specified|not\s+established|pending\s+confirmation)\b|"
-    r"(?:未说明|不明确|无法确认|待确认|未消解|仍.{0,8}未解决|(?:可由|需由|需要|请).{0,24}(?:确认|决定)))",
+    r"(?:未说明|不明确|无法确认|待确认|未消解|未解决|(?:可由|需由|需要|请).{0,24}(?:确认|决定)))",
     flags=re.IGNORECASE,
 )
 

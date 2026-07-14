@@ -20,7 +20,7 @@ class BenchmarkTests(unittest.TestCase):
         tasks = load_benchmark_tasks()
         identifiers = {task.identifier for task in tasks}
 
-        self.assertEqual(len(tasks), 34)
+        self.assertEqual(len(tasks), 35)
         self.assertEqual(
             identifiers,
             {
@@ -58,6 +58,7 @@ class BenchmarkTests(unittest.TestCase):
                 "document-transport-scoped-consistency",
                 "document-then-repository-owner",
                 "reviewer-finding-idempotent-replay",
+                "document-unresolved-difference-word-order",
             },
         )
         self.assertTrue(DEFAULT_TASKS_DIR.is_dir())
@@ -69,9 +70,9 @@ class BenchmarkTests(unittest.TestCase):
             payload = json.loads((output_dir / "benchmark-report.json").read_text(encoding="utf-8"))
             markdown = (output_dir / "benchmark-report.md").read_text(encoding="utf-8")
 
-            self.assertEqual(len(results), 34)
+            self.assertEqual(len(results), 35)
         self.assertTrue(all(result.passed for result in results))
-        self.assertEqual(payload["passed"], 34)
+        self.assertEqual(payload["passed"], 35)
         self.assertEqual(payload["failed"], 0)
         self.assertIn("small-code-change-test-diff", markdown)
         self.assertIn("budget-exhausted-incomplete", markdown)
@@ -102,6 +103,7 @@ class BenchmarkTests(unittest.TestCase):
         self.assertIn("document-transport-scoped-consistency", markdown)
         self.assertIn("document-then-repository-owner", markdown)
         self.assertIn("reviewer-finding-idempotent-replay", markdown)
+        self.assertIn("document-unresolved-difference-word-order", markdown)
 
     def test_scripted_tool_call_can_emit_raw_malformed_arguments(self) -> None:
         client = ScriptedBenchmarkClient(

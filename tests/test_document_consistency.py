@@ -360,6 +360,22 @@ class DocumentConsistencyTests(unittest.TestCase):
             )
         )
 
+    def test_unresolved_difference_word_order_covers_cited_pair(self) -> None:
+        handoff = _three_artifact_handoff()
+        assessment = DocumentConsistencyAssessment("reported_unresolved", ("e001", "e003"))
+
+        self.assertIsNone(
+            validate_document_consistency_assessment(
+                assessment,
+                handoff,
+                candidate=(
+                    "需求文档标注字段不填；示例图片显示字段有值。"
+                    "复核人与签章是否在本期生成存在未解决的差异，需人工确认来源角色与优先级。"
+                ),
+                verdict="pass",
+            )
+        )
+
     def test_conflict_candidate_requires_two_document_observation_ids(self) -> None:
         handoff = _handoff()
         one_sided = DocumentConsistencyAssessment("reported_unresolved", ("e002",), ())

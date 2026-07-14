@@ -1,0 +1,88 @@
+{
+  "id": "document-unresolved-difference-word-order",
+  "title": "Document consistency accepts an unresolved difference expressed before the artifact noun",
+  "prompt": "只根据 Markdown 和 HTML 分析资料一致性，不要检查代码。资料角色不明确时保留待确认项。",
+  "budget_seconds": 90,
+  "workspace_files": {
+    "policy.md": "# Policy\nReviewer and signature must remain blank.\n",
+    "prototype.html": "<p>Reviewer and signature fields contain values.</p>\n"
+  },
+  "scripted_responses": [
+    {
+      "tool_calls": [
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "policy.md"
+          }
+        },
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "prototype.html"
+          }
+        }
+      ]
+    },
+    {
+      "content": "已验证证据：policy.md 要求复核人与签章留空；prototype.html 显示对应字段有值。仍缺证据：资料角色与优先级未说明。结论：复核人与签章如何呈现存在未解决的差异，需人工确认。"
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "submit_read_only_review",
+          "arguments": {
+            "verdict": "pass",
+            "confidence": 0.97,
+            "reason": "the candidate preserves the unresolved artifact boundary",
+            "document_consistency": {
+              "stance": "reported_unresolved",
+              "conflict_evidence_ids": [
+                "e001",
+                "e002"
+              ],
+              "supporting_evidence_ids": []
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "acceptance": {
+    "required_tools": [
+      "read_file"
+    ],
+    "forbidden_tools": [
+      "apply_patch",
+      "write_file",
+      "shell",
+      "run_tests",
+      "search_code",
+      "inspect_image"
+    ],
+    "changed_files": [],
+    "answer_all_of": [
+      "policy.md",
+      "prototype.html",
+      "未解决的差异",
+      "人工确认"
+    ],
+    "termination_reason": "final",
+    "run_summary": {
+      "tool_calls": 2,
+      "tool_errors": 0
+    },
+    "read_only_reviewer": {
+      "triggers": 1,
+      "finding_submits": 0,
+      "final_submits": 1,
+      "rewrites": 0,
+      "output_lifecycle_exhausted": 0
+    },
+    "safe_partial_report": {
+      "emitted": 0
+    },
+    "max_tool_errors": 0
+  },
+  "residual_risk": "The fixture covers one common Chinese unresolved-difference word order while pair binding and reconciliation evidence remain enforced separately."
+}
