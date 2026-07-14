@@ -17,6 +17,7 @@ PRECISE_EVIDENCE_TOOLS = frozenset(
         "search_code",
     }
 )
+BOUNDED_EXPLORE_TOOLS = PRECISE_EVIDENCE_TOOLS | {"glob_files"}
 CANDIDATE_EVIDENCE_TOOLS = PRECISE_EVIDENCE_TOOLS | frozenset(
     {
         "lsp_definition",
@@ -30,6 +31,32 @@ OBSERVATION_TOOLS = CANDIDATE_EVIDENCE_TOOLS | {"glob_files", "list_files"}
 MAX_OWNER_DESIGN_EXPLORE_CALLS = 12
 SOFT_EXPLORE_CALLS_PER_ROOT = 2
 HARD_EXPLORE_CALLS_PER_ROOT = 4
+SOURCE_FILE_SUFFIXES = frozenset(
+    {
+        ".c",
+        ".cc",
+        ".cpp",
+        ".cs",
+        ".go",
+        ".h",
+        ".hpp",
+        ".java",
+        ".js",
+        ".jsx",
+        ".kt",
+        ".kts",
+        ".php",
+        ".py",
+        ".rb",
+        ".rs",
+        ".scala",
+        ".sql",
+        ".swift",
+        ".ts",
+        ".tsx",
+        ".vue",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -82,9 +109,11 @@ def evaluate_read_only_explore(
     hard_budget = min(MAX_OWNER_DESIGN_EXPLORE_CALLS, max(4, len(roots) * HARD_EXPLORE_CALLS_PER_ROOT))
     semantic_candidates = _semantic_candidate_paths_by_root(results, roots)
     inventory_paths = _inventory_paths_by_root(results, roots)
-    covered = _covered_roots(results, roots, semantic_candidates, inventory_paths)
+    precise_source_inventory = _precise_source_inventory_paths_by_root(results, roots)
+    candidate_paths = _merge_candidate_paths(roots, semantic_candidates, precise_source_inventory)
+    covered = _covered_roots(results, roots, candidate_paths, inventory_paths)
     missing = tuple(root for root in roots if root not in covered)
-    read_candidates = _read_candidates_for_missing_roots(semantic_candidates, missing)
+    read_candidates = _read_candidates_for_missing_roots(candidate_paths, missing)
     root_attempts = _root_attempts(results, roots)
     preferred_roots = _least_observed_roots(missing, root_attempts)
     discovery_roots = _roots_needing_fallback_discovery(results, missing, read_candidates, root_attempts)
@@ -293,6 +322,87 @@ def _inventory_paths_by_root(
             seen.add((root, rendered))
             inventory[root].append(rendered)
     return {root: tuple(paths) for root, paths in inventory.items()}
+
+
+def _precise_source_inventory_paths_by_root(
+    results: Iterable[ToolResultSummary],
+    roots: tuple[str, ...],
+) -> dict[str, tuple[str, ...]]:
+    """Promote only exact source basenames from glob output to read candidates.
+
+    Broad extension globs, directories, and manifest names remain inventory.
+    This mirrors OMP's glob-then-read workflow without treating an arbitrary
+    listing as semantic owner evidence.
+    """
+
+    candidates: dict[str, list[str]] = {root: [] for root in roots}
+    seen: set[tuple[str, str]] = set()
+    for result in results:
+        if result.name != "glob_files" or not _is_executed_explore_attempt(result) or result.is_error:
+            continue
+        patterns = result.metadata.get("patterns")
+        files = result.metadata.get("files")
+        if not isinstance(patterns, (list, tuple)) or not isinstance(files, (list, tuple)):
+            continue
+        exact_source_names = _exact_source_names_by_root(result, roots, patterns)
+        if not any(exact_source_names.values()):
+            continue
+        for root, rendered in _scoped_file_list_paths(result, roots, files):
+            if Path(rendered).name not in exact_source_names[root] or (root, rendered) in seen:
+                continue
+            seen.add((root, rendered))
+            candidates[root].append(rendered)
+    return {root: tuple(paths) for root, paths in candidates.items()}
+
+
+def _exact_source_basename(raw_pattern: object) -> str | None:
+    if not isinstance(raw_pattern, str) or not raw_pattern.strip():
+        return None
+    name = Path(raw_pattern.strip()).name
+    if not name or any(char in name for char in "*?["):
+        return None
+    if Path(name).suffix.lower() not in SOURCE_FILE_SUFFIXES:
+        return None
+    return name
+
+
+def _exact_source_names_by_root(
+    result: ToolResultSummary,
+    roots: tuple[str, ...],
+    patterns: Iterable[object],
+) -> dict[str, set[str]]:
+    names: dict[str, set[str]] = {root: set() for root in roots}
+    for raw in patterns:
+        name = _exact_source_basename(raw)
+        if name is None or not isinstance(raw, str):
+            continue
+        rendered = raw.strip()
+        scoped_roots = tuple(
+            root
+            for root in roots
+            if rendered == root or rendered.startswith(root.rstrip("/") + "/")
+        )
+        if not scoped_roots and not Path(rendered).is_absolute():
+            scoped_roots = _typed_scope_roots(result, roots)
+        for root in scoped_roots:
+            names[root].add(name)
+    return names
+
+
+def _merge_candidate_paths(
+    roots: tuple[str, ...],
+    *sources: dict[str, tuple[str, ...]],
+) -> dict[str, tuple[str, ...]]:
+    return {
+        root: tuple(
+            dict.fromkeys(
+                path
+                for source in sources
+                for path in source.get(root, ())
+            )
+        )
+        for root in roots
+    }
 
 
 def _scoped_evidence_paths(result: ToolResultSummary, roots: tuple[str, ...]) -> tuple[tuple[str, str], ...]:

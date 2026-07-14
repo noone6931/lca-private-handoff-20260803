@@ -4294,7 +4294,16 @@ class AgentRuntimeTests(unittest.TestCase):
             if not any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in call["messages"])
         ]
         self.assertTrue(
-            all(schema in ({"read_file", "search_code"}, {"glob_files"}, set()) for schema in primary_schema_calls)
+            all(
+                schema
+                in (
+                    {"glob_files", "read_file", "search_code"},
+                    {"read_file", "search_code"},
+                    {"glob_files"},
+                    set(),
+                )
+                for schema in primary_schema_calls
+            )
         )
         glob_schema_rejections = [
             item

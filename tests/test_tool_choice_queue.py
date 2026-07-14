@@ -115,7 +115,7 @@ class ToolChoiceQueueTests(unittest.TestCase):
                 read_only_review_profile="owner_impact",
             )
 
-        self.assertEqual(initial.allowed_tool_names, frozenset({"read_file", "search_code"}))
+        self.assertEqual(initial.allowed_tool_names, frozenset({"glob_files", "read_file", "search_code"}))
         self.assertFalse(any(name.startswith("lsp_") for name in initial.allowed_tool_names))
         self.assertIn(str(first), initial.tool_call_hints[0])
         self.assertIn(str(second), initial.tool_call_hints[0])
@@ -324,9 +324,66 @@ class ToolChoiceQueueTests(unittest.TestCase):
                 read_only_review_profile="owner_impact",
             )
 
-        self.assertEqual(decision.allowed_tool_names, frozenset({"read_file", "search_code"}))
+        self.assertEqual(decision.allowed_tool_names, frozenset({"glob_files", "read_file", "search_code"}))
         self.assertEqual(decision.scoped_read_paths, ())
         self.assertNotIn(str(source), decision.tool_call_hints[0] if decision.tool_call_hints else "")
+
+    def test_exact_source_filename_glob_becomes_a_bounded_read_candidate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            source = root / "src" / "PrepareOrderApplication.java"
+            source.parent.mkdir()
+            source.write_text("class PrepareOrderApplication {}\n", encoding="utf-8")
+            glob_match = ToolResultSummary(
+                "glob_files",
+                str(source),
+                metadata={
+                    "evidence_root": str(root),
+                    "searched_roots": [str(root)],
+                    "files": [str(source)],
+                    "patterns": [str(root / "**" / "PrepareOrderApplication.java")],
+                    "negative_evidence_type": "path_match",
+                },
+            )
+            decision = evaluate_tool_choice_state(
+                task_kind="read-only",
+                prompt="只读分析 owner 和设计影响。",
+                tool_results=(glob_match,),
+                workspace_roots=(str(root),),
+                read_only_review_profile="owner_impact",
+            )
+
+        self.assertEqual(decision.allowed_tool_names, frozenset({"read_file", "search_code"}))
+        self.assertIn(str(source), decision.tool_call_hints[0])
+
+    def test_exact_source_glob_candidate_keeps_root_provenance(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            first = Path(tmp, "first").resolve()
+            second = Path(tmp, "second").resolve()
+            first_source = first / "src" / "Owner.java"
+            second_source = second / "src" / "Owner.java"
+            first_source.parent.mkdir(parents=True)
+            second_source.parent.mkdir(parents=True)
+            first_source.write_text("class FirstOwner {}\n", encoding="utf-8")
+            second_source.write_text("class SecondOwner {}\n", encoding="utf-8")
+            glob_match = ToolResultSummary(
+                "glob_files",
+                f"{first_source}\n{second_source}",
+                metadata={
+                    "searched_roots": [str(first), str(second)],
+                    "files": [str(first_source), str(second_source)],
+                    "patterns": [str(first / "**" / "Owner.java")],
+                    "negative_evidence_type": "path_match",
+                },
+            )
+            decision = evaluate_read_only_explore(
+                profile="owner_impact",
+                tool_results=(glob_match,),
+                code_roots=(str(first), str(second)),
+            )
+
+        self.assertEqual(decision.read_candidates, (str(first_source),))
+        self.assertNotIn(str(second_source), decision.read_candidates)
 
     def test_owner_explore_fallback_discovery_advances_one_missing_root_at_a_time(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1262,7 +1319,7 @@ class ToolChoiceQueueTests(unittest.TestCase):
         )
         self.assertEqual(initial.rule_id, "read_only_profile_explore")
         self.assertIn("read_file", initial.allowed_tool_names)
-        self.assertNotIn("glob_files", initial.allowed_tool_names)
+        self.assertIn("glob_files", initial.allowed_tool_names)
 
         noisy = [
             ToolResultSummary("glob_files", f"result {index}", path=f"{backend}/src")

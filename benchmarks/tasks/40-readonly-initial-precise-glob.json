@@ -1,0 +1,105 @@
+{
+  "id": "readonly-initial-precise-glob",
+  "title": "OMP-style precise filename glob is available before a content-search miss and feeds a bounded source read",
+  "prompt": "请读取 requirements.md 和 {{root:backend}} 下的 Processor.java，输出需求事实、源码事实、设计建议和尚待确认项，不要修改文件。",
+  "budget_seconds": 90,
+  "workspace_files": {
+    "requirements.md": "# Requirement\nCall the existing processor from the proposed flow.\n"
+  },
+  "additional_roots": {
+    "backend": {
+      "src/main/java/example/Processor.java": "package example;\npublic class Processor { void process() {} }\n"
+    }
+  },
+  "scripted_responses": [
+    {
+      "tool_calls": [
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "requirements.md"
+          }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "glob_files",
+          "arguments": {
+            "path": "{{root:backend}}",
+            "pattern": "**/Processor.java"
+          }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "{{root:backend}}/src/main/java/example/Processor.java"
+          }
+        }
+      ]
+    },
+    {
+      "content": "## 需求事实\n- requirements.md:2 要求候选流程调用既有 processor。\n\n## 源码事实\n- 路径：`{{root:backend}}/src/main/java/example/Processor.java`\n  - 第 2 行：定义 Processor.process。\n\n## 设计建议\n- 建议让候选流程调用该方法；这是建议，不是当前调用链事实。\n\n## 尚待确认项\n- 当前调用方与完整业务 Owner 尚未定位。"
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "submit_read_only_review",
+          "arguments": {
+            "verdict": "pass",
+            "confidence": 0.98,
+            "reason": "The candidate preserves requirement/source/proposal boundaries and leaves the unobserved call chain unlocated."
+          }
+        }
+      ]
+    }
+  ],
+  "acceptance": {
+    "required_tools": [
+      "read_file",
+      "glob_files"
+    ],
+    "forbidden_tools": [
+      "search_code",
+      "list_files",
+      "apply_patch",
+      "write_file",
+      "shell",
+      "run_tests"
+    ],
+    "changed_files": [],
+    "answer_all_of": [
+      "需求事实",
+      "源码事实",
+      "Processor.process",
+      "不是当前调用链事实",
+      "尚未定位"
+    ],
+    "termination_reason": "final",
+    "run_summary": {
+      "tool_calls": 3,
+      "tool_errors": 0,
+      "provider_schema_violations": 0,
+      "provider_protocol_violations": 0
+    },
+    "read_only_reviewer": {
+      "triggers": 1,
+      "rewrites": 0,
+      "rewrite_acceptances": 0,
+      "rewrite_verification_rounds": 0,
+      "typed_submits": 1,
+      "finding_submits": 0,
+      "final_submits": 1
+    },
+    "safe_partial_report": {
+      "emitted": 0
+    },
+    "max_tool_errors": 0
+  },
+  "residual_risk": "This deterministic fixture proves an OMP-shaped precise filename glob can precede content search and become a bounded read candidate; live providers can still choose malformed or broad patterns."
+}

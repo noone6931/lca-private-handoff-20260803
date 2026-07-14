@@ -11,7 +11,9 @@ from .document_artifacts import DocumentArtifactRequirement
 from .document_artifacts import document_artifact_coverage
 from .inventory_contract import inventory_glob_arguments_for_roots, inventory_glob_call_hint
 from .negative_evidence import allowed_tools_for_negative_claims, parse_negative_evidence_claims, unsupported_negative_existence_claims
-from .read_only_explore import PRECISE_EVIDENCE_TOOLS, evaluate_read_only_explore
+from .read_only_explore import BOUNDED_EXPLORE_TOOLS
+from .read_only_explore import PRECISE_EVIDENCE_TOOLS
+from .read_only_explore import evaluate_read_only_explore
 from .task_contract import is_inspection_forbidden
 from .tool_observation import ToolResultSummary
 from .verification_timeline import last_workspace_write_index
@@ -590,7 +592,7 @@ def evaluate_tool_choice_state(
                 if explore_decision.read_candidates
                 else {"glob_files"}
                 if explore_decision.discovery_roots
-                else PRECISE_EVIDENCE_TOOLS,
+                else BOUNDED_EXPLORE_TOOLS,
                 allowed_tools,
             ),
             reason=(
@@ -600,7 +602,7 @@ def evaluate_tool_choice_state(
                     if explore_decision.read_candidates
                     else "run one root-scoped fallback discovery for the current missing root before finalizing; "
                     if explore_decision.discovery_roots
-                    else "use only precise source evidence to cover each remaining code root; "
+                    else "use bounded source search/read or a precise filename glob to cover each remaining code root; "
                 )
                 + "do not continue broad directory inventory. "
                 f"observations={explore_decision.observation_calls}/{explore_decision.hard_budget}."
@@ -616,7 +618,7 @@ def evaluate_tool_choice_state(
                 if explore_decision.read_candidates
                 else ("glob_files",)
                 if explore_decision.discovery_roots
-                else ("search_code", "read_file")
+                else ("search_code", "read_file", "glob_files")
             ),
             tool_call_hints=(
                 ("read_file candidates: " + ", ".join(explore_decision.read_candidates),)
