@@ -3656,6 +3656,8 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertIn("A bare path, symbol name, or assertion that files were read is not evidence", prompt)
         self.assertIn("Check every factual predicate in a repository-source claim", prompt)
         self.assertIn("does not by itself prove an end-to-end capability", prompt)
+        self.assertIn("Validate asserted counts against the claim-scoped excerpt", prompt)
+        self.assertIn("handler reference proves only that the name is referenced", prompt)
         self.assertIn("A failed guessed path in an additional root is only a scoped inspection failure", prompt)
         self.assertIn("branches, versions, mirrors", prompt)
         self.assertIn("Do not review design taste, completeness, naming preference", prompt)
@@ -3684,6 +3686,8 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertIn("branches, versions, mirrors", message)
         self.assertIn("For a compound source claim, each factual predicate must be supported", message)
         self.assertIn("do not by themselves prove an end-to-end capability", message)
+        self.assertIn("Recount asserted totals from the cited excerpt", message)
+        self.assertIn("handler reference is not a method or function definition", message)
 
     def test_rewrite_treats_reviewer_action_as_advisory_not_source_evidence(self) -> None:
         result = ReviewerResult(

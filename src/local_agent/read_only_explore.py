@@ -549,14 +549,12 @@ def _scoped_file_list_paths(
 
 def _typed_scope_roots(result: ToolResultSummary, roots: tuple[str, ...]) -> tuple[str, ...]:
     root = str(result.metadata.get("evidence_root") or "").strip()
-    if root in roots:
-        return (root,)
+    if root:
+        return (root,) if root in roots else ()
     searched_roots = result.metadata.get("searched_roots")
     if isinstance(searched_roots, (list, tuple)):
-        scoped = tuple(str(item).strip() for item in searched_roots if str(item).strip() in roots)
-        if scoped:
-            return scoped
-    return roots
+        return tuple(str(item).strip() for item in searched_roots if str(item).strip() in roots)
+    return ()
 
 
 def _cross_root_exact_glob_retry(
@@ -582,28 +580,53 @@ def _cross_root_exact_glob_retry(
             continue
         scoped_roots = _typed_scope_roots(result, roots)
         for raw in patterns:
-            relative = _precise_relative_source_pattern(raw)
-            if relative is None:
-                continue
-            attempted.update((root, relative) for root in scoped_roots)
+            binding = _precise_source_pattern_binding(raw, roots)
+            if binding is not None:
+                bound_root, relative = binding
+                attempted.add((bound_root, relative))
+            else:
+                relative = _precise_relative_source_pattern(raw)
+                if relative is None:
+                    continue
+                attempted.update((root, relative) for root in scoped_roots)
             if result.metadata.get("negative_evidence_type") in {"exact_path_missing", "path_no_match"}:
                 failed_relative_paths.append(relative)
         missing_paths = result.metadata.get("missing_paths")
         if isinstance(missing_paths, (list, tuple)):
-            failed_relative_paths.extend(
-                relative
-                for raw in missing_paths
-                if (relative := _precise_relative_source_pattern(raw)) is not None
-            )
-    for root in missing_roots:
-        patterns = tuple(
-            str(Path(root) / relative)
-            for relative in dict.fromkeys(failed_relative_paths)
-            if (root, relative) not in attempted
-        )
-        if patterns:
-            return (root,), patterns[:2]
+            for raw in missing_paths:
+                binding = _precise_source_pattern_binding(raw, roots)
+                relative = binding[1] if binding is not None else _precise_relative_source_pattern(raw)
+                if relative is not None:
+                    failed_relative_paths.append(relative)
+    retry_roots: list[str] = []
+    retry_patterns: list[str] = []
+    for relative in dict.fromkeys(failed_relative_paths):
+        for root in missing_roots:
+            if (root, relative) in attempted:
+                continue
+            retry_roots.append(root)
+            retry_patterns.append(str(Path(root) / relative))
+            if len(retry_patterns) >= 4:
+                return tuple(dict.fromkeys(retry_roots)), tuple(retry_patterns)
+    if retry_patterns:
+        return tuple(dict.fromkeys(retry_roots)), tuple(retry_patterns)
     return (), ()
+
+
+def _precise_source_pattern_binding(raw: object, roots: tuple[str, ...]) -> tuple[str, str] | None:
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    path = Path(raw.strip())
+    if not path.is_absolute():
+        return None
+    for root in roots:
+        try:
+            relative = path.relative_to(root).as_posix()
+        except ValueError:
+            continue
+        if _precise_relative_source_pattern(relative) is not None:
+            return root, relative
+    return None
 
 
 def _precise_relative_source_pattern(raw: object) -> str | None:

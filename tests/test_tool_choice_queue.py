@@ -625,6 +625,84 @@ class ToolChoiceQueueTests(unittest.TestCase):
         self.assertEqual(decision.allowed_tool_names, frozenset({"glob_files"}))
         self.assertEqual(required["paths"], [str(second / "**" / "list.vue")])
 
+    def test_primary_scoped_precise_miss_rebases_across_all_code_roots(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            requirements = root / "requirements"
+            backend = root / "backend"
+            frontend = root / "frontend"
+            requirements.mkdir()
+            backend.mkdir()
+            frontend.mkdir()
+            primary_miss = ToolResultSummary(
+                "glob_files",
+                '{"files":[]}',
+                useless=True,
+                metadata={
+                    "searched_roots": [str(requirements)],
+                    "patterns": ["**/PrepareOrderApplication.java"],
+                    "negative_evidence_type": "path_no_match",
+                },
+            )
+            decision = evaluate_tool_choice_state(
+                task_kind="read-only",
+                prompt="只读分析技术设计。",
+                tool_results=(primary_miss,),
+                workspace_roots=(str(backend), str(frontend)),
+                read_only_review_profile="design",
+            )
+
+        required = json.loads(decision.required_tool_arguments_json)
+        self.assertEqual(decision.rule_id, "read_only_profile_explore_exact_cross_root")
+        self.assertEqual(
+            set(required["paths"]),
+            {
+                str(backend / "**" / "PrepareOrderApplication.java"),
+                str(frontend / "**" / "PrepareOrderApplication.java"),
+            },
+        )
+
+    def test_absolute_precise_retry_marks_root_attempted_and_advances(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            requirements = root / "requirements"
+            backend = root / "backend"
+            frontend = root / "frontend"
+            requirements.mkdir()
+            backend.mkdir()
+            frontend.mkdir()
+            primary_miss = ToolResultSummary(
+                "glob_files",
+                '{"files":[]}',
+                useless=True,
+                metadata={
+                    "searched_roots": [str(requirements)],
+                    "patterns": ["**/PrepareOrderApplication.java"],
+                    "negative_evidence_type": "path_no_match",
+                },
+            )
+            backend_retry_miss = ToolResultSummary(
+                "glob_files",
+                '{"files":[]}',
+                useless=True,
+                metadata={
+                    "searched_roots": [str(backend)],
+                    "patterns": [str(backend / "**" / "PrepareOrderApplication.java")],
+                    "negative_evidence_type": "path_no_match",
+                },
+            )
+            decision = evaluate_tool_choice_state(
+                task_kind="read-only",
+                prompt="只读分析技术设计。",
+                tool_results=(primary_miss, backend_retry_miss),
+                workspace_roots=(str(backend), str(frontend)),
+                read_only_review_profile="design",
+            )
+
+        required = json.loads(decision.required_tool_arguments_json)
+        self.assertEqual(decision.rule_id, "read_only_profile_explore_exact_cross_root")
+        self.assertEqual(required["paths"], [str(frontend / "**" / "PrepareOrderApplication.java")])
+
     def test_mixed_exact_glob_retries_only_missing_source_path_in_uncovered_root(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             first = Path(tmp, "backend").resolve()
