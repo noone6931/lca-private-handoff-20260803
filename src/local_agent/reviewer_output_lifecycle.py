@@ -55,7 +55,7 @@ class ReviewerOutputEvent:
     @property
     def is_recoverable_rejection(self) -> bool:
         return self.is_capacity_rejection or (
-            self.kind == "finding_rejected" and self.code == "claim_id_conflict"
+            self.kind == "finding_rejected" and self.code in {"claim_id_conflict", "claim_role_out_of_scope"}
         )
 
     @property

@@ -18,10 +18,19 @@
       ]
     },
     {
-      "content": "## 源码当前事实\n- src/Owner.java:1 declares Owner.\n\n## 设计建议\n- 建议新增 settlement API。\n\n## 尚待确认项\n- 是否复用旧字段。"
+      "content": "## 源码当前事实\n- src/Owner.java:1 proves Owner owns settlement.\n\n## 设计建议\n- 建议新增 settlement API。\n\n## 尚待确认项\n- 是否复用旧字段。"
     },
     {
       "tool_calls": [
+        {
+          "name": "report_read_only_finding",
+          "arguments": {
+            "claim_id": "c001",
+            "finding_scope": "candidate_defect",
+            "issue": "line 1 declares a class but does not prove settlement ownership",
+            "action": "limit the source fact to the observed class declaration"
+          }
+        },
         {
           "name": "report_read_only_finding",
           "arguments": {
@@ -36,10 +45,13 @@
           "arguments": {
             "verdict": "revise",
             "confidence": 0.9,
-            "reason": "expand the proposal"
+            "reason": "scope the source fact and ignore proposal completeness"
           }
         }
       ]
+    },
+    {
+      "content": "## 源码当前事实\n- src/Owner.java:1 declares class Owner only; settlement ownership remains unlocated.\n\n## 设计建议\n- 建议新增 settlement API。\n\n## 尚待确认项\n- 是否复用旧字段。"
     },
     {
       "tool_calls": [
@@ -69,7 +81,7 @@
     ],
     "changed_files": [],
     "answer_all_of": [
-      "src/Owner.java:1 declares Owner",
+      "src/Owner.java:1 declares class Owner only",
       "建议新增 settlement API",
       "是否复用旧字段"
     ],
@@ -79,12 +91,14 @@
       "tool_errors": 0
     },
     "read_only_reviewer": {
-      "triggers": 1,
+      "triggers": 2,
       "attempts": 2,
       "rejected_finding_submits": 1,
-      "rejected_final_submits": 1,
-      "typed_submits": 1,
-      "rewrites": 0
+      "rejected_final_submits": 0,
+      "typed_submits": 3,
+      "rewrites": 1,
+      "rewrite_acceptances": 1,
+      "rewrite_verification_rounds": 1
     },
     "safe_partial_report": {
       "emitted": 0
