@@ -1411,6 +1411,8 @@ class AgentRuntime:
         content: str,
         run_start_index: int,
     ) -> SteeringDecision | None:
+        if self._read_only_review_phase.owns_pending_candidate_validation():
+            return None
         context = self._final_answer_context(content, run_start_index)
         claim_metrics = _negative_claim_metrics(content, context.tool_results)
         if any(claim_metrics.values()):

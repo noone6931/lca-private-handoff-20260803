@@ -2940,6 +2940,13 @@ def _config(workspace: Path, *, provider: str = "openai-compatible", vision_mode
 
 
 class ReadOnlyReviewerTests(unittest.TestCase):
+    def test_pending_transport_directive_owns_candidate_before_other_final_steerers(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = AgentRuntime(_config(Path(tmp).resolve()), show_tool_logs=False)
+
+            runtime._run.read_only_review.transport_rewrite_requested = True
+            self.assertIsNone(runtime._decide_final_answer_steering("I used read_file and completed the task.", 0))
+
     def test_reviewer_timeout_uses_deadline_after_finalization_reserve(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             runtime = AgentRuntime(_config(Path(tmp).resolve()), show_tool_logs=False)

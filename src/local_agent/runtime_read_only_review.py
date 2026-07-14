@@ -54,6 +54,12 @@ class ReadOnlyReviewPhase:
     def begin_run(self) -> None:
         self._runtime._run.read_only_review.reset()
 
+    def owns_pending_candidate_validation(self) -> bool:
+        """Whether the next no-tool candidate belongs to an active review directive."""
+
+        state = self._runtime._run.read_only_review
+        return state.transport_rewrite_requested
+
     def review_candidate(self, candidate: str) -> ReviewerPhaseOutcome:
         runtime = self._runtime
         state = runtime._run.read_only_review
