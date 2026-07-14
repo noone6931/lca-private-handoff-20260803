@@ -1,0 +1,197 @@
+{
+  "id": "document-final-submit-recovery",
+  "title": "Document reviewer final submit recovers after consistency key and evidence corrections",
+  "prompt": "只根据 Markdown 和 HTML 分析资料一致性，不要检查代码。资料角色未说明时保持未消解。",
+  "budget_seconds": 90,
+  "workspace_files": {
+    "policy.md": "# Policy\nField must remain blank.\n",
+    "prototype.html": "<p>Field has a value.</p>\n"
+  },
+  "scripted_responses": [
+    {
+      "tool_calls": [
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "policy.md"
+          }
+        },
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "prototype.html"
+          }
+        }
+      ]
+    },
+    {
+      "content": "Requirement claim 1 is verified.\n\nRequirement claim 2 is verified.\n\nRequirement claim 3 is verified.\n\nRequirement claim 4 is verified.\n\nRequirement claim 5 is verified.\n\nRequirement claim 6 is verified.\n\npolicy.md:1 says the field is blank; prototype.html:1 shows a value, but the prototype is a later completed state so there is no conflict."
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "report_read_only_finding",
+          "arguments": {
+            "claim_id": "c001",
+            "finding_scope": "candidate_defect",
+            "issue": "candidate fact needs qualification",
+            "action": "mark this reviewed claim unverified or unresolved"
+          }
+        },
+        {
+          "name": "report_read_only_finding",
+          "arguments": {
+            "claim_id": "c002",
+            "finding_scope": "candidate_defect",
+            "issue": "candidate fact needs qualification",
+            "action": "mark this reviewed claim unverified or unresolved"
+          }
+        },
+        {
+          "name": "report_read_only_finding",
+          "arguments": {
+            "claim_id": "c003",
+            "finding_scope": "candidate_defect",
+            "issue": "candidate fact needs qualification",
+            "action": "mark this reviewed claim unverified or unresolved"
+          }
+        },
+        {
+          "name": "report_read_only_finding",
+          "arguments": {
+            "claim_id": "c004",
+            "finding_scope": "candidate_defect",
+            "issue": "candidate fact needs qualification",
+            "action": "mark this reviewed claim unverified or unresolved"
+          }
+        },
+        {
+          "name": "report_read_only_finding",
+          "arguments": {
+            "claim_id": "c005",
+            "finding_scope": "candidate_defect",
+            "issue": "candidate fact needs qualification",
+            "action": "mark this reviewed claim unverified or unresolved"
+          }
+        },
+        {
+          "name": "report_read_only_finding",
+          "arguments": {
+            "claim_id": "c006",
+            "finding_scope": "candidate_defect",
+            "issue": "candidate fact needs qualification",
+            "action": "mark this reviewed claim unverified or unresolved"
+          }
+        },
+        {
+          "name": "report_read_only_finding",
+          "arguments": {
+            "claim_id": "c007",
+            "finding_scope": "candidate_defect",
+            "issue": "candidate resolves an artifact difference without direct lifecycle evidence",
+            "action": "remove the unsupported reconciliation and keep the artifact role unresolved"
+          }
+        },
+        {
+          "name": "submit_read_only_review",
+          "arguments": {
+            "verdict": "revise",
+            "confidence": 0.9,
+            "reason": "document conflict needs rewrite",
+            "document_consistency": {
+              "stance": "reported_unresolved",
+              "conflict_ids": [
+                "e001",
+                "e002"
+              ],
+              "supporting_evidence_ids": []
+            }
+          }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "submit_read_only_review",
+          "arguments": {
+            "verdict": "revise",
+            "confidence": 0.9,
+            "reason": "document conflict needs rewrite",
+            "document_consistency": {
+              "stance": "reported_unresolved",
+              "conflict_evidence_ids": [
+                "e001"
+              ],
+              "supporting_evidence_ids": []
+            }
+          }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "submit_read_only_review",
+          "arguments": {
+            "verdict": "revise",
+            "confidence": 0.9,
+            "reason": "document conflict needs rewrite",
+            "document_consistency": {
+              "stance": "reported_unresolved",
+              "conflict_evidence_ids": [
+                "e001",
+                "e002"
+              ],
+              "supporting_evidence_ids": []
+            }
+          }
+        }
+      ]
+    },
+    {
+      "content": "Requirement claims 1-6 are unverified. policy.md:1 says the field is blank; prototype.html:1 shows a value. The policy/prototype discrepancy remains unresolved because artifact role and lifecycle are not established."
+    }
+  ],
+  "acceptance": {
+    "required_tools": [
+      "read_file"
+    ],
+    "forbidden_tools": [
+      "apply_patch",
+      "write_file",
+      "shell",
+      "run_tests",
+      "search_code",
+      "inspect_image"
+    ],
+    "changed_files": [],
+    "answer_all_of": [
+      "policy.md",
+      "prototype.html",
+      "unresolved"
+    ],
+    "answer_forbidden_regex": [
+      "later completed state so there is no conflict"
+    ],
+    "termination_reason": "final",
+    "run_summary": {
+      "tool_errors": 0
+    },
+    "read_only_reviewer": {
+      "triggers": 1,
+      "finding_submits": 7,
+      "invalidated_finding_submits": 0,
+      "rejected_final_submits": 2,
+      "final_submits": 1,
+      "rewrites": 1,
+      "rewrite_acceptances": 1,
+      "output_lifecycle_exhausted": 0
+    },
+    "safe_partial_report": {
+      "emitted": 0
+    },
+    "max_tool_errors": 0
+  },
+  "residual_risk": "The fixture proves final consistency payload recovery after incremental findings have been accepted; it does not implement the future full incremental-yield protocol migration."
+}

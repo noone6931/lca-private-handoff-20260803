@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Iterable, Literal, Mapping
+from typing import TYPE_CHECKING, Any, Iterable, Literal, Mapping
 
 from .document_identity import document_artifact_identity
 
@@ -42,10 +42,19 @@ class DocumentConsistencyFindingIssue:
 
 
 class DocumentConsistencyValidationError(ValueError):
-    def __init__(self, code: str) -> None:
+    def __init__(self, code: str, diagnostics: Mapping[str, object] | None = None) -> None:
         self.code = code
+        self.diagnostics = dict(diagnostics or {})
         super().__init__(code)
 
+
+DOCUMENT_CONSISTENCY_KEYS = ("stance", "conflict_evidence_ids", "supporting_evidence_ids")
+DOCUMENT_CONSISTENCY_STANCES = (
+    "reported_unresolved",
+    "conditional_reconciliation",
+    "asserted_reconciled",
+    "explicitly_supported_reconciliation",
+)
 
 MAX_REWRITE_CONTEXT_CHARS = 4200
 MAX_REWRITE_REQUEST_CHARS = 700
@@ -54,6 +63,66 @@ MAX_REWRITE_OPTIONAL_ITEM_SUMMARY_CHARS = 220
 MAX_REWRITE_PATH_CHARS = 180
 MAX_REWRITE_ROOT_CHARS = 140
 MAX_REWRITE_SCOPE_CHARS = 80
+
+
+def document_consistency_schema(evidence_ids: Iterable[str]) -> dict[str, Any]:
+    """Return the single source of truth for final consistency payload shape."""
+
+    evidence_id = {"type": "string", "enum": list(evidence_ids)}
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "stance": {
+                "type": "string",
+                "enum": list(DOCUMENT_CONSISTENCY_STANCES),
+                "description": (
+                    "How the candidate handles differences between supplied artifacts. Use reported_unresolved when "
+                    "the answer keeps artifact role/lifecycle/precedence unresolved."
+                ),
+            },
+            "conflict_evidence_ids": {
+                "type": "array",
+                "maxItems": 8,
+                "items": evidence_id,
+                "description": (
+                    "Known evidence IDs for the artifact observations being compared. When the candidate reports, "
+                    "conditions, or reconciles a source difference, cite at least two sides from distinct artifacts."
+                ),
+            },
+            "supporting_evidence_ids": {
+                "type": "array",
+                "maxItems": 8,
+                "items": evidence_id,
+                "description": (
+                    "Must be empty unless stance is explicitly_supported_reconciliation; never overlap with "
+                    "conflict_evidence_ids; cite only independent non-visual read_file lifecycle/precedence support."
+                ),
+            },
+        },
+        "required": list(DOCUMENT_CONSISTENCY_KEYS),
+    }
+
+
+def document_consistency_rejection_hint(code: str) -> str:
+    """Return a sanitized, executable final-submit correction hint."""
+
+    if code == "document_consistency_keys_invalid":
+        return (
+            " document_consistency must be an object with exactly these keys: "
+            "stance, conflict_evidence_ids, supporting_evidence_ids."
+        )
+    if code == "document_conflict_evidence_insufficient":
+        return (
+            " Accepted findings remain recorded. Submit only the final verdict again and set "
+            "document_consistency.conflict_evidence_ids to at least two known document/image observation IDs from "
+            "distinct artifacts when the candidate compares or preserves an artifact difference."
+        )
+    if code == "document_consistency_evidence_roles_overlap":
+        return " conflict_evidence_ids and supporting_evidence_ids must be disjoint."
+    if code == "document_consistency_support_requires_explicit_stance":
+        return " supporting_evidence_ids must be [] unless stance is explicitly_supported_reconciliation."
+    return ""
 
 
 def parse_document_consistency_assessment(
@@ -65,16 +134,17 @@ def parse_document_consistency_assessment(
 
     if not isinstance(raw, Mapping):
         raise DocumentConsistencyValidationError("document_consistency_missing")
-    expected = {"stance", "conflict_evidence_ids", "supporting_evidence_ids"}
+    expected = set(DOCUMENT_CONSISTENCY_KEYS)
     if set(raw) != expected:
-        raise DocumentConsistencyValidationError("document_consistency_keys_invalid")
+        raise DocumentConsistencyValidationError(
+            "document_consistency_keys_invalid",
+            {
+                "document_consistency_keys": sorted(str(key)[:64] for key in raw),
+                "expected_document_consistency_keys": list(DOCUMENT_CONSISTENCY_KEYS),
+            },
+        )
     stance = raw.get("stance")
-    if stance not in {
-        "reported_unresolved",
-        "conditional_reconciliation",
-        "asserted_reconciled",
-        "explicitly_supported_reconciliation",
-    }:
+    if stance not in DOCUMENT_CONSISTENCY_STANCES:
         raise DocumentConsistencyValidationError("document_consistency_stance_invalid")
     known = set(evidence_ids)
     conflicts = _unique_known_ids(raw.get("conflict_evidence_ids"), known, "document_conflict_evidence")
@@ -84,6 +154,46 @@ def parse_document_consistency_assessment(
     if stance != "explicitly_supported_reconciliation" and supports:
         raise DocumentConsistencyValidationError("document_consistency_support_requires_explicit_stance")
     return DocumentConsistencyAssessment(stance, conflicts, supports)
+
+
+def complete_document_consistency_assessment(
+    assessment: DocumentConsistencyAssessment,
+    handoff: "ExploreHandoff",
+    *,
+    candidate: str,
+    finding_claim_ids: Iterable[str] = (),
+) -> DocumentConsistencyAssessment:
+    """Fill omitted conflict ids from the same bounded handoff when deterministic.
+
+    The reviewer has already yielded candidate findings incrementally.  The
+    final submit should not need to reconstruct a conflict matrix that Runtime
+    already owns.  This helper only completes omitted conflict_evidence_ids
+    when the candidate/stance actually involves artifact reconciliation and the
+    handoff contains a unique two-sided artifact set.  A generic multi-document
+    handoff is not enough; otherwise Runtime would guess which artifacts are in
+    conflict.
+    """
+
+    candidate_stance = candidate_reconciliation_stance(candidate)
+    needs_conflict_ids = candidate_stance is not None or assessment.stance in {
+        "conditional_reconciliation",
+        "asserted_reconciled",
+        "explicitly_supported_reconciliation",
+    }
+    if not needs_conflict_ids or assessment.conflict_evidence_ids:
+        return assessment
+    canonical_ids = _canonical_document_conflict_ids(
+        handoff,
+        exclude=assessment.supporting_evidence_ids,
+        finding_claim_ids=finding_claim_ids,
+    )
+    if _distinct_artifact_count(tuple(_items_by_id(handoff)[item_id] for item_id in canonical_ids)) < 2:
+        return assessment
+    return DocumentConsistencyAssessment(
+        assessment.stance,
+        canonical_ids[:8],
+        assessment.supporting_evidence_ids,
+    )
 
 
 def validate_document_consistency_findings(
@@ -298,6 +408,43 @@ def _unique_known_ids(value: object, known: set[str], prefix: str) -> tuple[str,
     if len(set(value)) != len(value):
         raise DocumentConsistencyValidationError(f"{prefix}_duplicate")
     return tuple(value)
+
+
+def _items_by_id(handoff: "ExploreHandoff") -> dict[str, "ClaimEvidenceItem"]:
+    return {item.evidence_id: item for item in handoff.items}
+
+
+def _canonical_document_conflict_ids(
+    handoff: "ExploreHandoff",
+    *,
+    exclude: Iterable[str] = (),
+    finding_claim_ids: Iterable[str] = (),
+) -> tuple[str, ...]:
+    excluded = {item_id for item_id in exclude if item_id}
+    claim_ids = {claim_id for claim_id in finding_claim_ids if claim_id}
+    candidates = tuple(
+        item
+        for item in handoff.items
+        if item.evidence_id not in excluded and _is_document_observation(item)
+    )
+    if claim_ids:
+        bound = tuple(item for item in candidates if _item_binds_any_claim(item, claim_ids))
+        if bound:
+            return _unique_two_artifact_ids(bound)
+    return _unique_two_artifact_ids(candidates)
+
+
+def _item_binds_any_claim(item: "ClaimEvidenceItem", claim_ids: set[str]) -> bool:
+    return item.claim_id in claim_ids or bool(set(item.claim_ids) & claim_ids)
+
+
+def _unique_two_artifact_ids(items: tuple["ClaimEvidenceItem", ...]) -> tuple[str, ...]:
+    first_by_artifact: dict[tuple[str, str], str] = {}
+    for item in items:
+        first_by_artifact.setdefault(_document_artifact_identity(item), item.evidence_id)
+    if len(first_by_artifact) != 2:
+        return ()
+    return tuple(first_by_artifact.values())
 
 
 def _is_document_observation(item: ClaimEvidenceItem) -> bool:

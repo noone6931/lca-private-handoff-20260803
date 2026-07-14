@@ -19,7 +19,7 @@ class BenchmarkTests(unittest.TestCase):
         tasks = load_benchmark_tasks()
         identifiers = {task.identifier for task in tasks}
 
-        self.assertEqual(len(tasks), 24)
+        self.assertEqual(len(tasks), 25)
         self.assertEqual(
             identifiers,
             {
@@ -47,6 +47,7 @@ class BenchmarkTests(unittest.TestCase):
                 "readonly-exact-toolchoice",
                 "readonly-reviewer-nine-findings",
                 "readonly-multiroot-explore-directive",
+                "document-final-submit-recovery",
             },
         )
         self.assertTrue(DEFAULT_TASKS_DIR.is_dir())
@@ -58,9 +59,9 @@ class BenchmarkTests(unittest.TestCase):
             payload = json.loads((output_dir / "benchmark-report.json").read_text(encoding="utf-8"))
             markdown = (output_dir / "benchmark-report.md").read_text(encoding="utf-8")
 
-            self.assertEqual(len(results), 24)
+            self.assertEqual(len(results), 25)
         self.assertTrue(all(result.passed for result in results))
-        self.assertEqual(payload["passed"], 24)
+        self.assertEqual(payload["passed"], 25)
         self.assertEqual(payload["failed"], 0)
         self.assertIn("small-code-change-test-diff", markdown)
         self.assertIn("budget-exhausted-incomplete", markdown)

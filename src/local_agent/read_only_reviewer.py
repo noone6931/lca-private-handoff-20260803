@@ -8,7 +8,10 @@ from typing import Any, Literal, Mapping
 
 from .document_consistency import DocumentConsistencyAssessment
 from .document_consistency import DocumentConsistencyValidationError
+from .document_consistency import complete_document_consistency_assessment
+from .document_consistency import document_consistency_rejection_hint
 from .document_consistency import document_consistency_rewrite_context
+from .document_consistency import document_consistency_schema
 from .document_consistency import parse_document_consistency_assessment
 from .document_consistency import validate_document_consistency_finding_issue
 from .explore_handoff import ExploreHandoff
@@ -290,7 +293,7 @@ Review contract:
 - When the handoff has no explicit direct binding, do not say a main owner/module judgment is correct or mostly correct. Treat same-domain code as observed or analogous and leave the owner unlocated.
 - For a document-consistency review, do not resolve conflicting document or image observations with an invented workflow, scope, actor, source priority, authoritative source, or precedence rule. Preserve the conflict as unresolved unless the handoff explicitly reconciles it. A candidate that accurately cites both observations, explicitly keeps the conflict unresolved, and presents only labeled options or questions for later confirmation is compliant: submit `pass` with no reported findings. A finding must identify a candidate error such as an unsupported reconciliation, a self-contradictory candidate statement, a missing cited observation, a user-request violation, or a claim that exceeds the handoff; the source materials disagreeing by itself is not a candidate defect. If the only issue is that a source owner must decide how to update source materials, submit `pass` with no reported findings.
 
-The incremental output contract is bounded and shallow. Report at most 8 findings total by calling report_read_only_finding once per finding; then call submit_read_only_review with verdict, confidence, and reason only. Findings are capacity-limited: choose the highest-risk blocking candidate defects first. Once 8 findings are recorded, stop reporting findings and submit the final verdict. A `pass` verdict requires 0 reported findings; `revise` and `unverified` require 1 to 8 reported findings. Every finding must have one unique, known claim_id plus non-empty issue and action. For every finding, choose exactly one claim_id from candidate_claims and set finding_scope to `candidate_defect`; Runtime binds the exact candidate text by claim_id. The action must change the candidate answer; it must not ask to modify the requirements, images, prototypes, or source artifacts, and must not merely ask a source owner to decide. Never invent or repeat a claim_id. Do not submit `source_material_gap` findings; those are not candidate defects. Report only the highest-risk blocking findings when there are more than 8. Keep the complete output under 9000 characters.
+The incremental output contract is bounded and shallow. Report at most 8 findings total by calling report_read_only_finding once per finding; then call submit_read_only_review with verdict, confidence, reason, and any profile-required typed summary such as document_consistency. Do not repeat findings in the final submit; accepted findings are already recorded as incremental sections. Findings are capacity-limited: choose the highest-risk blocking candidate defects first. Once 8 findings are recorded, stop reporting findings and submit the final verdict. A `pass` verdict requires 0 reported findings; `revise` and `unverified` require 1 to 8 reported findings. Every finding must have one unique, known claim_id plus non-empty issue and action. For every finding, choose exactly one claim_id from candidate_claims and set finding_scope to `candidate_defect`; Runtime binds the exact candidate text by claim_id. The action must change the candidate answer; it must not ask to modify the requirements, images, prototypes, or source artifacts, and must not merely ask a source owner to decide. Never invent or repeat a claim_id. Do not submit `source_material_gap` findings; those are not candidate defects. Report only the highest-risk blocking findings when there are more than 8. Keep the complete output under 9000 characters.
 Choose revise when the candidate can be corrected using the handoff. Choose unverified when the candidate cannot safely make the requested factual conclusion."""
     if _is_document_consistency_review(handoff):
         system += (
@@ -336,33 +339,7 @@ def reviewer_output_tool_schema(
     }
     required = ["verdict", "confidence", "reason"]
     if document_consistency:
-        evidence_id = {"type": "string", "enum": list(evidence_ids)}
-        properties["document_consistency"] = {
-            "type": "object",
-            "additionalProperties": False,
-            "properties": {
-                "stance": {
-                    "type": "string",
-                    "enum": [
-                        "reported_unresolved",
-                        "conditional_reconciliation",
-                        "asserted_reconciled",
-                        "explicitly_supported_reconciliation",
-                    ],
-                },
-                "conflict_evidence_ids": {"type": "array", "maxItems": 8, "items": evidence_id},
-                "supporting_evidence_ids": {
-                    "type": "array",
-                    "maxItems": 8,
-                    "items": evidence_id,
-                    "description": (
-                        "Must be empty unless stance is explicitly_supported_reconciliation; never overlap with "
-                        "conflict_evidence_ids; cite only independent non-visual read_file lifecycle/precedence support."
-                    ),
-                },
-            },
-            "required": ["stance", "conflict_evidence_ids", "supporting_evidence_ids"],
-        }
+        properties["document_consistency"] = document_consistency_schema(evidence_ids)
         required.append("document_consistency")
     return {
         "type": "function",
@@ -553,6 +530,8 @@ def parse_reviewer_final_payload(
     document_consistency: bool = False,
     evidence_ids: tuple[str, ...] = (),
     required_candidate_claim_ids: tuple[str, ...] = (),
+    handoff: ExploreHandoff | None = None,
+    candidate: str = "",
 ) -> ReviewerResult:
     """Validate final verdict payload after incremental findings have been collected."""
 
@@ -568,6 +547,8 @@ def parse_reviewer_final_payload(
         document_consistency=document_consistency,
         evidence_ids=evidence_ids,
         required_candidate_claim_ids=required_candidate_claim_ids,
+        handoff=handoff,
+        candidate=candidate,
     )
 
 
@@ -578,6 +559,8 @@ def parse_reviewer_payload(
     document_consistency: bool = False,
     evidence_ids: tuple[str, ...] = (),
     required_candidate_claim_ids: tuple[str, ...] = (),
+    handoff: ExploreHandoff | None = None,
+    candidate: str = "",
 ) -> ReviewerResult:
     if not isinstance(raw, Mapping):
         raise ReviewerValidationError("top_level_not_object", {"top_level_type": type(raw).__name__})
@@ -687,8 +670,15 @@ def parse_reviewer_payload(
                 raw.get("document_consistency"),
                 evidence_ids=evidence_ids,
             )
+            if handoff is not None:
+                assessment = complete_document_consistency_assessment(
+                    assessment,
+                    handoff,
+                    candidate=candidate,
+                    finding_claim_ids=tuple(finding.claim_id for finding in findings),
+                )
         except DocumentConsistencyValidationError as exc:
-            raise ReviewerValidationError(exc.code, diagnostics) from None
+            raise ReviewerValidationError(exc.code, {**diagnostics, **exc.diagnostics}) from None
         finding_issue = validate_document_consistency_finding_issue(
             assessment,
             (
@@ -864,6 +854,8 @@ def _sanitize_diagnostics(diagnostics: Mapping[str, Any]) -> dict[str, Any]:
         "tool_call_count",
         "accepted_candidate_defect_count",
         "rejected_candidate_defect_count",
+        "document_consistency_keys",
+        "expected_document_consistency_keys",
     }
     return {key: diagnostics[key] for key in allowed if key in diagnostics}
 
@@ -936,6 +928,8 @@ def _repair_shape_instruction(diagnostics: Mapping[str, Any]) -> str:
             "non-visual read_file lifecycle or precedence support. "
             + common
         )
+    if code == "document_consistency_keys_invalid":
+        return document_consistency_rejection_hint(code) + " " + common
     if code == "document_consistency_support_requires_explicit_stance":
         return (
             "For document_consistency, set supporting_evidence_ids to [] unless stance is explicitly_supported_reconciliation. "
@@ -943,12 +937,7 @@ def _repair_shape_instruction(diagnostics: Mapping[str, Any]) -> str:
             + common
         )
     if code == "document_conflict_evidence_insufficient":
-        return (
-            "For document_consistency, when the candidate reports, conditions, or reconciles a conflict, "
-            "conflict_evidence_ids must cite at least two known document or image observations that form the comparison. "
-            "Do not cite only one side of the conflict. "
-            + common
-        )
+        return document_consistency_rejection_hint(code) + " Do not cite only one side of the conflict. " + common
     if code in {"document_supporting_evidence_invalid", "document_supporting_evidence_unknown", "document_supporting_evidence_duplicate"}:
         return (
             "For document_consistency, keep supporting_evidence_ids empty unless the stance is explicitly_supported_reconciliation "

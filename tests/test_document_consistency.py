@@ -4,6 +4,8 @@ import unittest
 
 from local_agent.document_consistency import DocumentConsistencyAssessment
 from local_agent.document_consistency import candidate_reconciliation_stance
+from local_agent.document_consistency import complete_document_consistency_assessment
+from local_agent.document_consistency import document_consistency_schema
 from local_agent.document_consistency import DocumentConsistencyValidationError
 from local_agent.document_consistency import parse_document_consistency_assessment
 from local_agent.document_consistency import validate_document_consistency_assessment
@@ -613,6 +615,83 @@ class DocumentConsistencyTests(unittest.TestCase):
             ),
             "document_reconciliation_support_invalid",
         )
+
+    def test_document_consistency_schema_and_parser_share_required_keys(self) -> None:
+        schema = document_consistency_schema(("e001", "e002"))
+        self.assertEqual(schema["required"], ["stance", "conflict_evidence_ids", "supporting_evidence_ids"])
+        self.assertEqual(set(schema["properties"]), {"stance", "conflict_evidence_ids", "supporting_evidence_ids"})
+        with self.assertRaises(DocumentConsistencyValidationError) as raised:
+            parse_document_consistency_assessment(
+                {"stance": "reported_unresolved", "conflict_ids": ["e001"], "supporting_evidence_ids": []},
+                evidence_ids=("e001", "e002"),
+            )
+        self.assertEqual(raised.exception.code, "document_consistency_keys_invalid")
+        self.assertEqual(
+            raised.exception.diagnostics["expected_document_consistency_keys"],
+            ["stance", "conflict_evidence_ids", "supporting_evidence_ids"],
+        )
+
+    def test_document_consistency_completion_uses_only_unique_typed_conflict_set(self) -> None:
+        handoff = _handoff()
+        assessment = DocumentConsistencyAssessment("reported_unresolved", (), ())
+        completed = complete_document_consistency_assessment(
+            assessment,
+            handoff,
+            candidate="Document A says blank; Image B shows value. The discrepancy remains unresolved.",
+        )
+        self.assertEqual(completed.conflict_evidence_ids, ("e001", "e002"))
+
+        ambiguous = ExploreHandoff(
+            request="compare artifacts",
+            contract=_contract(),
+            items=(
+                ClaimEvidenceItem("requirement_fact", "read_file", "policy.md", "primary", "root_local", "ok", "blank"),
+                ClaimEvidenceItem("requirement_fact", "read_file", "prototype.html", "primary", "root_local", "ok", "value"),
+                ClaimEvidenceItem("visual_observation", "inspect_image", "example.png", "primary", "root_local", "ok", "value"),
+            ),
+        )
+        unchanged = complete_document_consistency_assessment(
+            assessment,
+            ambiguous,
+            candidate="The document and image difference remains unresolved.",
+        )
+        self.assertEqual(unchanged.conflict_evidence_ids, ())
+
+    def test_document_consistency_completion_may_use_claim_bound_two_sides_only(self) -> None:
+        handoff = ExploreHandoff(
+            request="compare artifacts",
+            contract=_contract(),
+            items=(
+                ClaimEvidenceItem(
+                    "requirement_fact",
+                    "read_file",
+                    "policy.md",
+                    "primary",
+                    "root_local",
+                    "ok",
+                    "blank",
+                    claim_ids=("c007",),
+                ),
+                ClaimEvidenceItem(
+                    "visual_observation",
+                    "inspect_image",
+                    "example.png",
+                    "primary",
+                    "root_local",
+                    "ok",
+                    "value",
+                    claim_ids=("c007",),
+                ),
+                ClaimEvidenceItem("requirement_fact", "read_file", "prototype.html", "primary", "root_local", "ok", "neutral"),
+            ),
+        )
+        completed = complete_document_consistency_assessment(
+            DocumentConsistencyAssessment("reported_unresolved", (), ()),
+            handoff,
+            candidate="The policy/image discrepancy remains unresolved.",
+            finding_claim_ids=("c007",),
+        )
+        self.assertEqual(completed.conflict_evidence_ids, ("e001", "e002"))
 
     def test_visual_observation_keeps_relevant_middle_content_for_document_review(self) -> None:
         visual = "Visual summary. " + ("layout detail " * 75) + "Reviewer field is visibly populated. " + ("footer detail " * 75)

@@ -7,6 +7,7 @@ from copy import deepcopy
 from typing import Any, Literal
 
 from .provider_protocol import classify_provider_content_artifact
+from .document_consistency import document_consistency_rejection_hint
 from .read_only_reviewer import MAX_REVIEWER_FINDINGS
 from .read_only_reviewer import REVIEWER_FINDING_TOOL_NAME
 from .read_only_reviewer import REVIEWER_OUTPUT_TOOL_NAME
@@ -200,6 +201,8 @@ def parse_reviewer_output_turn(
                     document_consistency=document_consistency,
                     evidence_ids=handoff.evidence_ids,
                     required_candidate_claim_ids=required_candidate_claim_ids,
+                    handoff=handoff,
+                    candidate=candidate,
                 )
                 validate_document_consistency(result, handoff, candidate)
             except ReviewerValidationError as exc:
@@ -270,7 +273,8 @@ def reviewer_tool_result_content(event: ReviewerOutputEvent) -> str:
                 f"{','.join(invalidated)} were invalidated; resubmit corrected findings for those claim_ids, "
                 "then submit the final verdict"
             )
-        return f"final review rejected: {event.code}; submit a corrected final verdict"
+        hint = document_consistency_rejection_hint(event.code)
+        return f"final review rejected: {event.code}; submit a corrected final verdict.{hint}"
     return f"output call rejected: {event.code}; use only the reviewer output tools"
 
 

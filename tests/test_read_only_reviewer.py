@@ -1467,6 +1467,112 @@ class _DocumentConsistencyInvalidFindingRecoveryClient:
         )()
 
 
+class _DocumentConsistencyFinalSubmitRecoveryClient:
+    calls: list[dict] = []
+
+    def __init__(self, config: AgentConfig):
+        self._primary_calls = 0
+        self._review_calls = 0
+
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
+        reviewer = any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages)
+        if reviewer:
+            self._review_calls += 1
+            if self._review_calls == 1:
+                findings = [
+                    _finding_call(
+                        f"finding-{index}",
+                        f"c{index:03d}",
+                        _candidate_claim(messages, f"c{index:03d}"),
+                        issue="candidate fact needs qualification",
+                        action="mark this reviewed claim unverified or unresolved",
+                    )
+                    for index in range(1, 8)
+                ]
+                bad_keys = {
+                    "verdict": "revise",
+                    "confidence": 0.9,
+                    "reason": "document conflict needs rewrite",
+                    "document_consistency": {
+                        "stance": "reported_unresolved",
+                        "conflict_ids": ["e001", "e002"],
+                        "supporting_evidence_ids": [],
+                    },
+                }
+                return _review_tool_calls_response([*findings, _final_call("bad-keys", bad_keys)])
+            if self._review_calls == 2:
+                one_sided = {
+                    "verdict": "revise",
+                    "confidence": 0.9,
+                    "reason": "document conflict needs rewrite",
+                    "document_consistency": {
+                        "stance": "reported_unresolved",
+                        "conflict_evidence_ids": ["e001"],
+                        "supporting_evidence_ids": [],
+                    },
+                }
+                return _review_tool_calls_response([_final_call("one-sided", one_sided)])
+            if self._review_calls == 3:
+                corrected = {
+                    "verdict": "revise",
+                    "confidence": 0.9,
+                    "reason": "document conflict needs rewrite",
+                    "document_consistency": {
+                        "stance": "reported_unresolved",
+                        "conflict_evidence_ids": ["e001", "e002"],
+                        "supporting_evidence_ids": [],
+                    },
+                }
+                return _review_tool_calls_response([_final_call("corrected", corrected)])
+            raise AssertionError("second open-ended reviewer call should not be reached")
+        self._primary_calls += 1
+        if self._primary_calls == 1:
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "read-policy",
+                                "type": "function",
+                                "function": {"name": "read_file", "arguments": '{"path":"policy.md"}'},
+                            },
+                            {
+                                "id": "read-prototype",
+                                "type": "function",
+                                "function": {"name": "read_file", "arguments": '{"path":"prototype.html"}'},
+                            },
+                        ],
+                    }
+                },
+            )()
+        if self._review_calls == 0:
+            content = "\n\n".join(
+                [f"Requirement claim {index} is verified." for index in range(1, 7)]
+                + [
+                    "policy.md:1 says the field is blank; prototype.html:1 shows a value, "
+                    "but the prototype is a later completed state so there is no conflict."
+                ]
+            )
+            return type("Response", (), {"message": {"content": content}})()
+        return type(
+            "Response",
+            (),
+            {
+                "message": {
+                    "content": (
+                        "Requirement claims 1-6 are unverified. policy.md:1 says the field is blank; "
+                        "prototype.html:1 shows a value. The policy/prototype discrepancy remains unresolved because "
+                        "artifact role and lifecycle are not established."
+                    )
+                }
+            },
+        )()
+
+
 class _DocumentConsistencyRepeatedInvalidFindingClient(_DocumentConsistencyInvalidFindingRecoveryClient):
     calls: list[dict] = []
 
@@ -2329,6 +2435,47 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertEqual(len(rejected_results), 1)
         self.assertIn("c008", str(rejected_results[0].get("content")))
 
+    def test_document_consistency_final_submit_recovers_after_key_and_evidence_rejections(self) -> None:
+        _DocumentConsistencyFinalSubmitRecoveryClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            (workspace / "policy.md").write_text("Field must remain blank.\n", encoding="utf-8")
+            (workspace / "prototype.html").write_text("<p>Field has a value.</p>\n", encoding="utf-8")
+            with patch("local_agent.agent.OpenAICompatibleClient", _DocumentConsistencyFinalSubmitRecoveryClient):
+                runtime = AgentRuntime(_config(workspace), show_tool_logs=False)
+                answer = runtime.run("只根据 Markdown 和 HTML 分析资料一致性，不要检查代码。资料角色未说明时保持未消解。")
+
+        self.assertIn("unresolved", answer)
+        summary = runtime._last_run_summary["read_only_reviewer"]
+        self.assertEqual(summary["finding_submits"], 7)
+        self.assertEqual(summary["invalidated_finding_submits"], 0)
+        self.assertEqual(summary["rejected_final_submits"], 2)
+        self.assertEqual(summary["final_submits"], 1)
+        self.assertEqual(summary["rewrites"], 1)
+        self.assertEqual(summary["rewrite_acceptances"], 1)
+        self.assertEqual(summary["output_lifecycle_exhausted"], 0)
+        self.assertEqual([finding.claim_id for finding in runtime._run.read_only_review.findings], [f"c{index:03d}" for index in range(1, 8)])
+        review_calls = [
+            call
+            for call in _DocumentConsistencyFinalSubmitRecoveryClient.calls
+            if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in call["messages"])
+        ]
+        self.assertEqual(len(review_calls), 3)
+        bad_key_result = [
+            message
+            for message in review_calls[1]["messages"]
+            if message.get("role") == "tool" and message.get("tool_call_id") == "bad-keys"
+        ]
+        self.assertEqual(len(bad_key_result), 1)
+        self.assertIn("stance, conflict_evidence_ids, supporting_evidence_ids", str(bad_key_result[0].get("content")))
+        one_side_result = [
+            message
+            for message in review_calls[2]["messages"]
+            if message.get("role") == "tool" and message.get("tool_call_id") == "one-sided"
+        ]
+        self.assertEqual(len(one_side_result), 1)
+        self.assertIn("Accepted findings remain recorded", str(one_side_result[0].get("content")))
+
     def test_document_consistency_repeated_bad_finding_remains_bounded_unverified(self) -> None:
         _DocumentConsistencyRepeatedInvalidFindingClient.calls = []
         with tempfile.TemporaryDirectory() as tmp:
@@ -3159,7 +3306,9 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertIn("source priority", prompt)
         self.assertIn("must not ask to modify the requirements, images, prototypes", prompt)
         self.assertIn("report_read_only_finding once per finding", prompt)
-        self.assertIn("submit_read_only_review with verdict, confidence, and reason only", prompt)
+        self.assertIn("submit_read_only_review with verdict, confidence, reason", prompt)
+        self.assertIn("profile-required typed summary such as document_consistency", prompt)
+        self.assertIn("Do not repeat findings in the final submit", prompt)
         schema = reviewer_finding_tool_schema(candidate_claim_units("candidate"))
         action_description = schema["function"]["parameters"]["properties"]["action"]["description"]
         self.assertIn("candidate-answer change", action_description)
