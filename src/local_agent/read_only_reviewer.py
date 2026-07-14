@@ -793,8 +793,9 @@ def _repair_shape_instruction(diagnostics: Mapping[str, Any]) -> str:
     if code == "candidate_defect_findings_missing":
         return (
             "A previous repair attempt contained valid candidate_defect findings. Keep those candidate defects in this "
-            "submission with their same claim_id and exact copied claim text; do not replace them with pass unless the "
-            "candidate_defect findings are no longer present in the repaired output request. "
+            "submission by resubmitting the same claim_id with finding_scope=candidate_defect plus issue/action only. "
+            "Do not include claim text; Runtime binds the canonical candidate text by claim_id. Do not replace them "
+            "with pass unless the candidate_defect findings are no longer present in the repaired output request. "
             + common
         )
     if code in {"output_tool_arguments_type_invalid", "output_tool_arguments_json_invalid"}:

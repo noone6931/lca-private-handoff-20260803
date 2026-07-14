@@ -1823,8 +1823,24 @@ class ReadOnlyReviewerTests(unittest.TestCase):
                 {"verdict": "pass", "confidence": 0.8, "findings": [], "reason": "only source gap remains"},
                 claim_units=units,
                 required_candidate_claim_ids=raised.exception.pending_candidate_claim_ids,
-            )
+        )
         self.assertEqual(pass_raised.exception.code, "candidate_defect_findings_missing")
+        missing_repair = reviewer_repair_messages(
+            build_explore_handoff(
+                request="review",
+                contract=generate_requirement_contract("只根据 Markdown 和图片分析资料一致性，不要检查代码。"),
+                requirement_evidence=(), source_evidence=(), records=(), tool_results=(),
+            ),
+            units,
+            pass_raised.exception.diagnostics,
+            required_resubmit_claim_ids=pass_raised.exception.pending_candidate_claim_ids,
+        )
+        missing_repair_text = missing_repair[-1]["content"]
+        self.assertIn("same claim_id", missing_repair_text)
+        self.assertIn("issue/action only", missing_repair_text)
+        self.assertIn("Runtime binds the canonical candidate text by claim_id", missing_repair_text)
+        self.assertNotIn("exact copied claim text", missing_repair_text)
+        self.assertNotIn("copy the exact", missing_repair_text)
 
         repaired = parse_reviewer_payload(
             {
