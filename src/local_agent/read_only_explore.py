@@ -529,6 +529,13 @@ def _cross_root_exact_glob_retry(
             attempted.update((root, relative) for root in scoped_roots)
             if result.metadata.get("negative_evidence_type") in {"exact_path_missing", "path_no_match"}:
                 failed_relative_paths.append(relative)
+        missing_paths = result.metadata.get("missing_paths")
+        if isinstance(missing_paths, (list, tuple)):
+            failed_relative_paths.extend(
+                relative
+                for raw in missing_paths
+                if (relative := _precise_relative_source_pattern(raw)) is not None
+            )
     for root in missing_roots:
         patterns = tuple(
             str(Path(root) / relative)

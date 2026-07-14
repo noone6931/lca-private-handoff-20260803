@@ -451,6 +451,46 @@ class ToolChoiceQueueTests(unittest.TestCase):
         self.assertEqual(decision.allowed_tool_names, frozenset({"glob_files"}))
         self.assertEqual(required["paths"], [str(second / "**" / "list.vue")])
 
+    def test_mixed_exact_glob_retries_only_missing_source_path_in_uncovered_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            first = Path(tmp, "backend").resolve()
+            second = Path(tmp, "frontend").resolve()
+            backend_source = first / "src" / "Processor.java"
+            frontend_source = second / "src" / "views" / "list.vue"
+            backend_source.parent.mkdir(parents=True)
+            frontend_source.parent.mkdir(parents=True)
+            backend_source.write_text("class Processor {}\n", encoding="utf-8")
+            frontend_source.write_text("<template />\n", encoding="utf-8")
+            mixed_result = ToolResultSummary(
+                "glob_files",
+                '{"files":["src/Processor.java"],"missing_paths":["src/views/list.vue"]}',
+                metadata={
+                    "searched_roots": [str(first)],
+                    "patterns": ["src/Processor.java", "src/views/list.vue"],
+                    "files": ["src/Processor.java"],
+                    "missing_paths": ["src/views/list.vue"],
+                    "negative_evidence_type": "path_match",
+                },
+            )
+            backend_read = ToolResultSummary(
+                "read_file",
+                "class Processor {}",
+                path=str(backend_source),
+                metadata={"resolved_path": str(backend_source)},
+            )
+            decision = evaluate_tool_choice_state(
+                task_kind="read-only",
+                prompt="只读分析 owner 和设计影响。",
+                tool_results=(mixed_result, backend_read),
+                workspace_roots=(str(first), str(second)),
+                read_only_review_profile="design",
+            )
+
+        required = json.loads(decision.required_tool_arguments_json)
+        self.assertEqual(decision.rule_id, "read_only_profile_explore_exact_cross_root")
+        self.assertEqual(decision.allowed_tool_names, frozenset({"glob_files"}))
+        self.assertEqual(required["paths"], [str(frontend_source)])
+
     def test_broad_filename_glob_miss_does_not_trigger_exact_cross_root_retry(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             first = Path(tmp, "backend").resolve()
