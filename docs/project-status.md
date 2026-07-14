@@ -30,7 +30,7 @@
 
 ## 当前进度
 
-当前项目已完成 P8 前端协议与交互基础 MVP、P9 真实需求使用准备的阶段性验证和 P10/P11 Intelligence Runtime 骨架，正在收束 P12 只读证据与 reviewer 生命周期。T-158~T-180 将 document/reviewer 的 claim binding、incremental yield、transport、rewrite、safe-partial 和 exact tool-choice 生命周期继续拆回各自 Owner；T-181~T-187 修复了文档改写闭环、读文档后 repository intent 保持、finding replay 幂等、未解决差异语序识别和 reviewer 改写后的有界 transport recovery。T-188 直接参考 OMP `grep.ts` / `read.ts` 的列宽与每文件结果限制，在工具 Owner 内限制 `search_code`/`read_file` 的超长单行输出，避免 minified CSS 将 20KB/232KB 注入上下文。T-189 修复 Markdown-to-Excel 生成器的 code-span pipe、表内空行和列数校验，保证项目状态 Excel 仍是事实源的可靠投影。当前完整门禁为 830 个单测、35/35 deterministic benchmark 和 7/7 architecture checks；`agent.py` 为 1,866 行/71 个方法，`steering/final_answer.py` 为 59 行。默认 stable 仍是已验证的 T-149 release `20260712T053754Z-39cf362f4f3f-2c9b80db01e9`；T-188 release `20260714T170102Z-c248d3598dc2-6f417eb9e525` 只是 immutable runtime candidate。真实 provider S1~S3 仍存在 reviewer/provider 协议与日用收敛残余，小牙线程本轮没有产出独立执行结果，因此不得宣称 P12 stable 已发布。
+当前项目已完成 P8 前端协议与交互基础 MVP、P9 真实需求使用准备的阶段性验证和 P10/P11 Intelligence Runtime 骨架，正在收束 P12 只读证据与 reviewer 生命周期。T-158~T-180 将 document/reviewer 的 claim binding、incremental yield、transport、rewrite、safe-partial 和 exact tool-choice 生命周期继续拆回各自 Owner；T-181~T-187 修复了文档改写闭环、读文档后 repository intent 保持、finding replay 幂等、未解决差异语序识别和 reviewer 改写后的有界 transport recovery。T-188 直接参考 OMP `grep.ts` / `read.ts` 的列宽与每文件结果限制，在工具 Owner 内限制 `search_code`/`read_file` 的超长单行输出，避免 minified CSS 将 20KB/232KB 注入上下文。T-189 修复 Markdown-to-Excel 生成器的 code-span pipe、表内空行和列数校验，保证项目状态 Excel 仍是事实源的可靠投影。当前完整门禁为 830 个单测、35/35 deterministic benchmark 和 7/7 architecture checks；`agent.py` 为 1,866 行/71 个方法，`steering/final_answer.py` 为 59 行。默认 stable 仍是已验证的 T-149 release `20260712T053754Z-39cf362f4f3f-2c9b80db01e9`；T-188 release `20260714T170102Z-c248d3598dc2-6f417eb9e525` 只是 immutable runtime candidate。T-190 fresh-state live gate 为 S1 PASS、S2/S3 FAIL（均安全终止为 `provider_protocol_violation`），整体 1/3；小牙线程也没有产出独立执行结果，因此不得宣称 P12 stable 已发布。
 
 已具备的核心能力：
 
@@ -371,8 +371,9 @@
 | T-183~T-185 | Reviewer Replay / Stance / Recovery Hardening | 已完成，candidate only | P12 | provider 会重放同一 finding、改变“未解决差异”的词序，或在非 final-submit 阶段误触 recovery。 | finding replay 幂等；未解决差异解析覆盖真实语序；recovery 仅限 final submit。提交 `d93468a`、`b613b4c`、`272eecd`。 |
 | T-186 | Post-review Transport Recovery | 已完成，candidate only | P12 | reviewer 生成的改写仍可能超出 transport 限制，旧逻辑无法使用尚未消费的一次 recovery。 | 在 `runtime_read_only_review.py` 复用有界 one-shot transport rewrite；已消费时失败关闭。该批 825 tests、35/35 benchmark、7/7 architecture checks 通过，提交 `d7231f8`。 |
 | T-187 | Scoped Unresolved Document Differences | 已完成，candidate only | P12 | “2 项未解决，其余无冲突”“无法判定是否真实冲突”等限定句被误判为已调和。 | 仅在 `document_consistency.py` 修正 clause-local stance；仍拒绝“尚未解决，但其实无冲突”这类 asserted reconciliation。提交 `9c5faac`。 |
-| T-188 | OMP-aligned Search / Read Output Bounds | 已完成；immutable candidate 待独立回归 | P12 | S2 命中 minified CSS 时，`search_code` 返回约 20KB，随后单行 `read_file` 注入约 232KB，挤占上下文并破坏收敛。 | 参考 OMP `grep.ts` 的 512 列和 per-file 20、`read.ts`/settings 的 768 列：`search_code` 返回 result/per-file/line truncation metadata，`read_file` 截断展示但保持完整文件 hash。原 CSS 样本降为约 566/947 字符。827 tests、35/35 benchmark、7/7 architecture checks；candidate `20260714T170102Z-c248d3598dc2-6f417eb9e525`，stable 未变。 |
+| T-188 | OMP-aligned Search / Read Output Bounds | 已完成；immutable candidate live gate 1/3，未发布 | P12 | S2 命中 minified CSS 时，`search_code` 返回约 20KB，随后单行 `read_file` 注入约 232KB，挤占上下文并破坏收敛。 | 参考 OMP `grep.ts` 的 512 列和 per-file 20、`read.ts`/settings 的 768 列：`search_code` 返回 result/per-file/line truncation metadata，`read_file` 截断展示但保持完整文件 hash。原 CSS 样本降为约 566/947 字符。827 tests、35/35 benchmark、7/7 architecture checks；candidate `20260714T170102Z-c248d3598dc2-6f417eb9e525`，stable 未变。 |
 | T-189 | Project Status Workbook Integrity | 已完成 | P2/P12 | 项目状态 Excel 生成器会把反引号代码中的 `|` 拆成额外列，表内空行拆出同名 worksheet，格式错误只能到 Excel 打开时才暴露。 | `scripts/sync_project_excel.py` 现在识别 code-span/escaped pipe、保留同一表内空行，并对列数不一致 fail-fast；新增 3 个回归测试。生成后用 artifact-tool 检查 9 个唯一 sheet、0 公式错误并渲染全 sheet 视觉复核。Excel 仍由 Markdown 生成，不手工编辑。 |
+| T-190 | T-188 Immutable Candidate S1~S3 Live Gate | 已完成；1/3，通过发布门禁失败 | P12 | 离线门禁不能替代真实百炼在需求、跨仓 Owner 和设计场景中的协议/语义表现。 | S1 session `20260714T171643755189Z` / run `e0b0640f5a7e4e3e89b05f74aea85871`：136.4s、7 LLM、4 tools、0 error、1 compaction，reviewer revise 后 rewrite acceptance，图片/冲突证据正确，natural final。S2 `20260714T172056281842Z` / `9f50c1fa140244728ccd21374dd62ea9`：13.6s、8 tools、3 deny errors、2 schema violations，未覆盖前后端 direct read，`provider_protocol_violation`。S3 `20260714T172316303013Z` / `ae3b0fec02124c489b04dd1456981f27`：76.8s、仅 1 次需求 read，`provider_protocol_violation`。后两者未释放不可靠结论，但安全不等于日用可用。 |
 
 ## 风险清单
 
@@ -558,6 +559,6 @@
 
 用户确认本文件后，建议按以下顺序继续：
 
-1. 用 T-188 immutable candidate 独立重跑母需求 S1~S3；核对 release/digest、fresh state、工具输出上限、自然终态和 reviewer 语义质量。当前小牙线程未实际执行最近两次任务，不能把“已派发”计为回归通过。
-2. 若 S1~S3 全部达到日用发布线，再运行 publish gate 并原子替换 stable；否则只记录可复现失败，先对照 OMP Owner/lifecycle，再按一批修复、一批回归处理。
+1. T-190 已确认 T-188 candidate 仅 S1 通过；S2/S3 的 provider protocol violation 先作为百炼兼容性阻塞记录，不因单轮文本形态向 `agent.py` 加关键词 guard。
+2. 下一批先用独立、可执行的黑盒任务复现 S2/S3；若同类协议越界重复出现，再对照 OMP provider adapter/turn ownership 设计单一 Owner 修复。三场景全过前不 publish。
 3. stable 通过后进入第一个真实小切片，完成 read -> preview -> patch -> test -> diff -> reviewer；Subagent、Browser、AST/LSP write 和完整 TUI 仍按既定优先级后置。

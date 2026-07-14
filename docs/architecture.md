@@ -131,7 +131,7 @@ flowchart TD
 
 T-158~T-187 不在 `agent.py` 叠加新的领域判断，而是让 document/reviewer 各阶段状态由其 Owner 记录和消费：claim/finding 有稳定 ID，重复 replay 幂等；rewrite 只有已排队且尚未消费的 transport recovery；final-submit 之外不能借 recovery 重开流程；unresolved/conditional/asserted reconciliation 按 clause-local 语义区分。T-188 则直接对齐 OMP 工具边界：`search_code` 在 `tools/search.py` 控制 512 列、每文件 20 个匹配和 typed truncation，`read_file` 在 `tools/files.py` 控制 768 列展示并保留完整 hash。两者都属于 tool-result shaping，不进入 Runtime guard。
 
-当前 deterministic gate 为 830 tests、35/35 benchmark、7/7 architecture checks。immutable candidate 为 `20260714T170102Z-c248d3598dc2-6f417eb9e525`；默认 stable 仍为 T-149。发布条件不是“安全拒绝即可”，而是母需求 S1~S3 在 fresh state 下同时达到有界工具调用、自然 final、证据/建议分层和 reviewer 不引入无证据方案，并取得独立黑盒回归。
+当前 deterministic gate 为 830 tests、35/35 benchmark、7/7 architecture checks。immutable candidate 为 `20260714T170102Z-c248d3598dc2-6f417eb9e525`；默认 stable 仍为 T-149。T-190 live gate 只有 S1 natural final，S2/S3 均由 provider adapter 识别普通文本中的工具协议 envelope 并以 `provider_protocol_violation` 终止，证明“失败关闭”有效但尚不具备日用发布质量。发布条件不是“安全拒绝即可”，而是母需求 S1~S3 在 fresh state 下同时达到有界工具调用、自然 final、证据/建议分层和 reviewer 不引入无证据方案，并取得独立黑盒回归。
 
 ## 待加入能力矩阵
 
