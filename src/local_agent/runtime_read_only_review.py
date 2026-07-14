@@ -1,6 +1,7 @@
 """Runtime phase for one isolated, read-only evidence review per run."""
 from __future__ import annotations
 
+import time
 from typing import Any, Protocol
 
 from .document_consistency import validate_document_consistency_assessment
@@ -26,7 +27,7 @@ from .runtime_read_only_review_round import run_review_round
 from .safe_partial_report import build_safe_partial_report
 
 
-MAX_REVIEWER_TIMEOUT_SECONDS = 20.0
+MAX_REVIEWER_TIMEOUT_SECONDS = 45.0
 
 
 class ReadOnlyReviewRuntimePort(Protocol):
@@ -499,10 +500,17 @@ class ReadOnlyReviewPhase:
         )
 
     def _review_timeout(self) -> float | None:
-        remaining = self._runtime._provider_context_phase.remaining_timeout(self._runtime._run.deadline_monotonic)
-        if remaining is None:
-            return MAX_REVIEWER_TIMEOUT_SECONDS
-        return max(0.1, min(MAX_REVIEWER_TIMEOUT_SECONDS, remaining))
+        runtime = self._runtime
+        run = runtime._run
+        remaining = runtime._provider_context_phase.remaining_timeout(run.deadline_monotonic)
+        if run.deadline_monotonic is None:
+            return max(0.1, min(MAX_REVIEWER_TIMEOUT_SECONDS, remaining))
+        reserve = run.finalization.effective_reserve_seconds(
+            deadline_monotonic=run.deadline_monotonic,
+            run_started_monotonic=run.started_monotonic,
+        )
+        available = max(0.1, run.deadline_monotonic - time.monotonic() - reserve)
+        return max(0.1, min(MAX_REVIEWER_TIMEOUT_SECONDS, remaining, available))
 
     def _has_reviewer_time_for_repair(self) -> bool:
         remaining = self._runtime._provider_context_phase.remaining_timeout(self._runtime._run.deadline_monotonic)

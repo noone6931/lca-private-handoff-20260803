@@ -2939,6 +2939,28 @@ def _config(workspace: Path, *, provider: str = "openai-compatible", vision_mode
 
 
 class ReadOnlyReviewerTests(unittest.TestCase):
+    def test_reviewer_timeout_uses_deadline_after_finalization_reserve(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = AgentRuntime(_config(Path(tmp).resolve()), show_tool_logs=False)
+            runtime._run.started_monotonic = 100.0
+            runtime._run.deadline_monotonic = 150.0
+            with (
+                patch.object(runtime._provider_context_phase, "remaining_timeout", return_value=120.0),
+                patch("local_agent.runtime_read_only_review.time.monotonic", return_value=120.0),
+            ):
+                timeout = runtime._read_only_review_phase._review_timeout()
+
+        self.assertEqual(timeout, 20.0)
+
+    def test_reviewer_timeout_allows_normal_provider_latency_without_deadline(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = AgentRuntime(_config(Path(tmp).resolve()), show_tool_logs=False)
+            runtime._run.deadline_monotonic = None
+            with patch.object(runtime._provider_context_phase, "remaining_timeout", return_value=120.0):
+                timeout = runtime._read_only_review_phase._review_timeout()
+
+        self.assertEqual(timeout, 45.0)
+
     def test_document_consistency_spoofed_unresolved_pass_becomes_safe_partial(self) -> None:
         _SpoofedDocumentConsistencyClient.calls = []
         with tempfile.TemporaryDirectory() as tmp:
