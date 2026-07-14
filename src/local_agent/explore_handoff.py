@@ -184,6 +184,21 @@ def build_explore_handoff(
         results,
         claim_units,
     )
+    source_fact_claim_ids = _source_fact_claim_ids(claim_units)
+    source_locator_claim_ids = {
+        claim_id
+        for item in candidate_locator_items
+        if item.classification == "source_locator"
+        for claim_id in item.claim_ids
+    }
+    transport_omitted_claim_ids = tuple(
+        dict.fromkeys(
+            (
+                *transport_omitted_claim_ids,
+                *(claim_id for claim_id in source_fact_claim_ids if claim_id not in source_locator_claim_ids),
+            )
+        )
+    )
     requirements = [
         ClaimEvidenceItem(
             "requirement_fact",
@@ -314,6 +329,37 @@ def build_explore_handoff(
         contract=contract,
         items=tuple(items[:MAX_HANDOFF_ITEMS]),
         transport_omitted_claim_ids=tuple(transport_omitted_claim_ids),
+    )
+
+
+_SOURCE_FACT_SECTION_PATTERNS = (
+    re.compile(r"(?:源码|代码|仓库).{0,10}(?:当前|现状|已验证|观察)?事实", flags=re.IGNORECASE),
+    re.compile(r"(?:current\s+)?(?:source|repository|code)\s+facts?", flags=re.IGNORECASE),
+    re.compile(r"observed\s+(?:source|repository|code)", flags=re.IGNORECASE),
+)
+
+
+def _source_fact_claim_ids(claim_units: Iterable[Any]) -> tuple[str, ...]:
+    return tuple(
+        str(getattr(unit, "claim_id", "") or "")
+        for unit in claim_units
+        if str(getattr(unit, "claim_id", "") or "")
+        and not _is_source_path_context_only(str(getattr(unit, "text", "") or ""))
+        and any(
+            pattern.search(str(getattr(unit, "section_context", "") or ""))
+            for pattern in _SOURCE_FACT_SECTION_PATTERNS
+        )
+    )
+
+
+def _is_source_path_context_only(text: str) -> bool:
+    compact = re.sub(r"^\s*(?:[-*+]\s+|\d{1,4}[.)]\s+)", "", text or "").strip()
+    return bool(
+        re.fullmatch(
+            r"(?:路径|文件|文件路径|path|file|source)\s*[:：]\s*`?[^`\n]+\.[A-Za-z0-9]+`?[。.]?",
+            compact,
+            flags=re.IGNORECASE,
+        )
     )
 
 

@@ -440,11 +440,14 @@ def reviewer_transport_rewrite_message(
     omitted_count = len(tuple(dict.fromkeys(omitted_claim_ids)))
     return (
         "[Read-only evidence review: bounded transport recovery]\n"
-        "The previous answer was too granular for the isolated evidence reviewer: "
-        f"{omitted_count} reviewed claim(s) had cited evidence that could not fit inside the bounded claim matrix.\n\n"
+        "The previous answer was not fully transportable to the isolated evidence reviewer: "
+        f"{omitted_count} reviewed claim(s) lacked a usable claim-scoped locator, used an invalid/over-broad locator, "
+        "or could not fit inside the bounded claim matrix.\n\n"
         "Rewrite the same answer once, without tools, into a compact reviewable final candidate. Follow these constraints:\n"
         "- Keep only the user's high-value requested conclusions; merge repeated table rows and duplicate facts.\n"
-        "- Use a small number of precise, already-observed locators per conclusion; prefer shared ranges over one citation per row.\n"
+        "- Every current repository/source fact must cite an already-read source with a precise path-bound line or narrow line range. "
+        "Remove or explicitly downgrade a source claim when the existing evidence cannot support such a locator.\n"
+        "- Use a small number of precise, already-observed locators per conclusion; prefer narrow shared ranges over one citation per row.\n"
         "- Do not add new facts, paths, artifacts, owners, lifecycle explanations, source priority, or inferred workflow state.\n"
         "- Preserve direct observations exactly at their evidence boundary. Visual observations show what is visible; they do not prove author intent, lifecycle, precedence, or role.\n"
         "- If document/image/prototype observations differ and the handoff has no explicit role/lifecycle/precedence support, state that the discrepancy remains unresolved / pending confirmation. Do not describe either artifact as a mockup, reference-only example, historical version, later/final/offline-filled state, or authoritative source unless an existing handoff item explicitly supports that.\n"

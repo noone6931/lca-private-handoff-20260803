@@ -3530,6 +3530,71 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertTrue(any('2: <button @click="process">' in item.summary for item in locator_items))
         self.assertTrue(any(frontend_claim in item.claim_ids for item in locator_items))
         self.assertFalse(any(item.classification == "requirement_locator" for item in handoff.items))
+        self.assertEqual(handoff.transport_omitted_claim_ids, ())
+
+    def test_source_fact_section_without_claim_locator_requires_transport_rewrite(self) -> None:
+        contract = generate_requirement_contract("读取源码并输出证据化技术设计。")
+        source_path = "/workspace/backend/src/Processor.java"
+        candidate = (
+            "## 源码当前事实\n"
+            "- Processor currently owns the workflow.\n"
+            "## 设计建议\n"
+            "- 建议新增协调接口。\n"
+        )
+        units = candidate_claim_units(candidate)
+        handoff = build_explore_handoff(
+            request="读取源码并输出证据化技术设计。",
+            contract=contract,
+            requirement_evidence=(),
+            source_evidence=(
+                SourceEvidence(source_path, "1: class Processor {}", root="/workspace/backend"),
+            ),
+            records=(),
+            tool_results=(),
+            candidate=candidate,
+            claim_units=units,
+        )
+        source_claim_id = next(unit.claim_id for unit in units if "currently owns" in unit.text)
+        proposal_claim_id = next(unit.claim_id for unit in units if "建议新增" in unit.text)
+
+        self.assertIn(source_claim_id, handoff.transport_omitted_claim_ids)
+        self.assertNotIn(proposal_claim_id, handoff.transport_omitted_claim_ids)
+
+    def test_source_fact_section_with_claim_locator_is_transportable(self) -> None:
+        contract = generate_requirement_contract("读取源码并输出证据化技术设计。")
+        source_path = "/workspace/backend/src/Processor.java"
+        candidate = (
+            "## Source facts\n"
+            f"- {source_path}:2 defines Processor.process.\n"
+            "## Design proposal\n"
+            "- Add a coordination API.\n"
+        )
+        units = candidate_claim_units(candidate)
+        handoff = build_explore_handoff(
+            request="读取源码并输出证据化技术设计。",
+            contract=contract,
+            requirement_evidence=(),
+            source_evidence=(
+                SourceEvidence(
+                    source_path,
+                    "1: class Processor {\n2:   void process() {}\n3: }",
+                    root="/workspace/backend",
+                ),
+            ),
+            records=(),
+            tool_results=(),
+            candidate=candidate,
+            claim_units=units,
+        )
+        source_claim_id = next(unit.claim_id for unit in units if "Processor.process" in unit.text)
+
+        self.assertNotIn(source_claim_id, handoff.transport_omitted_claim_ids)
+        self.assertTrue(
+            any(
+                item.classification == "source_locator" and source_claim_id in item.claim_ids
+                for item in handoff.items
+            )
+        )
 
     def test_path_bullet_binds_following_line_bullets_to_repository_source(self) -> None:
         contract = generate_requirement_contract("读取源码并输出证据化技术设计。")

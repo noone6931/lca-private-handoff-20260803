@@ -31,7 +31,7 @@
       ]
     },
     {
-      "content": "## 源码事实\n- `src/OwnerApplication.java` 定义 `OwnerApplication.execute`。\n\n## Owner 与调用入口\n- 该类是当前直接读取到的应用层候选；完整 Owner 与调用入口未定位。"
+      "content": "## 源码事实\n- `src/OwnerApplication.java:1` 定义 `OwnerApplication.execute`。\n\n## Owner 与调用入口\n- 该类是当前直接读取到的应用层候选；完整 Owner 与调用入口未定位。"
     },
     {
       "tool_calls": [

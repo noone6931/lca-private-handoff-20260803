@@ -67,7 +67,7 @@
       ]
     },
     {
-      "content": "## 需求事实\n- requirements.md 要求基于既有前后端入口设计结算流程。\n\n## 源码事实\n- `src/Processor.java` 定义 `Processor.settle`。\n- `{{root:frontend}}/src/views/preOrderManagement/list.vue` 是已直接读取的前端入口。\n\n## 设计建议\n- 建议由该页面调用候选结算接口；这是建议，不是当前调用链事实。\n\n## 尚待确认项\n- 当前接口、数据表与完整 Owner 尚未定位。"
+      "content": "## 需求事实\n- requirements.md:2 要求基于既有前后端入口设计结算流程。\n\n## 源码事实\n- `src/Processor.java:1` 定义 `Processor.settle`。\n- `{{root:frontend}}/src/views/preOrderManagement/list.vue:1` 是已直接读取的前端入口。\n\n## 设计建议\n- 建议由该页面调用候选结算接口；这是建议，不是当前调用链事实。\n\n## 尚待确认项\n- 当前接口、数据表与完整 Owner 尚未定位。"
     },
     {
       "tool_calls": [

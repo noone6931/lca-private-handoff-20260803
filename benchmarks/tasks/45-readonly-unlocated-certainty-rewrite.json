@@ -33,7 +33,7 @@
       "content": "源码事实：`OwnerApplication.execute` 已直接读取。Owner 仍未定位。结论：无直接影响。该功能需要从零开发。"
     },
     {
-      "content": "## 源码事实\n- `src/OwnerApplication.java` 定义 `OwnerApplication.execute`。\n\n## 结论边界\n- 完整 Owner 和影响范围仍未定位；是否复用现有模块或新建实现均需继续确认。"
+      "content": "## 源码事实\n- `src/OwnerApplication.java:1` 定义 `OwnerApplication.execute`。\n\n## 结论边界\n- 完整 Owner 和影响范围仍未定位；是否复用现有模块或新建实现均需继续确认。"
     },
     {
       "tool_calls": [
