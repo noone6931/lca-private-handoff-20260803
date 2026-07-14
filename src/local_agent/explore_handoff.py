@@ -142,6 +142,7 @@ class _DocumentLocatorSource:
     root: str
     scope: str
     identity_path: str
+    classification: str
 
 
 @dataclass(frozen=True)
@@ -441,7 +442,7 @@ def _candidate_locator_items(
                 prior = buckets.get(bucket_key)
                 claim_ids = (claim_id,) if prior is None else tuple(dict.fromkeys((*prior.claim_ids, claim_id)))
                 buckets[bucket_key] = ClaimEvidenceItem(
-                    "requirement_locator",
+                    source.classification,
                     "read_file",
                     source.path,
                     source.root,
@@ -490,7 +491,7 @@ def _packed_line_locator_items(
             for chunk_start, chunk_end, summary in chunks:
                 key = (artifact_key, "line", f"{chunk_start}-{chunk_end}")
                 buckets[key] = ClaimEvidenceItem(
-                    "requirement_locator",
+                    source.classification,
                     "read_file",
                     source.path,
                     source.root,
@@ -658,23 +659,21 @@ def _document_locator_sources(
             root=root,
             scope=item.scope or "root_local",
             identity_path=document_artifact_identity(root=root, path=item.path)[1],
+            classification="requirement_locator",
         )
         _store_document_locator_source(sources, source)
     for item in source_evidence:
-        if not str(item.path or "").lower().endswith((".md", ".markdown", ".html", ".htm")):
-            continue
         source = _DocumentLocatorSource(
             path=item.path,
             content=item.content,
             root=item.root or "(unknown)",
             scope=item.scope or "root_local",
             identity_path=item.path,
+            classification=_locator_classification(item.path),
         )
         _store_document_locator_source(sources, source)
     for item in tool_results:
         if item.name != "read_file" or item.is_error:
-            continue
-        if not str(item.path or "").lower().endswith((".md", ".markdown", ".html", ".htm")):
             continue
         source = _DocumentLocatorSource(
             path=item.path or "(none)",
@@ -682,9 +681,18 @@ def _document_locator_sources(
             root=str(item.metadata.get("evidence_root") or item.metadata.get("evidence_root_label") or "(unknown)"),
             scope=str(item.metadata.get("evidence_scope") or "root_local"),
             identity_path=str(item.metadata.get("resolved_path") or item.path or ""),
+            classification=_locator_classification(item.path or ""),
         )
         _store_document_locator_source(sources, source)
     return list(sources.values())
+
+
+def _locator_classification(path: str) -> str:
+    """Keep requirement-document and repository-source locators distinct."""
+
+    if str(path or "").lower().endswith((".md", ".markdown", ".html", ".htm")):
+        return "requirement_locator"
+    return "source_locator"
 
 
 def _store_document_locator_source(
@@ -858,8 +866,8 @@ def _handoff_item_identity(item: ClaimEvidenceItem) -> tuple[str, ...]:
             path=item.path,
             identity_path=item.identity_path,
         )
-        if item.classification == "requirement_locator":
-            return ("requirement_locator", root_identity, artifact_identity, item.summary)
+        if item.classification in {"requirement_locator", "source_locator"}:
+            return (item.classification, root_identity, artifact_identity, item.summary)
         if item.classification == "document_reconciliation_support":
             return ("document_support", root_identity, artifact_identity, item.summary)
         return ("artifact", item.tool, root_identity, artifact_identity)

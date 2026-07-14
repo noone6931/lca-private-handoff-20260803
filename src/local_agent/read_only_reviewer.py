@@ -251,12 +251,29 @@ def _extract_candidate_claim_units(candidate: str) -> tuple[tuple[CandidateClaim
     locator_context = ""
     section_context = ""
     pending_structural_group: list[int] = []
+    active_source_path = ""
 
     def record_issue(code: str, detail: str = "") -> None:
         issues.append(CandidateClaimProjectionIssue(code, detail))
 
     def append_unit(unit: str) -> None:
-        indexed.append(CandidateClaimUnit(f"c{len(indexed) + 1:03d}", unit, locator_context, section_context))
+        nonlocal active_source_path
+        explicit_source_path = _source_path_context(unit)
+        if explicit_source_path:
+            active_source_path = explicit_source_path
+        effective_locator_context = locator_context
+        line_range = _claim_line_range(unit)
+        if active_source_path and line_range is not None:
+            start, end = line_range
+            effective_locator_context = f"{active_source_path}:{start}" if start == end else f"{active_source_path}:{start}-{end}"
+        indexed.append(
+            CandidateClaimUnit(
+                f"c{len(indexed) + 1:03d}",
+                unit,
+                effective_locator_context,
+                section_context,
+            )
+        )
 
     def apply_locator_to_pending_group(context: str) -> None:
         for item_index in pending_structural_group:
@@ -296,6 +313,7 @@ def _extract_candidate_claim_units(candidate: str) -> tuple[tuple[CandidateClaim
             section_context = _heading_context(line)
             pending_structural_group.clear()
             locator_context = line if _line_has_path_bound_locator(line) else ""
+            active_source_path = _source_path_context(line)
             if locator_context:
                 pending_structural_group.clear()
             continue
@@ -338,9 +356,13 @@ Review contract:
 - Missing or incomplete searches mean unlocated within their stated scope, not absent everywhere.
 - Requirement facts, repository facts, proposals, and open questions must remain distinct.
 - Some handoff claim_matrix items include claim_ids. Those are claim-scoped evidence excerpts for those candidate claims only; check that the addressed claim_id is a member of claim_ids before using the excerpt, and do not use an image observation to prove a Markdown requirement rule or vice versa.
+- `requirement_locator` excerpts bind requirement/document claims; `source_locator` excerpts bind repository-source claims. Prefer these claim-scoped excerpts over generic summaries. A failed or missing path in one root never invalidates a successful read in another root, even when basenames match.
 - A proposal must not be worded as an existing table, class, endpoint, service, approval flow, numbering prefix, or integration unless the handoff explicitly supports it.
 - A clearly labeled design proposal, suggested new table/class/API, candidate option, or pending-confirmation plan is allowed without proving that every old asset is impossible to reuse. It must stay labeled as proposal/pending confirmation and list the prerequisite reuse/owner checks; report a defect only when the candidate presents the proposed name as current implementation, existing fact, verified owner, or proven absence.
 - When the handoff has no explicit direct binding, do not say a main owner/module judgment is correct or mostly correct. Treat same-domain code as observed or analogous and leave the owner unlocated.
+- Report a finding only when it is provable from the exact request, a claim-scoped handoff excerpt, or an internal contradiction in the candidate. Do not invent acceptance criteria, business semantics, source behavior, dynamic binding, holiday handling, or possible hidden implementations merely because they could exist.
+- A finding must be actionable, free of unstated assumptions, and proportionate to the user's requested rigor. If a concern depends on unseen code or a hypothetical alternative, stay silent about it. Requirement facts do not need to be observed in repository source when the candidate keeps them in the requirement-fact section; clearly labeled proposals do not need to exist in current source.
+- There is no target finding count. Prefer `pass` with zero findings over speculative review activity. `revise` is reserved for concrete candidate defects, not opportunities to request more investigation or stronger wording.
 - For a document-consistency review, do not resolve conflicting document or image observations with an invented workflow, scope, actor, source priority, authoritative source, or precedence rule. Preserve the conflict as unresolved unless the handoff explicitly reconciles it. A candidate that accurately cites both observations, explicitly keeps the conflict unresolved, and presents only labeled options or questions for later confirmation is compliant: submit `pass` with no reported findings. A finding must identify a candidate error such as an unsupported reconciliation, a self-contradictory candidate statement, a missing cited observation, a user-request violation, or a claim that exceeds the handoff; the source materials disagreeing by itself is not a candidate defect. If the only issue is that a source owner must decide how to update source materials, submit `pass` with no reported findings.
 
 The incremental output contract is bounded and shallow. Report at most 8 findings total by calling report_read_only_finding once per finding; then call submit_read_only_review with verdict, confidence, reason, and any profile-required typed summary such as document_consistency. Do not repeat findings in the final submit; accepted findings are already recorded as incremental sections. Findings are capacity-limited: choose the highest-risk blocking candidate defects first. Once 8 findings are recorded, stop reporting findings and submit the final verdict. A `pass` verdict requires 0 reported findings; `revise` and `unverified` require 1 to 8 reported findings. Every finding must have one unique, known claim_id plus non-empty issue and action. For every finding, choose exactly one claim_id from candidate_claims and set finding_scope to `candidate_defect`; Runtime binds the exact candidate text by claim_id. The action must change the candidate answer; it must not ask to modify the requirements, images, prototypes, or source artifacts, and must not merely ask a source owner to decide. Never invent or repeat a claim_id. Do not submit `source_material_gap` findings; those are not candidate defects. Report only the highest-risk blocking findings when there are more than 8. Keep the complete output under 9000 characters.
@@ -1178,6 +1200,47 @@ def _is_presentation_list_container_label(line: str) -> bool:
 
 def _line_has_path_bound_locator(line: str) -> bool:
     return bool(re.search(r"\.(?:md|markdown|html?|png|jpe?g|gif|webp)\s*[:#（(；;，, ]", line, flags=re.IGNORECASE))
+
+
+_SOURCE_PATH_SUFFIXES = (
+    "bash|c|cc|cpp|css|go|gradle|h|hpp|html?|java|js|jsx|json|kt|kts|md|markdown|png|jpe?g|gif|webp|"
+    "properties|py|rs|scss|sh|sql|svelte|toml|ts|tsx|vue|xml|ya?ml|zsh"
+)
+
+
+def _source_path_context(text: str) -> str:
+    """Return one explicit source path for nearby line-only bullets."""
+
+    backticked = re.findall(r"`([^`\n]+)`", text or "")
+    candidates = [*backticked]
+    candidates.extend(
+        match.group(1)
+        for match in re.finditer(
+            rf"((?:[A-Za-z]:)?(?:[/\\][^\s`，,；;：:]+)+\.(?:{_SOURCE_PATH_SUFFIXES}))",
+            text or "",
+            flags=re.IGNORECASE,
+        )
+    )
+    for candidate in candidates:
+        normalized = candidate.strip().strip("()[]{}（）【】,，;；。")
+        if re.search(rf"\.(?:{_SOURCE_PATH_SUFFIXES})$", normalized, flags=re.IGNORECASE):
+            return normalized
+    return ""
+
+
+def _claim_line_range(text: str) -> tuple[int, int] | None:
+    """Parse a nearby source-line label without interpreting its semantics."""
+
+    match = re.search(r"第\s*(\d+)\s*(?:[-–至]\s*(\d+)\s*)?行", text or "")
+    if match is None:
+        match = re.search(r"\blines?\s+L?(\d+)\s*(?:[-–]\s*L?(\d+)\s*)?", text or "", flags=re.IGNORECASE)
+    if match is None:
+        return None
+    start = int(match.group(1))
+    end = int(match.group(2) or start)
+    if start < 1 or end < start or end - start + 1 > 160:
+        return None
+    return start, end
 
 
 def _is_citation_only_context(line: str) -> bool:

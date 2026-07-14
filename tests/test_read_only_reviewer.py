@@ -3459,6 +3459,103 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertIn("requirement_locator", classifications)
         self.assertIn("observed_candidate", classifications)
 
+    def test_claim_scoped_line_locators_include_repository_source_files(self) -> None:
+        contract = generate_requirement_contract(
+            "读取后端 Processor.java 和前端 Panel.vue，区分源码事实与设计建议。"
+        )
+        backend_path = "/workspace/backend/src/Processor.java"
+        frontend_path = "/workspace/frontend/src/Panel.vue"
+        backend = "\n".join(
+            [
+                "1: package example;",
+                "2: public class Processor {",
+                "3:   void process() {}",
+                "4: }",
+            ]
+        )
+        frontend = "\n".join(
+            [
+                "1: <template>",
+                "2:   <button @click=\"process\">Run</button>",
+                "3: </template>",
+            ]
+        )
+        candidate = (
+            f"- 源码事实：{backend_path}:2-3 定义 Processor.process。\n"
+            f"- 源码事实：{frontend_path}:1-2 渲染 Run 按钮。\n"
+            "- 设计建议：可新增协调接口，此项不是当前实现。"
+        )
+        units = candidate_claim_units(candidate)
+        handoff = build_explore_handoff(
+            request="读取后端 Processor.java 和前端 Panel.vue，区分源码事实与设计建议。",
+            contract=contract,
+            requirement_evidence=(),
+            source_evidence=(
+                SourceEvidence(backend_path, backend, root="/workspace/backend"),
+                SourceEvidence(frontend_path, frontend, root="/workspace/frontend"),
+            ),
+            records=(),
+            tool_results=(),
+            candidate=candidate,
+            claim_units=units,
+        )
+        locator_items = [item for item in handoff.items if item.classification == "source_locator"]
+        backend_claim = next(unit.claim_id for unit in units if "Processor.process" in unit.text)
+        frontend_claim = next(unit.claim_id for unit in units if "Run 按钮" in unit.text)
+
+        self.assertTrue(any("2: public class Processor" in item.summary for item in locator_items))
+        self.assertTrue(any(backend_claim in item.claim_ids for item in locator_items))
+        self.assertTrue(any('2: <button @click="process">' in item.summary for item in locator_items))
+        self.assertTrue(any(frontend_claim in item.claim_ids for item in locator_items))
+        self.assertFalse(any(item.classification == "requirement_locator" for item in handoff.items))
+
+    def test_path_bullet_binds_following_line_bullets_to_repository_source(self) -> None:
+        contract = generate_requirement_contract("读取源码并输出证据化技术设计。")
+        source_path = "/workspace/backend/src/Processor.java"
+        content = "\n".join(f"{number}: source line {number}" for number in range(1, 80))
+        candidate = (
+            "## 源码当前事实\n"
+            f"- 路径：`{source_path}`\n"
+            "- 证据点：\n"
+            "  - 第 25 行：存在 process 方法。\n"
+            "  - 第 51–52 行：存在状态检查。\n"
+        )
+        units = candidate_claim_units(candidate)
+        handoff = build_explore_handoff(
+            request="读取源码并输出证据化技术设计。",
+            contract=contract,
+            requirement_evidence=(),
+            source_evidence=(SourceEvidence(source_path, content, root="/workspace/backend"),),
+            records=(),
+            tool_results=(),
+            candidate=candidate,
+            claim_units=units,
+        )
+        locator_items = [item for item in handoff.items if item.classification == "source_locator"]
+        line_25_claim = next(unit.claim_id for unit in units if "第 25 行" in unit.text)
+        line_51_claim = next(unit.claim_id for unit in units if "第 51–52 行" in unit.text)
+
+        self.assertTrue(any("25: source line 25" in item.summary and line_25_claim in item.claim_ids for item in locator_items))
+        self.assertTrue(any("51: source line 51" in item.summary and line_51_claim in item.claim_ids for item in locator_items))
+        self.assertTrue(any("52: source line 52" in item.summary and line_51_claim in item.claim_ids for item in locator_items))
+
+    def test_reviewer_contract_uses_omp_provable_finding_bar(self) -> None:
+        contract = generate_requirement_contract("读取源码并输出证据化技术设计。")
+        handoff = build_explore_handoff(
+            request="读取源码并输出证据化技术设计。",
+            contract=contract,
+            requirement_evidence=(),
+            source_evidence=(SourceEvidence("src/Processor.java", "1: class Processor {}", root="/workspace"),),
+            records=(),
+            tool_results=(),
+        )
+        prompt = reviewer_messages(handoff, candidate_claim_units("源码事实：src/Processor.java:1 定义 Processor。"))[0]["content"]
+
+        self.assertIn("Report a finding only when it is provable", prompt)
+        self.assertIn("There is no target finding count", prompt)
+        self.assertIn("Requirement facts do not need to be observed in repository source", prompt)
+        self.assertIn("A failed or missing path in one root never invalidates a successful read in another root", prompt)
+
     def test_path_bound_line_locator_variants_parse_full_ranges(self) -> None:
         variants = (
             ("policy.md:93-128", "93-128"),
