@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
+from ..inventory_contract import glob_inventory_denial_reason
 from ..protocol.interactions import InteractionHandler
 from ..protocol.interactions import InteractionRequest
 from ..terminal_io import terminal_input_prompt
@@ -155,7 +156,15 @@ class ToolRegistry:
                 return ToolResult(scope_denial, is_error=True)
             glob_scope_denial = _runtime_glob_scope_denial_reason(name, arguments, context)
             if glob_scope_denial:
-                return ToolResult(glob_scope_denial, is_error=True)
+                return ToolResult(
+                    glob_scope_denial,
+                    is_error=True,
+                    metadata={
+                        "active_tool_rejection": True,
+                        "inventory_contract_rejection": True,
+                        "tool": name,
+                    },
+                )
             result = tool.handler(arguments, context)
             if compatibility_notes:
                 metadata = {**dict(result.metadata), "compatibility_normalized": list(compatibility_notes)}
@@ -238,35 +247,11 @@ def _runtime_glob_scope_denial_reason(
 
     if name != "glob_files" or context.runtime_glob_required_roots is None:
         return None
-    raw_paths = arguments.get("paths")
-    if not isinstance(raw_paths, list) or not all(isinstance(path, str) for path in raw_paths):
-        return None
-    missing = [
-        root
-        for root in sorted(context.runtime_glob_required_roots)
-        if not _glob_paths_cover_root(raw_paths, Path(root), context.workspace)
-    ]
-    if not missing:
-        return None
-    rendered = ", ".join(missing)
-    return (
-        "Runtime workspace inventory restriction: glob_files must explicitly cover every currently uncovered "
-        f"workspace root before other exploration. Missing root scopes: {rendered}. "
-        "Use absolute root-prefixed manifest/source patterns for additional roots; do not retry a primary-only glob."
+    return glob_inventory_denial_reason(
+        arguments,
+        required_roots=context.runtime_glob_required_roots,
+        workspace=context.workspace,
     )
-
-
-def _glob_paths_cover_root(raw_paths: list[str], root: Path, workspace: Path) -> bool:
-    root_text = str(root.resolve())
-    for raw_path in raw_paths:
-        expanded = str(Path(raw_path).expanduser())
-        if not Path(expanded).is_absolute():
-            if root.resolve() == workspace.resolve():
-                return True
-            continue
-        if expanded == root_text or expanded.startswith(root_text + "/"):
-            return True
-    return False
 
 
 def _approval_denial_reason(tool: Tool, context: ToolContext) -> str | None:

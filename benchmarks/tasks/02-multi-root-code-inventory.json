@@ -19,8 +19,9 @@
           "name": "glob_files",
           "arguments": {
             "paths": [
-              ".",
-              "{{root:service}}"
+              "requirements.md",
+              "{{root:service}}/**/pom.xml",
+              "{{root:service}}/**/*.java"
             ],
             "limit": 100
           }

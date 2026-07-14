@@ -209,9 +209,9 @@ class ToolChoiceQueueTests(unittest.TestCase):
                     "search_code",
                     "No matches.",
                     useless=True,
-                    metadata={"negative_evidence_type": "content_no_match"},
+                    metadata={"evidence_root": str(root), "negative_evidence_type": "content_no_match"},
                 ),
-                ToolResultSummary("lsp_symbols", "No symbols.", useless=True),
+                ToolResultSummary("lsp_symbols", "No symbols.", useless=True, metadata={"evidence_root": str(root)}),
                 ToolResultSummary("read_file", "Tool call was not executed", is_error=True, path=str(root / "App.java")),
             )
             decision = evaluate_read_only_explore(
@@ -261,7 +261,7 @@ class ToolChoiceQueueTests(unittest.TestCase):
         self.assertEqual(final.action, "finalize")
         self.assertEqual(final.discovery_roots, ())
 
-    def test_owner_explore_fallback_glob_candidate_transitions_to_direct_read(self) -> None:
+    def test_owner_explore_fallback_glob_inventory_does_not_become_hard_candidate(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp).resolve()
             source = root / "src" / "Owner.java"
@@ -291,8 +291,9 @@ class ToolChoiceQueueTests(unittest.TestCase):
                 read_only_review_profile="owner_impact",
             )
 
-        self.assertEqual(decision.allowed_tool_names, frozenset({"read_file"}))
-        self.assertEqual(decision.scoped_read_paths, (str(source),))
+        self.assertEqual(decision.allowed_tool_names, frozenset({"read_file", "search_code"}))
+        self.assertEqual(decision.scoped_read_paths, ())
+        self.assertNotIn(str(source), decision.tool_call_hints[0] if decision.tool_call_hints else "")
 
     def test_owner_explore_fallback_discovery_advances_one_missing_root_at_a_time(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -384,11 +385,17 @@ class ToolChoiceQueueTests(unittest.TestCase):
                 read_only_review_profile="owner_impact",
             )
 
-        self.assertEqual(decision.allowed_tool_names, frozenset({"read_file"}))
-        self.assertIn(str(source), decision.scoped_read_paths)
+        self.assertEqual(decision.allowed_tool_names, frozenset({"glob_files"}))
+        self.assertEqual(decision.required_glob_roots, (str(second),))
+        self.assertEqual(decision.scoped_read_paths, ())
         # After the first root is read, the second root must still be eligible
         # for its own fallback; the combined truncated request alone is not an
         # effective second-root discovery.
+        first_hit = ToolResultSummary(
+            "search_code",
+            f"{source}:1: class Owner",
+            metadata={"evidence_root": str(first), "evidence_paths": [str(source)]},
+        )
         after_first_read = evaluate_tool_choice_state(
             task_kind="read-only",
             prompt="只读分析 owner 和设计影响。",
@@ -396,6 +403,7 @@ class ToolChoiceQueueTests(unittest.TestCase):
                 first_no_match,
                 second_no_match,
                 combined_glob,
+                first_hit,
                 ToolResultSummary("read_file", "class Owner {}", path=str(source), metadata={"resolved_path": str(source)}),
             ),
             workspace_roots=(str(first), str(second)),
@@ -428,6 +436,167 @@ class ToolChoiceQueueTests(unittest.TestCase):
         self.assertEqual(decision.allowed_tool_names, frozenset({"read_file"}))
         self.assertEqual(decision.preferred_tool_names, ("read_file",))
         self.assertIn(str(source), decision.tool_call_hints[0])
+
+    def test_owner_explore_semantic_candidates_are_not_source_suffix_limited(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            sql = root / "db" / "owner.sql"
+            xml = root / "mapper" / "OwnerMapper.xml"
+            yaml = root / "config" / "route.yaml"
+            for path in (sql, xml, yaml):
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("owner: evidence\n", encoding="utf-8")
+            decision = evaluate_read_only_explore(
+                profile="owner_impact",
+                tool_results=(
+                    ToolResultSummary(
+                        "search_code",
+                        "semantic hits",
+                        metadata={"evidence_root": str(root), "evidence_paths": [str(sql), str(xml), str(yaml)]},
+                    ),
+                ),
+                code_roots=(str(root),),
+            )
+
+        self.assertEqual(decision.read_candidates[:2], (str(sql), str(xml)))
+
+    def test_relative_evidence_paths_bind_only_to_typed_search_scope(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            first = root / "service-a"
+            second = root / "service-b"
+            first_path = first / "src" / "index.js"
+            second_path = second / "src" / "index.js"
+            first_path.parent.mkdir(parents=True)
+            second_path.parent.mkdir(parents=True)
+            first_path.write_text("export const owner = 'a';\n", encoding="utf-8")
+            second_path.write_text("export const owner = 'b';\n", encoding="utf-8")
+            scoped = evaluate_read_only_explore(
+                profile="owner_impact",
+                tool_results=(
+                    ToolResultSummary(
+                        "search_code",
+                        "src/index.js:1: owner",
+                        metadata={"evidence_root": str(first), "evidence_paths": ["src/index.js"]},
+                    ),
+                ),
+                code_roots=(str(first), str(second)),
+            )
+            ambiguous_legacy = evaluate_read_only_explore(
+                profile="owner_impact",
+                tool_results=(
+                    ToolResultSummary(
+                        "search_code",
+                        "src/index.js:1: owner",
+                        metadata={"evidence_paths": ["src/index.js"]},
+                    ),
+                ),
+                code_roots=(str(first), str(second)),
+            )
+
+        self.assertEqual(scoped.read_candidates, (str(first_path),))
+        self.assertEqual(scoped.preferred_roots, (str(second),))
+        self.assertEqual(ambiguous_legacy.read_candidates, ())
+
+    def test_relative_multiroot_glob_files_do_not_fake_root_local_discovery(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            first = root / "service-a"
+            second = root / "service-b"
+            first_file = first / "src" / "index.js"
+            second_file = second / "src" / "index.js"
+            first_file.parent.mkdir(parents=True)
+            second_file.parent.mkdir(parents=True)
+            first_file.write_text("export const owner = 'a';\n", encoding="utf-8")
+            second_file.write_text("export const owner = 'b';\n", encoding="utf-8")
+            first_no_match = ToolResultSummary(
+                "search_code",
+                "No matches.",
+                useless=True,
+                metadata={"evidence_root": str(first), "negative_evidence_type": "content_no_match"},
+            )
+            second_no_match = ToolResultSummary(
+                "search_code",
+                "No matches.",
+                useless=True,
+                metadata={"evidence_root": str(second), "negative_evidence_type": "content_no_match"},
+            )
+            ambiguous_glob = ToolResultSummary(
+                "glob_files",
+                "src/index.js",
+                metadata={"searched_roots": [str(first), str(second)], "files": ["src/index.js"]},
+            )
+            decision = evaluate_tool_choice_state(
+                task_kind="read-only",
+                prompt="只读分析 owner 和设计影响。",
+                tool_results=(first_no_match, second_no_match, ambiguous_glob),
+                workspace_roots=(str(first), str(second)),
+                read_only_review_profile="owner_impact",
+            )
+
+        self.assertEqual(decision.allowed_tool_names, frozenset({"glob_files"}))
+        self.assertEqual(len(decision.required_glob_roots), 1)
+        self.assertIn(decision.required_glob_roots[0], {str(first), str(second)})
+
+    def test_inventory_read_alone_does_not_complete_owner_coverage(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            config = root / "config" / "datasource.properties"
+            config.parent.mkdir(parents=True)
+            config.write_text("url=jdbc:test\n", encoding="utf-8")
+            decision = evaluate_read_only_explore(
+                profile="owner_impact",
+                tool_results=(
+                    ToolResultSummary(
+                        "glob_files",
+                        str(config),
+                        metadata={"evidence_root": str(root), "files": [str(config)]},
+                    ),
+                    ToolResultSummary("read_file", "url=jdbc:test\n", path=str(config), metadata={"resolved_path": str(config)}),
+                ),
+                code_roots=(str(root),),
+            )
+
+        self.assertEqual(decision.missing_roots, (str(root),))
+        self.assertNotEqual(decision.action, "finalize")
+
+    def test_list_files_inventory_read_does_not_complete_owner_coverage(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            config = root / "config" / "datasource.properties"
+            manual = root / "notes" / "manual-owner.txt"
+            config.parent.mkdir(parents=True)
+            manual.parent.mkdir(parents=True)
+            config.write_text("url=jdbc:test\n", encoding="utf-8")
+            manual.write_text("manual exact owner observation\n", encoding="utf-8")
+            inventory_read = evaluate_read_only_explore(
+                profile="owner_impact",
+                tool_results=(
+                    ToolResultSummary(
+                        "list_files",
+                        str(config),
+                        metadata={"evidence_root": str(root), "listed_root": str(root), "files": [str(config)]},
+                    ),
+                    ToolResultSummary("read_file", "url=jdbc:test\n", path=str(config), metadata={"resolved_path": str(config)}),
+                ),
+                code_roots=(str(root),),
+            )
+            manual_read = evaluate_read_only_explore(
+                profile="owner_impact",
+                tool_results=(
+                    ToolResultSummary(
+                        "read_file",
+                        "manual exact owner observation\n",
+                        path=str(manual),
+                        metadata={"resolved_path": str(manual)},
+                    ),
+                ),
+                code_roots=(str(root),),
+            )
+
+        self.assertEqual(inventory_read.missing_roots, (str(root),))
+        self.assertEqual(manual_read.action, "finalize")
+        self.assertEqual(manual_read.missing_roots, ())
     def test_document_only_contract_never_reopens_code_discovery_tools(self) -> None:
         decision = evaluate_tool_choice_state(
             task_kind="read-only",
@@ -981,18 +1150,38 @@ class ToolChoiceQueueTests(unittest.TestCase):
         self.assertIn(f"code_read:{backend}", exhausted.missing_requirements)
 
     def test_design_profile_finalizes_after_one_read_per_required_root(self) -> None:
-        backend = "/workspace/backend"
-        frontend = "/workspace/frontend"
-        decision = evaluate_tool_choice_state(
-            task_kind="read-only",
-            prompt="arbitrary",
-            tool_results=[
-                ToolResultSummary("read_file", "class Service {}", path=f"{backend}/src/Service.java"),
-                ToolResultSummary("read_file", "export default {}", path=f"{frontend}/src/Page.vue"),
-            ],
-            design_evidence_roots=(backend, frontend),
-            read_only_review_profile="design",
-        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            backend = root / "backend"
+            frontend = root / "frontend"
+            backend_file = backend / "src" / "App.java"
+            frontend_file = frontend / "src" / "Page.vue"
+            backend_file.parent.mkdir(parents=True)
+            frontend_file.parent.mkdir(parents=True)
+            backend_file.write_text("class Service {}\n", encoding="utf-8")
+            frontend_file.write_text("export default {}\n", encoding="utf-8")
+            decision = evaluate_tool_choice_state(
+                task_kind="read-only",
+                prompt="arbitrary",
+                tool_results=[
+                    ToolResultSummary("search_code", "backend hit", metadata={"evidence_paths": [str(backend_file)]}),
+                    ToolResultSummary("search_code", "frontend hit", metadata={"evidence_paths": [str(frontend_file)]}),
+                    ToolResultSummary(
+                        "read_file",
+                        "class Service {}",
+                        path=str(backend_file),
+                        metadata={"resolved_path": str(backend_file)},
+                    ),
+                    ToolResultSummary(
+                        "read_file",
+                        "export default {}",
+                        path=str(frontend_file),
+                        metadata={"resolved_path": str(frontend_file)},
+                    ),
+                ],
+                design_evidence_roots=(str(backend), str(frontend)),
+                read_only_review_profile="design",
+            )
         self.assertTrue(decision.force_final_answer_without_tools)
         self.assertEqual(decision.missing_requirements, ())
 

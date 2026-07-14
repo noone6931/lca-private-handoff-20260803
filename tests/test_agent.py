@@ -436,7 +436,7 @@ class _OwnerExploreFallbackRootFairClient:
                                 "type": "function",
                                 "function": {
                                     "name": "search_code",
-                                    "arguments": json.dumps({"path": str(additional / "src"), "pattern": "NoSuchOwnerToken"}),
+                                    "arguments": json.dumps({"path": str(additional), "pattern": "NoSuchOwnerToken"}),
                                 },
                             },
                         ],
@@ -452,19 +452,11 @@ class _OwnerExploreFallbackRootFairClient:
                         "content": None,
                         "tool_calls": [
                             {
-                                "id": "detour-search-primary",
+                                "id": "bare-inventory",
                                 "type": "function",
                                 "function": {
-                                    "name": "search_code",
-                                    "arguments": json.dumps({"path": "src", "pattern": "PrimaryOwner"}),
-                                },
-                            },
-                            {
-                                "id": "detour-search-additional",
-                                "type": "function",
-                                "function": {
-                                    "name": "search_code",
-                                    "arguments": json.dumps({"path": str(additional / "src"), "pattern": "AdditionalOwner"}),
+                                    "name": "glob_files",
+                                    "arguments": json.dumps({"paths": [str(self.config.workspace), str(additional)], "limit": 200}),
                                 },
                             },
                         ],
@@ -484,7 +476,7 @@ class _OwnerExploreFallbackRootFairClient:
                                 "type": "function",
                                 "function": {
                                     "name": "glob_files",
-                                    "arguments": json.dumps({"paths": [str(self.config.workspace / "src" / "*.java")], "limit": 100}),
+                                    "arguments": json.dumps({"paths": [str(self.config.workspace / "**" / "*Primary*")], "limit": 100}),
                                 },
                             }
                         ],
@@ -500,9 +492,12 @@ class _OwnerExploreFallbackRootFairClient:
                         "content": None,
                         "tool_calls": [
                             {
-                                "id": "read-primary",
+                                "id": "glob-additional",
                                 "type": "function",
-                                "function": {"name": "read_file", "arguments": json.dumps({"path": "src/Primary.java"})},
+                                "function": {
+                                    "name": "glob_files",
+                                    "arguments": json.dumps({"paths": [str(additional / "**" / "*Additional*")], "limit": 100}),
+                                },
                             }
                         ],
                     }
@@ -517,11 +512,19 @@ class _OwnerExploreFallbackRootFairClient:
                         "content": None,
                         "tool_calls": [
                             {
-                                "id": "glob-additional",
+                                "id": "search-primary-semantic",
                                 "type": "function",
                                 "function": {
-                                    "name": "glob_files",
-                                    "arguments": json.dumps({"paths": [str(additional / "src" / "*.java")], "limit": 100}),
+                                    "name": "search_code",
+                                    "arguments": json.dumps({"path": "src", "pattern": "PrimaryOwner"}),
+                                },
+                            },
+                            {
+                                "id": "search-additional-semantic",
+                                "type": "function",
+                                "function": {
+                                    "name": "search_code",
+                                    "arguments": json.dumps({"path": str(additional), "pattern": "AdditionalOwner"}),
                                 },
                             }
                         ],
@@ -537,11 +540,16 @@ class _OwnerExploreFallbackRootFairClient:
                         "content": None,
                         "tool_calls": [
                             {
+                                "id": "read-primary",
+                                "type": "function",
+                                "function": {"name": "read_file", "arguments": json.dumps({"path": "src/Primary.sql"})},
+                            },
+                            {
                                 "id": "read-additional",
                                 "type": "function",
                                 "function": {
                                     "name": "read_file",
-                                    "arguments": json.dumps({"path": str(additional / "src" / "Additional.java")}),
+                                    "arguments": json.dumps({"path": str(additional / "config" / "AdditionalRoute.yaml")}),
                                 },
                             }
                         ],
@@ -551,7 +559,7 @@ class _OwnerExploreFallbackRootFairClient:
         return type(
             "Response",
             (),
-            {"message": {"content": "Primary.java 和 Additional.java 都已直接读取；owner 仍按证据限定。"}},
+            {"message": {"content": "Primary.sql 和 AdditionalRoute.yaml 都已通过语义搜索命中后直接读取；owner 仍按证据限定。"}},
         )()
 
 
@@ -3973,9 +3981,11 @@ class AgentRuntimeTests(unittest.TestCase):
             workspace = Path(tmp).resolve() / "primary"
             additional = Path(tmp).resolve() / "service-b"
             (workspace / "src").mkdir(parents=True)
-            (additional / "src").mkdir(parents=True)
-            (workspace / "src" / "Primary.java").write_text("class PrimaryOwner {}\n", encoding="utf-8")
-            (additional / "src" / "Additional.java").write_text("class AdditionalOwner {}\n", encoding="utf-8")
+            (additional / "config").mkdir(parents=True)
+            (workspace / "config").mkdir(parents=True)
+            (workspace / "config" / "payment-datasource.properties").write_text("alphabetical inventory noise\n", encoding="utf-8")
+            (workspace / "src" / "Primary.sql").write_text("select 'PrimaryOwner';\n", encoding="utf-8")
+            (additional / "config" / "AdditionalRoute.yaml").write_text("owner: AdditionalOwner\n", encoding="utf-8")
             with patch("local_agent.agent.OpenAICompatibleClient", _OwnerExploreFallbackRootFairClient):
                 runtime = AgentRuntime(
                     AgentConfig(
@@ -3998,13 +4008,12 @@ class AgentRuntimeTests(unittest.TestCase):
                     if line.strip()
                 ]
 
-        self.assertIn("Primary.java", result)
-        self.assertIn("Additional.java", result)
+        self.assertIn("Primary.sql", result)
+        self.assertIn("AdditionalRoute.yaml", result)
         summary = runtime._last_run_summary
         self.assertEqual(summary["termination_reason"], "final")
-        self.assertEqual(summary["tool_counts"], {"glob_files": 2, "list_files": 3, "read_file": 2, "search_code": 2})
-        self.assertEqual(summary["provider_schema_violations"], 5)
-        self.assertEqual(summary["suppressed_tool_executions"], 2)
+        self.assertEqual(summary["tool_counts"], {"glob_files": 3, "list_files": 3, "read_file": 2, "search_code": 4})
+        self.assertGreaterEqual(summary["provider_schema_violations"], 3)
         self.assertEqual(summary["read_only_reviewer"]["triggers"], 1)
         self.assertEqual(
             {
@@ -4012,20 +4021,27 @@ class AgentRuntimeTests(unittest.TestCase):
                 for item in runtime._run.tool_choice_results
                 if item.name == "read_file" and not item.is_error
             },
-            {str(workspace / "src" / "Primary.java"), str(additional / "src" / "Additional.java")},
+            {str(workspace / "src" / "Primary.sql"), str(additional / "config" / "AdditionalRoute.yaml")},
+        )
+        self.assertNotIn(
+            str(workspace / "config" / "payment-datasource.properties"),
+            {
+                str(item.metadata.get("resolved_path") or item.path)
+                for item in runtime._run.tool_choice_results
+                if item.name == "read_file" and not item.is_error
+            },
         )
         glob_schema_calls = [
             call for call in _OwnerExploreFallbackRootFairClient.calls
             if _tool_names_from_schema_call(call["tools"]) == {"glob_files"}
         ]
-        self.assertGreaterEqual(len(glob_schema_calls), 2)
-        suppressed_results = [
-            record["payload"]
-            for record in records
-            if record.get("event") == "tool_result"
-            and "Tool call was not executed" in str(record.get("payload", {}).get("content") or "")
+        self.assertGreaterEqual(len(glob_schema_calls), 3)
+        inventory_rejections = [
+            item
+            for item in runtime._run.tool_choice_results
+            if item.name == "glob_files" and item.is_error and item.metadata.get("inventory_contract_rejection")
         ]
-        self.assertEqual(len(suppressed_results), 2)
+        self.assertEqual(len(inventory_rejections), 1)
 
     def test_exact_tool_choice_skipped_detour_keeps_transcript_pairing(self) -> None:
         _ExactToolChoicePairingClient.calls = []

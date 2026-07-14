@@ -1,0 +1,186 @@
+{
+  "id": "readonly-inventory-provenance",
+  "title": "Read-only explore keeps inventory provenance separate from semantic candidates",
+  "prompt": "只读分析两个代码根的 owner、调用链和影响范围，不要修改文件。需求目录里的资料可以作为背景，但代码 owner 必须来自代码根证据。",
+  "budget_seconds": 90,
+  "workspace_files": {
+    "requirements.md": "# Demand\nDemandOnlyMarker appears only in the primary requirement workspace.\n"
+  },
+  "additional_roots": {
+    "backend": {
+      "pom.xml": "<project />\n",
+      "config/payment-datasource.properties": "alphabetically early inventory noise\n",
+      "src/owner.sql": "select 'BackendSemanticOwner' as owner;\n"
+    },
+    "frontend": {
+      "package.json": "{\"scripts\":{\"build\":\"vite\"}}\n",
+      "routes/owner-route.yaml": "owner: FrontendSemanticRoute\n"
+    }
+  },
+  "scripted_responses": [
+    {
+      "tool_calls": [
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "requirements.md"
+          }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "search_code",
+          "arguments": {
+            "path": ".",
+            "pattern": "DemandOnlyMarker"
+          }
+        },
+        {
+          "name": "search_code",
+          "arguments": {
+            "path": "{{root:backend}}",
+            "pattern": "NoSuchOwnerToken"
+          }
+        },
+        {
+          "name": "search_code",
+          "arguments": {
+            "path": "{{root:frontend}}",
+            "pattern": "NoSuchOwnerToken"
+          }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "glob_files",
+          "arguments": {
+            "paths": [
+              "{{root:backend}}",
+              "{{root:frontend}}"
+            ],
+            "limit": 200
+          }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "glob_files",
+          "arguments": {
+            "paths": [
+              "{{root:backend}}/**/*payment*"
+            ],
+            "limit": 100
+          }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "glob_files",
+          "arguments": {
+            "paths": [
+              "{{root:frontend}}/**/*route*"
+            ],
+            "limit": 100
+          }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "search_code",
+          "arguments": {
+            "path": "{{root:backend}}",
+            "pattern": "BackendSemanticOwner"
+          }
+        },
+        {
+          "name": "search_code",
+          "arguments": {
+            "path": "{{root:frontend}}",
+            "pattern": "FrontendSemanticRoute"
+          }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "{{root:backend}}/src/owner.sql"
+          }
+        },
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "{{root:frontend}}/routes/owner-route.yaml"
+          }
+        }
+      ]
+    },
+    {
+      "content": "backend/src/owner.sql 和 frontend/routes/owner-route.yaml 均是在语义 search 命中后直接读取的代码根证据；payment-datasource.properties 只是 inventory 噪声，不作为 owner 结论。调用链仍限定为已读证据。"
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "submit_read_only_review",
+          "arguments": {
+            "verdict": "pass",
+            "confidence": 0.95,
+            "reason": "Both code roots have semantic search-backed direct reads; inventory noise is not treated as owner evidence."
+          }
+        }
+      ]
+    }
+  ],
+  "acceptance": {
+    "required_tools": [
+      "search_code",
+      "glob_files",
+      "read_file"
+    ],
+    "forbidden_tools": [
+      "apply_patch",
+      "write_file",
+      "shell",
+      "run_tests"
+    ],
+    "changed_files": [],
+    "answer_all_of": [
+      "owner.sql",
+      "owner-route.yaml",
+      "inventory 噪声"
+    ],
+    "answer_forbidden_regex": [
+      "payment-datasource.properties.*真实 owner",
+      "out of scope",
+      "不在.*检查范围"
+    ],
+    "termination_reason": "final",
+    "run_summary": {
+      "tool_calls": 11,
+      "tool_errors": 1,
+      "provider_schema_violations": 0,
+      "suppressed_tool_executions": 0
+    },
+    "read_only_reviewer": {
+      "triggers": 1,
+      "typed_submits": 1
+    },
+    "safe_partial_report": {
+      "emitted": 0
+    },
+    "max_tool_errors": 1
+  },
+  "residual_risk": "This deterministic fixture proves bounded inventory provenance and semantic candidate promotion without live provider noise; real repositories may still need additional semantic search turns."
+}

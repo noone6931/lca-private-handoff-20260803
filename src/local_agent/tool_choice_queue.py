@@ -10,6 +10,7 @@ from .design_evidence import missing_design_evidence_roots
 from .document_artifacts import DocumentArtifactRequirement
 from .document_artifacts import document_artifact_coverage
 from .document_artifacts import missing_document_artifacts
+from .inventory_contract import inventory_glob_call_hint
 from .negative_evidence import allowed_tools_for_negative_claims, parse_negative_evidence_claims, unsupported_negative_existence_claims
 from .read_only_explore import PRECISE_EVIDENCE_TOOLS, evaluate_read_only_explore
 from .task_contract import is_inspection_forbidden
@@ -574,10 +575,7 @@ def evaluate_tool_choice_state(
             tool_call_hints=(
                 ("read_file candidates: " + ", ".join(explore_decision.read_candidates),)
                 if explore_decision.read_candidates
-                else (
-                    "Run one bounded glob_files discovery rooted at this missing root: "
-                    + ", ".join(explore_decision.discovery_roots),
-                )
+                else (inventory_glob_call_hint(explore_decision.discovery_roots),)
                 if explore_decision.discovery_roots
                 else (
                     (
@@ -1005,39 +1003,7 @@ def _inventory_covered_roots(results: Iterable[ToolResultSummary]) -> set[str]:
 
 
 def _inventory_glob_call_hint(roots: Iterable[str]) -> str:
-    """Render a bounded, executable discovery shape for every uncovered root.
-
-    A directory-wide ``**/*`` scan is both expensive and likely truncated on a
-    multi-project checkout.  Project manifests and a small source-language sample
-    give the model enough evidence to identify candidate code projects without
-    widening shell or Git permissions.
-    """
-
-    patterns: list[str] = []
-    markers = (
-        "pom.xml",
-        "build.gradle",
-        "build.gradle.kts",
-        "package.json",
-        "pyproject.toml",
-        "go.mod",
-        "Cargo.toml",
-        "src/main/java/**/*.java",
-        "src/**/*.py",
-        "src/**/*.js",
-        "src/**/*.ts",
-        "src/**/*.vue",
-    )
-    for root in roots:
-        cleaned = str(root).rstrip("/")
-        if not cleaned:
-            continue
-        patterns.extend(f"{cleaned}/**/{marker}" for marker in markers)
-    arguments = {"paths": patterns, "limit": 200, "hidden": False, "gitignore": True}
-    return (
-        "Use this bounded multi-root discovery call exactly (do not send an empty paths entry): "
-        f"glob_files({json.dumps(arguments, ensure_ascii=False)})"
-    )
+    return inventory_glob_call_hint(roots)
 
 
 def _is_implementation_task(task_kind: str, prompt: str) -> bool:

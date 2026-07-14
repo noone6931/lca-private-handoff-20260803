@@ -105,10 +105,12 @@ def list_files(args: dict[str, Any], context: ToolContext) -> ToolResult:
             },
         )
     if root.is_file():
+        file_name = display_workspace_path(context.workspace, root, context.allowed_dirs)
         return ToolResult(
-            display_workspace_path(context.workspace, root, context.allowed_dirs),
+            file_name,
             metadata={
                 "listed_root": str(root),
+                "files": [file_name],
                 "entry_count": 1,
                 "truncated": False,
                 "result_limit_reached": False,
@@ -132,6 +134,7 @@ def list_files(args: dict[str, Any], context: ToolContext) -> ToolResult:
         content,
         metadata={
             "listed_root": str(root),
+            "files": list(results),
             "entry_count": len(results),
             "truncated": truncated,
             "result_limit_reached": truncated,

@@ -707,6 +707,24 @@ class ToolTests(unittest.TestCase):
         self.assertIn("src/app.py", result.content)
         self.assertNotIn(".local-agent", result.content)
         self.assertNotIn("__pycache__", result.content)
+        self.assertEqual(result.metadata["files"], ["src/app.py"])
+
+    def test_list_files_metadata_files_is_bounded_with_display_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            for name in ("a.py", "b.py", "c.py"):
+                (workspace / name).write_text(name, encoding="utf-8")
+
+            result = list_files(
+                {"max_results": 2},
+                ToolContext(workspace=workspace, approval_mode="yolo"),
+            )
+
+        self.assertFalse(result.is_error)
+        self.assertTrue(result.metadata["truncated"])
+        self.assertEqual(result.metadata["entry_count"], 2)
+        self.assertEqual(len(result.metadata["files"]), 2)
+        self.assertEqual(result.metadata["files"], result.content.splitlines()[:2])
 
     def test_list_files_rejects_path_escape(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -802,10 +820,30 @@ class ToolTests(unittest.TestCase):
                 {"paths": ["**/pom.xml", f"{additional}/**/pom.xml"]},
                 context,
             )
+            bare_roots = registry.execute(
+                "glob_files",
+                {"paths": [str(primary), str(additional)]},
+                context,
+            )
+            broad_roots = registry.execute(
+                "glob_files",
+                {"paths": ["**/*", f"{additional}/**/*"]},
+                context,
+            )
+            bounded_terms = registry.execute(
+                "glob_files",
+                {"paths": ["**/*payment*", f"{additional}/**/*.sql"]},
+                context,
+            )
 
         self.assertTrue(primary_only.is_error)
         self.assertIn(str(additional), primary_only.content)
+        self.assertTrue(primary_only.metadata.get("active_tool_rejection"))
+        self.assertTrue(primary_only.metadata.get("inventory_contract_rejection"))
         self.assertFalse(both_roots.is_error)
+        self.assertTrue(bare_roots.is_error)
+        self.assertTrue(broad_roots.is_error)
+        self.assertFalse(bounded_terms.is_error)
 
     def test_registry_normalizes_search_code_camel_case_string_result_limit(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1576,6 +1614,7 @@ class ToolTests(unittest.TestCase):
 
         self.assertFalse(result.is_error)
         self.assertIn(str(target), result.content)
+        self.assertEqual(result.metadata["files"], [str(target)])
 
     def test_list_files_root_includes_allowed_directory_hint(self) -> None:
         with tempfile.TemporaryDirectory() as workspace_tmp, tempfile.TemporaryDirectory() as allowed_tmp:
