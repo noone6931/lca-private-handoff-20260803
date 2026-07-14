@@ -1207,16 +1207,12 @@ class AgentRuntime:
     ) -> ToolResult:
         allowed_tools = self._effective_runtime_tool_allowlist()
         scoped_read_paths = self._effective_runtime_read_file_paths()
-        required_glob_roots = self._run.tool_choice_required_glob_roots
-        if allowed_tools is not None or scoped_read_paths is not None or required_glob_roots is not None:
+        if allowed_tools is not None or scoped_read_paths is not None:
             tool_context = replace(
                 tool_context,
                 runtime_tool_allowlist=frozenset(allowed_tools) if allowed_tools is not None else None,
                 runtime_read_file_paths=scoped_read_paths,
                 runtime_read_file_remaining=self._run.tool_choice_read_file_remaining,
-                runtime_glob_required_roots=(
-                    frozenset(required_glob_roots) if required_glob_roots is not None else None
-                ),
             )
         read_file_key = (
             _read_file_path_key(name, arguments, self._workspace_context.primary, self._workspace_context.additional_roots)

@@ -1,7 +1,7 @@
 {
-  "id": "readonly-first-miss-fallback",
-  "title": "Read-only owner exploration performs one scoped fallback after each root's first empty search",
-  "prompt": "只读定位两个代码根的 owner、调用链和影响范围；空搜索后换一种有界策略，不要修改文件。",
+  "id": "readonly-parallel-root-glob",
+  "title": "Read-only explore accepts parallel root-local glob calls before bounded reads",
+  "prompt": "只读定位两个代码根的 owner 和影响范围；首次内容搜索无匹配后换 glob 策略，不要修改文件。",
   "budget_seconds": 90,
   "workspace_files": {
     "src/Primary.java": "class PrimaryOwner { void coordinate() {} }\n"
@@ -36,32 +36,18 @@
           "name": "glob_files",
           "arguments": {
             "paths": [
-              "{{root:secondary}}/**/src/**/*.*"
+              "**/*"
             ],
-            "limit": 200
+            "limit": 100
           }
-        }
-      ]
-    },
-    {
-      "tool_calls": [
-        {
-          "name": "read_file",
-          "arguments": {
-            "path": "{{root:secondary}}/src/Secondary.ts"
-          }
-        }
-      ]
-    },
-    {
-      "tool_calls": [
+        },
         {
           "name": "glob_files",
           "arguments": {
             "paths": [
-              "src/**/*.*"
+              "{{root:secondary}}/**/*"
             ],
-            "limit": 200
+            "limit": 100
           }
         }
       ]
@@ -77,7 +63,17 @@
       ]
     },
     {
-      "content": "已读证据：src/Primary.java 和 secondary/src/Secondary.ts 均在各自代码根中直接读取。Owner 结论仅限这两个候选；完整调用链仍未定位。"
+      "tool_calls": [
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "{{root:secondary}}/src/Secondary.ts"
+          }
+        }
+      ]
+    },
+    {
+      "content": "两个 broad glob 只用于定位正向候选；src/Primary.java 和 secondary/src/Secondary.ts 随后均已直接读取，Owner 与影响结论只限这些已读证据。"
     },
     {
       "tool_calls": [
@@ -86,7 +82,7 @@
           "arguments": {
             "verdict": "pass",
             "confidence": 0.96,
-            "reason": "Both roots have direct source reads after one bounded alternate discovery, and the answer keeps the full owner chain unlocated."
+            "reason": "Both roots have direct reads after parallel root-local glob discovery, and the answer does not turn truncated inventory into absence evidence."
           }
         }
       ]
@@ -109,18 +105,24 @@
     "answer_all_of": [
       "Primary.java",
       "Secondary.ts",
-      "仍未定位"
+      "只用于定位正向候选",
+      "已直接读取"
     ],
     "answer_forbidden_regex": [
       "已证实.*完整.*owner",
-      "repository.*不存在"
+      "未发现.*不存在"
     ],
     "termination_reason": "final",
     "run_summary": {
       "tool_calls": 6,
       "tool_errors": 0,
       "provider_schema_violations": 0,
-      "provider_protocol_violations": 0
+      "provider_protocol_violations": 0,
+      "suppressed_tool_executions": 0
+    },
+    "tool_choice_exact": {
+      "forces": 0,
+      "exhausted": 0
     },
     "read_only_reviewer": {
       "triggers": 1,
@@ -131,5 +133,5 @@
     },
     "max_tool_errors": 0
   },
-  "residual_risk": "The deterministic fixture locks one alternate discovery per root after the first empty search; live model search-term quality still varies."
+  "residual_risk": "This deterministic fixture locks the exact parallel multi-root glob shape from the live failure; live provider argument quality and repository scale still require immutable-candidate regression."
 }

@@ -78,17 +78,10 @@
     {
       "tool_calls": [
         {
-            "name": "search_code",
-            "arguments": {
-              "path": "{{root:service-b}}/src",
-              "pattern": "AdditionalOwner"
-            }
-        },
-        {
-            "name": "read_file",
-            "arguments": {
+          "name": "read_file",
+          "arguments": {
             "path": "{{root:service-b}}/src/Additional.java"
-            }
+          }
         }
       ]
     },
@@ -133,7 +126,7 @@
     ],
     "termination_reason": "final",
     "run_summary": {
-      "tool_calls": 9,
+      "tool_calls": 8,
       "tool_errors": 3,
       "provider_schema_violations": 3,
       "suppressed_tool_executions": 0

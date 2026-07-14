@@ -9,7 +9,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
-from ..inventory_contract import glob_inventory_denial_reason
 from ..protocol.interactions import InteractionHandler
 from ..protocol.interactions import InteractionRequest
 from ..terminal_io import terminal_input_prompt
@@ -44,7 +43,6 @@ class ToolContext:
     runtime_tool_allowlist: frozenset[str] | None = None
     runtime_read_file_paths: frozenset[str] | None = None
     runtime_read_file_remaining: int | None = None
-    runtime_glob_required_roots: frozenset[str] | None = None
     vision_inspector: Callable[[Path, str, bytes, str], str] | None = None
 
 
@@ -154,17 +152,6 @@ class ToolRegistry:
             scope_denial = _runtime_read_file_scope_denial_reason(name, arguments, context)
             if scope_denial:
                 return ToolResult(scope_denial, is_error=True)
-            glob_scope_denial = _runtime_glob_scope_denial_reason(name, arguments, context)
-            if glob_scope_denial:
-                return ToolResult(
-                    glob_scope_denial,
-                    is_error=True,
-                    metadata={
-                        "active_tool_rejection": True,
-                        "inventory_contract_rejection": True,
-                        "tool": name,
-                    },
-                )
             result = tool.handler(arguments, context)
             if compatibility_notes:
                 metadata = {**dict(result.metadata), "compatibility_normalized": list(compatibility_notes)}
@@ -235,22 +222,6 @@ def _runtime_read_file_scope_denial_reason(
     return (
         "Runtime candidate read restriction: read_file may only revisit the selected candidate paths at this step. "
         f"Allowed paths: {allowed}. Retry a listed path with a narrower range, or answer from existing evidence."
-    )
-
-
-def _runtime_glob_scope_denial_reason(
-    name: str,
-    arguments: dict[str, Any],
-    context: ToolContext,
-) -> str | None:
-    """Require inventory discovery to cover each root before broader exploration."""
-
-    if name != "glob_files" or context.runtime_glob_required_roots is None:
-        return None
-    return glob_inventory_denial_reason(
-        arguments,
-        required_roots=context.runtime_glob_required_roots,
-        workspace=context.workspace,
     )
 
 

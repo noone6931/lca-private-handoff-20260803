@@ -29,6 +29,16 @@
         {
           "name": "read_file",
           "arguments": {
+            "path": "src/Owner.java"
+          }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "read_file",
+          "arguments": {
             "path": "src/Dependency.java"
           }
         }
@@ -61,17 +71,6 @@
     {
       "tool_calls": [
         {
-          "name": "search_code",
-          "arguments": {
-            "path": "{{root:frontend}}/src",
-            "pattern": "RouteOwner"
-          }
-        }
-      ]
-    },
-    {
-      "tool_calls": [
-        {
           "name": "read_file",
           "arguments": {
             "path": "{{root:frontend}}/src/Route.ts"
@@ -80,7 +79,7 @@
       ]
     },
     {
-      "content": "已读取 Dependency.java 作为 CandidateOwner 的后续依赖证据；frontend 先按 JavaStyleOwner 搜索无匹配，随后 alternate search 命中并读取 src/Route.ts。owner 结论仍限定为已读证据。"
+      "content": "已读取 Owner.java，并继续读取 Dependency.java 作为 CandidateOwner 的后续依赖证据；frontend 先按 JavaStyleOwner 搜索无匹配，随后 alternate glob 定位并读取 src/Route.ts。owner 结论仍限定为已读证据。"
     },
     {
       "tool_calls": [
@@ -111,7 +110,7 @@
     "answer_all_of": [
       "Dependency.java",
       "Route.ts",
-      "alternate search",
+      "alternate glob",
       "已读证据"
     ],
     "answer_forbidden_regex": [

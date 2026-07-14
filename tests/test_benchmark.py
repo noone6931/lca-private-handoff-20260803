@@ -20,7 +20,7 @@ class BenchmarkTests(unittest.TestCase):
         tasks = load_benchmark_tasks()
         identifiers = {task.identifier for task in tasks}
 
-        self.assertEqual(len(tasks), 45)
+        self.assertEqual(len(tasks), 46)
         self.assertEqual(
             identifiers,
             {
@@ -69,6 +69,7 @@ class BenchmarkTests(unittest.TestCase):
                 "readonly-cross-root-mixed-exact-retry",
                 "readonly-glob-then-bounded-source-read",
                 "readonly-unlocated-certainty-rewrite",
+                "readonly-parallel-root-glob",
             },
         )
         self.assertTrue(DEFAULT_TASKS_DIR.is_dir())
@@ -80,9 +81,9 @@ class BenchmarkTests(unittest.TestCase):
             payload = json.loads((output_dir / "benchmark-report.json").read_text(encoding="utf-8"))
             markdown = (output_dir / "benchmark-report.md").read_text(encoding="utf-8")
 
-            self.assertEqual(len(results), 45)
+            self.assertEqual(len(results), 46)
         self.assertTrue(all(result.passed for result in results))
-        self.assertEqual(payload["passed"], 45)
+        self.assertEqual(payload["passed"], 46)
         self.assertEqual(payload["failed"], 0)
         self.assertIn("small-code-change-test-diff", markdown)
         self.assertIn("budget-exhausted-incomplete", markdown)
@@ -106,6 +107,7 @@ class BenchmarkTests(unittest.TestCase):
         self.assertIn("readonly-multiroot-explore-directive", markdown)
         self.assertIn("readonly-inventory-provenance", markdown)
         self.assertIn("readonly-open-explore-soft-preference", markdown)
+        self.assertIn("readonly-parallel-root-glob", markdown)
         self.assertIn("readonly-transport-recovery", markdown)
         self.assertIn("readonly-rewrite-verification-closure", markdown)
         self.assertIn("readonly-design-proposal-semantics", markdown)

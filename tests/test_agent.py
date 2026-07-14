@@ -675,11 +675,11 @@ class _OwnerExploreFallbackRootFairClient:
                         "content": None,
                         "tool_calls": [
                             {
-                                "id": "glob-primary",
+                                "id": "read-primary",
                                 "type": "function",
                                 "function": {
-                                    "name": "glob_files",
-                                    "arguments": json.dumps({"paths": [str(self.config.workspace / "**" / "*Primary*")], "limit": 100}),
+                                    "name": "read_file",
+                                    "arguments": json.dumps({"path": "src/Primary.sql"}),
                                 },
                             }
                         ],
@@ -695,59 +695,6 @@ class _OwnerExploreFallbackRootFairClient:
                         "content": None,
                         "tool_calls": [
                             {
-                                "id": "glob-additional",
-                                "type": "function",
-                                "function": {
-                                    "name": "glob_files",
-                                    "arguments": json.dumps({"paths": [str(additional / "**" / "*Additional*")], "limit": 100}),
-                                },
-                            }
-                        ],
-                    }
-                },
-            )()
-        if self._primary_calls == 6:
-            return type(
-                "Response",
-                (),
-                {
-                    "message": {
-                        "content": None,
-                        "tool_calls": [
-                            {
-                                "id": "search-primary-semantic",
-                                "type": "function",
-                                "function": {
-                                    "name": "search_code",
-                                    "arguments": json.dumps({"path": "src", "pattern": "PrimaryOwner"}),
-                                },
-                            },
-                            {
-                                "id": "search-additional-semantic",
-                                "type": "function",
-                                "function": {
-                                    "name": "search_code",
-                                    "arguments": json.dumps({"path": str(additional), "pattern": "AdditionalOwner"}),
-                                },
-                            }
-                        ],
-                    }
-                },
-            )()
-        if self._primary_calls == 7:
-            return type(
-                "Response",
-                (),
-                {
-                    "message": {
-                        "content": None,
-                        "tool_calls": [
-                            {
-                                "id": "read-primary",
-                                "type": "function",
-                                "function": {"name": "read_file", "arguments": json.dumps({"path": "src/Primary.sql"})},
-                            },
-                            {
                                 "id": "read-additional",
                                 "type": "function",
                                 "function": {
@@ -758,6 +705,12 @@ class _OwnerExploreFallbackRootFairClient:
                         ],
                     }
                 },
+            )()
+        if self._primary_calls == 6:
+            return type(
+                "Response",
+                (),
+                {"message": {"content": "Primary.sql 和 AdditionalRoute.yaml 都已通过 glob 定位后直接读取；owner 仍按证据限定。"}},
             )()
         return type(
             "Response",
@@ -4269,7 +4222,7 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertIn("AdditionalRoute.yaml", result)
         summary = runtime._last_run_summary
         self.assertEqual(summary["termination_reason"], "final")
-        self.assertEqual(summary["tool_counts"], {"glob_files": 3, "list_files": 3, "read_file": 2, "search_code": 4})
+        self.assertEqual(summary["tool_counts"], {"glob_files": 1, "list_files": 3, "read_file": 2, "search_code": 2})
         self.assertGreaterEqual(summary["provider_schema_violations"], 3)
         self.assertEqual(summary["read_only_reviewer"]["triggers"], 1)
         self.assertEqual(
@@ -4299,6 +4252,7 @@ class AgentRuntimeTests(unittest.TestCase):
                 in (
                     {"glob_files", "read_file", "search_code"},
                     {"read_file", "search_code"},
+                    {"read_file"},
                     {"glob_files"},
                     set(),
                 )
@@ -4310,13 +4264,7 @@ class AgentRuntimeTests(unittest.TestCase):
             for item in runtime._run.tool_choice_results
             if item.name == "glob_files" and item.is_error and item.metadata.get("provider_schema_violation")
         ]
-        inventory_denials = [
-            item
-            for item in runtime._run.tool_choice_results
-            if item.name == "glob_files" and item.is_error and "bounded manifest/source patterns" in item.content
-        ]
         self.assertEqual(glob_schema_rejections, [])
-        self.assertEqual(len(inventory_denials), 1)
 
     def test_exact_tool_choice_skipped_detour_keeps_transcript_pairing(self) -> None:
         _ExactToolChoicePairingClient.calls = []

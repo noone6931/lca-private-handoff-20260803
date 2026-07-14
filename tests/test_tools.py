@@ -798,7 +798,7 @@ class ToolTests(unittest.TestCase):
         self.assertTrue(empty.is_error)
         self.assertIn("non-empty authorized path or pattern", empty.content)
 
-    def test_registry_requires_every_inventory_root_before_running_glob(self) -> None:
+    def test_registry_allows_parallel_root_local_glob_calls(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp).resolve()
             primary = root / "primary"
@@ -812,39 +812,19 @@ class ToolTests(unittest.TestCase):
                 workspace=primary,
                 allowed_dirs=(additional,),
                 approval_mode="yolo",
-                runtime_glob_required_roots=frozenset({str(primary), str(additional)}),
             )
 
             primary_only = registry.execute("glob_files", {"paths": ["**/pom.xml"]}, context)
-            both_roots = registry.execute(
+            additional_only = registry.execute(
                 "glob_files",
-                {"paths": ["**/pom.xml", f"{additional}/**/pom.xml"]},
-                context,
-            )
-            bare_roots = registry.execute(
-                "glob_files",
-                {"paths": [str(primary), str(additional)]},
-                context,
-            )
-            broad_roots = registry.execute(
-                "glob_files",
-                {"paths": ["**/*", f"{additional}/**/*"]},
-                context,
-            )
-            bounded_terms = registry.execute(
-                "glob_files",
-                {"paths": ["**/*payment*", f"{additional}/**/*.sql"]},
+                {"paths": [f"{additional}/**/pom.xml"]},
                 context,
             )
 
-        self.assertTrue(primary_only.is_error)
-        self.assertIn(str(additional), primary_only.content)
-        self.assertTrue(primary_only.metadata.get("active_tool_rejection"))
-        self.assertTrue(primary_only.metadata.get("inventory_contract_rejection"))
-        self.assertFalse(both_roots.is_error)
-        self.assertTrue(bare_roots.is_error)
-        self.assertTrue(broad_roots.is_error)
-        self.assertFalse(bounded_terms.is_error)
+        self.assertFalse(primary_only.is_error)
+        self.assertEqual(primary_only.metadata["searched_roots"], [str(primary)])
+        self.assertFalse(additional_only.is_error)
+        self.assertEqual(additional_only.metadata["searched_roots"], [str(additional)])
 
     def test_inventory_glob_hint_stays_within_schema_for_three_roots(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -863,7 +843,6 @@ class ToolTests(unittest.TestCase):
                 workspace=roots[0],
                 allowed_dirs=roots[1:],
                 approval_mode="yolo",
-                runtime_glob_required_roots=frozenset(str(repo) for repo in roots),
             )
 
             result = registry.execute("glob_files", args, context)
@@ -888,7 +867,6 @@ class ToolTests(unittest.TestCase):
                 workspace=roots[0],
                 allowed_dirs=roots[1:],
                 approval_mode="yolo",
-                runtime_glob_required_roots=frozenset(str(repo) for repo in roots),
             )
 
             result = registry.execute("glob_files", {"paths": [f"{roots[0]}/**/pom.xml"]}, context)
@@ -897,9 +875,7 @@ class ToolTests(unittest.TestCase):
         self.assertNotIn("glob_files(", hint)
         self.assertNotIn("Split", hint)
         self.assertNotIn("Split", result.content)
-        self.assertTrue(result.is_error)
-        self.assertIn("cannot fit in one glob_files call", result.content)
-        self.assertIn("reduce the active root set", result.content)
+        self.assertFalse(result.is_error)
 
     def test_registry_normalizes_search_code_camel_case_string_result_limit(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

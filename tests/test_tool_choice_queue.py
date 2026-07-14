@@ -295,7 +295,7 @@ class ToolChoiceQueueTests(unittest.TestCase):
         self.assertEqual(final.action, "finalize")
         self.assertEqual(final.discovery_roots, ())
 
-    def test_owner_explore_fallback_glob_inventory_does_not_become_hard_candidate(self) -> None:
+    def test_owner_explore_fallback_glob_source_becomes_bounded_read_candidate(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp).resolve()
             source = root / "src" / "Owner.java"
@@ -325,9 +325,9 @@ class ToolChoiceQueueTests(unittest.TestCase):
                 read_only_review_profile="owner_impact",
             )
 
-        self.assertEqual(decision.allowed_tool_names, frozenset({"glob_files", "read_file", "search_code"}))
-        self.assertEqual(decision.scoped_read_paths, ())
-        self.assertNotIn(str(source), decision.tool_call_hints[0] if decision.tool_call_hints else "")
+        self.assertEqual(decision.allowed_tool_names, frozenset({"read_file"}))
+        self.assertEqual(decision.scoped_read_paths, (str(source),))
+        self.assertIn(str(source), decision.tool_call_hints[0])
 
     def test_exact_source_filename_glob_becomes_a_bounded_read_candidate(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -426,7 +426,7 @@ class ToolChoiceQueueTests(unittest.TestCase):
         self.assertEqual(decision.action, "finalize")
         self.assertEqual(decision.missing_roots, ())
 
-    def test_generic_mixed_inventory_does_not_become_a_source_read_choice(self) -> None:
+    def test_generic_mixed_inventory_exposes_only_source_read_choices(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp).resolve()
             source = root / "src" / "Owner.java"
@@ -443,7 +443,7 @@ class ToolChoiceQueueTests(unittest.TestCase):
                     "files": [str(manifest), str(source)],
                     "patterns": ["**/package.json", "**/src/**/*.*"],
                     "negative_evidence_type": "path_match",
-                    "truncated": False,
+                    "truncated": True,
                 },
             )
             decision = evaluate_read_only_explore(
@@ -452,7 +452,7 @@ class ToolChoiceQueueTests(unittest.TestCase):
                 code_roots=(str(root),),
             )
 
-        self.assertEqual(decision.inventory_read_candidates, ())
+        self.assertEqual(decision.inventory_read_candidates, (str(source),))
 
     def test_hard_budget_keeps_one_typed_candidate_read_closure(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -755,17 +755,11 @@ class ToolChoiceQueueTests(unittest.TestCase):
                 read_only_review_profile="owner_impact",
             )
 
-        self.assertEqual(decision.allowed_tool_names, frozenset({"glob_files"}))
-        self.assertEqual(decision.required_glob_roots, (str(second),))
-        self.assertEqual(decision.scoped_read_paths, ())
+        self.assertEqual(decision.allowed_tool_names, frozenset({"read_file"}))
+        self.assertEqual(decision.scoped_read_paths, (str(source),))
         # After the first root is read, the second root must still be eligible
-        # for its own fallback; the combined truncated request alone is not an
-        # effective second-root discovery.
-        first_hit = ToolResultSummary(
-            "search_code",
-            f"{source}:1: class Owner",
-            metadata={"evidence_root": str(first), "evidence_paths": [str(source)]},
-        )
+        # for its own fallback; a positive candidate from a truncated listing
+        # is useful without pretending the other root was inspected.
         after_first_read = evaluate_tool_choice_state(
             task_kind="read-only",
             prompt="只读分析 owner 和设计影响。",
@@ -775,7 +769,6 @@ class ToolChoiceQueueTests(unittest.TestCase):
                 first_no_match,
                 second_no_match,
                 combined_glob,
-                first_hit,
                 ToolResultSummary("read_file", "class Owner {}", path=str(source), metadata={"resolved_path": str(source)}),
             ),
             workspace_roots=(str(first), str(second)),

@@ -56,6 +56,9 @@ SOURCE_FILE_SUFFIXES = frozenset(
         ".ts",
         ".tsx",
         ".vue",
+        ".xml",
+        ".yaml",
+        ".yml",
     }
 )
 
@@ -397,12 +400,11 @@ def _model_selected_source_inventory_paths_by_root(
     results: Iterable[ToolResultSummary],
     roots: tuple[str, ...],
 ) -> dict[str, tuple[str, ...]]:
-    """Expose bounded choices from a completed source-only glob for one read.
+    """Expose bounded source choices from any successful glob for one read.
 
-    The model already selected these glob patterns as its discovery strategy.
-    Requiring one subsequent read mirrors OMP's locate-then-read explore flow;
-    generic manifest/tree inventory and truncated results are deliberately
-    excluded so an arbitrary listing cannot become source evidence.
+    A returned path is positive location evidence even when the listing was
+    truncated. Requiring a subsequent exact read mirrors OMP's locate-then-read
+    flow while incomplete listings still cannot support absence conclusions.
     """
 
     candidates: dict[str, list[str]] = {root: [] for root in roots}
@@ -412,35 +414,22 @@ def _model_selected_source_inventory_paths_by_root(
             result.name != "glob_files"
             or not _is_executed_explore_attempt(result)
             or result.is_error
-            or result.metadata.get("truncated")
             or result.metadata.get("evidence_paths_overflow")
         ):
             continue
-        patterns = result.metadata.get("patterns")
         files = result.metadata.get("files")
-        if (
-            not isinstance(patterns, (list, tuple))
-            or not patterns
-            or not isinstance(files, (list, tuple))
-            or not files
-            or any(not _is_source_only_glob_pattern(pattern) for pattern in patterns)
-        ):
+        if not isinstance(files, (list, tuple)) or not files:
             continue
         for root, rendered in _scoped_file_list_paths(result, roots, files):
             if (
-                (root, rendered) in seen
+                Path(rendered).suffix.lower() not in SOURCE_FILE_SUFFIXES
+                or (root, rendered) in seen
                 or len(candidates[root]) >= MAX_SOURCE_INVENTORY_READ_CHOICES_PER_ROOT
             ):
                 continue
             seen.add((root, rendered))
             candidates[root].append(rendered)
     return {root: tuple(paths) for root, paths in candidates.items()}
-
-
-def _is_source_only_glob_pattern(raw: object) -> bool:
-    if not isinstance(raw, str) or not raw.strip():
-        return False
-    return Path(raw.strip()).suffix.lower() in SOURCE_FILE_SUFFIXES
 
 
 def _exact_source_basename(raw_pattern: object) -> str | None:
