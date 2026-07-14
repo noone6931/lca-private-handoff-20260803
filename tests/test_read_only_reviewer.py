@@ -3654,8 +3654,36 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertIn("every candidate statement presented as a current repository/source fact", prompt)
         self.assertIn("they never substitute for claim-scoped support", prompt)
         self.assertIn("A bare path, symbol name, or assertion that files were read is not evidence", prompt)
+        self.assertIn("Check every factual predicate in a repository-source claim", prompt)
+        self.assertIn("does not by itself prove an end-to-end capability", prompt)
+        self.assertIn("A failed guessed path in an additional root is only a scoped inspection failure", prompt)
+        self.assertIn("branches, versions, mirrors", prompt)
         self.assertIn("Do not review design taste, completeness, naming preference", prompt)
         self.assertIn("is not itself a candidate-answer defect", prompt)
+
+    def test_transport_rewrite_does_not_promote_cross_root_guesses_or_compound_claims(self) -> None:
+        contract = generate_requirement_contract("读取源码并输出证据化技术设计。")
+        source_path = "/workspace/backend/src/Processor.java"
+        handoff = build_explore_handoff(
+            request="读取源码并输出证据化技术设计。",
+            contract=contract,
+            requirement_evidence=(),
+            source_evidence=(
+                SourceEvidence(source_path, "1: class Processor {}", root="/workspace/backend"),
+            ),
+            records=(),
+            tool_results=(),
+        )
+
+        message = reviewer_transport_rewrite_message(
+            handoff=handoff,
+            omitted_claim_ids=("c001",),
+        )
+
+        self.assertIn("Treat failed guessed paths in other roots only as scoped inspection failures", message)
+        self.assertIn("branches, versions, mirrors", message)
+        self.assertIn("For a compound source claim, each factual predicate must be supported", message)
+        self.assertIn("do not by themselves prove an end-to-end capability", message)
 
     def test_rewrite_treats_reviewer_action_as_advisory_not_source_evidence(self) -> None:
         result = ReviewerResult(
