@@ -31,6 +31,8 @@ def normalize_compatibility_arguments(name: str, arguments: dict[str, Any]) -> t
         _normalize_glob_paths(normalized, notes)
         _normalize_glob_path_scope(normalized, notes)
         _normalize_glob_paths(normalized, notes)
+        _normalize_boolean_string(normalized, "hidden", notes)
+        _normalize_boolean_string(normalized, "gitignore", notes)
         _normalize_bounded_integer(normalized, "limit", notes)
     elif name == "search_code":
         _rename_alias(normalized, "maxResults", "max_results", notes)
@@ -94,6 +96,17 @@ def _normalize_bounded_integer(arguments: dict[str, Any], field: str, notes: lis
         return
     arguments[field] = int(value.strip())
     notes.append(f"{field} string -> integer")
+
+
+def _normalize_boolean_string(arguments: dict[str, Any], field: str, notes: list[str]) -> None:
+    value = arguments.get(field)
+    if not isinstance(value, str):
+        return
+    normalized = value.strip().lower()
+    if normalized not in {"true", "false"}:
+        return
+    arguments[field] = normalized == "true"
+    notes.append(f"{field} string -> boolean ({normalized})")
 
 
 def _normalize_glob_pattern(arguments: dict[str, Any], notes: list[str]) -> None:

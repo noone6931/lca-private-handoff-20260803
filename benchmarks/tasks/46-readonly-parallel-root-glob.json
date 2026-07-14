@@ -35,19 +35,19 @@
         {
           "name": "glob_files",
           "arguments": {
-            "paths": [
-              "**/*"
-            ],
-            "limit": 100
+            "paths": "[\"**/*\"]",
+            "hidden": "False",
+            "gitignore": "True",
+            "limit": "100"
           }
         },
         {
           "name": "glob_files",
           "arguments": {
-            "paths": [
-              "{{root:secondary}}/**/*"
-            ],
-            "limit": 100
+            "paths": "[\"{{root:secondary}}/**/*\"]",
+            "hidden": "False",
+            "gitignore": "True",
+            "limit": "100"
           }
         }
       ]

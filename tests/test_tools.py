@@ -791,14 +791,27 @@ class ToolTests(unittest.TestCase):
             source.write_text("class App {}\n", encoding="utf-8")
             result = ToolRegistry(search_tools()).execute(
                 "glob_files",
-                {"paths": json.dumps(["src/**/*.java"])},
+                {
+                    "paths": json.dumps(["src/**/*.java"]),
+                    "hidden": "False",
+                    "gitignore": "True",
+                    "limit": "200",
+                },
                 ToolContext(workspace=workspace, approval_mode="yolo"),
             )
 
         payload = json.loads(result.content)
         self.assertFalse(result.is_error)
         self.assertEqual(payload["files"], ["src/App.java"])
-        self.assertEqual(result.metadata["compatibility_normalized"], ["paths JSON string -> array"])
+        self.assertEqual(
+            result.metadata["compatibility_normalized"],
+            [
+                "paths JSON string -> array",
+                "hidden string -> boolean (false)",
+                "gitignore string -> boolean (true)",
+                "limit string -> integer",
+            ],
+        )
 
     def test_registry_drops_blank_glob_siblings_but_rejects_an_empty_scope(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
