@@ -274,6 +274,31 @@ class RequirementContractTests(unittest.TestCase):
         self.assertEqual(contract.evidence_domain, "repository_code")
         self.assertEqual(contract.read_only_review_profile, "design")
 
+    def test_repository_contract_preserves_explicit_source_artifacts(self) -> None:
+        prompt = (
+            "只读分析 src/main/java/com/example/PrepareOrderApplication.java 和 "
+            "src/views/preOrderManagement/list.vue 的当前实现，给出技术设计，不要修改。"
+        )
+
+        contract = generate_requirement_contract(prompt)
+
+        self.assertEqual(
+            contract.source_artifacts,
+            (
+                "src/main/java/com/example/PrepareOrderApplication.java",
+                "src/views/preOrderManagement/list.vue",
+            ),
+        )
+        self.assertIn("Requested source artifacts:", render_contract_context(contract))
+
+    def test_document_only_contract_does_not_promote_source_like_text(self) -> None:
+        contract = generate_requirement_contract(
+            "只根据 requirements.md 里引用的 src/views/list.vue 做文档分析，不要检查代码。"
+        )
+
+        self.assertEqual(contract.evidence_domain, "requirement_documents")
+        self.assertEqual(contract.source_artifacts, ())
+
     def test_design_review_language_does_not_override_non_repository_boundaries(self) -> None:
         document_only = generate_requirement_contract(
             "只根据需求文档 Markdown 做技术设计说明，不要检查代码。"

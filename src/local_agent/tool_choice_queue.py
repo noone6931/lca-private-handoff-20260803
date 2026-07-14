@@ -441,6 +441,7 @@ class RequiredToolGate:
         evidence_domain: str | None = None,
         read_only_review_profile: str | None = None,
         document_artifacts: Iterable[DocumentArtifactRequirement] = (),
+        source_artifacts: Iterable[str] = (),
     ) -> ToolChoiceDecision:
         return evaluate_tool_choice_state(
             task_kind=task_kind,
@@ -453,6 +454,7 @@ class RequiredToolGate:
             evidence_domain=evidence_domain,
             read_only_review_profile=read_only_review_profile,
             document_artifacts=document_artifacts,
+            source_artifacts=source_artifacts,
         )
 
 
@@ -472,6 +474,7 @@ def evaluate_tool_choice_state(
     evidence_domain: str | None = None,
     read_only_review_profile: str | None = None,
     document_artifacts: Iterable[DocumentArtifactRequirement] = (),
+    source_artifacts: Iterable[str] = (),
 ) -> ToolChoiceDecision:
     if is_inspection_forbidden(prompt):
         return ToolChoiceDecision(
@@ -568,6 +571,7 @@ def evaluate_tool_choice_state(
         profile=read_only_review_profile,
         tool_results=results,
         code_roots=tuple(design_evidence_roots or workspace_roots or ()),
+        requested_source_artifacts=source_artifacts,
     )
     if explore_decision.is_applicable:
         missing = explore_decision.missing_roots

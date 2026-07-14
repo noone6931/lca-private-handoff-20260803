@@ -29,6 +29,7 @@ class RequirementContract:
     workspace_metadata_subject: str | None = None
     read_only_review_profile: ReadOnlyReviewProfile = "none"
     document_artifacts: tuple[DocumentArtifactRequirement, ...] = ()
+    source_artifacts: tuple[str, ...] = ()
 
 
 def requires_no_edit_final_hygiene(contract: RequirementContract | None) -> bool:
@@ -326,6 +327,28 @@ _READ_ONLY_DESIGN_REVIEW_MARKERS = (
     "改造方案",
 )
 
+_SOURCE_ARTIFACT_REFERENCE = re.compile(
+    r"(?P<path>(?:(?:[A-Za-z]:)?[\\/]|~[\\/]|\.{1,2}[\\/])?"
+    r"(?:[^\s`'\"，,；;()（）<>]+[\\/])+"
+    r"[^\s`'\"，,；;()（）<>]+\."
+    r"(?:c|cc|cpp|cs|go|h|hpp|java|js|jsx|kt|kts|php|py|rb|rs|scala|sql|swift|ts|tsx|vue|ya?ml))",
+    re.IGNORECASE,
+)
+
+
+def extract_source_artifact_references(user_prompt: str) -> tuple[str, ...]:
+    """Return explicit source paths from the user message in first-seen order."""
+
+    references: list[str] = []
+    seen: set[str] = set()
+    for match in _SOURCE_ARTIFACT_REFERENCE.finditer(user_prompt or ""):
+        reference = match.group("path").replace("\\", "/")
+        if reference in seen:
+            continue
+        seen.add(reference)
+        references.append(reference)
+    return tuple(references)
+
 def generate_requirement_contract(user_prompt: str) -> RequirementContract:
     """Generate a local deterministic contract without calling an LLM."""
 
@@ -337,6 +360,7 @@ def generate_requirement_contract(user_prompt: str) -> RequirementContract:
     metadata_subject = workspace_metadata_subject(prompt) if task_kind == "read-only" else None
     evidence_domain = _evidence_domain(prompt, inspection_forbidden, metadata_subject)
     document_artifacts = extract_document_artifact_requirements(user_prompt) if evidence_domain == "requirement_documents" else ()
+    source_artifacts = extract_source_artifact_references(user_prompt) if evidence_domain == "repository_code" else ()
     review_profile = _read_only_review_profile(
         prompt, task_kind, evidence_domain, inspection_forbidden, metadata_subject, document_artifacts
     )
@@ -455,6 +479,7 @@ def generate_requirement_contract(user_prompt: str) -> RequirementContract:
             task_kind=task_kind,
             evidence_domain="repository_code",
             read_only_review_profile=review_profile,
+            source_artifacts=source_artifacts,
         )
 
     if task_kind == "code-implementation":
@@ -545,6 +570,8 @@ def render_contract_context(contract: RequirementContract) -> str:
         lines.append(f"Read-only review profile: {contract.read_only_review_profile}")
     if contract.document_artifacts:
         lines.append("Requested document artifacts: " + ", ".join(item.label for item in contract.document_artifacts))
+    if contract.source_artifacts:
+        lines.append("Requested source artifacts: " + ", ".join(contract.source_artifacts))
     if contract.inspection_forbidden:
         lines.append("Inspection policy: repository inspection is forbidden for this task.")
     if contract.workspace_metadata_subject:

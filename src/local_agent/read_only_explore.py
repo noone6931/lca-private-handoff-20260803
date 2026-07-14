@@ -88,6 +88,7 @@ def evaluate_read_only_explore(
     profile: str | None,
     tool_results: Iterable[ToolResultSummary],
     code_roots: Iterable[str],
+    requested_source_artifacts: Iterable[str] = (),
 ) -> ReadOnlyExploreDecision:
     """Return a policy from typed profile and observations, never request text."""
 
@@ -119,7 +120,13 @@ def evaluate_read_only_explore(
     source_inventory = _model_selected_source_inventory_paths_by_root(results, roots)
     candidate_paths = _merge_candidate_paths(roots, semantic_candidates, precise_source_inventory)
     covered_candidate_paths = _merge_candidate_paths(roots, candidate_paths, source_inventory)
-    covered = _covered_roots(results, roots, covered_candidate_paths, inventory_paths)
+    covered = _covered_roots(
+        results,
+        roots,
+        covered_candidate_paths,
+        inventory_paths,
+        requested_source_artifacts=tuple(requested_source_artifacts),
+    )
     missing = tuple(root for root in roots if root not in covered)
     read_candidates = _read_candidates_for_missing_roots(candidate_paths, missing)
     exact_read_candidates = _read_candidates_for_missing_roots(precise_source_inventory, missing)
@@ -264,6 +271,8 @@ def _covered_roots(
     roots: tuple[str, ...],
     semantic_candidates: dict[str, tuple[str, ...]],
     inventory_paths: dict[str, tuple[str, ...]],
+    *,
+    requested_source_artifacts: tuple[str, ...] = (),
 ) -> set[str]:
     covered: set[str] = set()
     for result in results:
@@ -276,11 +285,40 @@ def _covered_roots(
             if path in semantic_candidates.get(root, ()):
                 covered.add(root)
                 continue
+            if _matches_requested_source_artifact(path, root, requested_source_artifacts):
+                covered.add(root)
+                continue
             if path in inventory_paths.get(root, ()):
                 continue
             if path == root or path.startswith(root + "/"):
                 covered.add(root)
     return covered
+
+
+def _matches_requested_source_artifact(path: str, root: str, references: tuple[str, ...]) -> bool:
+    if not references or not (path == root or path.startswith(root + "/")):
+        return False
+    relative = Path(path).relative_to(root).as_posix()
+    for raw_reference in references:
+        reference = str(raw_reference).strip().replace("\\", "/")
+        if not reference:
+            continue
+        reference_path = Path(reference)
+        if reference_path.is_absolute():
+            try:
+                if path == str(reference_path.resolve()):
+                    return True
+            except OSError:
+                if path == str(reference_path):
+                    return True
+            continue
+        while reference.startswith("./"):
+            reference = reference[2:]
+        if reference.startswith("../"):
+            continue
+        if relative == reference or relative.endswith("/" + reference):
+            return True
+    return False
 
 
 def _canonical_path(result: ToolResultSummary) -> str | None:

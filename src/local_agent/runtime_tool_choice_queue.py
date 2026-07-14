@@ -48,6 +48,7 @@ class RuntimeToolChoiceQueuePhase:
             evidence_domain=contract.evidence_domain,
             read_only_review_profile=contract.read_only_review_profile,
             document_artifacts=contract.document_artifacts,
+            source_artifacts=contract.source_artifacts,
         )
         runtime._run.tool_choice_allowed_tool_names = set(decision.allowed_tool_names)
         runtime._run.update_tool_choice_read_scope(decision.scoped_read_paths, decision.scoped_read_budget)

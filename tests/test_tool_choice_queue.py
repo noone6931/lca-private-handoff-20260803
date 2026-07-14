@@ -1053,6 +1053,49 @@ class ToolChoiceQueueTests(unittest.TestCase):
         self.assertEqual(decision.missing_roots, (str(root),))
         self.assertNotEqual(decision.action, "finalize")
 
+    def test_explicit_source_artifact_read_completes_inventory_coverage(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            source = root / "src" / "PrepareOrderApplication.java"
+            source.parent.mkdir(parents=True)
+            source.write_text("class PrepareOrderApplication {}\n", encoding="utf-8")
+            decoys = []
+            for index in range(16):
+                decoy = root / "src" / f"Inventory{index:02d}.java"
+                decoy.write_text(f"class Inventory{index:02d} {{}}\n", encoding="utf-8")
+                decoys.append(str(decoy))
+            results = (
+                ToolResultSummary(
+                    "glob_files",
+                    str(source),
+                    metadata={"evidence_root": str(root), "files": [*decoys, str(source)]},
+                ),
+                ToolResultSummary(
+                    "read_file",
+                    "class PrepareOrderApplication {}\n",
+                    path=str(source),
+                    metadata={"resolved_path": str(source)},
+                ),
+            )
+
+            ordinary = evaluate_read_only_explore(
+                profile="owner_impact",
+                tool_results=results,
+                code_roots=(str(root),),
+            )
+            requested = evaluate_tool_choice_state(
+                task_kind="read-only",
+                prompt="只读分析 src/PrepareOrderApplication.java 的 owner 和影响范围。",
+                tool_results=results,
+                workspace_roots=(str(root),),
+                read_only_review_profile="owner_impact",
+                source_artifacts=("src/PrepareOrderApplication.java",),
+            )
+
+        self.assertEqual(ordinary.missing_roots, (str(root),))
+        self.assertEqual(requested.rule_id, "read_only_profile_explore_final")
+        self.assertTrue(requested.force_final_answer_without_tools)
+
     def test_list_files_inventory_read_does_not_complete_owner_coverage(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp).resolve()

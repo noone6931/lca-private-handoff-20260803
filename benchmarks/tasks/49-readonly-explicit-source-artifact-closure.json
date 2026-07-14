@@ -1,0 +1,148 @@
+{
+  "id": "readonly-explicit-source-artifact-closure",
+  "title": "Explicit source artifact reads close broad inventory coverage outside the candidate window",
+  "prompt": "请读取 requirements.md、后端 src/main/java/com/example/PrepareOrderApplication.java 和前端 src/views/preOrderManagement/list.vue，输出需求事实、源码事实、设计建议和尚待确认项，不要修改文件。",
+  "budget_seconds": 90,
+  "workspace_files": {
+    "requirements.md": "# Requirement\nDesign a settlement flow using the two named source files.\n"
+  },
+  "additional_roots": {
+    "backend": {
+      "src/Inventory00.java": "class Inventory00 {}\n",
+      "src/Inventory01.java": "class Inventory01 {}\n",
+      "src/Inventory02.java": "class Inventory02 {}\n",
+      "src/Inventory03.java": "class Inventory03 {}\n",
+      "src/Inventory04.java": "class Inventory04 {}\n",
+      "src/Inventory05.java": "class Inventory05 {}\n",
+      "src/Inventory06.java": "class Inventory06 {}\n",
+      "src/Inventory07.java": "class Inventory07 {}\n",
+      "src/Inventory08.java": "class Inventory08 {}\n",
+      "src/Inventory09.java": "class Inventory09 {}\n",
+      "src/Inventory10.java": "class Inventory10 {}\n",
+      "src/Inventory11.java": "class Inventory11 {}\n",
+      "src/Inventory12.java": "class Inventory12 {}\n",
+      "src/Inventory13.java": "class Inventory13 {}\n",
+      "src/Inventory14.java": "class Inventory14 {}\n",
+      "src/Inventory15.java": "class Inventory15 {}\n",
+      "src/main/java/com/example/PrepareOrderApplication.java": "class PrepareOrderApplication { void cancelPrepareOrder() {} }\n"
+    },
+    "frontend": {
+      "src/Inventory00.js": "export const inventory00 = true;\n",
+      "src/Inventory01.js": "export const inventory01 = true;\n",
+      "src/Inventory02.js": "export const inventory02 = true;\n",
+      "src/Inventory03.js": "export const inventory03 = true;\n",
+      "src/Inventory04.js": "export const inventory04 = true;\n",
+      "src/Inventory05.js": "export const inventory05 = true;\n",
+      "src/Inventory06.js": "export const inventory06 = true;\n",
+      "src/Inventory07.js": "export const inventory07 = true;\n",
+      "src/Inventory08.js": "export const inventory08 = true;\n",
+      "src/Inventory09.js": "export const inventory09 = true;\n",
+      "src/Inventory10.js": "export const inventory10 = true;\n",
+      "src/Inventory11.js": "export const inventory11 = true;\n",
+      "src/Inventory12.js": "export const inventory12 = true;\n",
+      "src/Inventory13.js": "export const inventory13 = true;\n",
+      "src/Inventory14.js": "export const inventory14 = true;\n",
+      "src/Inventory15.js": "export const inventory15 = true;\n",
+      "src/views/preOrderManagement/list.vue": "<template><button @click=\"cancelPrepareOrder\">return</button></template>\n"
+    }
+  },
+  "scripted_responses": [
+    {
+      "tool_calls": [
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "requirements.md"
+          }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "glob_files",
+          "arguments": {
+            "paths": [
+              "{{root:backend}}/**/*",
+              "{{root:frontend}}/**/*"
+            ],
+            "limit": 200,
+            "hidden": false,
+            "gitignore": true
+          }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "{{root:backend}}/src/main/java/com/example/PrepareOrderApplication.java"
+          }
+        },
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "{{root:frontend}}/src/views/preOrderManagement/list.vue"
+          }
+        }
+      ]
+    },
+    {
+      "content": "## 需求事实\n- requirements.md:2 要求基于两个点名源码文件设计结算流程。\n\n## 源码事实\n- `{{root:backend}}/src/main/java/com/example/PrepareOrderApplication.java:1` 定义 `cancelPrepareOrder`。\n- `{{root:frontend}}/src/views/preOrderManagement/list.vue:1` 的模板引用 `cancelPrepareOrder` handler；该行不证明前后端调用关系。\n\n## 设计建议\n- 建议在定位真实接口后连接回退流程；这是建议，不是当前实现。\n\n## 尚待确认项\n- 当前接口和完整调用链尚未定位。"
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "submit_read_only_review",
+          "arguments": {
+            "verdict": "pass",
+            "confidence": 0.98,
+            "reason": "Both user-named source artifacts were directly read after a broad inventory, source facts have exact locators, and the call chain remains explicitly unverified."
+          }
+        }
+      ]
+    }
+  ],
+  "acceptance": {
+    "required_tools": [
+      "read_file",
+      "glob_files"
+    ],
+    "forbidden_tools": [
+      "search_code",
+      "list_files",
+      "apply_patch",
+      "write_file",
+      "shell",
+      "run_tests"
+    ],
+    "changed_files": [],
+    "answer_all_of": [
+      "需求事实",
+      "源码事实",
+      "cancelPrepareOrder",
+      "不证明前后端调用关系",
+      "不是当前实现",
+      "尚未定位"
+    ],
+    "termination_reason": "final",
+    "run_summary": {
+      "tool_calls": 4,
+      "tool_errors": 0,
+      "provider_schema_violations": 0,
+      "provider_protocol_violations": 0
+    },
+    "read_only_reviewer": {
+      "triggers": 1,
+      "rewrites": 0,
+      "typed_submits": 1
+    },
+    "safe_partial_report": {
+      "emitted": 0
+    },
+    "max_tool_errors": 0
+  },
+  "residual_risk": "This fixture locks explicit artifact closure after broad inventory; live provider argument quality and reviewer semantics still require immutable-candidate regression."
+}
