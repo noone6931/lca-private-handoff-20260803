@@ -362,7 +362,7 @@ def _candidate_locator_items(
             path=source.path,
             identity_path=source.identity_path,
         )
-        for locator in parse_document_locators(candidate, source.path):
+        for locator in _candidate_locators_for_source(candidate, source):
             if _locator_is_ambiguous(locator.path, source, sources):
                 continue
             key = (artifact_key, locator.kind, locator.value)
@@ -390,18 +390,36 @@ def _candidate_locator_items(
     return _fair_candidate_locator_items(buckets, order)
 
 
+def _candidate_locators_for_source(candidate: str, source: _DocumentLocatorSource) -> tuple[Any, ...]:
+    locators: list[Any] = []
+    refs = tuple(
+        dict.fromkeys(
+            ref
+            for ref in (
+                source.path,
+                source.identity_path if source.identity_path and source.identity_path != source.path else "",
+            )
+            if ref
+        )
+    )
+    for ref in refs:
+        locators.extend(parse_document_locators(candidate, ref))
+    return tuple(dict.fromkeys(locators))
+
+
 def _document_locator_sources(
     requirements: Iterable[RequirementEvidence],
     tool_results: Iterable[ToolResultSummary],
 ) -> list[_DocumentLocatorSource]:
     sources: dict[tuple[str, str], _DocumentLocatorSource] = {}
     for item in requirements:
+        root = item.root or "(unknown)"
         source = _DocumentLocatorSource(
             path=item.path,
             content=item.content,
-            root=item.root or "(unknown)",
+            root=root,
             scope=item.scope or "root_local",
-            identity_path=item.path,
+            identity_path=document_artifact_identity(root=root, path=item.path)[1],
         )
         _store_document_locator_source(sources, source)
     for item in tool_results:
@@ -435,19 +453,33 @@ def _locator_is_ambiguous(
     source: _DocumentLocatorSource,
     sources: Iterable[_DocumentLocatorSource],
 ) -> bool:
-    """A basename-only citation cannot bind one of several same-name artifacts."""
+    """A citation that resolves to multiple artifacts cannot bind safely."""
 
     cited = (cited_path or "").replace("\\", "/").strip().strip("`")
-    if not cited or "/" in cited:
+    if not cited:
         return False
-    source_name = cited.lower()
     identities = {
         document_artifact_identity(root=item.root, path=item.path, identity_path=item.identity_path)
         for item in sources
-        if item.path and item.path.replace("\\", "/").rsplit("/", 1)[-1].lower() == source_name
+        if _citation_matches_source(cited, item)
     }
     current = document_artifact_identity(root=source.root, path=source.path, identity_path=source.identity_path)
     return current in identities and len(identities) > 1
+
+
+def _citation_matches_source(cited_path: str, source: _DocumentLocatorSource) -> bool:
+    cited = (cited_path or "").replace("\\", "/").strip().strip("`")
+    if not cited:
+        return False
+    source_identity = document_artifact_identity(root=source.root, path=source.path, identity_path=source.identity_path)
+    if "/" not in cited:
+        return source.path.replace("\\", "/").rsplit("/", 1)[-1].casefold() == cited.casefold()
+    cited_identity = document_artifact_identity(
+        root=source.root,
+        path=cited,
+        identity_path=cited if cited.startswith("/") else "",
+    )
+    return cited_identity == source_identity
 
 
 def _fair_candidate_locator_items(

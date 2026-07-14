@@ -275,6 +275,40 @@ class DocumentConsistencyTests(unittest.TestCase):
         )
         self.assertFalse(any(item.classification == "requirement_locator" for item in handoff.items))
 
+    def test_same_relative_locator_is_ambiguous_across_roots(self) -> None:
+        handoff = build_explore_handoff(
+            request="compare artifacts",
+            contract=_contract(),
+            requirement_evidence=(
+                RequirementEvidence("docs/policy.md", "10: Root A text", root="/workspace/root-a"),
+                RequirementEvidence("docs/policy.md", "10: Root B text", root="/workspace/root-b"),
+            ),
+            source_evidence=(),
+            records=(),
+            tool_results=(),
+            candidate="需求事实：docs/policy.md:10 说明了规则。",
+        )
+        self.assertFalse(any(item.classification == "requirement_locator" for item in handoff.items))
+
+    def test_absolute_locator_disambiguates_same_relative_path_across_roots(self) -> None:
+        handoff = build_explore_handoff(
+            request="compare artifacts",
+            contract=_contract(),
+            requirement_evidence=(
+                RequirementEvidence("docs/policy.md", "10: Root A text", root="/workspace/root-a"),
+                RequirementEvidence("docs/policy.md", "10: Root B text", root="/workspace/root-b"),
+            ),
+            source_evidence=(),
+            records=(),
+            tool_results=(),
+            candidate="需求事实：/workspace/root-a/docs/policy.md:10 说明了规则。",
+        )
+        locators = [item for item in handoff.items if item.classification == "requirement_locator"]
+        self.assertEqual(len(locators), 1)
+        self.assertEqual(locators[0].root, "/workspace/root-a")
+        self.assertIn("Root A text", locators[0].summary)
+        self.assertNotIn("Root B text", locators[0].summary)
+
     def test_candidate_locator_prefers_complete_read_source_for_late_lines(self) -> None:
         truncated = "\n".join(f"{number}: line {number}" for number in range(1, 20))
         full = "\n".join(f"{number}: line {number}" for number in range(1, 222))

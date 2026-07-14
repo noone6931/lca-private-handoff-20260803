@@ -865,6 +865,12 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertIn("`pass` verdict requires exactly 0", prompt)
         self.assertIn("finding_scope to `candidate_defect`", prompt)
         self.assertIn("copy that exact candidate_claims text", prompt)
+        self.assertIn("action must change the candidate answer", prompt)
+        self.assertIn("must not ask to modify the requirements, images, prototypes", prompt)
+        schema = reviewer_output_tool_schema(candidate_claim_units("candidate"))
+        action_description = schema["function"]["parameters"]["properties"]["findings"]["items"]["properties"]["action"]["description"]
+        self.assertIn("candidate-answer change", action_description)
+        self.assertIn("Do not ask to modify source documents", action_description)
         repair = reviewer_repair_messages(handoff, candidate_claim_units("candidate"), {"error_code": "findings_too_many"})
         self.assertIn("at most 8", repair[0]["content"])
         self.assertIn("no more than 8 highest-risk findings", repair[-1]["content"])
@@ -1064,6 +1070,77 @@ class ReadOnlyReviewerTests(unittest.TestCase):
             raised.exception.diagnostics,
         )
         self.assertIn("Do not submit source_material_gap findings", repair[-1]["content"])
+
+    def test_mixed_source_gap_repair_must_preserve_candidate_defect(self) -> None:
+        units = candidate_claim_units(
+            "The image value conflicts with the document and remains unresolved.\n\n"
+            "The screenshot is the completed state, so the materials are consistent."
+        )
+        claim_by_id = {unit.claim_id: unit.text for unit in units}
+        with self.assertRaises(ReviewerValidationError) as raised:
+            parse_reviewer_payload(
+                {
+                    "verdict": "revise",
+                    "confidence": 0.7,
+                    "findings": [
+                        {
+                            "claim_id": "c001",
+                            "claim": claim_by_id["c001"],
+                            "finding_scope": "source_material_gap",
+                            "issue": "source owner must choose the final artifact",
+                            "action": "ask the source owner to decide",
+                        },
+                        {
+                            "claim_id": "c002",
+                            "claim": claim_by_id["c002"],
+                            "finding_scope": "candidate_defect",
+                            "issue": "candidate invents lifecycle support",
+                            "action": "remove the completed-state reconciliation",
+                        },
+                    ],
+                    "reason": "mixed source gap and candidate defect",
+                },
+                claim_units=units,
+            )
+        self.assertEqual(raised.exception.code, "source_material_gap_finding")
+        self.assertEqual(raised.exception.pending_candidate_claim_ids, ("c002",))
+
+        with self.assertRaises(ReviewerValidationError) as pass_raised:
+            parse_reviewer_payload(
+                {"verdict": "pass", "confidence": 0.8, "findings": [], "reason": "only source gap remains"},
+                claim_units=units,
+                required_candidate_claim_ids=raised.exception.pending_candidate_claim_ids,
+            )
+        self.assertEqual(pass_raised.exception.code, "candidate_defect_findings_missing")
+
+        repaired = parse_reviewer_payload(
+            {
+                "verdict": "revise",
+                "confidence": 0.8,
+                "findings": [
+                    {
+                        "claim_id": "c002",
+                        "claim": claim_by_id["c002"],
+                        "finding_scope": "candidate_defect",
+                        "issue": "candidate invents lifecycle support",
+                        "action": "remove the completed-state reconciliation",
+                    }
+                ],
+                "reason": "candidate defect remains",
+            },
+            claim_units=units,
+            required_candidate_claim_ids=raised.exception.pending_candidate_claim_ids,
+        )
+        self.assertEqual([finding.claim_id for finding in repaired.findings], ["c002"])
+
+    def test_source_gap_only_repair_can_pass(self) -> None:
+        units = candidate_claim_units("The document and image are not consistent; artifact role remains unresolved.")
+        parsed = parse_reviewer_payload(
+            {"verdict": "pass", "confidence": 0.9, "findings": [], "reason": "candidate accurately reports source gap"},
+            claim_units=units,
+            required_candidate_claim_ids=(),
+        )
+        self.assertEqual(parsed.verdict, "pass")
 
     def test_finding_claim_must_match_selected_claim_id(self) -> None:
         units = candidate_claim_units("First unsupported claim.\n\nSecond unsupported claim.")

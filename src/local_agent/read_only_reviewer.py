@@ -75,8 +75,15 @@ class ReviewerResult:
 class ReviewerValidationError(ValueError):
     """A typed, redacted schema failure suitable for one repair request."""
 
-    def __init__(self, code: str, diagnostics: Mapping[str, Any] | None = None) -> None:
+    def __init__(
+        self,
+        code: str,
+        diagnostics: Mapping[str, Any] | None = None,
+        *,
+        pending_candidate_claim_ids: tuple[str, ...] = (),
+    ) -> None:
         self.code = code
+        self.pending_candidate_claim_ids = pending_candidate_claim_ids
         self.diagnostics = {"error_code": code, **dict(diagnostics or {})}
         super().__init__(code)
 
@@ -214,7 +221,7 @@ Review contract:
 - When the handoff has no explicit direct binding, do not say a main owner/module judgment is correct or mostly correct. Treat same-domain code as observed or analogous and leave the owner unlocated.
 - For a document-consistency review, do not resolve conflicting document or image observations with an invented workflow, scope, actor, or precedence rule. Preserve the conflict as unresolved unless the handoff explicitly reconciles it. A candidate that accurately cites both observations, explicitly keeps the conflict unresolved, and presents only labeled options or questions for later confirmation is compliant: submit `pass` with no findings. A finding must identify a candidate error such as an unsupported reconciliation, a missing cited observation, or a claim that exceeds the handoff; the source materials disagreeing by itself is not a candidate defect. If the only issue is that a source owner must decide how to update source materials, submit `pass` with no findings.
 
-The output tool arguments use verdict, confidence, findings, and reason. The complete submission must be shorter than 9000 characters. `findings` must contain at most 8 items. A `pass` verdict requires exactly 0 findings; `revise` and `unverified` require 1 to 8 findings. Every finding must have one unique, known claim_id plus non-empty issue and action. For every finding, choose exactly one claim_id from candidate_claims, set finding_scope to `candidate_defect`, and copy that exact candidate_claims text into `claim`. Never invent or repeat a claim_id. Do not submit `source_material_gap` findings; those are not candidate defects. Report only the highest-risk blocking findings when there are more than 8.
+The output tool arguments use verdict, confidence, findings, and reason. The complete submission must be shorter than 9000 characters. `findings` must contain at most 8 items. A `pass` verdict requires exactly 0 findings; `revise` and `unverified` require 1 to 8 findings. Every finding must have one unique, known claim_id plus non-empty issue and action. For every finding, choose exactly one claim_id from candidate_claims, set finding_scope to `candidate_defect`, and copy that exact candidate_claims text into `claim`. The action must change the candidate answer; it must not ask to modify the requirements, images, prototypes, or source artifacts, and must not merely ask a source owner to decide. Never invent or repeat a claim_id. Do not submit `source_material_gap` findings; those are not candidate defects. Report only the highest-risk blocking findings when there are more than 8.
 Choose revise when the candidate can be corrected using the handoff. Choose unverified when the candidate cannot safely make the requested factual conclusion."""
     if _is_document_consistency_review(handoff):
         system += (
@@ -262,7 +269,15 @@ def reviewer_output_tool_schema(
                 "description": "Findings must be candidate_defect. source_material_gap is invalid and should be removed during repair.",
             },
             "issue": {"type": "string", "minLength": 1, "maxLength": 1000},
-            "action": {"type": "string", "minLength": 1, "maxLength": 1000},
+            "action": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1000,
+                "description": (
+                    "Required candidate-answer change. Do not ask to modify source documents, images, prototypes, "
+                    "or requirements, and do not merely ask a source owner to decide."
+                ),
+            },
         },
         "required": ["claim_id", "claim", "finding_scope", "issue", "action"],
     }
@@ -352,6 +367,7 @@ def parse_reviewer_result(
     claim_units: tuple[CandidateClaimUnit, ...],
     document_consistency: bool = False,
     evidence_ids: tuple[str, ...] = (),
+    required_candidate_claim_ids: tuple[str, ...] = (),
 ) -> ReviewerResult:
     if not isinstance(content, str) or not content.strip():
         raise ReviewerValidationError("missing_json")
@@ -366,6 +382,7 @@ def parse_reviewer_result(
         claim_units=claim_units,
         document_consistency=document_consistency,
         evidence_ids=evidence_ids,
+        required_candidate_claim_ids=required_candidate_claim_ids,
     )
 
 
@@ -375,6 +392,7 @@ def parse_reviewer_payload(
     claim_units: tuple[CandidateClaimUnit, ...],
     document_consistency: bool = False,
     evidence_ids: tuple[str, ...] = (),
+    required_candidate_claim_ids: tuple[str, ...] = (),
 ) -> ReviewerResult:
     if not isinstance(raw, Mapping):
         raise ReviewerValidationError("top_level_not_object", {"top_level_type": type(raw).__name__})
@@ -407,6 +425,7 @@ def parse_reviewer_payload(
     used_claim_ids: set[str] = set()
     source_material_gap_count = 0
     candidate_defect_count = 0
+    candidate_defect_claim_ids: list[str] = []
     for item in findings_value:
         if not isinstance(item, Mapping):
             raise ReviewerValidationError("finding_not_object", diagnostics)
@@ -439,6 +458,7 @@ def parse_reviewer_payload(
             source_material_gap_count += 1
         else:
             candidate_defect_count += 1
+            candidate_defect_claim_ids.append(claim_id)
         used_claim_ids.add(claim_id)
         findings.append(ReviewerFinding(claim_id, _clip(issue), _clip(action), _clip(claim), finding_scope))
     if source_material_gap_count:
@@ -448,7 +468,9 @@ def parse_reviewer_payload(
                 **diagnostics,
                 "source_material_gap_count": source_material_gap_count,
                 "candidate_defect_count": candidate_defect_count,
+                "required_candidate_defect_count": len(candidate_defect_claim_ids),
             },
+            pending_candidate_claim_ids=tuple(candidate_defect_claim_ids),
         )
     reason = raw.get("reason")
     if not isinstance(reason, str):
@@ -459,6 +481,18 @@ def parse_reviewer_payload(
         raise ReviewerValidationError("pass_with_findings", diagnostics)
     if verdict in {"revise", "unverified"} and not findings:
         raise ReviewerValidationError("nonpassing_without_findings", diagnostics)
+    required_claims = tuple(dict.fromkeys(claim_id for claim_id in required_candidate_claim_ids if claim_id in known_claim_ids))
+    missing_required = tuple(claim_id for claim_id in required_claims if claim_id not in candidate_defect_claim_ids)
+    if missing_required:
+        raise ReviewerValidationError(
+            "candidate_defect_findings_missing",
+            {
+                **diagnostics,
+                "required_candidate_defect_count": len(required_claims),
+                "missing_candidate_defect_count": len(missing_required),
+            },
+            pending_candidate_claim_ids=required_claims,
+        )
     assessment = None
     if document_consistency:
         try:
@@ -575,6 +609,8 @@ def _sanitize_diagnostics(diagnostics: Mapping[str, Any]) -> dict[str, Any]:
         "claim_mismatch_count",
         "source_material_gap_count",
         "candidate_defect_count",
+        "required_candidate_defect_count",
+        "missing_candidate_defect_count",
         "response_chars",
         "top_level_type",
     }
@@ -605,6 +641,13 @@ def _repair_shape_instruction(diagnostics: Mapping[str, Any]) -> str:
             "Do not submit source_material_gap findings. Findings must be candidate_defect items whose action changes "
             "the candidate answer. If only source materials need an owner decision and the candidate already reports that "
             "gap accurately, submit pass with an empty findings list; otherwise keep only candidate_defect findings. "
+            + common
+        )
+    if code == "candidate_defect_findings_missing":
+        return (
+            "A previous repair attempt contained valid candidate_defect findings. Keep those candidate defects in this "
+            "submission with their same claim_id and exact copied claim text; do not replace them with pass unless the "
+            "candidate_defect findings are no longer present in the repaired output request. "
             + common
         )
     if code == "document_consistency_evidence_roles_overlap":

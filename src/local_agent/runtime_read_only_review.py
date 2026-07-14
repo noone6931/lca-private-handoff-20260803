@@ -122,6 +122,7 @@ class ReadOnlyReviewPhase:
         result = None
         saw_protocol_failure = False
         repaired_this_round = False
+        required_candidate_claim_ids: tuple[str, ...] = ()
         for attempt in range(1, max_attempts + 1):
             state.provider_attempts = attempt
             runtime._run.collector.record_read_only_review_attempt()
@@ -143,8 +144,13 @@ class ReadOnlyReviewPhase:
                     document_consistency=document_consistency,
                     handoff=handoff,
                     candidate=candidate,
+                    required_candidate_claim_ids=required_candidate_claim_ids,
                 )
             except ReviewerValidationError as exc:
+                if exc.pending_candidate_claim_ids:
+                    required_candidate_claim_ids = tuple(
+                        dict.fromkeys((*required_candidate_claim_ids, *exc.pending_candidate_claim_ids))
+                    )
                 if exc.code.startswith("output_tool_") or exc.code == "provider_markup_artifact":
                     saw_protocol_failure = True
                     state.protocol_failures += 1
@@ -231,6 +237,7 @@ class ReadOnlyReviewPhase:
         document_consistency: bool,
         handoff: Any,
         candidate: str,
+        required_candidate_claim_ids: tuple[str, ...] = (),
     ) -> tuple[Any, bool]:
         tool_calls = message.get("tool_calls")
         if isinstance(tool_calls, list) and tool_calls:
@@ -253,6 +260,7 @@ class ReadOnlyReviewPhase:
                 claim_units=claim_units,
                 document_consistency=document_consistency,
                 evidence_ids=handoff.evidence_ids,
+                required_candidate_claim_ids=required_candidate_claim_ids,
             )
             self._validate_document_consistency(result, handoff, candidate)
             return result, True
@@ -268,6 +276,7 @@ class ReadOnlyReviewPhase:
             claim_units=claim_units,
             document_consistency=document_consistency,
             evidence_ids=handoff.evidence_ids,
+            required_candidate_claim_ids=required_candidate_claim_ids,
         )
         self._validate_document_consistency(result, handoff, candidate)
         return result, False
