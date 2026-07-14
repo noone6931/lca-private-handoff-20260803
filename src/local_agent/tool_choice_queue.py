@@ -588,7 +588,9 @@ def evaluate_tool_choice_state(
         return ToolChoiceDecision(
             steering_required=True,
             allowed_tool_names=_allowed_subset(
-                PRECISE_EVIDENCE_TOOLS
+                {"read_file"}
+                if explore_decision.exact_read_candidates
+                else PRECISE_EVIDENCE_TOOLS
                 if explore_decision.read_candidates
                 else {"glob_files"}
                 if explore_decision.discovery_roots
@@ -610,7 +612,9 @@ def evaluate_tool_choice_state(
                 f"observations={explore_decision.observation_calls}/{explore_decision.hard_budget}."
             ),
             rule_id=(
-                "read_only_profile_explore_exact_cross_root"
+                "read_only_profile_explore_candidate_read"
+                if explore_decision.exact_read_candidates
+                else "read_only_profile_explore_exact_cross_root"
                 if explore_decision.discovery_patterns
                 else "read_only_profile_explore_soft"
                 if explore_decision.observation_calls >= explore_decision.soft_budget
@@ -644,10 +648,14 @@ def evaluate_tool_choice_state(
                 () if explore_decision.discovery_patterns else explore_decision.discovery_roots
             ),
             required_tool_arguments_json=(
-                _precise_glob_arguments_json(explore_decision.discovery_patterns)
+                _read_file_arguments_json(explore_decision.exact_read_candidates[0])
+                if explore_decision.exact_read_candidates
+                else _precise_glob_arguments_json(explore_decision.discovery_patterns)
                 if explore_decision.discovery_patterns
                 else _inventory_glob_arguments_json(explore_decision.discovery_roots)
             ),
+            scoped_read_paths=explore_decision.exact_read_candidates[:1],
+            scoped_read_budget=1 if explore_decision.exact_read_candidates else None,
         )
 
     evidence_preferred = _preferred_evidence_tools(results)
@@ -1081,6 +1089,10 @@ def _precise_glob_arguments_json(patterns: Iterable[str]) -> str:
         ensure_ascii=False,
         sort_keys=True,
     )
+
+
+def _read_file_arguments_json(path: str) -> str:
+    return json.dumps({"path": path}, ensure_ascii=False, sort_keys=True) if path else ""
 
 
 def _precise_glob_call_hint(patterns: Iterable[str]) -> str:

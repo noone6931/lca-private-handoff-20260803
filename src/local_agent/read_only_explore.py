@@ -69,6 +69,7 @@ class ReadOnlyExploreDecision:
     soft_budget: int = 0
     hard_budget: int = 0
     read_candidates: tuple[str, ...] = ()
+    exact_read_candidates: tuple[str, ...] = ()
     preferred_roots: tuple[str, ...] = ()
     discovery_roots: tuple[str, ...] = ()
     discovery_patterns: tuple[str, ...] = ()
@@ -115,6 +116,7 @@ def evaluate_read_only_explore(
     covered = _covered_roots(results, roots, candidate_paths, inventory_paths)
     missing = tuple(root for root in roots if root not in covered)
     read_candidates = _read_candidates_for_missing_roots(candidate_paths, missing)
+    exact_read_candidates = _read_candidates_for_missing_roots(precise_source_inventory, missing)
     root_attempts = _root_attempts(results, roots)
     preferred_roots = _least_observed_roots(missing, root_attempts)
     exact_discovery_roots, exact_discovery_patterns = _cross_root_exact_glob_retry(results, roots, missing)
@@ -133,6 +135,7 @@ def evaluate_read_only_explore(
             soft_budget=soft_budget,
             hard_budget=hard_budget,
             read_candidates=read_candidates,
+            exact_read_candidates=exact_read_candidates,
             preferred_roots=preferred_roots,
             discovery_roots=discovery_roots,
             discovery_patterns=exact_discovery_patterns,
@@ -147,6 +150,7 @@ def evaluate_read_only_explore(
             soft_budget=soft_budget,
             hard_budget=hard_budget,
             read_candidates=read_candidates,
+            exact_read_candidates=exact_read_candidates,
             preferred_roots=preferred_roots,
             discovery_roots=discovery_roots,
             discovery_patterns=exact_discovery_patterns,
@@ -162,6 +166,7 @@ def evaluate_read_only_explore(
             soft_budget=soft_budget,
             hard_budget=hard_budget,
             read_candidates=read_candidates,
+            exact_read_candidates=exact_read_candidates,
             preferred_roots=preferred_roots,
             discovery_roots=discovery_roots,
             discovery_patterns=exact_discovery_patterns,
@@ -175,6 +180,7 @@ def evaluate_read_only_explore(
         soft_budget=soft_budget,
         hard_budget=hard_budget,
         read_candidates=read_candidates,
+        exact_read_candidates=exact_read_candidates,
         preferred_roots=preferred_roots,
         discovery_roots=discovery_roots,
         discovery_patterns=exact_discovery_patterns,

@@ -121,6 +121,7 @@ class ToolChoiceQueueTests(unittest.TestCase):
         self.assertIn(str(second), initial.tool_call_hints[0])
         self.assertIn(str(second), after_first_root.tool_call_hints[0])
         self.assertNotIn(str(first), after_first_root.tool_call_hints[0])
+        self.assertEqual(read_candidate.rule_id, "read_only_profile_explore")
         self.assertEqual(read_candidate.allowed_tool_names, frozenset({"read_file", "search_code"}))
         self.assertEqual(read_candidate.scoped_read_paths, ())
         self.assertIn(str(source), read_candidate.tool_call_hints[0])
@@ -353,7 +354,9 @@ class ToolChoiceQueueTests(unittest.TestCase):
                 read_only_review_profile="owner_impact",
             )
 
-        self.assertEqual(decision.allowed_tool_names, frozenset({"read_file", "search_code"}))
+        self.assertEqual(decision.allowed_tool_names, frozenset({"read_file"}))
+        self.assertEqual(decision.scoped_read_paths, (str(source),))
+        self.assertEqual(json.loads(decision.required_tool_arguments_json), {"path": str(source)})
         self.assertIn(str(source), decision.tool_call_hints[0])
 
     def test_exact_source_glob_candidate_keeps_root_provenance(self) -> None:
