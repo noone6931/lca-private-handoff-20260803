@@ -9,9 +9,9 @@
   "scripted_responses": [
     {"tool_calls": [{"name": "read_file", "arguments": {"path": "src/Observed.java"}}]},
     {"content": "已证实真实 owner 是 InventedOwner，现有 InventedTable 和 /invented API 已实现。"},
-    {"tool_calls": [{"name": "submit_read_only_review", "arguments": {"verdict": "revise", "confidence": 0.95, "findings": [{"claim_id": "c001", "issue": "asserted owner, table, and API have no direct binding", "action": "downgrade them to unlocated or proposal"}], "reason": "repository facts are invented"}}]},
+    {"tool_calls": [{"name": "submit_read_only_review", "arguments": {"verdict": "revise", "confidence": 0.95, "findings": [{"claim_id": "c001", "claim": "已证实真实 owner 是 InventedOwner，现有 InventedTable 和 /invented API 已实现。", "finding_scope": "candidate_defect", "issue": "asserted owner, table, and API have no direct binding", "action": "downgrade them to unlocated or proposal"}], "reason": "repository facts are invented"}}]},
     {"content": "已证实真实 owner 是 InventedOwner，现有 InventedTable 和 /invented API 已实现。"},
-    {"tool_calls": [{"name": "submit_read_only_review", "arguments": {"verdict": "revise", "confidence": 0.95, "findings": [{"claim_id": "c001", "issue": "unsupported facts remain in the rewrite", "action": "do not release the candidate"}], "reason": "rewrite remains unsafe"}}]}
+    {"tool_calls": [{"name": "submit_read_only_review", "arguments": {"verdict": "revise", "confidence": 0.95, "findings": [{"claim_id": "c001", "claim": "已证实真实 owner 是 InventedOwner，现有 InventedTable 和 /invented API 已实现。", "finding_scope": "candidate_defect", "issue": "unsupported facts remain in the rewrite", "action": "do not release the candidate"}], "reason": "rewrite remains unsafe"}}]}
   ],
   "acceptance": {
     "required_tools": ["read_file"],

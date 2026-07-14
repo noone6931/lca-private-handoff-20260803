@@ -25,9 +25,9 @@
       ]
     },
     {"content": "已证实真实 owner 是 InventedOwner，现有 InventedTable 和 /invented API 已实现。"},
-    {"tool_calls": [{"name": "submit_read_only_review", "arguments": {"verdict": "revise", "confidence": 0.9, "findings": [{"claim_id": "c001", "issue": "The asserted owner and implementation are unsupported.", "action": "Keep the owner unlocated and report incomplete root coverage."}], "reason": "No direct binding covers every requested root."}}]},
+    {"tool_calls": [{"name": "submit_read_only_review", "arguments": {"verdict": "revise", "confidence": 0.9, "findings": [{"claim_id": "c001", "claim": "已证实真实 owner 是 InventedOwner，现有 InventedTable 和 /invented API 已实现。", "finding_scope": "candidate_defect", "issue": "The asserted owner and implementation are unsupported.", "action": "Keep the owner unlocated and report incomplete root coverage."}], "reason": "No direct binding covers every requested root."}}]},
     {"content": "已证实真实 owner 是 InventedOwner，现有 InventedTable 和 /invented API 已实现。"},
-    {"tool_calls": [{"name": "submit_read_only_review", "arguments": {"verdict": "revise", "confidence": 0.9, "findings": [{"claim_id": "c001", "issue": "Unsupported owner remains.", "action": "Do not release the candidate."}], "reason": "The rewrite remains unsupported."}}]}
+    {"tool_calls": [{"name": "submit_read_only_review", "arguments": {"verdict": "revise", "confidence": 0.9, "findings": [{"claim_id": "c001", "claim": "已证实真实 owner 是 InventedOwner，现有 InventedTable 和 /invented API 已实现。", "finding_scope": "candidate_defect", "issue": "Unsupported owner remains.", "action": "Do not release the candidate."}], "reason": "The rewrite remains unsupported."}}]}
   ],
   "acceptance": {
     "required_tools": ["read_file", "search_code"],

@@ -3,9 +3,9 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
-from .tool_gateway import _tool_choice_signature_count
-from .tool_gateway import _tool_choice_steering_message
-from .tool_gateway import _tool_choice_steering_signature
+from .tool_choice_queue import tool_choice_signature_count
+from .tool_choice_queue import tool_choice_steering_message
+from .tool_choice_queue import tool_choice_steering_signature
 
 
 MAX_TOOL_CHOICE_QUEUE_STEERS_PER_SIGNATURE = 1
@@ -77,10 +77,10 @@ class RuntimeToolChoiceQueuePhase:
             return stop
         if not decision.steering_required:
             return None
-        signature = _tool_choice_steering_signature(decision, len(runtime._run.tool_choice_results))
+        signature = tool_choice_steering_signature(decision, len(runtime._run.tool_choice_results))
         if signature in runtime._run.tool_choice_steering_signatures:
             return None
-        if _tool_choice_signature_count(runtime._run.tool_choice_steering_signatures, decision.rule_id) >= (
+        if tool_choice_signature_count(runtime._run.tool_choice_steering_signatures, decision.rule_id) >= (
             MAX_TOOL_CHOICE_QUEUE_STEERS_PER_SIGNATURE
         ):
             return None
@@ -90,7 +90,7 @@ class RuntimeToolChoiceQueuePhase:
 
     def _append_tool_choice_message(self, decision: Any, *, force_final: bool) -> None:
         runtime = self._runtime
-        content = _tool_choice_steering_message(decision, runtime._run.current_user_request)
+        content = tool_choice_steering_message(decision, runtime._run.current_user_request)
         runtime._messages.append({"role": "user", "content": content})
         runtime._session.append(
             "runtime_steering",

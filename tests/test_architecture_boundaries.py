@@ -50,3 +50,11 @@ class ArchitectureBoundaryTests(unittest.TestCase):
         provider_context = (ROOT / "src/local_agent/provider_context.py").read_text(encoding="utf-8")
         self.assertIn("class ProviderContextPhase:", provider_context)
         self.assertNotIn("class ProviderContextMixin:", provider_context)
+
+    def test_tool_choice_steering_helpers_live_with_queue_owner(self) -> None:
+        queue = (ROOT / "src/local_agent/tool_choice_queue.py").read_text(encoding="utf-8")
+        gateway = (ROOT / "src/local_agent/tool_gateway.py").read_text(encoding="utf-8")
+        self.assertIn("def tool_choice_steering_message", queue)
+        self.assertIn("def tool_choice_steering_signature", queue)
+        self.assertNotIn("def _tool_choice_steering_message", gateway)
+        self.assertNotIn("def _tool_choice_steering_signature", gateway)

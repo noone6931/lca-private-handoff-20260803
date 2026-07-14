@@ -49,6 +49,17 @@ def _review_submit(payload: dict) -> object:
     )()
 
 
+def _first_candidate_claim(messages) -> str:
+    for message in reversed(messages):
+        if message.get("role") != "user" or "LCA_READ_ONLY_EVIDENCE_REVIEW" not in str(message.get("content")):
+            continue
+        payload = json.loads(message["content"])
+        claims = payload.get("candidate_claims") or ()
+        if claims:
+            return str(claims[0].get("text") or "")
+    return ""
+
+
 class _ReviewerFlowClient:
     calls: list[dict] = []
 
@@ -74,7 +85,8 @@ class _ReviewerFlowClient:
                     "findings": [
                         {
                             "claim_id": "c001",
-                            "claim": "已证实真实 owner 是 PayServiceImpl",
+                            "claim": "已证实真实 owner 是 PayServiceImpl，DDL 和 API 也由它负责。",
+                            "finding_scope": "candidate_defect",
                             "issue": "same-domain code is only analogous without a requested behavior binding",
                             "action": "label it as a reusable candidate and keep the owner unlocated",
                         }
@@ -131,7 +143,8 @@ class _InventedDesignReviewerClient:
                     "findings": [
                         {
                             "claim_id": "c001",
-                            "claim": "现有 PayBillRecordInfoVo 使用 SF 前缀，并包含多级审批和退款复用",
+                            "claim": "现有 PayBillRecordInfoVo 使用 SF 前缀，并包含多级审批和退款复用。",
+                            "finding_scope": "candidate_defect",
                             "issue": "invented repository types and numbering behavior",
                             "action": "move them to proposal or pending confirmation",
                         }
@@ -175,16 +188,17 @@ class _ReviewerRepairClient:
         reviewer = any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages)
         if reviewer:
             self._review_calls += 1
+            claim = _first_candidate_claim(messages)
             if self._review_calls == 1:
                 return type("Response", (), {"message": {"content": json.dumps({
                     "verdict": "pass", "confidence": 0.9,
-                    "findings": [{"claim_id": "c001", "issue": "unsupported", "action": "downgrade"}],
+                    "findings": [{"claim_id": "c001", "claim": claim, "finding_scope": "candidate_defect", "issue": "unsupported", "action": "downgrade"}],
                     "reason": "contradictory shape",
                 })}})()
             if self._review_calls == 2:
                 return _review_submit({
                     "verdict": "revise", "confidence": 0.9,
-                    "findings": [{"claim_id": "c001", "issue": "unsupported owner", "action": "mark unlocated"}],
+                    "findings": [{"claim_id": "c001", "claim": claim, "finding_scope": "candidate_defect", "issue": "unsupported owner", "action": "mark unlocated"}],
                     "reason": "binding absent",
                 })
             return _review_submit({"verdict": "pass", "confidence": 0.9, "findings": [], "reason": "rewrite is scoped"})
@@ -219,6 +233,7 @@ class _ReviewerUnverifiedRewriteClient:
         type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
         if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages):
             self._review_calls += 1
+            claim = _first_candidate_claim(messages)
             if self._review_calls > 1:
                 return _review_submit({"verdict": "pass", "confidence": 0.9, "findings": [], "reason": "rewrite is truthful"})
             return _review_submit(
@@ -228,7 +243,8 @@ class _ReviewerUnverifiedRewriteClient:
                     "findings": [
                         {
                             "claim_id": "c001",
-                            "claim": "owner conclusion is unsupported",
+                            "claim": claim,
+                            "finding_scope": "candidate_defect",
                             "issue": "no direct behavior-to-owner binding exists",
                             "action": "report the owner as unlocated and the inspected code as analogous",
                         }
@@ -323,7 +339,7 @@ class _ParaphraseReviewerClient(_InvalidReviewerClient):
             return type(
                 "Response",
                 (),
-                {"message": {"content": '{"verdict":"revise","confidence":0.9,"findings":[{"claim_id":"c999","claim":"PayServiceImpl is the verified owner","issue":"unsupported","action":"qualify"}],"reason":"missing binding"}'}},
+                {"message": {"content": '{"verdict":"revise","confidence":0.9,"findings":[{"claim_id":"c999","claim":"PayServiceImpl is the verified owner","finding_scope":"candidate_defect","issue":"unsupported","action":"qualify"}],"reason":"missing binding"}'}},
             )()
         return type("Response", (), {"message": {"content": "已证实真实 owner 是 PayServiceImpl。"}})()
 
@@ -403,7 +419,7 @@ class _NoncompliantRewriteClient(_ReviewerFlowClient):
                 {
                     "verdict": "revise",
                     "confidence": 0.9,
-                    "findings": [{"claim_id": "c001", "issue": "unsupported", "action": "qualify"}],
+                    "findings": [{"claim_id": "c001", "claim": "已证实真实 owner 是 PayServiceImpl。", "finding_scope": "candidate_defect", "issue": "unsupported", "action": "qualify"}],
                     "reason": "binding absent",
                 }
             )
@@ -431,7 +447,7 @@ class _ReviewerLastGateClient:
                 {
                     "verdict": "revise",
                     "confidence": 0.9,
-                    "findings": [{"claim_id": "c001", "issue": "unsupported repository detail", "action": "mark it unverified"}],
+                    "findings": [{"claim_id": "c001", "claim": "现有 Redis key、权限接口和模板服务已经由 PayServiceImpl 实现。", "finding_scope": "candidate_defect", "issue": "unsupported repository detail", "action": "mark it unverified"}],
                     "reason": "no direct binding",
                 }
             )
@@ -512,8 +528,24 @@ class _SpoofedDocumentConsistencyClient:
 class _DocumentConsistencySourceGapReviewerClient:
     def __init__(self, config: AgentConfig):
         self.config = config
+        self._review_calls = 0
 
     def chat(self, messages, tools, *, timeout=None):
+        self._review_calls += 1
+        if self._review_calls > 1:
+            return _review_submit(
+                {
+                    "verdict": "pass",
+                    "confidence": 0.93,
+                    "findings": [],
+                    "reason": "candidate already reports the source-material gap",
+                    "document_consistency": {
+                        "stance": "reported_unresolved",
+                        "conflict_evidence_ids": ["e001", "e002"],
+                        "supporting_evidence_ids": [],
+                    },
+                }
+            )
         return _review_submit(
             {
                 "verdict": "revise",
@@ -521,6 +553,8 @@ class _DocumentConsistencySourceGapReviewerClient:
                 "findings": [
                     {
                         "claim_id": "c001",
+                        "claim": "The document and image are not consistent; artifact role remains unresolved.",
+                        "finding_scope": "source_material_gap",
                         "issue": "source materials still need confirmation",
                         "action": "ask the document owner to decide the final artifact wording",
                     }
@@ -666,7 +700,7 @@ class ReadOnlyReviewerTests(unittest.TestCase):
             self.assertIn("requirements.md", matching_report)
             self.assertIn("prototype.html", matching_report)
 
-    def test_document_consistency_source_gap_nonpass_can_release_unresolved_candidate(self) -> None:
+    def test_document_consistency_source_gap_finding_is_repaired_not_runtime_overridden(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             with patch("local_agent.agent.OpenAICompatibleClient", _DocumentConsistencySourceGapReviewerClient):
                 runtime = AgentRuntime(_config(Path(tmp).resolve()), show_tool_logs=False)
@@ -711,7 +745,9 @@ class ReadOnlyReviewerTests(unittest.TestCase):
 
         self.assertEqual(outcome.kind, "pass")
         self.assertEqual(runtime._run.read_only_review.verdict, "pass")
-        self.assertIn("source-material gaps", runtime._run.read_only_review.reason)
+        self.assertEqual(runtime._run.read_only_review.schema_failures, 1)
+        self.assertEqual(runtime._run.read_only_review.repairs, 1)
+        self.assertNotIn("source-gap", runtime._run.read_only_review.reason or "")
 
     def test_handoff_is_bounded_and_conservative_about_source_reads(self) -> None:
         contract = generate_requirement_contract("只读分析服务 owner 和影响范围，不要修改。")
@@ -782,12 +818,12 @@ class ReadOnlyReviewerTests(unittest.TestCase):
     def test_reviewer_result_requires_typed_validated_json(self) -> None:
         units = candidate_claim_units("owner")
         parsed = parse_reviewer_result(
-            '{"verdict":"revise","confidence":0.8,"findings":[{"claim_id":"c001","claim":"owner","issue":"gap","action":"qualify"}],"reason":"missing binding"}',
+            '{"verdict":"revise","confidence":0.8,"findings":[{"claim_id":"c001","claim":"owner","finding_scope":"candidate_defect","issue":"gap","action":"qualify"}],"reason":"missing binding"}',
             claim_units=units,
         )
         self.assertEqual(parsed.verdict, "revise")
         with self.assertRaises(ValueError):
-            parse_reviewer_result('{"verdict":"pass","confidence":1,"findings":[{"claim_id":"c001","claim":"x","issue":"x","action":"x"}],"reason":"x"}', claim_units=units)
+            parse_reviewer_result('{"verdict":"pass","confidence":1,"findings":[{"claim_id":"c001","claim":"owner","finding_scope":"candidate_defect","issue":"x","action":"x"}],"reason":"x"}', claim_units=units)
         with self.assertRaises(ValueError):
             parse_reviewer_result("review looks good", claim_units=units)
 
@@ -805,7 +841,7 @@ class ReadOnlyReviewerTests(unittest.TestCase):
             {
                 "verdict": "revise",
                 "confidence": 0.9,
-                "findings": [{"claim_id": "c001", "issue": "x", "action": "y", "extra": "no"}],
+                "findings": [{"claim_id": "c001", "claim": "unsupported owner claim", "finding_scope": "candidate_defect", "issue": "x", "action": "y", "extra": "no"}],
                 "reason": "x",
             },
             {
@@ -827,6 +863,8 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertIn("shorter than 9000", prompt)
         self.assertIn("at most 8", prompt)
         self.assertIn("`pass` verdict requires exactly 0", prompt)
+        self.assertIn("finding_scope to `candidate_defect`", prompt)
+        self.assertIn("copy that exact candidate_claims text", prompt)
         repair = reviewer_repair_messages(handoff, candidate_claim_units("candidate"), {"error_code": "findings_too_many"})
         self.assertIn("at most 8", repair[0]["content"])
         self.assertIn("no more than 8 highest-risk findings", repair[-1]["content"])
@@ -884,7 +922,15 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         bad_payload = {
             "verdict": "unverified",
             "confidence": 0.5,
-            "findings": [{"claim_id": "c001", "issue": "unsupported reconciliation", "action": "keep unresolved"}],
+            "findings": [
+                {
+                    "claim_id": "c001",
+                    "claim": "A and B are consistent because B is the completed state.",
+                    "finding_scope": "candidate_defect",
+                    "issue": "unsupported reconciliation",
+                    "action": "keep unresolved",
+                }
+            ],
             "reason": "bad support ids",
             "document_consistency": {
                 "stance": "explicitly_supported_reconciliation",
@@ -940,7 +986,15 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         payload = {
             "verdict": "unverified",
             "confidence": 0.5,
-            "findings": [{"claim_id": "c001", "issue": "unresolved", "action": "keep unresolved"}],
+            "findings": [
+                {
+                    "claim_id": "c001",
+                    "claim": "A and B remain unresolved.",
+                    "finding_scope": "candidate_defect",
+                    "issue": "unresolved",
+                    "action": "keep unresolved",
+                }
+            ],
             "reason": "bad support ids",
             "document_consistency": {
                 "stance": "reported_unresolved",
@@ -979,12 +1033,76 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         )
         self.assertEqual(parsed.document_consistency.stance, "conditional_reconciliation")
 
+    def test_source_material_gap_finding_requires_repair_not_silent_normalization(self) -> None:
+        units = candidate_claim_units("The document and image are not consistent; artifact role remains unresolved.")
+        with self.assertRaises(ReviewerValidationError) as raised:
+            parse_reviewer_payload(
+                {
+                    "verdict": "revise",
+                    "confidence": 0.7,
+                    "findings": [
+                        {
+                            "claim_id": "c001",
+                            "claim": "The document and image are not consistent; artifact role remains unresolved.",
+                            "finding_scope": "source_material_gap",
+                            "issue": "source owner must choose final wording",
+                            "action": "ask the artifact owner to update sources",
+                        }
+                    ],
+                    "reason": "source gap",
+                },
+                claim_units=units,
+            )
+        self.assertEqual(raised.exception.code, "source_material_gap_finding")
+        repair = reviewer_repair_messages(
+            build_explore_handoff(
+                request="review",
+                contract=generate_requirement_contract("只根据 Markdown 和图片分析资料一致性，不要检查代码。"),
+                requirement_evidence=(), source_evidence=(), records=(), tool_results=(),
+            ),
+            units,
+            raised.exception.diagnostics,
+        )
+        self.assertIn("Do not submit source_material_gap findings", repair[-1]["content"])
+
+    def test_finding_claim_must_match_selected_claim_id(self) -> None:
+        units = candidate_claim_units("First unsupported claim.\n\nSecond unsupported claim.")
+        with self.assertRaises(ReviewerValidationError) as raised:
+            parse_reviewer_payload(
+                {
+                    "verdict": "revise",
+                    "confidence": 0.7,
+                    "findings": [
+                        {
+                            "claim_id": "c001",
+                            "claim": "Second unsupported claim.",
+                            "finding_scope": "candidate_defect",
+                            "issue": "wrong claim id",
+                            "action": "choose matching id",
+                        }
+                    ],
+                    "reason": "mismatch",
+                },
+                claim_units=units,
+            )
+        self.assertEqual(raised.exception.code, "finding_claim_mismatch")
+        repair = reviewer_repair_messages(
+            build_explore_handoff(
+                request="review",
+                contract=generate_requirement_contract("只读分析 owner，不要修改文件。"),
+                requirement_evidence=(), source_evidence=(), records=(), tool_results=(),
+            ),
+            units,
+            raised.exception.diagnostics,
+        )
+        self.assertIn("copy the exact candidate_claims text", repair[-1]["content"])
+
     def test_claim_ids_address_markdown_units_without_reviewer_text_matching(self) -> None:
         candidate = "| Scope | Owner |\n| --- | --- |\n| Frontend | **platformPayment** |\n\n**Conclusion:** platformPayment is the verified owner."
         units = candidate_claim_units(candidate)
         self.assertEqual([unit.claim_id for unit in units], ["c001", "c002", "c003"])
         result = parse_reviewer_result(
-            '{"verdict":"revise","confidence":0.9,"findings":[{"claim_id":"c002","claim":"front-end ownership is overstated","issue":"no direct binding","action":"mark as analogous candidate"}],"reason":"unlocated owner"}',
+            '{"verdict":"revise","confidence":0.9,"findings":[{"claim_id":"c002","claim":"| Frontend | **platformPayment** |","finding_scope":"candidate_defect","issue":"no direct binding","action":"mark as analogous candidate"}],"reason":"unlocated owner"}',
             claim_units=units,
         )
         rewritten = "| Scope | Owner |\n| --- | --- |\n| Frontend | analogous candidate |\n\n**Conclusion:** the true owner remains unlocated."
@@ -992,7 +1110,7 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertFalse(rewrite_complies_with_review(candidate, units, result.findings))
         with self.assertRaises(ValueError):
             parse_reviewer_result(
-                '{"verdict":"revise","confidence":0.9,"findings":[{"claim_id":"c999","claim":"summary","issue":"gap","action":"qualify"}],"reason":"x"}',
+                '{"verdict":"revise","confidence":0.9,"findings":[{"claim_id":"c999","claim":"summary","finding_scope":"candidate_defect","issue":"gap","action":"qualify"}],"reason":"x"}',
                 claim_units=units,
             )
 
@@ -1010,7 +1128,7 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertIn("c103", ids)
         tail_unit = next(unit for unit in units if unit.claim_id == "c102")
         result = parse_reviewer_result(
-            '{"verdict":"revise","confidence":0.9,"findings":[{"claim_id":"c102","claim":"owner claim","issue":"no binding","action":"mark unlocated"},{"claim_id":"c103","claim":"conclusion","issue":"no binding","action":"mark unlocated"}],"reason":"x"}',
+            '{"verdict":"revise","confidence":0.9,"findings":[{"claim_id":"c102","claim":"| Frontend | **platformPayment** is verified owner |","finding_scope":"candidate_defect","issue":"no binding","action":"mark unlocated"},{"claim_id":"c103","claim":"Final conclusion: platformPayment is the true owner.","finding_scope":"candidate_defect","issue":"no binding","action":"mark unlocated"}],"reason":"x"}',
             claim_units=units,
         )
         self.assertIn("platformPayment", tail_unit.text)
@@ -1113,7 +1231,7 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         units = candidate_claim_units("secret candidate claim")
         with self.assertRaises(ReviewerValidationError) as raised:
             parse_reviewer_result(
-                '{"verdict":"pass","confidence":0.9,"findings":[{"claim_id":"c001","issue":"secret claim","action":"repair"}],"reason":"x"}',
+                '{"verdict":"pass","confidence":0.9,"findings":[{"claim_id":"c001","claim":"secret candidate claim","finding_scope":"candidate_defect","issue":"secret claim","action":"repair"}],"reason":"x"}',
                 claim_units=units,
             )
         repair = reviewer_repair_messages(

@@ -8,9 +8,9 @@
   },
   "scripted_responses": [
     {"content": "现有 PayBillRecordInfoVo、SF 前缀、多级审批和退款复用已经实现，可直接接入。"},
-    {"tool_calls": [{"name": "submit_read_only_review", "arguments": {"verdict": "revise", "confidence": 0.95, "findings": [{"claim_id": "c001", "claim": "existing implementation is asserted without source evidence", "issue": "the handoff has no direct binding for those repository details", "action": "mark them as proposal or pending confirmation"}], "reason": "invented repository facts"}}]},
+    {"tool_calls": [{"name": "submit_read_only_review", "arguments": {"verdict": "revise", "confidence": 0.95, "findings": [{"claim_id": "c001", "claim": "现有 PayBillRecordInfoVo、SF 前缀、多级审批和退款复用已经实现，可直接接入。", "finding_scope": "candidate_defect", "issue": "the handoff has no direct binding for those repository details", "action": "mark them as proposal or pending confirmation"}], "reason": "invented repository facts"}}]},
     {"content": "建议复用现有 PayBillRecordInfoVo、SF 前缀、多级审批和退款复用；这些能力已由当前系统提供。"},
-    {"tool_calls": [{"name": "submit_read_only_review", "arguments": {"verdict": "revise", "confidence": 0.95, "findings": [{"claim_id": "c001", "claim": "rewrite still presents unsupported repository details as facts", "issue": "the addressed claim remains semantically unsupported", "action": "do not release this draft"}], "reason": "rewrite remains unsafe"}}]}
+    {"tool_calls": [{"name": "submit_read_only_review", "arguments": {"verdict": "revise", "confidence": 0.95, "findings": [{"claim_id": "c001", "claim": "建议复用现有 PayBillRecordInfoVo、SF 前缀、多级审批和退款复用；这些能力已由当前系统提供。", "finding_scope": "candidate_defect", "issue": "the addressed claim remains semantically unsupported", "action": "do not release this draft"}], "reason": "rewrite remains unsafe"}}]}
   ],
   "acceptance": {
     "forbidden_tools": ["apply_patch", "write_file", "shell", "run_tests"],

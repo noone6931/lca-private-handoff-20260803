@@ -355,13 +355,16 @@ def _candidate_locator_items(
     buckets: dict[tuple[str, str], list[ClaimEvidenceItem]] = {}
     order: list[tuple[str, str]] = []
     seen: set[tuple[tuple[str, str], str, str]] = set()
-    for source in _document_locator_sources(requirements, tool_results):
+    sources = _document_locator_sources(requirements, tool_results)
+    for source in sources:
         artifact_key = document_artifact_identity(
             root=source.root,
             path=source.path,
             identity_path=source.identity_path,
         )
         for locator in parse_document_locators(candidate, source.path):
+            if _locator_is_ambiguous(locator.path, source, sources):
+                continue
             key = (artifact_key, locator.kind, locator.value)
             if key in seen:
                 continue
@@ -400,7 +403,7 @@ def _document_locator_sources(
             scope=item.scope or "root_local",
             identity_path=item.path,
         )
-        sources.setdefault(document_artifact_identity(root=source.root, path=source.path, identity_path=source.identity_path), source)
+        _store_document_locator_source(sources, source)
     for item in tool_results:
         if item.name != "read_file" or item.is_error:
             continue
@@ -413,8 +416,38 @@ def _document_locator_sources(
             scope=str(item.metadata.get("evidence_scope") or "root_local"),
             identity_path=str(item.metadata.get("resolved_path") or item.path or ""),
         )
-        sources.setdefault(document_artifact_identity(root=source.root, path=source.path, identity_path=source.identity_path), source)
+        _store_document_locator_source(sources, source)
     return list(sources.values())
+
+
+def _store_document_locator_source(
+    sources: dict[tuple[str, str], _DocumentLocatorSource],
+    source: _DocumentLocatorSource,
+) -> None:
+    key = document_artifact_identity(root=source.root, path=source.path, identity_path=source.identity_path)
+    prior = sources.get(key)
+    if prior is None or len(source.content or "") > len(prior.content or ""):
+        sources[key] = source
+
+
+def _locator_is_ambiguous(
+    cited_path: str,
+    source: _DocumentLocatorSource,
+    sources: Iterable[_DocumentLocatorSource],
+) -> bool:
+    """A basename-only citation cannot bind one of several same-name artifacts."""
+
+    cited = (cited_path or "").replace("\\", "/").strip().strip("`")
+    if not cited or "/" in cited:
+        return False
+    source_name = cited.lower()
+    identities = {
+        document_artifact_identity(root=item.root, path=item.path, identity_path=item.identity_path)
+        for item in sources
+        if item.path and item.path.replace("\\", "/").rsplit("/", 1)[-1].lower() == source_name
+    }
+    current = document_artifact_identity(root=source.root, path=source.path, identity_path=source.identity_path)
+    return current in identities and len(identities) > 1
 
 
 def _fair_candidate_locator_items(

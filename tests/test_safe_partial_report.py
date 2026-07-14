@@ -107,8 +107,20 @@ class SafePartialReportTests(unittest.TestCase):
         report = build_safe_partial_report(
             _handoff(),
             (
-                ReviewerFinding("c001", "No direct owner binding for the asserted owner.", "Downgrade to unlocated."),
-                ReviewerFinding("c002", "Existing endpoint/table is not supported.", "Mark it as a proposal."),
+                ReviewerFinding(
+                    "c001",
+                    "No direct owner binding for the asserted owner.",
+                    "Downgrade to unlocated.",
+                    "The owner is verified.",
+                    "candidate_defect",
+                ),
+                ReviewerFinding(
+                    "c002",
+                    "Existing endpoint/table is not supported.",
+                    "Mark it as a proposal.",
+                    "Existing endpoint is ready.",
+                    "candidate_defect",
+                ),
             ),
             reason="second_review_nonpass",
         )

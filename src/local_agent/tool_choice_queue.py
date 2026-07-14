@@ -12,6 +12,7 @@ from .document_artifacts import document_artifact_coverage
 from .document_artifacts import missing_document_artifacts
 from .negative_evidence import allowed_tools_for_negative_claims, parse_negative_evidence_claims, unsupported_negative_existence_claims
 from .read_only_explore import PRECISE_EVIDENCE_TOOLS, evaluate_read_only_explore
+from .runtime_prompt import _one_line
 from .task_contract import is_inspection_forbidden
 from .tool_observation import ToolResultSummary
 from .verification_timeline import last_workspace_write_index
@@ -300,6 +301,50 @@ class ToolChoiceDecision:
     @property
     def should_stop(self) -> bool:
         return self.stop_message is not None
+
+
+def tool_choice_steering_signature(decision: ToolChoiceDecision, result_count: int) -> str:
+    payload = {
+        "rule_id": decision.rule_id,
+        "missing": decision.missing_requirements,
+        "results": result_count,
+    }
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
+
+
+def tool_choice_signature_count(signatures: set[str], rule_id: str | None) -> int:
+    prefix = f'"rule_id": "{rule_id}"' if rule_id else '"rule_id": null'
+    return sum(1 for signature in signatures if prefix in signature)
+
+
+def tool_choice_steering_message(decision: ToolChoiceDecision, current_user_request: str | None) -> str:
+    allowed = ", ".join(sorted(decision.allowed_tool_names)) or "(no tools currently allowed)"
+    preferred = ", ".join(decision.preferred_tool_names) or "(none)"
+    missing = ", ".join(decision.missing_requirements) or "(none)"
+    hints = "\n".join(f"- call hint: {hint}" for hint in decision.tool_call_hints)
+    request = _one_line(current_user_request or "", max_chars=800)
+    if decision.force_final_answer_without_tools:
+        return (
+            "[Runtime tool choice queue]\n"
+            "The bounded exploration budget is exhausted. Your next response must be the final answer without tool calls. "
+            "Use only collected evidence, include searched scope and incomplete/truncated limits, and do not infer absence "
+            "from omitted results.\n"
+            f"- rule: {decision.rule_id or 'unknown'}\n"
+            f"- reason: {decision.reason}\n"
+            f"- original request: {request}"
+        )
+    return (
+        "[Runtime tool choice queue]\n"
+        "A required workflow gate is not satisfied yet. Use the allowed tool set for the next step; "
+        "do not answer as final until the missing requirement is satisfied or you can explicitly explain why it cannot be satisfied.\n"
+        f"- rule: {decision.rule_id or 'unknown'}\n"
+        f"- missing: {missing}\n"
+        f"- preferred next tools: {preferred}\n"
+        f"- allowed tools now: {allowed}\n"
+        f"- reason: {decision.reason}\n"
+        f"{hints + chr(10) if hints else ''}"
+        f"- original request: {request}"
+    )
 
 
 @dataclass(frozen=True)

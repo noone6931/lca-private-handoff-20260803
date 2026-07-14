@@ -4,7 +4,6 @@ from __future__ import annotations
 import json
 from typing import Any, Protocol
 
-from .document_consistency import candidate_reconciliation_stance
 from .document_consistency import validate_document_consistency_assessment
 from .chat_runtime import call_chat_with_timeout
 from .explore_handoff import build_explore_handoff
@@ -16,7 +15,6 @@ from .read_only_reviewer import MAX_INITIAL_REVIEWER_PROVIDER_CALLS
 from .read_only_reviewer import MAX_REWRITE_REVIEWER_PROVIDER_CALLS
 from .read_only_reviewer import REVIEWER_OUTPUT_TOOL_NAME
 from .read_only_reviewer import ReviewerPhaseOutcome
-from .read_only_reviewer import ReviewerResult
 from .read_only_reviewer import ReviewerValidationError
 from .read_only_reviewer import parse_reviewer_payload
 from .read_only_reviewer import parse_reviewer_result
@@ -184,7 +182,6 @@ class ReadOnlyReviewPhase:
             break
         if result is None:
             return self._unverified("invalid_output", "schema_repair_exhausted")
-        result = self._document_consistency_source_gap_result(result, candidate)
         if repaired_this_round:
             state.repair_success = True
             runtime._run.collector.record_read_only_review_repair_success()
@@ -390,28 +387,4 @@ class ReadOnlyReviewPhase:
                 str(getattr(item, "summary", "")),
             )
             for item in getattr(handoff, "items", ())
-        )
-
-    def _document_consistency_source_gap_result(self, result: Any, candidate: str) -> Any:
-        assessment = getattr(result, "document_consistency", None)
-        if assessment is None or getattr(result, "verdict", None) == "pass":
-            return result
-        if assessment.stance not in {"reported_unresolved", "conditional_reconciliation"}:
-            return result
-        if candidate_reconciliation_stance(candidate) not in {"reported_unresolved", "conditional_reconciliation"}:
-            return result
-        self._runtime._session.append(
-            "read_only_reviewer",
-            {
-                "event": "document_consistency_source_gap_accepted",
-                "original_verdict": result.verdict,
-                "stance": assessment.stance,
-            },
-        )
-        return ReviewerResult(
-            "pass",
-            result.confidence,
-            (),
-            "candidate reports the document conflict as unresolved; source-material gaps are not candidate defects",
-            assessment,
         )

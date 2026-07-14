@@ -8,9 +8,7 @@ from typing import Any, Mapping
 
 from .llm import LlmError, LlmTimeoutError
 from .patch.anchored import PatchError, display_workspace_path, resolve_workspace_path
-from .tool_choice_queue import ToolChoiceDecision
 from .tools.base import ToolResult
-from .runtime_prompt import _one_line
 from .runtime_prompt import _parse_tool_arguments
 
 def _tool_call_signature(name: str, arguments: str | dict[str, Any]) -> str:
@@ -37,50 +35,6 @@ def _intersect_optional_tool_allowlist(
     if current is None:
         return allowed
     return current.intersection(allowed)
-
-
-def _tool_choice_steering_signature(decision: ToolChoiceDecision, result_count: int) -> str:
-    payload = {
-        "rule_id": decision.rule_id,
-        "missing": decision.missing_requirements,
-        "results": result_count,
-    }
-    return json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
-
-
-def _tool_choice_signature_count(signatures: set[str], rule_id: str | None) -> int:
-    prefix = f'"rule_id": "{rule_id}"' if rule_id else '"rule_id": null'
-    return sum(1 for signature in signatures if prefix in signature)
-
-
-def _tool_choice_steering_message(decision: ToolChoiceDecision, current_user_request: str | None) -> str:
-    allowed = ", ".join(sorted(decision.allowed_tool_names)) or "(no tools currently allowed)"
-    preferred = ", ".join(decision.preferred_tool_names) or "(none)"
-    missing = ", ".join(decision.missing_requirements) or "(none)"
-    hints = "\n".join(f"- call hint: {hint}" for hint in decision.tool_call_hints)
-    request = _one_line(current_user_request or "", max_chars=800)
-    if decision.force_final_answer_without_tools:
-        return (
-            "[Runtime tool choice queue]\n"
-            "The bounded exploration budget is exhausted. Your next response must be the final answer without tool calls. "
-            "Use only collected evidence, include searched scope and incomplete/truncated limits, and do not infer absence "
-            "from omitted results.\n"
-            f"- rule: {decision.rule_id or 'unknown'}\n"
-            f"- reason: {decision.reason}\n"
-            f"- original request: {request}"
-        )
-    return (
-        "[Runtime tool choice queue]\n"
-        "A required workflow gate is not satisfied yet. Use the allowed tool set for the next step; "
-        "do not answer as final until the missing requirement is satisfied or you can explicitly explain why it cannot be satisfied.\n"
-        f"- rule: {decision.rule_id or 'unknown'}\n"
-        f"- missing: {missing}\n"
-        f"- preferred next tools: {preferred}\n"
-        f"- allowed tools now: {allowed}\n"
-        f"- reason: {decision.reason}\n"
-        f"{hints + chr(10) if hints else ''}"
-        f"- original request: {request}"
-    )
 
 
 def _tool_choice_result_path(arguments: str | dict[str, Any], result: ToolResult) -> str | None:

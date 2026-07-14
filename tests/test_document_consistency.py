@@ -260,6 +260,44 @@ class DocumentConsistencyTests(unittest.TestCase):
         self.assertTrue(any(item.path == "prototype.html" and "239: HTML target requirement" in item.summary for item in locators))
         self.assertFalse(any(item.path == "missing.html" for item in locators))
 
+    def test_basename_locator_is_ambiguous_across_roots(self) -> None:
+        handoff = build_explore_handoff(
+            request="compare artifacts",
+            contract=_contract(),
+            requirement_evidence=(
+                RequirementEvidence("docs/policy.md", "10: Root A text", root="/workspace/root-a"),
+                RequirementEvidence("docs/policy.md", "10: Root B text", root="/workspace/root-b"),
+            ),
+            source_evidence=(),
+            records=(),
+            tool_results=(),
+            candidate="需求事实：policy.md:10 说明了规则。",
+        )
+        self.assertFalse(any(item.classification == "requirement_locator" for item in handoff.items))
+
+    def test_candidate_locator_prefers_complete_read_source_for_late_lines(self) -> None:
+        truncated = "\n".join(f"{number}: line {number}" for number in range(1, 20))
+        full = "\n".join(f"{number}: line {number}" for number in range(1, 222))
+        handoff = build_explore_handoff(
+            request="compare artifacts",
+            contract=_contract(),
+            requirement_evidence=(RequirementEvidence("docs/policy.md", truncated, root="/workspace/root"),),
+            source_evidence=(),
+            records=(),
+            tool_results=(
+                ToolResultSummary(
+                    "read_file",
+                    full,
+                    path="docs/policy.md",
+                    metadata={"evidence_root": "/workspace/root", "resolved_path": "/workspace/root/docs/policy.md"},
+                ),
+            ),
+            candidate="需求事实：docs/policy.md:211 是关键约束。",
+        )
+        locators = [item for item in handoff.items if item.classification == "requirement_locator"]
+        self.assertEqual(len(locators), 1)
+        self.assertIn("211: line 211", locators[0].summary)
+
     def test_bad_candidate_can_be_revised_without_being_a_schema_failure(self) -> None:
         handoff = _handoff()
         assessment = DocumentConsistencyAssessment("asserted_reconciled", ("e001", "e002"))
@@ -402,8 +440,18 @@ class DocumentConsistencyTests(unittest.TestCase):
             source_evidence=(),
             records=(),
             tool_results=(
-                ToolResultSummary("read_file", content, path="policy.md"),
-                ToolResultSummary("inspect_image", "Visible field has a value.", path="example.png"),
+                ToolResultSummary(
+                    "read_file",
+                    content,
+                    path="policy.md",
+                    metadata={"evidence_root": "/workspace", "resolved_path": "/workspace/policy.md"},
+                ),
+                ToolResultSummary(
+                    "inspect_image",
+                    "Visible field has a value.",
+                    path="example.png",
+                    metadata={"evidence_root": "/workspace", "resolved_path": "/workspace/example.png"},
+                ),
             ),
             candidate="需求事实：policy.md:211 要求留空；图中显示有值，当前未消解。",
         )

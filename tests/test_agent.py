@@ -574,6 +574,58 @@ class _ExactToolChoiceNoToolClient:
         return type("Response", (), {"message": {"content": "Owner.java 已读取；空响应已通过 exact tool_choice 收束。"}})()
 
 
+class _ExactToolChoiceExhaustionClient:
+    calls: list[dict] = []
+
+    def __init__(self, config: AgentConfig):
+        self.config = config
+        self._primary_calls = 0
+
+    def chat(self, messages, tools, *, timeout=None, tool_choice=None):
+        type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout, "tool_choice": tool_choice})
+        self._primary_calls += 1
+        if self._primary_calls == 1:
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "search-owner",
+                                "type": "function",
+                                "function": {
+                                    "name": "search_code",
+                                    "arguments": json.dumps({"path": "src", "pattern": "CandidateOwner"}),
+                                },
+                            }
+                        ],
+                    }
+                },
+            )()
+        tool_call_id = "wrong-detour" if self._primary_calls == 2 else "wrong-forced"
+        return type(
+            "Response",
+            (),
+            {
+                "message": {
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": tool_call_id,
+                            "type": "function",
+                            "function": {
+                                "name": "search_code",
+                                "arguments": json.dumps({"path": "src", "pattern": tool_call_id}),
+                            },
+                        }
+                    ],
+                }
+            },
+        )()
+
+
 class _DummyInteractionHandler:
     def request_interaction(self, request):
         return InteractionResult("answered", "ok")
@@ -3647,6 +3699,43 @@ class AgentRuntimeTests(unittest.TestCase):
         forced = _ExactToolChoiceNoToolClient.calls[2]["tool_choice"]
         self.assertEqual(forced["function"]["name"], "read_file")
         self.assertEqual(runtime._last_run_summary["tool_counts"], {"search_code": 1, "read_file": 1})
+
+    def test_exact_tool_choice_exhausts_when_forced_tool_is_ignored(self) -> None:
+        _ExactToolChoiceExhaustionClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            (workspace / "src").mkdir()
+            (workspace / "src" / "Owner.java").write_text("class CandidateOwner {}\n", encoding="utf-8")
+            with patch("local_agent.agent.OpenAICompatibleClient", _ExactToolChoiceExhaustionClient):
+                runtime = AgentRuntime(
+                    AgentConfig(
+                        provider="openai-compatible",
+                        api_base_url="https://example.invalid/v1",
+                        api_key="token",
+                        model="model",
+                        workspace=workspace,
+                        max_steps=0,
+                        budget_seconds=None,
+                        approval_mode="yolo",
+                    ),
+                    show_tool_logs=False,
+                )
+                result = runtime.run("只读分析当前服务 owner 和影响范围，不要修改。")
+
+        self.assertIn("未完成/未验证", result)
+        self.assertEqual(runtime._last_run_summary["termination_reason"], "tool_choice_exact_exhausted")
+        self.assertEqual(runtime._last_run_summary["tool_choice_exact"]["forces"], 1)
+        self.assertEqual(runtime._last_run_summary["tool_choice_exact"]["exhausted"], 1)
+        self.assertEqual(runtime._last_run_summary["tool_counts"], {"search_code": 1})
+        self.assertEqual(_ExactToolChoiceExhaustionClient.calls[2]["tool_choice"]["function"]["name"], "read_file")
+        messages = runtime._messages
+        for tool_call_id in ("wrong-detour", "wrong-forced"):
+            tool_index = next(
+                index for index, message in enumerate(messages)
+                if message.get("role") == "tool" and message.get("tool_call_id") == tool_call_id
+            )
+            self.assertEqual(messages[tool_index - 1].get("role"), "assistant")
+            self.assertEqual(messages[tool_index - 1].get("tool_calls")[0]["id"], tool_call_id)
 
     def test_negative_discovery_directive_exhausts_without_leaking_a_glob_only_schema(self) -> None:
         _DirectiveExhaustionClient.calls = []

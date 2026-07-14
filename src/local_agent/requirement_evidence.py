@@ -119,23 +119,36 @@ def parse_document_locators(content: str, path: str) -> tuple[DocumentLocator, .
     file beside the locator so a document-only answer stays auditable.
     """
 
+    normalized_path = Path(path).as_posix().strip()
     filename = Path(path).name
     if not filename:
         return ()
-    prefix = rf"`?{re.escape(filename)}`?\s*"
-    patterns = (
-        ("line", prefix + r"(?::#L|#L|:)\s*(\d+)"),
-        ("page", prefix + r"(?:P|page|页)\s*(\d+)"),
-        ("section", prefix + r"第\s*([\d.]+)\s*节"),
-        ("section", prefix + r"(?:#|§|章节|章|节|section|heading)\s*([^\n`，,。;；:：]+)"),
-        ("heading", prefix + r"(?:标题|title)\s*[:：]?\s*([^\n`，,。;；:：]+)"),
-    )
+    refs = tuple(dict.fromkeys(ref for ref in sorted((normalized_path, filename), key=len, reverse=True) if ref))
+    patterns: list[tuple[str, str, str]] = []
+    for ref in refs:
+        prefix = rf"`?{re.escape(ref)}`?\s*"
+        patterns.extend(
+            (
+                (ref, "line", prefix + r"(?::#L|#L|:)\s*(\d+)"),
+                (ref, "page", prefix + r"(?:P|page|页)\s*(\d+)"),
+                (ref, "section", prefix + r"第\s*([\d.]+)\s*节"),
+                (ref, "section", prefix + r"(?:#|§|章节|章|节|section|heading)\s*([^\n`，,。;；:：]+)"),
+                (ref, "heading", prefix + r"(?:标题|title)\s*[:：]?\s*([^\n`，,。;；:：]+)"),
+            )
+        )
     found: list[DocumentLocator] = []
-    for kind, pattern in patterns:
+    spans: list[tuple[int, int, str, str]] = []
+    for ref, kind, pattern in patterns:
         for match in re.finditer(pattern, content, flags=re.IGNORECASE):
             value = match.group(1).strip()
-            if value:
-                found.append(DocumentLocator(filename, kind, value))
+            start, end = match.start(), match.end()
+            overlaps = any(
+                kind == prior_kind and value == prior_value and start < prior_end and prior_start < end
+                for prior_start, prior_end, prior_kind, prior_value in spans
+            )
+            if value and not overlaps:
+                spans.append((start, end, kind, value))
+                found.append(DocumentLocator(ref, kind, value))
     return tuple(found)
 
 

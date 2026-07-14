@@ -14,6 +14,7 @@ from .task_contract import RequirementContract
 
 
 ReviewerVerdict = Literal["pass", "revise", "unverified"]
+ReviewerFindingScope = Literal["candidate_defect", "source_material_gap"]
 MAX_REVIEWER_FINDINGS = 8
 MAX_REVIEWER_RESPONSE_CHARS = 9000
 MAX_INITIAL_REVIEWER_PROVIDER_CALLS = 3
@@ -40,10 +41,17 @@ class ReviewerFinding:
     claim_id: str
     issue: str
     action: str
-    claim: str = ""
+    claim: str
+    finding_scope: ReviewerFindingScope
 
     def to_dict(self) -> dict[str, str]:
-        return {"claim_id": self.claim_id, "claim": self.claim, "issue": self.issue, "action": self.action}
+        return {
+            "claim_id": self.claim_id,
+            "claim": self.claim,
+            "finding_scope": self.finding_scope,
+            "issue": self.issue,
+            "action": self.action,
+        }
 
 
 @dataclass(frozen=True)
@@ -204,9 +212,9 @@ Review contract:
 - Requirement facts, repository facts, proposals, and open questions must remain distinct.
 - A proposal must not be worded as an existing table, class, endpoint, service, approval flow, numbering prefix, or integration unless the handoff explicitly supports it.
 - When the handoff has no explicit direct binding, do not say a main owner/module judgment is correct or mostly correct. Treat same-domain code as observed or analogous and leave the owner unlocated.
-- For a document-consistency review, do not resolve conflicting document or image observations with an invented workflow, scope, actor, or precedence rule. Preserve the conflict as unresolved unless the handoff explicitly reconciles it. A candidate that accurately cites both observations, explicitly keeps the conflict unresolved, and presents only labeled options or questions for later confirmation is compliant: submit `pass` with no findings. A finding must identify a candidate error such as an unsupported reconciliation, a missing cited observation, or a claim that exceeds the handoff; the source materials disagreeing by itself is not a candidate defect.
+- For a document-consistency review, do not resolve conflicting document or image observations with an invented workflow, scope, actor, or precedence rule. Preserve the conflict as unresolved unless the handoff explicitly reconciles it. A candidate that accurately cites both observations, explicitly keeps the conflict unresolved, and presents only labeled options or questions for later confirmation is compliant: submit `pass` with no findings. A finding must identify a candidate error such as an unsupported reconciliation, a missing cited observation, or a claim that exceeds the handoff; the source materials disagreeing by itself is not a candidate defect. If the only issue is that a source owner must decide how to update source materials, submit `pass` with no findings.
 
-The output tool arguments use verdict, confidence, findings, and reason. The complete submission must be shorter than 9000 characters. `findings` must contain at most 8 items. A `pass` verdict requires exactly 0 findings; `revise` and `unverified` require 1 to 8 findings. Every finding must have one unique, known claim_id plus non-empty issue and action. For every finding, choose exactly one claim_id from candidate_claims. Never invent or repeat a claim_id. The optional claim field is for people, not an address. Report only the highest-risk blocking findings when there are more than 8.
+The output tool arguments use verdict, confidence, findings, and reason. The complete submission must be shorter than 9000 characters. `findings` must contain at most 8 items. A `pass` verdict requires exactly 0 findings; `revise` and `unverified` require 1 to 8 findings. Every finding must have one unique, known claim_id plus non-empty issue and action. For every finding, choose exactly one claim_id from candidate_claims, set finding_scope to `candidate_defect`, and copy that exact candidate_claims text into `claim`. Never invent or repeat a claim_id. Do not submit `source_material_gap` findings; those are not candidate defects. Report only the highest-risk blocking findings when there are more than 8.
 Choose revise when the candidate can be corrected using the handoff. Choose unverified when the candidate cannot safely make the requested factual conclusion."""
     if _is_document_consistency_review(handoff):
         system += (
@@ -247,11 +255,16 @@ def reviewer_output_tool_schema(
         "additionalProperties": False,
         "properties": {
             "claim_id": {"type": "string", "enum": known_ids},
-            "claim": {"type": "string"},
+            "claim": {"type": "string", "minLength": 1, "description": "Exact text copied from the selected candidate_claims item."},
+            "finding_scope": {
+                "type": "string",
+                "enum": ["candidate_defect", "source_material_gap"],
+                "description": "Findings must be candidate_defect. source_material_gap is invalid and should be removed during repair.",
+            },
             "issue": {"type": "string", "minLength": 1, "maxLength": 1000},
             "action": {"type": "string", "minLength": 1, "maxLength": 1000},
         },
-        "required": ["claim_id", "issue", "action"],
+        "required": ["claim_id", "claim", "finding_scope", "issue", "action"],
     }
     properties: dict[str, Any] = {
         "verdict": {"type": "string", "enum": ["pass", "revise", "unverified"]},
@@ -389,16 +402,25 @@ def parse_reviewer_payload(
     if len(findings_value) > MAX_REVIEWER_FINDINGS:
         raise ReviewerValidationError("findings_too_many", diagnostics)
     findings: list[ReviewerFinding] = []
-    known_claim_ids = {unit.claim_id for unit in claim_units}
+    claim_text_by_id = {unit.claim_id: unit.text for unit in claim_units}
+    known_claim_ids = set(claim_text_by_id)
     used_claim_ids: set[str] = set()
+    source_material_gap_count = 0
+    candidate_defect_count = 0
     for item in findings_value:
         if not isinstance(item, Mapping):
             raise ReviewerValidationError("finding_not_object", diagnostics)
-        allowed_finding_keys = {"claim_id", "claim", "issue", "action"}
-        required_finding_keys = {"claim_id", "issue", "action"}
+        allowed_finding_keys = {"claim_id", "claim", "finding_scope", "issue", "action"}
+        required_finding_keys = {"claim_id", "claim", "finding_scope", "issue", "action"}
         if not required_finding_keys.issubset(item) or not set(item).issubset(allowed_finding_keys):
             raise ReviewerValidationError("finding_keys_invalid", diagnostics)
-        claim_id, claim, issue, action = (item.get("claim_id"), item.get("claim"), item.get("issue"), item.get("action"))
+        claim_id, claim, finding_scope, issue, action = (
+            item.get("claim_id"),
+            item.get("claim"),
+            item.get("finding_scope"),
+            item.get("issue"),
+            item.get("action"),
+        )
         if not isinstance(claim_id, str) or claim_id not in known_claim_ids:
             raise ReviewerValidationError("claim_id_unknown", {**diagnostics, "unknown_claim_id_count": 1})
         if claim_id in used_claim_ids:
@@ -407,10 +429,27 @@ def parse_reviewer_payload(
             raise ReviewerValidationError("finding_fields_invalid", diagnostics)
         if len(issue) > 1000 or len(action) > 1000:
             raise ReviewerValidationError("finding_fields_too_large", diagnostics)
-        if claim is not None and not isinstance(claim, str):
+        if not isinstance(claim, str) or not claim.strip():
             raise ReviewerValidationError("finding_claim_invalid", diagnostics)
+        if _normalize_claim_binding(claim) != _normalize_claim_binding(claim_text_by_id[claim_id]):
+            raise ReviewerValidationError("finding_claim_mismatch", {**diagnostics, "claim_mismatch_count": 1})
+        if finding_scope not in {"candidate_defect", "source_material_gap"}:
+            raise ReviewerValidationError("finding_scope_invalid", diagnostics)
+        if finding_scope == "source_material_gap":
+            source_material_gap_count += 1
+        else:
+            candidate_defect_count += 1
         used_claim_ids.add(claim_id)
-        findings.append(ReviewerFinding(claim_id, _clip(issue), _clip(action), _clip(claim or "")))
+        findings.append(ReviewerFinding(claim_id, _clip(issue), _clip(action), _clip(claim), finding_scope))
+    if source_material_gap_count:
+        raise ReviewerValidationError(
+            "source_material_gap_finding",
+            {
+                **diagnostics,
+                "source_material_gap_count": source_material_gap_count,
+                "candidate_defect_count": candidate_defect_count,
+            },
+        )
     reason = raw.get("reason")
     if not isinstance(reason, str):
         raise ReviewerValidationError("reason_invalid", diagnostics)
@@ -533,6 +572,9 @@ def _sanitize_diagnostics(diagnostics: Mapping[str, Any]) -> dict[str, Any]:
         "findings_count",
         "unknown_claim_id_count",
         "duplicate_claim_id_count",
+        "claim_mismatch_count",
+        "source_material_gap_count",
+        "candidate_defect_count",
         "response_chars",
         "top_level_type",
     }
@@ -552,6 +594,19 @@ def _repair_shape_instruction(diagnostics: Mapping[str, Any]) -> str:
         return "A pass verdict must have an empty findings list; otherwise choose revise or unverified with 1 to 8 findings. " + common
     if code == "nonpassing_without_findings":
         return "A revise or unverified verdict needs 1 to 8 findings. " + common
+    if code in {"finding_claim_invalid", "finding_claim_mismatch"}:
+        return (
+            "Every finding must copy the exact candidate_claims text for its selected claim_id into claim. "
+            "If the text belongs to another claim_id, select that claim_id instead. "
+            + common
+        )
+    if code in {"source_material_gap_finding", "finding_scope_invalid"}:
+        return (
+            "Do not submit source_material_gap findings. Findings must be candidate_defect items whose action changes "
+            "the candidate answer. If only source materials need an owner decision and the candidate already reports that "
+            "gap accurately, submit pass with an empty findings list; otherwise keep only candidate_defect findings. "
+            + common
+        )
     if code == "document_consistency_evidence_roles_overlap":
         return (
             "For document_consistency, conflict_evidence_ids and supporting_evidence_ids must be disjoint. "
@@ -589,6 +644,10 @@ def _clip(value: str, limit: int = 420) -> str:
 
 def _normalize_span(value: str) -> str:
     return re.sub(r"\s+", "", value or "").casefold()
+
+
+def _normalize_claim_binding(value: str) -> str:
+    return re.sub(r"\s+", " ", _normalize_markdown(value)).strip()
 
 
 def _normalize_markdown(value: str) -> str:

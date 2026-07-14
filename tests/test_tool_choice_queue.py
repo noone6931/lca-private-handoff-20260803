@@ -17,14 +17,33 @@ from local_agent.tool_choice_queue import MAX_CANDIDATE_PATCH_PREVIEW_FAILURES
 from local_agent.tool_choice_queue import PLANNER_EXPLORE_TOOL_NAMES
 from local_agent.tool_choice_queue import POST_DIFF_REMEDIATION_TOOL_NAMES
 from local_agent.tool_choice_queue import ToolChoiceQueue
+from local_agent.tool_choice_queue import ToolChoiceDecision
 from local_agent.tool_choice_queue import ToolResultSummary
 from local_agent.tool_choice_queue import evaluate_tool_choice_state
 from local_agent.tool_choice_queue import session_evidence_reuse_directive
+from local_agent.tool_choice_queue import tool_choice_steering_message
 from local_agent.read_only_explore import evaluate_read_only_explore
 from local_agent.document_artifacts import DocumentArtifactRequirement
 
 
 class ToolChoiceQueueTests(unittest.TestCase):
+    def test_tool_choice_steering_message_keeps_reason_after_owner_move(self) -> None:
+        message = tool_choice_steering_message(
+            ToolChoiceDecision(
+                steering_required=True,
+                allowed_tool_names=frozenset({"read_file"}),
+                reason="collect exact source evidence",
+                rule_id="read_only_explore",
+                missing_requirements=("direct_read",),
+                preferred_tool_names=("read_file",),
+                tool_call_hints=("read_file path=src/Owner.java",),
+            ),
+            "只读分析 owner",
+        )
+        self.assertIn("- allowed tools now: read_file", message)
+        self.assertIn("- reason: collect exact source evidence", message)
+        self.assertIn("- call hint: read_file path=src/Owner.java", message)
+
     def test_owner_explore_prefers_direct_read_of_typed_search_candidates(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp).resolve()

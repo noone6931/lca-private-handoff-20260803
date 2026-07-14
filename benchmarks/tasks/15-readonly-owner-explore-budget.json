@@ -10,7 +10,7 @@
     {"tool_calls": [{"name": "search_code", "arguments": {"path": "src", "pattern": "PayServiceImpl"}}]},
     {"tool_calls": [{"name": "read_file", "arguments": {"path": "src/PayServiceImpl.java"}}]},
     {"content": "已验证事实：已读取 src/PayServiceImpl.java。推断：PayServiceImpl 是真实 owner，DDL 和 API 也由它负责。"},
-    {"tool_calls": [{"name": "submit_read_only_review", "arguments": {"verdict": "unverified", "confidence": 0.95, "findings": [{"claim_id": "c001", "claim": "owner conclusion", "issue": "no direct behavior binding", "action": "keep the owner unlocated"}], "reason": "only bounded observations were available"}}]},
+    {"tool_calls": [{"name": "submit_read_only_review", "arguments": {"verdict": "unverified", "confidence": 0.95, "findings": [{"claim_id": "c003", "claim": "推断：PayServiceImpl 是真实 owner，DDL 和 API 也由它负责。", "finding_scope": "candidate_defect", "issue": "no direct behavior binding", "action": "keep the owner unlocated"}], "reason": "only bounded observations were available"}}]},
     {"content": "已验证事实：src/PayServiceImpl.java 中存在 PayServiceImpl。推断/未验证：它仅是类似/可复用候选；真实 owner 仍未定位，需要直接调用链或符号绑定证据。"},
     {"tool_calls": [{"name": "submit_read_only_review", "arguments": {"verdict": "pass", "confidence": 0.95, "findings": [], "reason": "rewrite keeps the owner unlocated"}}]}
   ],
