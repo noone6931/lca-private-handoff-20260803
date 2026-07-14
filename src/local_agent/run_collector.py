@@ -396,6 +396,7 @@ class RunCollector:
                 "findings": stats.read_only_reviewer_findings,
                 "reviewed_claims": stats.read_only_reviewer_reviewed_claims,
                 "attempts": stats.read_only_reviewer_attempts,
+                "provider_turns": stats.read_only_reviewer_attempts,
                 "schema_failures": stats.read_only_reviewer_schema_failures,
                 "repairs": stats.read_only_reviewer_repairs,
                 "repair_successes": stats.read_only_reviewer_repair_successes,

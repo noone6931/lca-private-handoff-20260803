@@ -19,6 +19,7 @@ MAX_REVIEWER_FINDINGS = 8
 MAX_REVIEWER_RESPONSE_CHARS = 9000
 MAX_INITIAL_REVIEWER_PROVIDER_CALLS = 3
 MAX_REWRITE_REVIEWER_PROVIDER_CALLS = 2
+MAX_REVIEWER_SCHEMA_REPAIRS = 2
 REVIEWER_OUTPUT_TOOL_NAME = "submit_read_only_review"
 REVIEWER_FINDING_TOOL_NAME = "report_read_only_finding"
 MAX_CLAIM_UNITS = 80
@@ -138,6 +139,7 @@ class ReadOnlyReviewState:
             "reviewed_claim_count": len({item.claim_id for item in self.findings}),
             "document_consistency_stance": self.document_consistency.stance if self.document_consistency else None,
             "provider_attempts": self.provider_attempts,
+            "provider_turns": self.provider_attempts,
             "schema_failures": self.schema_failures,
             "repairs": self.repairs,
             "repair_success": self.repair_success,
@@ -380,29 +382,43 @@ def reviewer_repair_messages(
     handoff: ExploreHandoff,
     claim_units: tuple[CandidateClaimUnit, ...],
     diagnostics: Mapping[str, Any],
+    *,
+    accepted_claim_ids: tuple[str, ...] = (),
 ) -> list[dict[str, str]]:
     """Repeat the isolated review with sanitized schema-only feedback."""
 
     messages = reviewer_messages(handoff, claim_units)
-    messages.append(
-        {
-            "role": "user",
-            "content": json.dumps(
-                {
-                    "kind": "LCA_READ_ONLY_EVIDENCE_REVIEW_SCHEMA_REPAIR",
-                    "validation": _sanitize_diagnostics(diagnostics),
-                    "instruction": (
-                        "Use only the original output tools and submit complete arguments that exactly follow their schemas. "
-                        "Use only candidate claim IDs supplied in the original payload. "
-                        + _repair_shape_instruction(diagnostics)
-                    ),
-                },
-                ensure_ascii=False,
-                sort_keys=True,
-            ),
-        }
-    )
+    messages.append(reviewer_repair_message(diagnostics, accepted_claim_ids=accepted_claim_ids))
     return messages
+
+
+def reviewer_repair_message(
+    diagnostics: Mapping[str, Any],
+    *,
+    accepted_claim_ids: tuple[str, ...] = (),
+) -> dict[str, str]:
+    """Return one sanitized schema-repair turn without resetting prior yield transcript."""
+
+    accepted = tuple(dict.fromkeys(str(claim_id) for claim_id in accepted_claim_ids if str(claim_id).strip()))
+    return {
+        "role": "user",
+        "content": json.dumps(
+            {
+                "kind": "LCA_READ_ONLY_EVIDENCE_REVIEW_SCHEMA_REPAIR",
+                "validation": _sanitize_diagnostics(diagnostics),
+                "accepted_candidate_defect_claim_ids": list(accepted),
+                "instruction": (
+                    "Use only the original output tools and submit complete arguments that exactly follow their schemas. "
+                    "Use only candidate claim IDs supplied in the original payload. "
+                    "Do not repeat accepted_candidate_defect_claim_ids as new findings; keep those candidate defects in "
+                    "the final verdict semantics. "
+                    + _repair_shape_instruction(diagnostics)
+                ),
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        ),
+    }
 
 
 def parse_reviewer_result(
@@ -702,6 +718,12 @@ def _sanitize_diagnostics(diagnostics: Mapping[str, Any]) -> dict[str, Any]:
         "missing_candidate_defect_count",
         "response_chars",
         "top_level_type",
+        "arguments_type",
+        "json_error_category",
+        "tool_name",
+        "call_index",
+        "tool_call_count",
+        "accepted_candidate_defect_count",
     }
     return {key: diagnostics[key] for key in allowed if key in diagnostics}
 
@@ -743,6 +765,28 @@ def _repair_shape_instruction(diagnostics: Mapping[str, Any]) -> str:
             "candidate_defect findings are no longer present in the repaired output request. "
             + common
         )
+    if code in {"output_tool_arguments_type_invalid", "output_tool_arguments_json_invalid"}:
+        return (
+            "Tool arguments must be a JSON string matching the selected output tool schema. Do not pass a native object, "
+            "plain text, or malformed JSON. "
+            + common
+        )
+    if code == "output_tool_final_not_last":
+        return (
+            "Call report_read_only_finding zero or more times first; submit_read_only_review must be the final output "
+            "call in the response. Do not emit findings after the final verdict. "
+            + common
+        )
+    if code in {"output_tool_call_id_missing", "output_tool_call_id_duplicate"}:
+        return (
+            "Every output tool call must have one unique non-empty tool_call id so the reviewer transcript can pair "
+            "assistant tool calls with tool results. "
+            + common
+        )
+    if code == "output_tool_multiple_final_calls":
+        return "Submit exactly one final verdict. " + common
+    if code == "finding_limit_exceeded":
+        return "Do not report more than 8 findings. Submit the final verdict after the accepted findings. " + common
     if code == "document_consistency_evidence_roles_overlap":
         return (
             "For document_consistency, conflict_evidence_ids and supporting_evidence_ids must be disjoint. "

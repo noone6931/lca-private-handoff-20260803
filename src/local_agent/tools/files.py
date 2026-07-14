@@ -274,7 +274,7 @@ def inspect_image(args: dict[str, Any], context: ToolContext) -> ToolResult:
         metadata={
             "image_observation": True,
             "observation_origin": "vision_model",
-            "observation_reliability": "visible_content_only",
+            "observation_reliability": "model_declared_visible_observations",
             "vision_contract": "structured_direct_observations",
             "vision_uncertainty_items": uncertainty_count,
             "vision_inference_items": inference_count,
@@ -294,11 +294,13 @@ def _parse_vision_observation_contract(value: str) -> tuple[tuple[str, ...], int
         payload = json.loads(_strip_json_fence(value))
     except (TypeError, ValueError, json.JSONDecodeError):
         return None
-    if not isinstance(payload, dict) or set(payload) - {"observations", "uncertainties", "inferences"}:
+    if not isinstance(payload, dict) or set(payload) != {"observations", "uncertainties", "inferences"}:
         return None
-    observations = _string_list(payload.get("observations"))
-    uncertainties = _string_list(payload.get("uncertainties"))
-    inferences = _string_list(payload.get("inferences"))
+    observations = _required_string_list(payload.get("observations"))
+    uncertainties = _required_string_list(payload.get("uncertainties"))
+    inferences = _required_string_list(payload.get("inferences"))
+    if observations is None or uncertainties is None or inferences is None:
+        return None
     if not observations:
         return None
     return observations, len(uncertainties), len(inferences)
@@ -313,14 +315,12 @@ def _strip_json_fence(value: str) -> str:
     return text
 
 
-def _string_list(value: Any) -> tuple[str, ...]:
-    if isinstance(value, str):
-        items = (value,)
-    elif isinstance(value, list):
-        items = tuple(item for item in value if isinstance(item, str))
-    else:
-        return ()
-    return tuple(" ".join(item.split()) for item in items if item.strip())
+def _required_string_list(value: Any) -> tuple[str, ...] | None:
+    if not isinstance(value, list):
+        return None
+    if any(not isinstance(item, str) for item in value):
+        return None
+    return tuple(" ".join(item.split()) for item in value if item.strip())
 
 
 def detect_image_mime(raw: bytes) -> str | None:

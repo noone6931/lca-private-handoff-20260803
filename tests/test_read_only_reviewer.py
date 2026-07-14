@@ -93,6 +93,57 @@ def _first_candidate_claim(messages) -> str:
     return ""
 
 
+def _candidate_claim(messages, claim_id: str = "c001") -> str:
+    for message in reversed(messages):
+        if message.get("role") != "user" or "LCA_READ_ONLY_EVIDENCE_REVIEW" not in str(message.get("content")):
+            continue
+        payload = json.loads(message["content"])
+        for claim in payload.get("candidate_claims") or ():
+            if claim.get("claim_id") == claim_id:
+                return str(claim.get("text") or "")
+    return ""
+
+
+def _finding_call(
+    call_id: str,
+    claim_id: str,
+    claim: str,
+    *,
+    issue: str = "unsupported",
+    action: str = "qualify",
+    scope: str = "candidate_defect",
+) -> dict:
+    return {
+        "id": call_id,
+        "type": "function",
+        "function": {
+            "name": REVIEWER_FINDING_TOOL_NAME,
+            "arguments": json.dumps(
+                {
+                    "claim_id": claim_id,
+                    "claim": claim,
+                    "finding_scope": scope,
+                    "issue": issue,
+                    "action": action,
+                }
+            ),
+        },
+    }
+
+
+def _final_call(call_id: str, payload: dict | str) -> dict:
+    arguments = payload if isinstance(payload, str) else json.dumps(payload)
+    return {
+        "id": call_id,
+        "type": "function",
+        "function": {"name": REVIEWER_OUTPUT_TOOL_NAME, "arguments": arguments},
+    }
+
+
+def _review_tool_calls_response(tool_calls: list[dict]) -> object:
+    return type("Response", (), {"message": {"content": None, "tool_calls": tool_calls}})()
+
+
 class _ReviewerFlowClient:
     calls: list[dict] = []
 
@@ -239,6 +290,132 @@ class _ReviewerRepairClient:
         if self._primary_calls == 1:
             return type("Response", (), {"message": {"content": "PayServiceImpl is the verified owner."}})()
         return type("Response", (), {"message": {"content": "PayServiceImpl is an analogous candidate; the owner is unlocated."}})()
+
+
+class _ReviewerIncrementalRepairLifecycleClient:
+    calls: list[dict] = []
+
+    def __init__(self, config: AgentConfig):
+        self._primary_calls = 0
+        self._review_calls = 0
+
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
+        if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages):
+            self._review_calls += 1
+            claim = _first_candidate_claim(messages)
+            if self._review_calls == 1:
+                return _review_tool_calls_response([
+                    _finding_call("mismatch", "c001", claim + " (paraphrased)")
+                ])
+            if self._review_calls == 2:
+                return _review_tool_calls_response([
+                    _finding_call("valid-finding", "c001", claim, action="mark owner unlocated")
+                ])
+            if self._review_calls == 3:
+                return _review_tool_calls_response([_final_call("bad-final", "{")])
+            if self._review_calls == 4:
+                return _review_tool_calls_response([
+                    _final_call("final-revise", {"verdict": "revise", "confidence": 0.9, "reason": "accepted defect"})
+                ])
+            return _review_submit({"verdict": "pass", "confidence": 0.9, "findings": [], "reason": "rewrite scoped"})
+        self._primary_calls += 1
+        if self._primary_calls == 1:
+            return type("Response", (), {"message": {"content": "PayServiceImpl is the verified owner."}})()
+        return type("Response", (), {"message": {"content": "PayServiceImpl is an analogous candidate; the owner is unlocated."}})()
+
+
+class _ReviewerFinalBeforeFindingClient:
+    calls: list[dict] = []
+
+    def __init__(self, config: AgentConfig):
+        self._review_calls = 0
+
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
+        if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages):
+            self._review_calls += 1
+            claim = _first_candidate_claim(messages)
+            return _review_tool_calls_response([
+                _final_call(f"final-{self._review_calls}", {"verdict": "pass", "confidence": 0.9, "reason": "premature"}),
+                _finding_call(f"late-finding-{self._review_calls}", "c001", claim),
+            ])
+        return type("Response", (), {"message": {"content": "PayServiceImpl is the verified owner."}})()
+
+
+class _ReviewerFindingMalformedFinalThenPassClient:
+    calls: list[dict] = []
+
+    def __init__(self, config: AgentConfig):
+        self._review_calls = 0
+        self._primary_calls = 0
+
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
+        if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages):
+            self._review_calls += 1
+            claim = _first_candidate_claim(messages)
+            if self._review_calls == 1:
+                return _review_tool_calls_response([
+                    _finding_call("valid-before-bad-final", "c001", claim, action="mark unlocated"),
+                    _final_call("bad-final", "{"),
+                ])
+            if self._review_calls == 2:
+                return _review_tool_calls_response([
+                    _final_call("bad-pass", {"verdict": "pass", "confidence": 0.9, "reason": "drop finding"})
+                ])
+            if self._review_calls == 3:
+                return _review_tool_calls_response([
+                    _finding_call("kept-finding", "c001", claim, action="mark unlocated"),
+                    _final_call("valid-final", {"verdict": "revise", "confidence": 0.9, "reason": "kept candidate defect"}),
+                ])
+            return _review_submit({"verdict": "pass", "confidence": 0.9, "findings": [], "reason": "rewrite scoped"})
+        self._primary_calls += 1
+        if self._primary_calls == 1:
+            return type("Response", (), {"message": {"content": "PayServiceImpl is the verified owner."}})()
+        return type("Response", (), {"message": {"content": "PayServiceImpl is an analogous candidate; the owner is unlocated."}})()
+
+
+class _ReviewerEightFindingsClient:
+    calls: list[dict] = []
+
+    def __init__(self, config: AgentConfig):
+        self._review_calls = 0
+        self._primary_calls = 0
+
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
+        if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages):
+            self._review_calls += 1
+            if self._review_calls <= 8:
+                claim_id = f"c{self._review_calls:03d}"
+                return _review_tool_calls_response([
+                    _finding_call(f"finding-{self._review_calls}", claim_id, _candidate_claim(messages, claim_id))
+                ])
+            if self._review_calls == 9:
+                return _review_tool_calls_response([
+                    _final_call("final-revise", {"verdict": "revise", "confidence": 0.9, "reason": "eight findings"})
+                ])
+            return _review_submit({"verdict": "pass", "confidence": 0.9, "findings": [], "reason": "rewrite scoped"})
+        self._primary_calls += 1
+        if self._review_calls < 9:
+            content = "\n".join(f"- Unsupported owner claim {index}" for index in range(1, 9))
+            return type("Response", (), {"message": {"content": content}})()
+        return type("Response", (), {"message": {"content": "All owner claims are now scoped as unlocated."}})()
+
+
+class _ReviewerNinthFindingClient(_ReviewerEightFindingsClient):
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
+        if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages):
+            self._review_calls += 1
+            claim_id = f"c{self._review_calls:03d}"
+            return _review_tool_calls_response([
+                _finding_call(f"finding-{self._review_calls}", claim_id, _candidate_claim(messages, claim_id))
+            ])
+        self._primary_calls += 1
+        content = "\n".join(f"- Unsupported owner claim {index}" for index in range(1, 10))
+        return type("Response", (), {"message": {"content": content}})()
 
 
 class _ReviewerRepairExhaustedClient:
@@ -602,6 +779,78 @@ class _DocumentConsistencySourceGapReviewerClient:
         )
 
 
+class _DocumentConsistencyTwoStageReviewerClient:
+    calls: list[dict] = []
+
+    def __init__(self, config: AgentConfig):
+        self._primary_calls = 0
+        self._review_calls = 0
+
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
+        reviewer = any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages)
+        if reviewer:
+            self._review_calls += 1
+            if self._review_calls == 1:
+                claim = _first_candidate_claim(messages)
+                return _review_tool_calls_response([
+                    _finding_call(
+                        "doc-finding",
+                        "c001",
+                        claim,
+                        issue="unsupported reconciliation",
+                        action="keep both artifacts unresolved",
+                    )
+                ])
+            if self._review_calls == 2:
+                return _review_tool_calls_response([
+                    _final_call(
+                        "doc-final",
+                        {
+                            "verdict": "revise",
+                            "confidence": 0.9,
+                            "reason": "unsupported reconciliation",
+                            "document_consistency": {
+                                "stance": "asserted_reconciled",
+                                "conflict_evidence_ids": ["e001", "e002"],
+                                "supporting_evidence_ids": [],
+                            },
+                        },
+                    )
+                ])
+            return _review_submit(
+                {
+                    "verdict": "pass",
+                    "confidence": 0.93,
+                    "findings": [],
+                    "reason": "candidate preserves unresolved conflict",
+                    "document_consistency": {
+                        "stance": "reported_unresolved",
+                        "conflict_evidence_ids": ["e001", "e002"],
+                        "supporting_evidence_ids": [],
+                    },
+                }
+            )
+        self._primary_calls += 1
+        if self._primary_calls == 1:
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {"id": "read-policy", "type": "function", "function": {"name": "read_file", "arguments": '{"path":"policy.md"}'}},
+                            {"id": "read-prototype", "type": "function", "function": {"name": "read_file", "arguments": '{"path":"prototype.html"}'}},
+                        ],
+                    }
+                },
+            )()
+        if self._primary_calls == 2:
+            return type("Response", (), {"message": {"content": "policy.md 要求字段留空；prototype.html 显示有值。两份资料没有冲突，因为 prototype 是完成态。"}})()
+        return type("Response", (), {"message": {"content": "policy.md 要求字段留空；prototype.html 显示有值。资料角色未说明，因此当前仍未消解。"}})()
+
+
 def _config(workspace: Path, *, provider: str = "openai-compatible") -> AgentConfig:
     return AgentConfig(
         provider=provider,
@@ -781,6 +1030,34 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertEqual(runtime._run.read_only_review.schema_failures, 1)
         self.assertEqual(runtime._run.read_only_review.repairs, 1)
         self.assertNotIn("source-gap", runtime._run.read_only_review.reason or "")
+
+    def test_document_consistency_uses_two_stage_shallow_output_protocol(self) -> None:
+        _DocumentConsistencyTwoStageReviewerClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            (workspace / "policy.md").write_text("Field must remain blank.\n", encoding="utf-8")
+            (workspace / "prototype.html").write_text("<p>Field has a value.</p>\n", encoding="utf-8")
+            with patch("local_agent.agent.OpenAICompatibleClient", _DocumentConsistencyTwoStageReviewerClient):
+                runtime = AgentRuntime(_config(workspace), show_tool_logs=False)
+                answer = runtime.run("只根据 Markdown 和 HTML 分析资料一致性，不要检查代码。")
+
+        self.assertIn("仍未消解", answer)
+        summary = runtime._last_run_summary["read_only_reviewer"]
+        self.assertEqual(summary["finding_submits"], 1)
+        self.assertEqual(summary["final_submits"], 2)
+        self.assertEqual(summary["rewrites"], 1)
+        review_calls = [
+            call for call in _DocumentConsistencyTwoStageReviewerClient.calls
+            if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in call["messages"])
+        ]
+        self.assertEqual(
+            [tool["function"]["name"] for tool in review_calls[0]["tools"]],
+            [REVIEWER_FINDING_TOOL_NAME, REVIEWER_OUTPUT_TOOL_NAME],
+        )
+        self.assertEqual(
+            [tool["function"]["name"] for tool in review_calls[1]["tools"]],
+            [REVIEWER_FINDING_TOOL_NAME, REVIEWER_OUTPUT_TOOL_NAME],
+        )
 
     def test_handoff_is_bounded_and_conservative_about_source_reads(self) -> None:
         contract = generate_requirement_contract("只读分析服务 owner 和影响范围，不要修改。")
@@ -1342,6 +1619,83 @@ class ReadOnlyReviewerTests(unittest.TestCase):
             )
         )
         self.assertIn("LCA_READ_ONLY_EVIDENCE_REVIEW_SCHEMA_REPAIR", str(review_calls[1]["messages"][-1]["content"]))
+
+    def test_incremental_finding_turns_do_not_consume_schema_repair_budget(self) -> None:
+        _ReviewerIncrementalRepairLifecycleClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch("local_agent.agent.OpenAICompatibleClient", _ReviewerIncrementalRepairLifecycleClient):
+                runtime = AgentRuntime(_config(Path(tmp).resolve()), show_tool_logs=False)
+                answer = runtime.run("只读分析当前服务 owner 和影响范围，不要修改文件。")
+        self.assertIn("analogous candidate", answer)
+        summary = runtime._last_run_summary["read_only_reviewer"]
+        self.assertEqual(summary["schema_failures"], 2)
+        self.assertEqual(summary["repairs"], 2)
+        self.assertEqual(summary["repair_exhausted"], 0)
+        self.assertEqual(summary["finding_submits"], 1)
+        self.assertEqual(summary["final_submits"], 2)
+        review_calls = [
+            call for call in _ReviewerIncrementalRepairLifecycleClient.calls
+            if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in call["messages"])
+        ]
+        self.assertGreaterEqual(len(review_calls), 5)
+        repair_after_finding = review_calls[3]["messages"][-1]["content"]
+        self.assertIn('"accepted_candidate_defect_claim_ids": ["c001"]', repair_after_finding)
+        self.assertNotIn("mark owner unlocated", repair_after_finding)
+        prior_tool_results = [
+            message for message in review_calls[3]["messages"]
+            if message.get("role") == "tool" and message.get("tool_call_id") == "valid-finding"
+        ]
+        self.assertEqual(len(prior_tool_results), 1)
+
+    def test_final_before_finding_is_rejected_instead_of_passed(self) -> None:
+        _ReviewerFinalBeforeFindingClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch("local_agent.agent.OpenAICompatibleClient", _ReviewerFinalBeforeFindingClient):
+                runtime = AgentRuntime(_config(Path(tmp).resolve()), show_tool_logs=False)
+                answer = runtime.run("只读分析当前服务 owner 和影响范围，不要修改文件。")
+        self.assertIn("未完成/未验证", answer)
+        summary = runtime._last_run_summary["read_only_reviewer"]
+        self.assertEqual(summary["final_submits"], 0)
+        self.assertEqual(summary["verdicts"], {})
+        self.assertEqual(summary["protocol_failures"], 3)
+        self.assertEqual(summary["errors"], {"protocol_error": 1})
+
+    def test_valid_finding_before_malformed_final_cannot_be_dropped_by_later_pass(self) -> None:
+        _ReviewerFindingMalformedFinalThenPassClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch("local_agent.agent.OpenAICompatibleClient", _ReviewerFindingMalformedFinalThenPassClient):
+                runtime = AgentRuntime(_config(Path(tmp).resolve()), show_tool_logs=False)
+                answer = runtime.run("只读分析当前服务 owner 和影响范围，不要修改文件。")
+        self.assertIn("analogous candidate", answer)
+        summary = runtime._last_run_summary["read_only_reviewer"]
+        self.assertEqual(summary["schema_failures"], 2)
+        self.assertEqual(summary["repairs"], 2)
+        self.assertEqual(summary["verdicts"], {"pass": 1, "revise": 1})
+        self.assertEqual(summary["finding_submits"], 1)
+
+    def test_eight_incremental_findings_can_assemble_before_final(self) -> None:
+        _ReviewerEightFindingsClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch("local_agent.agent.OpenAICompatibleClient", _ReviewerEightFindingsClient):
+                runtime = AgentRuntime(_config(Path(tmp).resolve()), show_tool_logs=False)
+                answer = runtime.run("只读分析当前服务 owner 和影响范围，不要修改文件。")
+        self.assertIn("unlocated", answer)
+        summary = runtime._last_run_summary["read_only_reviewer"]
+        self.assertEqual(summary["finding_submits"], 8)
+        self.assertEqual(summary["findings"], 8)
+        self.assertEqual(summary["repair_exhausted"], 0)
+
+    def test_ninth_incremental_finding_fails_closed(self) -> None:
+        _ReviewerNinthFindingClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch("local_agent.agent.OpenAICompatibleClient", _ReviewerNinthFindingClient):
+                runtime = AgentRuntime(_config(Path(tmp).resolve()), show_tool_logs=False)
+                answer = runtime.run("只读分析当前服务 owner 和影响范围，不要修改文件。")
+        self.assertIn("未完成/未验证", answer)
+        summary = runtime._last_run_summary["read_only_reviewer"]
+        self.assertEqual(summary["finding_submits"], 8)
+        self.assertEqual(summary["repair_exhausted"], 1)
+        self.assertEqual(summary["errors"], {"invalid_output": 1})
 
     def test_schema_repair_exhaustion_stays_unverified_without_raw_payload(self) -> None:
         _ReviewerRepairExhaustedClient.calls = []

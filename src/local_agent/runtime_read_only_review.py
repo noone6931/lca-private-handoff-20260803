@@ -11,8 +11,8 @@ from .llm import LlmError
 from .llm import LlmTimeoutError
 from .provider_protocol import classify_provider_content_artifact
 from .read_only_reviewer import candidate_claim_units
-from .read_only_reviewer import MAX_INITIAL_REVIEWER_PROVIDER_CALLS
-from .read_only_reviewer import MAX_REWRITE_REVIEWER_PROVIDER_CALLS
+from .read_only_reviewer import MAX_REVIEWER_FINDINGS
+from .read_only_reviewer import MAX_REVIEWER_SCHEMA_REPAIRS
 from .read_only_reviewer import REVIEWER_FINDING_TOOL_NAME
 from .read_only_reviewer import REVIEWER_OUTPUT_TOOL_NAME
 from .read_only_reviewer import ReviewerFinding
@@ -22,7 +22,7 @@ from .read_only_reviewer import parse_reviewer_final_payload
 from .read_only_reviewer import parse_reviewer_finding_payload
 from .read_only_reviewer import reviewer_messages
 from .read_only_reviewer import reviewer_output_tool_schemas
-from .read_only_reviewer import reviewer_repair_messages
+from .read_only_reviewer import reviewer_repair_message
 from .read_only_reviewer import reviewer_rewrite_message
 from .read_only_reviewer import should_review_read_only_candidate
 from .safe_partial_report import build_safe_partial_report
@@ -97,7 +97,8 @@ class ReadOnlyReviewPhase:
         state.review_round += 1
         state.claim_units = claim_units
         timeout = self._review_timeout()
-        max_attempts = MAX_REWRITE_REVIEWER_PROVIDER_CALLS if rewrite_round else MAX_INITIAL_REVIEWER_PROVIDER_CALLS
+        max_repairs = MAX_REVIEWER_SCHEMA_REPAIRS
+        max_provider_turns = MAX_REVIEWER_FINDINGS + 1 + max_repairs
         if not rewrite_round:
             runtime._run.collector.record_read_only_review_trigger()
         runtime._session.append(
@@ -126,8 +127,11 @@ class ReadOnlyReviewPhase:
         repaired_this_round = False
         required_candidate_claim_ids: tuple[str, ...] = ()
         collected_findings: tuple[ReviewerFinding, ...] = ()
-        for attempt in range(1, max_attempts + 1):
-            state.provider_attempts = attempt
+        provider_turn = 0
+        repairs_used = 0
+        while provider_turn < max_provider_turns:
+            provider_turn += 1
+            state.provider_attempts = provider_turn
             runtime._run.collector.record_read_only_review_attempt()
             try:
                 response = call_chat_with_timeout(runtime._client, messages, output_schemas, timeout=timeout)
@@ -151,10 +155,17 @@ class ReadOnlyReviewPhase:
                     collected_findings=collected_findings,
                 )
             except ReviewerValidationError as exc:
-                if exc.pending_candidate_claim_ids:
-                    required_candidate_claim_ids = tuple(
-                        dict.fromkeys((*required_candidate_claim_ids, *exc.pending_candidate_claim_ids))
+                accepted_claim_ids = tuple(
+                    dict.fromkeys(
+                        (
+                            *(finding.claim_id for finding in collected_findings),
+                            *required_candidate_claim_ids,
+                            *exc.pending_candidate_claim_ids,
+                        )
                     )
+                )
+                if accepted_claim_ids:
+                    required_candidate_claim_ids = accepted_claim_ids
                 if exc.code.startswith("output_tool_") or exc.code == "provider_markup_artifact":
                     saw_protocol_failure = True
                     state.protocol_failures += 1
@@ -162,28 +173,35 @@ class ReadOnlyReviewPhase:
                 state.schema_failures += 1
                 runtime._run.collector.record_read_only_review_schema_failure()
                 diagnostic = exc.diagnostics
-                if attempt >= max_attempts:
+                if exc.code == "finding_limit_exceeded" or repairs_used >= max_repairs:
                     state.repair_exhausted = True
                     runtime._run.collector.record_read_only_review_repair_exhausted()
                     runtime._session.append(
                         "read_only_reviewer",
-                        {"event": "schema_repair_exhausted", "attempts": attempt, "diagnostic": diagnostic},
+                        {"event": "schema_repair_exhausted", "attempts": provider_turn, "diagnostic": diagnostic},
                     )
                     return self._unverified("protocol_error" if saw_protocol_failure else "invalid_output", exc.code)
                 if not self._has_reviewer_time_for_repair():
                     return self._unverified("deadline_or_finalization_budget", "reviewer_repair_timeout")
+                repairs_used += 1
                 state.repairs += 1
                 repaired_this_round = True
                 runtime._run.collector.record_read_only_review_repair()
                 runtime._session.append(
                     "read_only_reviewer",
-                    {"event": "schema_repair_requested", "attempt": attempt, "diagnostic": diagnostic},
+                    {
+                        "event": "schema_repair_requested",
+                        "attempt": provider_turn,
+                        "repair": repairs_used,
+                        "diagnostic": diagnostic,
+                        "accepted_claim_ids": list(accepted_claim_ids),
+                    },
                 )
                 runtime._events.emit(
                     "ContextUpdated",
-                    {"kind": "read_only_reviewer_schema_repair", "attempt": attempt, "error_code": exc.code},
+                    {"kind": "read_only_reviewer_schema_repair", "attempt": provider_turn, "error_code": exc.code},
                 )
-                messages = reviewer_repair_messages(handoff, claim_units, diagnostic)
+                messages.append(reviewer_repair_message(diagnostic, accepted_claim_ids=accepted_claim_ids))
                 timeout = self._review_timeout()
                 continue
             for event in submit_events:
@@ -194,7 +212,7 @@ class ReadOnlyReviewPhase:
                         "read_only_reviewer",
                         {
                             "event": "finding_submit",
-                            "attempt": attempt,
+                            "attempt": provider_turn,
                             "claim_id": event["finding"].claim_id,
                         },
                     )
@@ -203,7 +221,7 @@ class ReadOnlyReviewPhase:
                     runtime._run.collector.record_read_only_review_final_submit()
                     runtime._session.append(
                         "read_only_reviewer",
-                        {"event": "final_submit", "attempt": attempt},
+                        {"event": "final_submit", "attempt": provider_turn},
                     )
             if result is None:
                 collected_findings = (
@@ -212,7 +230,7 @@ class ReadOnlyReviewPhase:
                 )
                 messages.append(self._assistant_tool_message(message))
                 messages.extend(self._reviewer_tool_result_messages(message, submit_events))
-                if attempt >= max_attempts:
+                if provider_turn >= max_provider_turns:
                     state.repair_exhausted = True
                     runtime._run.collector.record_read_only_review_repair_exhausted()
                     return self._unverified("invalid_output", "missing_final_submit")
@@ -277,44 +295,82 @@ class ReadOnlyReviewPhase:
             events: list[dict[str, Any]] = []
             local_findings: list[ReviewerFinding] = []
             seen_claim_ids = {finding.claim_id for finding in collected_findings}
+            seen_tool_call_ids: set[str] = set()
             result = None
-            for call in tool_calls:
+            for index, call in enumerate(tool_calls):
                 function = call.get("function") if isinstance(call, dict) else None
                 name = function.get("name") if isinstance(function, dict) else None
                 arguments = function.get("arguments") if isinstance(function, dict) else None
+                call_id = self._validate_tool_call_id(call, index, local_findings, seen_tool_call_ids)
+                diagnostics = self._call_diagnostics(name, index, arguments)
+                if name == REVIEWER_OUTPUT_TOOL_NAME and index != len(tool_calls) - 1:
+                    self._raise_with_pending(
+                        "output_tool_final_not_last",
+                        {**diagnostics, "tool_call_count": len(tool_calls)},
+                        local_findings,
+                    )
                 if not isinstance(arguments, str):
-                    raise ReviewerValidationError("output_tool_arguments_invalid")
+                    self._raise_with_pending("output_tool_arguments_type_invalid", diagnostics, local_findings)
                 try:
                     payload = json.loads(arguments)
-                except json.JSONDecodeError:
-                    raise ReviewerValidationError("output_tool_arguments_invalid") from None
+                except json.JSONDecodeError as exc:
+                    self._raise_with_pending(
+                        "output_tool_arguments_json_invalid",
+                        {**diagnostics, "json_error_category": type(exc).__name__},
+                        local_findings,
+                    )
                 if name == REVIEWER_FINDING_TOOL_NAME:
-                    finding = self._parse_incremental_finding(payload, claim_units, local_findings)
+                    finding = self._parse_incremental_finding(
+                        payload,
+                        claim_units,
+                        local_findings,
+                        collected_count=len(collected_findings),
+                    )
                     if finding.claim_id in seen_claim_ids:
-                        raise ReviewerValidationError(
+                        self._raise_with_pending(
                             "claim_id_duplicate",
                             {"duplicate_claim_id_count": 1},
-                            pending_candidate_claim_ids=tuple(f.claim_id for f in (*collected_findings, *local_findings)),
+                            [*collected_findings, *local_findings],
                         )
                     seen_claim_ids.add(finding.claim_id)
                     local_findings.append(finding)
-                    events.append({"kind": "finding", "tool_call_id": self._tool_call_id(call), "finding": finding})
+                    events.append({"kind": "finding", "tool_call_id": call_id, "finding": finding})
                     continue
                 if name == REVIEWER_OUTPUT_TOOL_NAME:
                     if result is not None:
-                        raise ReviewerValidationError("output_tool_multiple_final_calls", {"tool_call_count": len(tool_calls)})
-                    result = parse_reviewer_final_payload(
-                        payload,
-                        findings=(*collected_findings, *local_findings),
-                        claim_units=claim_units,
-                        document_consistency=document_consistency,
-                        evidence_ids=handoff.evidence_ids,
-                        required_candidate_claim_ids=required_candidate_claim_ids,
-                    )
-                    self._validate_document_consistency(result, handoff, candidate)
-                    events.append({"kind": "final", "tool_call_id": self._tool_call_id(call)})
+                        self._raise_with_pending(
+                            "output_tool_multiple_final_calls",
+                            {"tool_call_count": len(tool_calls)},
+                            local_findings,
+                        )
+                    try:
+                        result = parse_reviewer_final_payload(
+                            payload,
+                            findings=(*collected_findings, *local_findings),
+                            claim_units=claim_units,
+                            document_consistency=document_consistency,
+                            evidence_ids=handoff.evidence_ids,
+                            required_candidate_claim_ids=required_candidate_claim_ids,
+                        )
+                        self._validate_document_consistency(result, handoff, candidate)
+                    except ReviewerValidationError as exc:
+                        if local_findings:
+                            raise ReviewerValidationError(
+                                exc.code,
+                                exc.diagnostics,
+                                pending_candidate_claim_ids=tuple(
+                                    dict.fromkeys(
+                                        (
+                                            *exc.pending_candidate_claim_ids,
+                                            *(finding.claim_id for finding in local_findings),
+                                        )
+                                    )
+                                ),
+                            ) from None
+                        raise
+                    events.append({"kind": "final", "tool_call_id": call_id})
                     continue
-                raise ReviewerValidationError("output_tool_name_invalid")
+                self._raise_with_pending("output_tool_name_invalid", diagnostics, local_findings)
             if result is None:
                 return None, events
             return result, events
@@ -330,7 +386,15 @@ class ReadOnlyReviewPhase:
         payload: Any,
         claim_units: tuple[Any, ...],
         local_findings: list[ReviewerFinding],
+        *,
+        collected_count: int = 0,
     ) -> ReviewerFinding:
+        if collected_count + len(local_findings) >= MAX_REVIEWER_FINDINGS:
+            self._raise_with_pending(
+                "finding_limit_exceeded",
+                {"findings_count": collected_count + len(local_findings) + 1},
+                local_findings,
+            )
         try:
             finding = parse_reviewer_finding_payload(payload, claim_units=claim_units)
         except ReviewerValidationError as exc:
@@ -343,6 +407,47 @@ class ReadOnlyReviewPhase:
                 ) from None
             raise
         return finding
+
+    def _validate_tool_call_id(
+        self,
+        call: Any,
+        index: int,
+        local_findings: list[ReviewerFinding],
+        seen_tool_call_ids: set[str],
+    ) -> str:
+        call_id = call.get("id") if isinstance(call, dict) else None
+        function = call.get("function") if isinstance(call, dict) else None
+        name = function.get("name") if isinstance(function, dict) else None
+        diagnostics = self._call_diagnostics(name, index, None)
+        if not isinstance(call_id, str) or not call_id.strip():
+            self._raise_with_pending("output_tool_call_id_missing", diagnostics, local_findings)
+        if call_id in seen_tool_call_ids:
+            self._raise_with_pending("output_tool_call_id_duplicate", diagnostics, local_findings)
+        seen_tool_call_ids.add(call_id)
+        return call_id
+
+    @staticmethod
+    def _call_diagnostics(name: Any, index: int, arguments: Any) -> dict[str, Any]:
+        diagnostics: dict[str, Any] = {"call_index": index}
+        if isinstance(name, str):
+            diagnostics["tool_name"] = name[:80]
+        else:
+            diagnostics["tool_name"] = type(name).__name__
+        if arguments is not None:
+            diagnostics["arguments_type"] = type(arguments).__name__
+        return diagnostics
+
+    @staticmethod
+    def _raise_with_pending(
+        code: str,
+        diagnostics: dict[str, Any],
+        local_findings: list[ReviewerFinding],
+    ) -> None:
+        raise ReviewerValidationError(
+            code,
+            diagnostics,
+            pending_candidate_claim_ids=tuple(dict.fromkeys(finding.claim_id for finding in local_findings)),
+        )
 
     def _assistant_tool_message(self, message: dict[str, Any]) -> dict[str, Any]:
         return {

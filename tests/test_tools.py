@@ -448,7 +448,7 @@ class ToolTests(unittest.TestCase):
         self.assertIn("inferences=1", observation.content)
         self.assertNotIn("visible-image-bytes", observation.content)
         self.assertEqual(observation.metadata["observation_origin"], "vision_model")
-        self.assertEqual(observation.metadata["observation_reliability"], "visible_content_only")
+        self.assertEqual(observation.metadata["observation_reliability"], "model_declared_visible_observations")
         self.assertEqual(observation.metadata["vision_contract"], "structured_direct_observations")
         self.assertEqual(observation.metadata["vision_uncertainty_items"], 1)
         self.assertEqual(observation.metadata["vision_inference_items"], 1)
@@ -469,6 +469,30 @@ class ToolTests(unittest.TestCase):
         self.assertTrue(result.metadata["image_inspection_unavailable"])
         self.assertEqual(result.metadata["reason"], "invalid_vision_contract")
         self.assertNotIn("business rule", result.content)
+
+    def test_image_inspection_requires_exact_structured_lists(self) -> None:
+        invalid_payloads = [
+            {"observations": "This means the workflow is approved", "uncertainties": [], "inferences": []},
+            {"observations": ["visible"], "inferences": []},
+            {"observations": ["visible"], "uncertainties": [], "inferences": [], "extra": []},
+            {"observations": ["visible", 3], "uncertainties": [], "inferences": []},
+            {"observations": ["visible"], "uncertainties": ["unclear"], "inferences": ["business rule"], "extra": "x"},
+        ]
+        for payload in invalid_payloads:
+            with self.subTest(payload=payload):
+                with tempfile.TemporaryDirectory() as tmp:
+                    workspace = Path(tmp).resolve()
+                    (workspace / "example.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+                    result = inspect_image(
+                        {"path": "example.png"},
+                        ToolContext(
+                            workspace=workspace,
+                            approval_mode="yolo",
+                            vision_inspector=lambda *_args, payload=payload: json.dumps(payload),
+                        ),
+                    )
+                self.assertTrue(result.is_error)
+                self.assertEqual(result.metadata["reason"], "invalid_vision_contract")
 
     def test_image_inspection_rejects_escape_oversize_and_unavailable_vision(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
