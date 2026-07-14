@@ -1,0 +1,182 @@
+{
+  "id": "readonly-reviewer-nine-findings",
+  "title": "Read-only reviewer preserves the first eight incremental findings and rejects the ninth locally",
+  "prompt": "只读分析当前服务 owner、调用链和影响范围，不要修改文件。",
+  "budget_seconds": 90,
+  "workspace_files": {
+    "src/Candidate.java": "class Candidate { void handle() {} }\n"
+  },
+  "scripted_responses": [
+    {
+      "tool_calls": [
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "src/Candidate.java"
+          }
+        }
+      ]
+    },
+    {
+      "content": "源码事实：src/Candidate.java 已读取。\n- Unsupported owner claim 1\n- Unsupported owner claim 2\n- Unsupported owner claim 3\n- Unsupported owner claim 4\n- Unsupported owner claim 5\n- Unsupported owner claim 6\n- Unsupported owner claim 7\n- Unsupported owner claim 8\n- Unsupported owner claim 9"
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "report_read_only_finding",
+          "arguments": {
+            "claim_id": "c003",
+            "claim": "- Unsupported owner claim 1",
+            "finding_scope": "candidate_defect",
+            "issue": "unsupported owner claim",
+            "action": "mark the owner unlocated"
+          }
+        },
+        {
+          "name": "report_read_only_finding",
+          "arguments": {
+            "claim_id": "c004",
+            "claim": "- Unsupported owner claim 2",
+            "finding_scope": "candidate_defect",
+            "issue": "unsupported owner claim",
+            "action": "mark the owner unlocated"
+          }
+        },
+        {
+          "name": "report_read_only_finding",
+          "arguments": {
+            "claim_id": "c005",
+            "claim": "- Unsupported owner claim 3",
+            "finding_scope": "candidate_defect",
+            "issue": "unsupported owner claim",
+            "action": "mark the owner unlocated"
+          }
+        },
+        {
+          "name": "report_read_only_finding",
+          "arguments": {
+            "claim_id": "c006",
+            "claim": "- Unsupported owner claim 4",
+            "finding_scope": "candidate_defect",
+            "issue": "unsupported owner claim",
+            "action": "mark the owner unlocated"
+          }
+        },
+        {
+          "name": "report_read_only_finding",
+          "arguments": {
+            "claim_id": "c007",
+            "claim": "- Unsupported owner claim 5",
+            "finding_scope": "candidate_defect",
+            "issue": "unsupported owner claim",
+            "action": "mark the owner unlocated"
+          }
+        },
+        {
+          "name": "report_read_only_finding",
+          "arguments": {
+            "claim_id": "c008",
+            "claim": "- Unsupported owner claim 6",
+            "finding_scope": "candidate_defect",
+            "issue": "unsupported owner claim",
+            "action": "mark the owner unlocated"
+          }
+        },
+        {
+          "name": "report_read_only_finding",
+          "arguments": {
+            "claim_id": "c009",
+            "claim": "- Unsupported owner claim 7",
+            "finding_scope": "candidate_defect",
+            "issue": "unsupported owner claim",
+            "action": "mark the owner unlocated"
+          }
+        },
+        {
+          "name": "report_read_only_finding",
+          "arguments": {
+            "claim_id": "c010",
+            "claim": "- Unsupported owner claim 8",
+            "finding_scope": "candidate_defect",
+            "issue": "unsupported owner claim",
+            "action": "mark the owner unlocated"
+          }
+        },
+        {
+          "name": "report_read_only_finding",
+          "arguments": {
+            "claim_id": "c011",
+            "claim": "- Unsupported owner claim 9",
+            "finding_scope": "candidate_defect",
+            "issue": "unsupported owner claim",
+            "action": "mark the owner unlocated"
+          }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "submit_read_only_review",
+          "arguments": {
+            "verdict": "revise",
+            "confidence": 0.94,
+            "reason": "top eight unsupported claims are sufficient to require rewrite"
+          }
+        }
+      ]
+    },
+    {
+      "content": "源码事实：src/Candidate.java 已读取。所有 owner 结论均保持 unlocated；no direct owner binding was established."
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "submit_read_only_review",
+          "arguments": {
+            "verdict": "pass",
+            "confidence": 0.95,
+            "reason": "rewrite is scoped and does not claim a verified owner"
+          }
+        }
+      ]
+    }
+  ],
+  "acceptance": {
+    "forbidden_tools": [
+      "apply_patch",
+      "write_file",
+      "shell",
+      "run_tests"
+    ],
+    "changed_files": [],
+    "answer_all_of": [
+      "unlocated",
+      "no direct owner binding"
+    ],
+    "answer_forbidden_regex": [
+      "verified owner"
+    ],
+    "termination_reason": "final",
+    "run_summary": {
+      "tool_calls": 1,
+      "tool_errors": 0
+    },
+    "read_only_reviewer": {
+      "triggers": 1,
+      "rewrites": 1,
+      "typed_submits": 10,
+      "finding_submits": 8,
+      "final_submits": 2,
+      "rejected_finding_submits": 1,
+      "finding_limit_hits": 1,
+      "repair_exhausted": 0,
+      "output_lifecycle_exhausted": 0
+    },
+    "max_tool_errors": 0,
+    "required_tools": [
+      "read_file"
+    ]
+  },
+  "residual_risk": "The fixture locks the output-yield lifecycle and capacity accounting; it does not expand the reviewer finding cap beyond eight."
+}

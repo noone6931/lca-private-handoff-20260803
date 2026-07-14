@@ -20,6 +20,8 @@ MAX_REVIEWER_RESPONSE_CHARS = 9000
 MAX_INITIAL_REVIEWER_PROVIDER_CALLS = 3
 MAX_REWRITE_REVIEWER_PROVIDER_CALLS = 2
 MAX_REVIEWER_SCHEMA_REPAIRS = 2
+MAX_REVIEWER_OUTPUT_LIFECYCLE_ERRORS = 2
+MAX_REVIEWER_CAPACITY_DIRECTIVES = 2
 REVIEWER_OUTPUT_TOOL_NAME = "submit_read_only_review"
 REVIEWER_FINDING_TOOL_NAME = "report_read_only_finding"
 MAX_CLAIM_UNITS = 80
@@ -108,6 +110,10 @@ class ReadOnlyReviewState:
     review_round: int = 0
     typed_submits: int = 0
     protocol_failures: int = 0
+    rejected_finding_submits: int = 0
+    rejected_final_submits: int = 0
+    finding_limit_hits: int = 0
+    output_lifecycle_exhausted: bool = False
     safe_partial_emitted: bool = False
 
     def reset(self) -> None:
@@ -127,6 +133,10 @@ class ReadOnlyReviewState:
         self.review_round = 0
         self.typed_submits = 0
         self.protocol_failures = 0
+        self.rejected_finding_submits = 0
+        self.rejected_final_submits = 0
+        self.finding_limit_hits = 0
+        self.output_lifecycle_exhausted = False
         self.safe_partial_emitted = False
 
     def snapshot(self) -> dict[str, Any]:
@@ -147,6 +157,10 @@ class ReadOnlyReviewState:
             "review_round": self.review_round,
             "typed_submits": self.typed_submits,
             "protocol_failures": self.protocol_failures,
+            "rejected_finding_submits": self.rejected_finding_submits,
+            "rejected_final_submits": self.rejected_final_submits,
+            "finding_limit_hits": self.finding_limit_hits,
+            "output_lifecycle_exhausted": self.output_lifecycle_exhausted,
         }
 
 
@@ -224,7 +238,7 @@ Review contract:
 - When the handoff has no explicit direct binding, do not say a main owner/module judgment is correct or mostly correct. Treat same-domain code as observed or analogous and leave the owner unlocated.
 - For a document-consistency review, do not resolve conflicting document or image observations with an invented workflow, scope, actor, or precedence rule. Preserve the conflict as unresolved unless the handoff explicitly reconciles it. A candidate that accurately cites both observations, explicitly keeps the conflict unresolved, and presents only labeled options or questions for later confirmation is compliant: submit `pass` with no reported findings. A finding must identify a candidate error such as an unsupported reconciliation, a missing cited observation, or a claim that exceeds the handoff; the source materials disagreeing by itself is not a candidate defect. If the only issue is that a source owner must decide how to update source materials, submit `pass` with no reported findings.
 
-The incremental output contract is bounded and shallow. Report at most 8 findings total by calling report_read_only_finding once per finding; then call submit_read_only_review with verdict, confidence, and reason only. A `pass` verdict requires 0 reported findings; `revise` and `unverified` require 1 to 8 reported findings. Every finding must have one unique, known claim_id plus non-empty issue and action. For every finding, choose exactly one claim_id from candidate_claims, set finding_scope to `candidate_defect`, and copy that exact candidate_claims text into `claim`. The action must change the candidate answer; it must not ask to modify the requirements, images, prototypes, or source artifacts, and must not merely ask a source owner to decide. Never invent or repeat a claim_id. Do not submit `source_material_gap` findings; those are not candidate defects. Report only the highest-risk blocking findings when there are more than 8. Keep the complete output under 9000 characters.
+The incremental output contract is bounded and shallow. Report at most 8 findings total by calling report_read_only_finding once per finding; then call submit_read_only_review with verdict, confidence, and reason only. Findings are capacity-limited: choose the highest-risk blocking candidate defects first. Once 8 findings are recorded, stop reporting findings and submit the final verdict. A `pass` verdict requires 0 reported findings; `revise` and `unverified` require 1 to 8 reported findings. Every finding must have one unique, known claim_id plus non-empty issue and action. For every finding, choose exactly one claim_id from candidate_claims, set finding_scope to `candidate_defect`, and copy that exact candidate_claims text into `claim`. The action must change the candidate answer; it must not ask to modify the requirements, images, prototypes, or source artifacts, and must not merely ask a source owner to decide. Never invent or repeat a claim_id. Do not submit `source_material_gap` findings; those are not candidate defects. Report only the highest-risk blocking findings when there are more than 8. Keep the complete output under 9000 characters.
 Choose revise when the candidate can be corrected using the handoff. Choose unverified when the candidate cannot safely make the requested factual conclusion."""
     if _is_document_consistency_review(handoff):
         system += (
@@ -365,17 +379,21 @@ def reviewer_output_tool_schemas(
     *,
     document_consistency: bool = False,
     evidence_ids: tuple[str, ...] = (),
+    include_finding_tool: bool = True,
 ) -> list[dict[str, Any]]:
     """Return OMP-style incremental output tools for the isolated reviewer."""
 
-    return [
-        reviewer_finding_tool_schema(claim_units),
+    schemas: list[dict[str, Any]] = []
+    if include_finding_tool:
+        schemas.append(reviewer_finding_tool_schema(claim_units))
+    schemas.append(
         reviewer_output_tool_schema(
             claim_units,
             document_consistency=document_consistency,
             evidence_ids=evidence_ids,
-        ),
-    ]
+        )
+    )
+    return schemas
 
 
 def reviewer_repair_messages(
@@ -384,11 +402,18 @@ def reviewer_repair_messages(
     diagnostics: Mapping[str, Any],
     *,
     accepted_claim_ids: tuple[str, ...] = (),
+    required_resubmit_claim_ids: tuple[str, ...] = (),
 ) -> list[dict[str, str]]:
     """Repeat the isolated review with sanitized schema-only feedback."""
 
     messages = reviewer_messages(handoff, claim_units)
-    messages.append(reviewer_repair_message(diagnostics, accepted_claim_ids=accepted_claim_ids))
+    messages.append(
+        reviewer_repair_message(
+            diagnostics,
+            accepted_claim_ids=accepted_claim_ids,
+            required_resubmit_claim_ids=required_resubmit_claim_ids,
+        )
+    )
     return messages
 
 
@@ -396,10 +421,14 @@ def reviewer_repair_message(
     diagnostics: Mapping[str, Any],
     *,
     accepted_claim_ids: tuple[str, ...] = (),
+    required_resubmit_claim_ids: tuple[str, ...] = (),
 ) -> dict[str, str]:
     """Return one sanitized schema-repair turn without resetting prior yield transcript."""
 
     accepted = tuple(dict.fromkeys(str(claim_id) for claim_id in accepted_claim_ids if str(claim_id).strip()))
+    required_resubmit = tuple(
+        dict.fromkeys(str(claim_id) for claim_id in required_resubmit_claim_ids if str(claim_id).strip())
+    )
     return {
         "role": "user",
         "content": json.dumps(
@@ -407,11 +436,14 @@ def reviewer_repair_message(
                 "kind": "LCA_READ_ONLY_EVIDENCE_REVIEW_SCHEMA_REPAIR",
                 "validation": _sanitize_diagnostics(diagnostics),
                 "accepted_candidate_defect_claim_ids": list(accepted),
+                "required_resubmit_candidate_defect_claim_ids": list(required_resubmit),
                 "instruction": (
                     "Use only the original output tools and submit complete arguments that exactly follow their schemas. "
                     "Use only candidate claim IDs supplied in the original payload. "
-                    "Do not repeat accepted_candidate_defect_claim_ids as new findings; keep those candidate defects in "
-                    "the final verdict semantics. "
+                    "Do not repeat accepted_candidate_defect_claim_ids as new findings; those findings were already "
+                    "recorded and must be preserved in the final verdict semantics. "
+                    "required_resubmit_candidate_defect_claim_ids were validated in a response that could not be safely "
+                    "paired, so report those findings again before submitting the final verdict. "
                     + _repair_shape_instruction(diagnostics)
                 ),
             },
@@ -724,6 +756,7 @@ def _sanitize_diagnostics(diagnostics: Mapping[str, Any]) -> dict[str, Any]:
         "call_index",
         "tool_call_count",
         "accepted_candidate_defect_count",
+        "rejected_candidate_defect_count",
     }
     return {key: diagnostics[key] for key in allowed if key in diagnostics}
 

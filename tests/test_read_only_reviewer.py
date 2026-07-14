@@ -253,7 +253,11 @@ class _InvalidReviewerClient:
         self.config = config
 
     def chat(self, messages, tools, *, timeout=None):
-        type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
+        type(self).calls.append({
+            "messages": json.loads(json.dumps(messages, ensure_ascii=False)),
+            "tools": json.loads(json.dumps(tools, ensure_ascii=False)),
+            "timeout": timeout,
+        })
         if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages):
             return type("Response", (), {"message": {"content": "not-json"}})()
         return type("Response", (), {"message": {"content": "PayServiceImpl is the verified owner."}})()
@@ -286,6 +290,51 @@ class _ReviewerRepairClient:
                     "reason": "binding absent",
                 })
             return _review_submit({"verdict": "pass", "confidence": 0.9, "findings": [], "reason": "rewrite is scoped"})
+        self._primary_calls += 1
+        if self._primary_calls == 1:
+            return type("Response", (), {"message": {"content": "PayServiceImpl is the verified owner."}})()
+        return type("Response", (), {"message": {"content": "PayServiceImpl is an analogous candidate; the owner is unlocated."}})()
+
+
+class _ReviewerMissingIdAfterFindingClient:
+    calls: list[dict] = []
+
+    def __init__(self, config: AgentConfig):
+        self._primary_calls = 0
+        self._review_calls = 0
+
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).calls.append({
+            "messages": json.loads(json.dumps(messages, ensure_ascii=False)),
+            "tools": json.loads(json.dumps(tools, ensure_ascii=False)),
+            "timeout": timeout,
+        })
+        if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages):
+            self._review_calls += 1
+            claim = _first_candidate_claim(messages)
+            if self._review_calls == 1:
+                return _review_tool_calls_response(
+                    [
+                        _finding_call("valid-local", "c001", claim, action="mark unlocated"),
+                        {
+                            "type": "function",
+                            "function": {
+                                "name": REVIEWER_OUTPUT_TOOL_NAME,
+                                "arguments": json.dumps({"verdict": "revise", "confidence": 0.9, "reason": "missing id"}),
+                            },
+                        },
+                    ]
+                )
+            if self._review_calls == 2:
+                return _review_tool_calls_response([
+                    _final_call("bad-pass", {"verdict": "pass", "confidence": 0.9, "reason": "drop required finding"})
+                ])
+            if self._review_calls == 3:
+                return _review_tool_calls_response([
+                    _finding_call("resubmitted", "c001", claim, action="mark unlocated"),
+                    _final_call("valid-final", {"verdict": "revise", "confidence": 0.9, "reason": "required finding restored"}),
+                ])
+            return _review_submit({"verdict": "pass", "confidence": 0.9, "findings": [], "reason": "rewrite scoped"})
         self._primary_calls += 1
         if self._primary_calls == 1:
             return type("Response", (), {"message": {"content": "PayServiceImpl is the verified owner."}})()
@@ -362,11 +411,6 @@ class _ReviewerFindingMalformedFinalThenPassClient:
                 ])
             if self._review_calls == 2:
                 return _review_tool_calls_response([
-                    _final_call("bad-pass", {"verdict": "pass", "confidence": 0.9, "reason": "drop finding"})
-                ])
-            if self._review_calls == 3:
-                return _review_tool_calls_response([
-                    _finding_call("kept-finding", "c001", claim, action="mark unlocated"),
                     _final_call("valid-final", {"verdict": "revise", "confidence": 0.9, "reason": "kept candidate defect"}),
                 ])
             return _review_submit({"verdict": "pass", "confidence": 0.9, "findings": [], "reason": "rewrite scoped"})
@@ -409,13 +453,208 @@ class _ReviewerNinthFindingClient(_ReviewerEightFindingsClient):
         type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
         if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages):
             self._review_calls += 1
-            claim_id = f"c{self._review_calls:03d}"
+            if self._review_calls == 1:
+                return _review_tool_calls_response([
+                    _finding_call(f"finding-{index}", f"c{index:03d}", _candidate_claim(messages, f"c{index:03d}"))
+                    for index in range(1, 10)
+                ])
+            if self._review_calls == 2:
+                return _review_tool_calls_response([
+                    _final_call("final-revise", {"verdict": "revise", "confidence": 0.9, "reason": "top eight findings recorded"})
+                ])
+            return _review_submit({"verdict": "pass", "confidence": 0.9, "findings": [], "reason": "rewrite scoped"})
+        self._primary_calls += 1
+        if self._review_calls >= 2:
+            content = "All owner claims are now scoped as unlocated."
+        else:
+            content = "\n".join(f"- Unsupported owner claim {index}" for index in range(1, 10))
+        return type("Response", (), {"message": {"content": content}})()
+
+
+class _ReviewerNineFindingsWithFinalClient(_ReviewerEightFindingsClient):
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
+        if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages):
+            self._review_calls += 1
+            if self._review_calls == 1:
+                return _review_tool_calls_response(
+                    [
+                        _finding_call(f"finding-{index}", f"c{index:03d}", _candidate_claim(messages, f"c{index:03d}"))
+                        for index in range(1, 10)
+                    ]
+                    + [
+                        _final_call("final-revise", {"verdict": "revise", "confidence": 0.9, "reason": "top eight findings"})
+                    ]
+                )
+            return _review_submit({"verdict": "pass", "confidence": 0.9, "findings": [], "reason": "rewrite scoped"})
+        self._primary_calls += 1
+        if self._review_calls < 1:
+            content = "\n".join(f"- Unsupported owner claim {index}" for index in range(1, 10))
+            return type("Response", (), {"message": {"content": content}})()
+        return type("Response", (), {"message": {"content": "All owner claims are now scoped as unlocated."}})()
+
+
+class _ReviewerAcceptedFindingThenPassClient(_ReviewerFindingMalformedFinalThenPassClient):
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
+        if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages):
+            self._review_calls += 1
+            claim = _first_candidate_claim(messages)
+            if self._review_calls == 1:
+                return _review_tool_calls_response([_finding_call("finding", "c001", claim, action="mark unlocated")])
+            if self._review_calls == 2:
+                return _review_tool_calls_response([
+                    _final_call("bad-pass", {"verdict": "pass", "confidence": 0.9, "reason": "drop finding"})
+                ])
+            if self._review_calls == 3:
+                return _review_tool_calls_response([
+                    _final_call("valid-final", {"verdict": "revise", "confidence": 0.9, "reason": "preserve finding"})
+                ])
+            return _review_submit({"verdict": "pass", "confidence": 0.9, "findings": [], "reason": "rewrite scoped"})
+        self._primary_calls += 1
+        if self._primary_calls == 1:
+            return type("Response", (), {"message": {"content": "PayServiceImpl is the verified owner."}})()
+        return type("Response", (), {"message": {"content": "PayServiceImpl is an analogous candidate; the owner is unlocated."}})()
+
+
+class _ReviewerValidFindingUnknownLaterClient(_ReviewerFindingMalformedFinalThenPassClient):
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
+        if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages):
+            self._review_calls += 1
+            claim = _first_candidate_claim(messages)
+            if self._review_calls == 1:
+                return _review_tool_calls_response([
+                    _finding_call("finding", "c001", claim, action="mark unlocated"),
+                    {
+                        "id": "unknown-output",
+                        "type": "function",
+                        "function": {"name": "read_file", "arguments": json.dumps({"path": "secret.txt"})},
+                    },
+                ])
+            if self._review_calls == 2:
+                return _review_tool_calls_response([
+                    _final_call("valid-final", {"verdict": "revise", "confidence": 0.9, "reason": "preserve finding"})
+                ])
+            return _review_submit({"verdict": "pass", "confidence": 0.9, "findings": [], "reason": "rewrite scoped"})
+        self._primary_calls += 1
+        if self._primary_calls == 1:
+            return type("Response", (), {"message": {"content": "PayServiceImpl is the verified owner."}})()
+        return type("Response", (), {"message": {"content": "PayServiceImpl is an analogous candidate; the owner is unlocated."}})()
+
+
+class _ReviewerRepeatedFindingAfterCapacityClient(_ReviewerEightFindingsClient):
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
+        if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages):
+            self._review_calls += 1
+            if self._review_calls == 1:
+                return _review_tool_calls_response([
+                    _finding_call(f"finding-{index}", f"c{index:03d}", _candidate_claim(messages, f"c{index:03d}"))
+                    for index in range(1, 10)
+                ])
             return _review_tool_calls_response([
-                _finding_call(f"finding-{self._review_calls}", claim_id, _candidate_claim(messages, claim_id))
+                _finding_call(f"extra-{self._review_calls}", "c009", _candidate_claim(messages, "c009"))
             ])
         self._primary_calls += 1
         content = "\n".join(f"- Unsupported owner claim {index}" for index in range(1, 10))
         return type("Response", (), {"message": {"content": content}})()
+
+
+class _ReviewerTenFindingsClient(_ReviewerEightFindingsClient):
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
+        if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages):
+            self._review_calls += 1
+            if self._review_calls == 1:
+                return _review_tool_calls_response([
+                    _finding_call(f"finding-{index}", f"c{index:03d}", _candidate_claim(messages, f"c{index:03d}"))
+                    for index in range(1, 11)
+                ])
+            if self._review_calls == 2:
+                return _review_tool_calls_response([
+                    _final_call("final-revise", {"verdict": "revise", "confidence": 0.9, "reason": "top eight findings recorded"})
+                ])
+            return _review_submit({"verdict": "pass", "confidence": 0.9, "findings": [], "reason": "rewrite scoped"})
+        self._primary_calls += 1
+        if self._review_calls >= 2:
+            content = "All owner claims are now scoped as unlocated."
+        else:
+            content = "\n".join(f"- Unsupported owner claim {index}" for index in range(1, 10))
+        return type("Response", (), {"message": {"content": content}})()
+
+
+class _ReviewerInvalidFindingThenPassClient(_ReviewerFindingMalformedFinalThenPassClient):
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
+        if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages):
+            self._review_calls += 1
+            claim = _first_candidate_claim(messages)
+            if self._review_calls == 1:
+                return _review_tool_calls_response([
+                    _finding_call("bad-finding", "c001", claim + " paraphrased", action="mark unlocated"),
+                    _final_call("bad-pass", {"verdict": "pass", "confidence": 0.9, "reason": "ignore invalid finding"}),
+                ])
+            if self._review_calls == 2:
+                return _review_tool_calls_response([
+                    _finding_call("fixed-finding", "c001", claim, action="mark unlocated"),
+                    _final_call("valid-final", {"verdict": "revise", "confidence": 0.9, "reason": "finding fixed"}),
+                ])
+            return _review_submit({"verdict": "pass", "confidence": 0.9, "findings": [], "reason": "rewrite scoped"})
+        self._primary_calls += 1
+        if self._primary_calls == 1:
+            return type("Response", (), {"message": {"content": "PayServiceImpl is the verified owner."}})()
+        return type("Response", (), {"message": {"content": "PayServiceImpl is an analogous candidate; the owner is unlocated."}})()
+
+
+class _ReviewerUnknownThenPassClient(_ReviewerFindingMalformedFinalThenPassClient):
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
+        if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages):
+            self._review_calls += 1
+            claim = _first_candidate_claim(messages)
+            if self._review_calls == 1:
+                return _review_tool_calls_response([
+                    {
+                        "id": "unknown-output",
+                        "type": "function",
+                        "function": {"name": "read_file", "arguments": json.dumps({"path": "secret.txt"})},
+                    },
+                    _final_call("bad-pass", {"verdict": "pass", "confidence": 0.9, "reason": "ignore unknown"}),
+                ])
+            if self._review_calls == 2:
+                return _review_tool_calls_response([
+                    _finding_call("fixed-finding", "c001", claim, action="mark unlocated"),
+                    _final_call("valid-final", {"verdict": "revise", "confidence": 0.9, "reason": "unknown fixed"}),
+                ])
+            return _review_submit({"verdict": "pass", "confidence": 0.9, "findings": [], "reason": "rewrite scoped"})
+        self._primary_calls += 1
+        if self._primary_calls == 1:
+            return type("Response", (), {"message": {"content": "PayServiceImpl is the verified owner."}})()
+        return type("Response", (), {"message": {"content": "PayServiceImpl is an analogous candidate; the owner is unlocated."}})()
+
+
+class _ReviewerTwoFinalsThenFixClient(_ReviewerFindingMalformedFinalThenPassClient):
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
+        if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages):
+            self._review_calls += 1
+            claim = _first_candidate_claim(messages)
+            if self._review_calls == 1:
+                return _review_tool_calls_response([
+                    _final_call("first-final", {"verdict": "pass", "confidence": 0.9, "reason": "premature"}),
+                    _final_call("second-final", {"verdict": "pass", "confidence": 0.9, "reason": "second pass"}),
+                ])
+            if self._review_calls == 2:
+                return _review_tool_calls_response([
+                    _finding_call("fixed-finding", "c001", claim, action="mark unlocated"),
+                    _final_call("valid-final", {"verdict": "revise", "confidence": 0.9, "reason": "final order fixed"}),
+                ])
+            return _review_submit({"verdict": "pass", "confidence": 0.9, "findings": [], "reason": "rewrite scoped"})
+        self._primary_calls += 1
+        if self._primary_calls == 1:
+            return type("Response", (), {"message": {"content": "PayServiceImpl is the verified owner."}})()
+        return type("Response", (), {"message": {"content": "PayServiceImpl is an analogous candidate; the owner is unlocated."}})()
 
 
 class _ReviewerRepairExhaustedClient:
@@ -1027,8 +1266,9 @@ class ReadOnlyReviewerTests(unittest.TestCase):
 
         self.assertEqual(outcome.kind, "pass")
         self.assertEqual(runtime._run.read_only_review.verdict, "pass")
-        self.assertEqual(runtime._run.read_only_review.schema_failures, 1)
-        self.assertEqual(runtime._run.read_only_review.repairs, 1)
+        self.assertEqual(runtime._run.read_only_review.schema_failures, 0)
+        self.assertEqual(runtime._run.read_only_review.repairs, 0)
+        self.assertEqual(runtime._run.read_only_review.rejected_finding_submits, 1)
         self.assertNotIn("source-gap", runtime._run.read_only_review.reason or "")
 
     def test_document_consistency_uses_two_stage_shallow_output_protocol(self) -> None:
@@ -1593,7 +1833,7 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertEqual(runtime._last_run_summary["termination_reason"], "read_only_reviewer_unverified")
         self.assertEqual(runtime._last_run_summary["read_only_reviewer"]["errors"], {"protocol_error": 1})
 
-    def test_schema_repair_turns_pass_with_findings_into_one_valid_revise(self) -> None:
+    def test_invalid_final_shape_is_tool_local_and_then_valid_revise(self) -> None:
         _ReviewerRepairClient.calls = []
         with tempfile.TemporaryDirectory() as tmp:
             with patch("local_agent.agent.OpenAICompatibleClient", _ReviewerRepairClient):
@@ -1603,9 +1843,10 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         summary = runtime._last_run_summary["read_only_reviewer"]
         self.assertEqual(summary["triggers"], 1)
         self.assertEqual(summary["attempts"], 3)
-        self.assertEqual(summary["schema_failures"], 1)
-        self.assertEqual(summary["repairs"], 1)
-        self.assertEqual(summary["repair_successes"], 1)
+        self.assertEqual(summary["schema_failures"], 0)
+        self.assertEqual(summary["repairs"], 0)
+        self.assertEqual(summary["repair_successes"], 0)
+        self.assertEqual(summary["rejected_final_submits"], 1)
         review_calls = [
             call for call in _ReviewerRepairClient.calls
             if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in call["messages"])
@@ -1618,7 +1859,33 @@ class ReadOnlyReviewerTests(unittest.TestCase):
                 for call in review_calls
             )
         )
-        self.assertIn("LCA_READ_ONLY_EVIDENCE_REVIEW_SCHEMA_REPAIR", str(review_calls[1]["messages"][-1]["content"]))
+        self.assertNotIn("LCA_READ_ONLY_EVIDENCE_REVIEW_SCHEMA_REPAIR", str(review_calls[1]["messages"][-1]["content"]))
+
+    def test_unpairable_call_after_valid_finding_requires_resubmit_not_accepted(self) -> None:
+        _ReviewerMissingIdAfterFindingClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch("local_agent.agent.OpenAICompatibleClient", _ReviewerMissingIdAfterFindingClient):
+                runtime = AgentRuntime(_config(Path(tmp).resolve()), show_tool_logs=False)
+                answer = runtime.run("只读分析当前服务 owner 和影响范围，不要修改文件。")
+        self.assertIn("analogous candidate", answer)
+        summary = runtime._last_run_summary["read_only_reviewer"]
+        self.assertEqual(summary["schema_failures"], 1)
+        self.assertEqual(summary["repairs"], 1)
+        self.assertEqual(summary["finding_submits"], 1)
+        self.assertEqual(summary["rejected_final_submits"], 1)
+        review_calls = [
+            call for call in _ReviewerMissingIdAfterFindingClient.calls
+            if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in call["messages"])
+        ]
+        repair_messages = [
+            message for message in review_calls[1]["messages"]
+            if message.get("role") == "user" and "LCA_READ_ONLY_EVIDENCE_REVIEW_SCHEMA_REPAIR" in str(message.get("content"))
+        ]
+        self.assertEqual(len(repair_messages), 1)
+        repair_payload = json.loads(repair_messages[0]["content"])
+        self.assertEqual(repair_payload["accepted_candidate_defect_claim_ids"], [])
+        self.assertEqual(repair_payload["required_resubmit_candidate_defect_claim_ids"], ["c001"])
+        self.assertNotIn("mark unlocated", repair_messages[0]["content"])
 
     def test_incremental_finding_turns_do_not_consume_schema_repair_budget(self) -> None:
         _ReviewerIncrementalRepairLifecycleClient.calls = []
@@ -1628,21 +1895,26 @@ class ReadOnlyReviewerTests(unittest.TestCase):
                 answer = runtime.run("只读分析当前服务 owner 和影响范围，不要修改文件。")
         self.assertIn("analogous candidate", answer)
         summary = runtime._last_run_summary["read_only_reviewer"]
-        self.assertEqual(summary["schema_failures"], 2)
-        self.assertEqual(summary["repairs"], 2)
+        self.assertEqual(summary["schema_failures"], 0)
+        self.assertEqual(summary["repairs"], 0)
         self.assertEqual(summary["repair_exhausted"], 0)
         self.assertEqual(summary["finding_submits"], 1)
+        self.assertEqual(summary["rejected_finding_submits"], 1)
+        self.assertEqual(summary["rejected_final_submits"], 1)
         self.assertEqual(summary["final_submits"], 2)
         review_calls = [
             call for call in _ReviewerIncrementalRepairLifecycleClient.calls
             if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in call["messages"])
         ]
-        self.assertGreaterEqual(len(review_calls), 5)
-        repair_after_finding = review_calls[3]["messages"][-1]["content"]
-        self.assertIn('"accepted_candidate_defect_claim_ids": ["c001"]', repair_after_finding)
-        self.assertNotIn("mark owner unlocated", repair_after_finding)
+        self.assertGreaterEqual(len(review_calls), 4)
+        rejected_tool_results = [
+            message for message in review_calls[2]["messages"]
+            if message.get("role") == "tool" and message.get("tool_call_id") == "bad-final"
+        ]
+        self.assertEqual(len(rejected_tool_results), 1)
+        self.assertIn("output_tool_arguments_json_invalid", str(rejected_tool_results[0].get("content")))
         prior_tool_results = [
-            message for message in review_calls[3]["messages"]
+            message for message in review_calls[2]["messages"]
             if message.get("role") == "tool" and message.get("tool_call_id") == "valid-finding"
         ]
         self.assertEqual(len(prior_tool_results), 1)
@@ -1656,9 +1928,12 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertIn("未完成/未验证", answer)
         summary = runtime._last_run_summary["read_only_reviewer"]
         self.assertEqual(summary["final_submits"], 0)
+        self.assertEqual(summary["finding_submits"], 0)
         self.assertEqual(summary["verdicts"], {})
-        self.assertEqual(summary["protocol_failures"], 3)
-        self.assertEqual(summary["errors"], {"protocol_error": 1})
+        self.assertEqual(summary["rejected_final_submits"], 2)
+        self.assertEqual(summary["rejected_finding_submits"], 2)
+        self.assertEqual(summary["output_lifecycle_exhausted"], 1)
+        self.assertEqual(summary["errors"], {"invalid_output": 1})
 
     def test_valid_finding_before_malformed_final_cannot_be_dropped_by_later_pass(self) -> None:
         _ReviewerFindingMalformedFinalThenPassClient.calls = []
@@ -1668,8 +1943,9 @@ class ReadOnlyReviewerTests(unittest.TestCase):
                 answer = runtime.run("只读分析当前服务 owner 和影响范围，不要修改文件。")
         self.assertIn("analogous candidate", answer)
         summary = runtime._last_run_summary["read_only_reviewer"]
-        self.assertEqual(summary["schema_failures"], 2)
-        self.assertEqual(summary["repairs"], 2)
+        self.assertEqual(summary["schema_failures"], 0)
+        self.assertEqual(summary["repairs"], 0)
+        self.assertEqual(summary["rejected_final_submits"], 1)
         self.assertEqual(summary["verdicts"], {"pass": 1, "revise": 1})
         self.assertEqual(summary["finding_submits"], 1)
 
@@ -1685,16 +1961,128 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertEqual(summary["findings"], 8)
         self.assertEqual(summary["repair_exhausted"], 0)
 
-    def test_ninth_incremental_finding_fails_closed(self) -> None:
+    def test_ninth_incremental_finding_is_tool_local_capacity_rejection(self) -> None:
         _ReviewerNinthFindingClient.calls = []
         with tempfile.TemporaryDirectory() as tmp:
             with patch("local_agent.agent.OpenAICompatibleClient", _ReviewerNinthFindingClient):
                 runtime = AgentRuntime(_config(Path(tmp).resolve()), show_tool_logs=False)
                 answer = runtime.run("只读分析当前服务 owner 和影响范围，不要修改文件。")
+        self.assertIn("unlocated", answer)
+        summary = runtime._last_run_summary["read_only_reviewer"]
+        self.assertEqual(summary["finding_submits"], 8)
+        self.assertEqual(summary["rejected_finding_submits"], 1)
+        self.assertEqual(summary["finding_limit_hits"], 1)
+        self.assertEqual(summary["repair_exhausted"], 0)
+        self.assertEqual(summary["errors"], {})
+        review_calls = [
+            call for call in _ReviewerNinthFindingClient.calls
+            if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in call["messages"])
+        ]
+        self.assertEqual(
+            [tool["function"]["name"] for tool in review_calls[1]["tools"]],
+            [REVIEWER_OUTPUT_TOOL_NAME],
+        )
+        tool_results = [message for message in review_calls[1]["messages"] if message.get("role") == "tool"]
+        self.assertEqual(len([message for message in tool_results if message.get("tool_call_id") == "finding-9"]), 1)
+        self.assertIn("capacity reached", str(tool_results[-1].get("content")))
+
+    def test_tenth_finding_same_turn_gets_limit_results_but_next_final_turn_allowed(self) -> None:
+        _ReviewerTenFindingsClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch("local_agent.agent.OpenAICompatibleClient", _ReviewerTenFindingsClient):
+                runtime = AgentRuntime(_config(Path(tmp).resolve()), show_tool_logs=False)
+                answer = runtime.run("只读分析当前服务 owner 和影响范围，不要修改文件。")
+        self.assertIn("unlocated", answer)
+        summary = runtime._last_run_summary["read_only_reviewer"]
+        self.assertEqual(summary["finding_submits"], 8)
+        self.assertEqual(summary["rejected_finding_submits"], 2)
+        self.assertEqual(summary["finding_limit_hits"], 2)
+        self.assertEqual(summary["output_lifecycle_exhausted"], 0)
+        review_calls = [
+            call for call in _ReviewerTenFindingsClient.calls
+            if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in call["messages"])
+        ]
+        self.assertEqual(
+            [tool["function"]["name"] for tool in review_calls[1]["tools"]],
+            [REVIEWER_OUTPUT_TOOL_NAME],
+        )
+        tool_results = [message for message in review_calls[1]["messages"] if message.get("role") == "tool"]
+        for index in range(1, 11):
+            self.assertEqual(len([message for message in tool_results if message.get("tool_call_id") == f"finding-{index}"]), 1)
+
+    def test_ninth_finding_plus_valid_final_assembles_top_eight(self) -> None:
+        _ReviewerNineFindingsWithFinalClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch("local_agent.agent.OpenAICompatibleClient", _ReviewerNineFindingsWithFinalClient):
+                runtime = AgentRuntime(_config(Path(tmp).resolve()), show_tool_logs=False)
+                answer = runtime.run("只读分析当前服务 owner 和影响范围，不要修改文件。")
+        self.assertIn("unlocated", answer)
+        summary = runtime._last_run_summary["read_only_reviewer"]
+        self.assertEqual(summary["finding_submits"], 8)
+        self.assertEqual(summary["findings"], 8)
+        self.assertEqual(summary["rejected_finding_submits"], 1)
+        self.assertEqual(summary["finding_limit_hits"], 1)
+        self.assertEqual(summary["final_submits"], 2)
+
+    def test_pass_after_accepted_finding_is_rejected_until_revise_preserves_it(self) -> None:
+        _ReviewerAcceptedFindingThenPassClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch("local_agent.agent.OpenAICompatibleClient", _ReviewerAcceptedFindingThenPassClient):
+                runtime = AgentRuntime(_config(Path(tmp).resolve()), show_tool_logs=False)
+                answer = runtime.run("只读分析当前服务 owner 和影响范围，不要修改文件。")
+        self.assertIn("analogous candidate", answer)
+        summary = runtime._last_run_summary["read_only_reviewer"]
+        self.assertEqual(summary["finding_submits"], 1)
+        self.assertEqual(summary["rejected_final_submits"], 1)
+        self.assertEqual(summary["verdicts"], {"pass": 1, "revise": 1})
+
+    def test_valid_finding_survives_unknown_later_output_call(self) -> None:
+        _ReviewerValidFindingUnknownLaterClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch("local_agent.agent.OpenAICompatibleClient", _ReviewerValidFindingUnknownLaterClient):
+                runtime = AgentRuntime(_config(Path(tmp).resolve()), show_tool_logs=False)
+                answer = runtime.run("只读分析当前服务 owner 和影响范围，不要修改文件。")
+        self.assertIn("analogous candidate", answer)
+        summary = runtime._last_run_summary["read_only_reviewer"]
+        self.assertEqual(summary["finding_submits"], 1)
+        self.assertEqual(summary["protocol_failures"], 1)
+        self.assertEqual(summary["verdicts"], {"pass": 1, "revise": 1})
+
+    def test_blocking_rejection_plus_valid_final_in_same_response_cannot_terminal(self) -> None:
+        cases = (
+            (_ReviewerInvalidFindingThenPassClient, "bad-finding", "bad-pass"),
+            (_ReviewerUnknownThenPassClient, "unknown-output", "bad-pass"),
+            (_ReviewerTwoFinalsThenFixClient, "first-final", "second-final"),
+        )
+        for client, first_call_id, second_call_id in cases:
+            with self.subTest(client=client.__name__), tempfile.TemporaryDirectory() as tmp:
+                client.calls = []
+                with patch("local_agent.agent.OpenAICompatibleClient", client):
+                    runtime = AgentRuntime(_config(Path(tmp).resolve()), show_tool_logs=False)
+                    answer = runtime.run("只读分析当前服务 owner 和影响范围，不要修改文件。")
+            self.assertIn("analogous candidate", answer)
+            summary = runtime._last_run_summary["read_only_reviewer"]
+            self.assertEqual(summary["verdicts"], {"pass": 1, "revise": 1})
+            self.assertEqual(summary["final_submits"], 2)
+            review_calls = [
+                call for call in client.calls
+                if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in call["messages"])
+            ]
+            paired = [message for message in review_calls[1]["messages"] if message.get("role") == "tool"]
+            self.assertEqual(len([message for message in paired if message.get("tool_call_id") == first_call_id]), 1)
+            self.assertEqual(len([message for message in paired if message.get("tool_call_id") == second_call_id]), 1)
+
+    def test_repeated_finding_after_capacity_exhausts_output_lifecycle(self) -> None:
+        _ReviewerRepeatedFindingAfterCapacityClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch("local_agent.agent.OpenAICompatibleClient", _ReviewerRepeatedFindingAfterCapacityClient):
+                runtime = AgentRuntime(_config(Path(tmp).resolve()), show_tool_logs=False)
+                answer = runtime.run("只读分析当前服务 owner 和影响范围，不要修改文件。")
         self.assertIn("未完成/未验证", answer)
         summary = runtime._last_run_summary["read_only_reviewer"]
         self.assertEqual(summary["finding_submits"], 8)
-        self.assertEqual(summary["repair_exhausted"], 1)
+        self.assertEqual(summary["finding_limit_hits"], 2)
+        self.assertEqual(summary["output_lifecycle_exhausted"], 1)
         self.assertEqual(summary["errors"], {"invalid_output": 1})
 
     def test_schema_repair_exhaustion_stays_unverified_without_raw_payload(self) -> None:
@@ -1706,8 +2094,10 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertIn("未完成/未验证", answer)
         summary = runtime._last_run_summary["read_only_reviewer"]
         self.assertEqual(summary["attempts"], 3)
-        self.assertEqual(summary["schema_failures"], 3)
-        self.assertEqual(summary["repair_exhausted"], 1)
+        self.assertEqual(summary["schema_failures"], 0)
+        self.assertEqual(summary["repair_exhausted"], 0)
+        self.assertEqual(summary["rejected_final_submits"], 3)
+        self.assertEqual(summary["output_lifecycle_exhausted"], 1)
         self.assertNotIn('"findings":"wrong"', answer)
 
     def test_schema_diagnostics_are_typed_and_do_not_echo_claim_text(self) -> None:
@@ -1759,8 +2149,8 @@ class ReadOnlyReviewerTests(unittest.TestCase):
     def test_reviewer_protocol_timeout_and_markup_are_auditable_unverified_outcomes(self) -> None:
         cases = (
             (_ReviewerProtocolClient, "openai-compatible", "protocol_error", 3),
-            (_ReviewerMultipleOutputClient, "openai-compatible", "protocol_error", 3),
-            (_ReviewerMalformedOutputClient, "openai-compatible", "protocol_error", 3),
+            (_ReviewerMultipleOutputClient, "openai-compatible", "invalid_output", 0),
+            (_ReviewerMalformedOutputClient, "openai-compatible", "invalid_output", 0),
             (_ReviewerTimeoutClient, "openai-compatible", "timeout", 0),
             (_ReviewerXmlArtifactClient, "bailian", "protocol_error", 3),
         )
@@ -1777,11 +2167,11 @@ class ReadOnlyReviewerTests(unittest.TestCase):
 
     def test_reviewer_repair_turn_timeout_and_protocol_violations_are_terminal_and_redacted(self) -> None:
         cases = (
-            (_ReviewerRepairTimeoutClient, "openai-compatible", "timeout", 0, 2),
-            (_ReviewerRepairProtocolClient, "openai-compatible", "protocol_error", 2, 3),
-            (_ReviewerRepairXmlClient, "bailian", "protocol_error", 2, 3),
+            (_ReviewerRepairTimeoutClient, "openai-compatible", "timeout", 0, 2, 0, 0),
+            (_ReviewerRepairProtocolClient, "openai-compatible", "protocol_error", 2, 3, 0, 0),
+            (_ReviewerRepairXmlClient, "bailian", "protocol_error", 3, 4, 3, 2),
         )
-        for client, provider, expected, protocol_count, attempts in cases:
+        for client, provider, expected, protocol_count, attempts, schema_failures, repairs in cases:
             with self.subTest(client=client.__name__), tempfile.TemporaryDirectory() as tmp:
                 client.calls = []
                 with patch("local_agent.agent.OpenAICompatibleClient", client):
@@ -1790,8 +2180,8 @@ class ReadOnlyReviewerTests(unittest.TestCase):
                 summary = runtime._last_run_summary["read_only_reviewer"]
                 self.assertIn("未完成/未验证", answer)
                 self.assertEqual(summary["attempts"], attempts)
-                self.assertEqual(summary["schema_failures"], 1 if attempts == 2 else 3)
-                self.assertEqual(summary["repairs"], 1 if attempts == 2 else 2)
+                self.assertEqual(summary["schema_failures"], schema_failures)
+                self.assertEqual(summary["repairs"], repairs)
                 self.assertEqual(summary["errors"], {expected: 1})
                 self.assertEqual(runtime._last_run_summary["provider_protocol_violations"], 0)
                 self.assertEqual(summary["protocol_failures"], protocol_count)
@@ -1799,9 +2189,9 @@ class ReadOnlyReviewerTests(unittest.TestCase):
                 self.assertNotIn("secret", runtime._session.path.read_text(encoding="utf-8"))
 
     def test_reviewer_schema_repair_is_not_attempted_without_remaining_deadline(self) -> None:
-        _ReviewerRepairExhaustedClient.calls = []
+        _ReviewerMissingIdAfterFindingClient.calls = []
         with tempfile.TemporaryDirectory() as tmp:
-            with patch("local_agent.agent.OpenAICompatibleClient", _ReviewerRepairExhaustedClient):
+            with patch("local_agent.agent.OpenAICompatibleClient", _ReviewerMissingIdAfterFindingClient):
                 runtime = AgentRuntime(_config(Path(tmp).resolve()), show_tool_logs=False)
                 contract = generate_requirement_contract("只读分析当前服务 owner 和影响范围，不要修改。")
                 now = time.monotonic()
