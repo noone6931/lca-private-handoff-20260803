@@ -129,7 +129,7 @@ def parse_document_locators(content: str, path: str) -> tuple[DocumentLocator, .
         prefix = rf"`?{re.escape(ref)}`?\s*"
         patterns.extend(
             (
-                (ref, "line", prefix + r"(?::#L|#L|:)\s*(\d+(?:\s*[-–]\s*\d+)?)"),
+                (ref, "line", prefix + r"(?::#L|#L|:)\s*(L?\d+(?:\s*[-–]\s*L?\d+)?)"),
                 (ref, "page", prefix + r"(?:P|page|页)\s*(\d+)"),
                 (ref, "section", prefix + r"第\s*([\d.]+)\s*节"),
                 (ref, "section", prefix + r"(?:#|§|章节|章|节|section|heading)\s*([^\n`，,。;；:：]+)"),
@@ -141,6 +141,8 @@ def parse_document_locators(content: str, path: str) -> tuple[DocumentLocator, .
     for ref, kind, pattern in patterns:
         for match in re.finditer(pattern, content, flags=re.IGNORECASE):
             value = match.group(1).strip()
+            if kind in {"section", "heading"} and re.fullmatch(r"L?\d+(?:\s*[-–]\s*L?\d+)?", value, flags=re.IGNORECASE):
+                continue
             start, end = match.start(), match.end()
             overlaps = any(
                 kind == prior_kind and value == prior_value and start < prior_end and prior_start < end
@@ -163,7 +165,7 @@ def document_locator_excerpt(content: str, locator: DocumentLocator, *, context_
     if not content:
         return None
     if locator.kind == "line":
-        line_range = _parse_line_range(locator.value)
+        line_range = parse_document_line_range(locator.value, max_lines=40)
         if line_range is None:
             return None
         if line_range[0] != line_range[1]:
@@ -216,13 +218,17 @@ def document_locator_excerpt(content: str, locator: DocumentLocator, *, context_
     return None
 
 
-def _parse_line_range(value: str) -> tuple[int, int] | None:
-    match = re.fullmatch(r"\s*(\d+)(?:\s*[-–]\s*(\d+))?\s*", value or "")
+def parse_document_line_range(value: str, *, max_lines: int | None = 40) -> tuple[int, int] | None:
+    """Return a normalized inclusive line range from a path-bound locator value."""
+
+    match = re.fullmatch(r"\s*L?(\d+)(?:\s*[-–]\s*L?(\d+))?\s*", value or "", flags=re.IGNORECASE)
     if match is None:
         return None
     start = int(match.group(1))
     end = int(match.group(2) or start)
-    if start < 1 or end < start or end - start > 40:
+    if start < 1 or end < start:
+        return None
+    if max_lines is not None and end - start + 1 > max_lines:
         return None
     return start, end
 

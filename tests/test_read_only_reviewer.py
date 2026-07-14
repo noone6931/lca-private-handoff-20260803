@@ -37,6 +37,7 @@ from local_agent.steering.final_answer import SteeringDecision
 from local_agent.task_contract import generate_requirement_contract
 from local_agent.llm import LlmTimeoutError
 from local_agent.requirement_evidence import RequirementEvidence
+from local_agent.requirement_evidence import parse_document_locators
 from local_agent.tool_observation import ToolResultSummary
 
 
@@ -1505,9 +1506,115 @@ class _TransportOmittedClaimClient:
                     }
                 },
             )()
-        claim_lines = [f"- policy.md:{index} states rule {index}." for index in range(1, 75)]
+        claim_lines = [f"- policy.md:{index * 10} states rule {index * 10}." for index in range(1, 75)]
         claim_lines.append("- policy.md:210 states rule 210; PayServiceImpl is the verified owner.")
         return type("Response", (), {"message": {"content": "\n".join(claim_lines)}})()
+
+
+class _PackedLocatorRuntimeClient:
+    calls: list[dict] = []
+
+    def __init__(self, config: AgentConfig):
+        self._primary_calls = 0
+
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
+        if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages):
+            payload = next(
+                json.loads(message["content"])
+                for message in messages
+                if message.get("role") == "user" and "LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content"))
+            )
+            claims = {claim["claim_id"]: claim["text"] for claim in payload["candidate_claims"]}
+            matrix = payload["handoff"]["claim_matrix"]
+            late_claim = next((claim_id for claim_id, text in claims.items() if "275-312" in text), "")
+            middle_claim = next((claim_id for claim_id, text in claims.items() if "178-252" in text), "")
+            has_277 = any(
+                item.get("classification") == "requirement_locator"
+                and late_claim in item.get("claim_ids", ())
+                and "277:" in item.get("summary", "")
+                for item in matrix
+            )
+            has_211 = any(
+                item.get("classification") == "requirement_locator"
+                and middle_claim in item.get("claim_ids", ())
+                and "211:" in item.get("summary", "")
+                for item in matrix
+            )
+            if has_211 and has_277:
+                return _review_tool_calls_response(
+                    [
+                        _final_call(
+                            "packed-pass",
+                            {
+                                "verdict": "pass",
+                                "confidence": 0.97,
+                                "reason": "packed locator evidence is visible",
+                                "document_consistency": {
+                                    "stance": "reported_unresolved",
+                                    "conflict_evidence_ids": [],
+                                    "supporting_evidence_ids": [],
+                                },
+                            },
+                        )
+                    ]
+                )
+            return _review_tool_calls_response(
+                [
+                    _finding_call(
+                        "missing-packed-evidence",
+                        late_claim or "c001",
+                        "",
+                        issue="late cited evidence is not visible",
+                        action="do not assert the cited requirement",
+                        include_claim=False,
+                    ),
+                    _final_call(
+                        "packed-revise",
+                        {
+                            "verdict": "revise",
+                            "confidence": 0.6,
+                            "reason": "missing packed evidence",
+                            "document_consistency": {
+                                "stance": "reported_unresolved",
+                                "conflict_evidence_ids": [],
+                                "supporting_evidence_ids": [],
+                            },
+                        },
+                    ),
+                ]
+            )
+        self._primary_calls += 1
+        if self._primary_calls == 1:
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {"id": "read-policy", "type": "function", "function": {"name": "read_file", "arguments": '{"path":"policy.md"}'}},
+                            {"id": "read-html", "type": "function", "function": {"name": "read_file", "arguments": '{"path":"prototype.html"}'}},
+                        ],
+                    }
+                },
+            )()
+        return type(
+            "Response",
+            (),
+            {
+                "message": {
+                    "content": "\n".join(
+                        [
+                            "- policy.md#L93-L128 states rule 127.",
+                            "- policy.md:178-252 states rule 211 and rule 252.",
+                            "- policy.md:275-312 states rule 277.",
+                            "- prototype.html#L203 states html rule 203.",
+                        ]
+                    )
+                }
+            },
+        )()
 
 
 def _config(workspace: Path, *, provider: str = "openai-compatible") -> AgentConfig:
@@ -1843,6 +1950,19 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertIn("requirement_locator", classifications)
         self.assertIn("observed_candidate", classifications)
 
+    def test_path_bound_line_locator_variants_parse_full_ranges(self) -> None:
+        variants = (
+            ("policy.md:93-128", "93-128"),
+            ("policy.md#L93-L128", "93-L128"),
+            ("policy.md:#L93-L128", "93-L128"),
+            ("policy.md:93–128", "93–128"),
+            ("policy.md#L93–L128", "93–L128"),
+        )
+        for text, expected in variants:
+            with self.subTest(text=text):
+                locators = parse_document_locators(text, "policy.md")
+                self.assertEqual([(locator.kind, locator.value) for locator in locators], [("line", expected)])
+
     def test_claim_scoped_locator_items_inherit_heading_range_and_serialize_claim_id(self) -> None:
         contract = generate_requirement_contract(
             "只根据 Markdown 和 HTML 分析资料一致性，不要检查代码。"
@@ -1916,6 +2036,9 @@ class ReadOnlyReviewerTests(unittest.TestCase):
             "| category | requirement fact |\n"
             "| --- | --- |\n"
             "| period | settlement period is monthly |\n"
+            "---\n"
+            "1. First ordered item remains whole.\n"
+            "2. Second ordered item remains whole.\n"
         )
         texts = [unit.text for unit in candidate_claim_units(candidate)]
 
@@ -1925,6 +2048,10 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertNotIn("html only supplies layout.", texts)
         self.assertNotIn("| category | requirement fact |", texts)
         self.assertIn("| period | settlement period is monthly |", texts)
+        self.assertIn("1. First ordered item remains whole.", texts)
+        self.assertIn("2. Second ordered item remains whole.", texts)
+        self.assertNotIn("1.", texts)
+        self.assertNotIn("---", texts)
 
     def test_overlong_factual_units_are_projection_issues_not_silent_drops(self) -> None:
         long_sentence = "Unsupported owner fact " + ("x" * 620)
@@ -1963,7 +2090,7 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp).resolve()
             (workspace / "policy.md").write_text(
-                "\n".join(f"{index}: rule {index}" for index in range(1, 250)),
+                "\n".join(f"{index}: rule {index}" for index in range(1, 900)),
                 encoding="utf-8",
             )
             with patch("local_agent.agent.OpenAICompatibleClient", _TransportOmittedClaimClient):
@@ -1987,9 +2114,9 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         contract = generate_requirement_contract(
             "只根据 Markdown 和 HTML 分析资料一致性，不要检查代码。"
         )
-        content = "\n".join(f"{index}: rule {index}" for index in range(1, 420))
+        content = "\n".join(f"{index}: rule {index}" for index in range(1, 900))
         candidate = "\n".join(
-            f"- policy.md:{120 + index} states rule {120 + index}."
+            f"- policy.md:{index * 10} states rule {index * 10}."
             for index in range(1, 76)
         ) + "\n- missing.md:10 states an unsupported rule."
         units = candidate_claim_units(candidate)
@@ -2016,6 +2143,137 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertTrue(omitted.isdisjoint(covered_claims))
         self.assertNotIn(missing_claim, omitted)
         self.assertFalse(any("missing.md" in item.summary for item in locator_items))
+
+    def test_live_shaped_overlapping_ranges_pack_into_bounded_claim_scoped_windows(self) -> None:
+        contract = generate_requirement_contract(
+            "只根据 Markdown 和 HTML 分析资料一致性，不要检查代码。"
+        )
+        md_content = "\n".join(f"{index}: markdown rule {index}" for index in range(1, 340))
+        html_content = "\n".join(f"{index}: html rule {index}" for index in range(1, 230))
+        candidate = "\n".join(
+            [
+                "- policy.md:56-62 states markdown rule 56.",
+                "- policy.md:74 states markdown rule 74.",
+                "- policy.md:86-90 states markdown rule 86.",
+                "- policy.md#L93-L128 states markdown rule 127.",
+                "- policy.md:94-95 states markdown rule 95.",
+                "- policy.md:96-106 states markdown rule 106.",
+                "- policy.md:107-126 states markdown rule 126.",
+                "- policy.md:129-176 states markdown rule 176.",
+                "- policy.md:178-252 states markdown rule 252.",
+                "- policy.md:210-212 states markdown rule 211.",
+                "- policy.md:216-246 states markdown rule 246.",
+                "- policy.md:275-312 states markdown rule 277.",
+                "- prototype.html#L203 states html rule 203.",
+            ]
+        )
+        units = candidate_claim_units(candidate)
+        handoff = build_explore_handoff(
+            request="只根据 Markdown 和 HTML 分析资料一致性，不要检查代码。",
+            contract=contract,
+            requirement_evidence=(RequirementEvidence("policy.md", md_content, root="/workspace"),),
+            source_evidence=(
+                SourceEvidence("prototype.html", html_content, root="/workspace"),
+            ),
+            records=(),
+            tool_results=(),
+            candidate=candidate,
+            claim_units=units,
+        )
+        locator_items = [item for item in handoff.items if item.classification == "requirement_locator"]
+        late_claim = next(unit.claim_id for unit in units if "275-312" in unit.text)
+        html_claim = next(unit.claim_id for unit in units if "prototype.html" in unit.text)
+
+        self.assertLessEqual(len(locator_items), 16)
+        self.assertLessEqual(sum(len(item.summary) for item in locator_items), 12000)
+        self.assertEqual(handoff.transport_omitted_claim_ids, ())
+        self.assertTrue(any("93:" in item.summary and "128:" in item.summary for item in locator_items))
+        self.assertTrue(any("129:" in item.summary for item in locator_items))
+        self.assertTrue(any("176:" in item.summary for item in locator_items))
+        self.assertTrue(any("178:" in item.summary for item in locator_items))
+        self.assertTrue(any("252:" in item.summary for item in locator_items))
+        self.assertTrue(any("277:" in item.summary and late_claim in item.claim_ids for item in locator_items))
+        self.assertTrue(any("203:" in item.summary and html_claim in item.claim_ids for item in locator_items))
+
+    def test_runtime_reviewer_receives_late_packed_locator_evidence(self) -> None:
+        _PackedLocatorRuntimeClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            (workspace / "policy.md").write_text(
+                "\n".join(f"{index}: markdown rule {index}" for index in range(1, 340)),
+                encoding="utf-8",
+            )
+            (workspace / "prototype.html").write_text(
+                "\n".join(f"{index}: html rule {index}" for index in range(1, 230)),
+                encoding="utf-8",
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _PackedLocatorRuntimeClient):
+                runtime = AgentRuntime(_config(workspace), show_tool_logs=False)
+                answer = runtime.run("只根据 policy.md 和 prototype.html 分析资料一致性，不要检查代码。")
+
+        self.assertIn("policy.md:275-312", answer)
+        summary = runtime._last_run_summary["read_only_reviewer"]
+        self.assertEqual(summary["verdicts"], {"pass": 1})
+        self.assertEqual(summary["attempts"], 1)
+        self.assertEqual(summary["errors"], {})
+        self.assertEqual(runtime._last_run_summary["termination_reason"], "final")
+
+    def test_multi_window_range_requires_every_window_to_transport(self) -> None:
+        contract = generate_requirement_contract(
+            "只根据 Markdown 分析资料一致性，不要检查代码。"
+        )
+        content = "\n".join(f"{index}: rule {index}" for index in range(1, 1120))
+        filler_claims = "\n".join(f"- policy.md:{10 + index * 50} states rule {10 + index * 50}." for index in range(15))
+        candidate = filler_claims + "\n- policy.md:1000-1073 states a multi-window requirement."
+        units = candidate_claim_units(candidate)
+        handoff = build_explore_handoff(
+            request="只根据 Markdown 分析资料一致性，不要检查代码。",
+            contract=contract,
+            requirement_evidence=(RequirementEvidence("policy.md", content, root="/workspace"),),
+            source_evidence=(),
+            records=(),
+            tool_results=(),
+            candidate=candidate,
+            claim_units=units,
+        )
+        target_claim = next(unit.claim_id for unit in units if "1000-1073" in unit.text)
+        target_items = [
+            item
+            for item in handoff.items
+            if item.classification == "requirement_locator" and target_claim in item.claim_ids
+        ]
+
+        self.assertTrue(target_items)
+        self.assertIn(target_claim, handoff.transport_omitted_claim_ids)
+
+    def test_long_window_splits_at_complete_lines_and_keeps_middle_citation_visible(self) -> None:
+        contract = generate_requirement_contract(
+            "只根据 Markdown 分析资料一致性，不要检查代码。"
+        )
+        lines = [
+            f"{index}: {'x' * 150} rule {index}"
+            for index in range(1, 45)
+        ]
+        candidate = "- policy.md:1-40 states rule 25."
+        units = candidate_claim_units(candidate)
+        handoff = build_explore_handoff(
+            request="只根据 Markdown 分析资料一致性，不要检查代码。",
+            contract=contract,
+            requirement_evidence=(RequirementEvidence("policy.md", "\n".join(lines), root="/workspace"),),
+            source_evidence=(),
+            records=(),
+            tool_results=(),
+            candidate=candidate,
+            claim_units=units,
+        )
+        locator_items = [item for item in handoff.items if item.classification == "requirement_locator"]
+        target_claim = units[0].claim_id
+
+        self.assertGreater(len(locator_items), 1)
+        self.assertEqual(handoff.transport_omitted_claim_ids, ())
+        self.assertTrue(all(len(item.summary) <= 2200 for item in locator_items))
+        self.assertTrue(any("25:" in item.summary and target_claim in item.claim_ids for item in locator_items))
+        self.assertFalse(any("[omitted middle lines]" in item.summary for item in locator_items))
 
     def test_oversized_locator_line_is_not_marked_transported(self) -> None:
         contract = generate_requirement_contract(

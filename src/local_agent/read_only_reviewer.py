@@ -237,11 +237,14 @@ def _extract_candidate_claim_units(candidate: str) -> tuple[tuple[CandidateClaim
         if not line:
             flush_paragraph()
             continue
+        if _is_markdown_horizontal_rule(line):
+            flush_paragraph()
+            continue
         if _is_markdown_heading(line):
             flush_paragraph()
             locator_context = line if _line_has_path_bound_locator(line) else ""
             continue
-        structural = line.startswith(("- ", "* ", "+ ", "> ")) or _is_table_row(line)
+        structural = line.startswith(("- ", "* ", "+ ", "> ")) or _is_ordered_list_item(line) or _is_table_row(line)
         if structural:
             flush_paragraph()
             next_line = raw_lines[index + 1].strip() if index + 1 < len(raw_lines) else ""
@@ -979,6 +982,14 @@ def _split_long_complete_unit(value: str) -> tuple[tuple[str, ...], bool]:
 
 def _is_markdown_heading(line: str) -> bool:
     return bool(re.fullmatch(r"#{1,6}\s+\S.*", line))
+
+
+def _is_markdown_horizontal_rule(line: str) -> bool:
+    return bool(re.fullmatch(r"(?:-{3,}|\*{3,}|_{3,})", line.replace(" ", "")))
+
+
+def _is_ordered_list_item(line: str) -> bool:
+    return bool(re.match(r"^\d{1,4}[.)]\s+\S", line))
 
 
 def _line_has_path_bound_locator(line: str) -> bool:

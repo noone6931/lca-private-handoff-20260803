@@ -6,14 +6,18 @@ matrix that another model call can inspect without receiving the transcript.
 """
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass, replace
+import re
 from typing import Any, Iterable
 
 from .document_consistency import explicit_reconciliation_excerpt
 from .document_identity import canonical_root_identity
 from .document_identity import document_artifact_identity
 from .evidence import EvidenceRecord
+from .requirement_evidence import DocumentLocator
 from .requirement_evidence import document_locator_excerpt
+from .requirement_evidence import parse_document_line_range
 from .requirement_evidence import parse_document_locators
 from .requirement_evidence import RequirementEvidence
 from .steering.final_answer import SourceEvidence
@@ -32,6 +36,9 @@ MAX_DOCUMENT_ARTIFACT_ITEMS = 6
 MAX_CANDIDATE_LOCATOR_ITEMS = 16
 MAX_CANDIDATE_LOCATOR_SUMMARY_CHARS = 2200
 MAX_CANDIDATE_LOCATOR_TOTAL_CHARS = 12000
+MAX_CANDIDATE_LOCATOR_WINDOW_LINES = 40
+MAX_CANDIDATE_LOCATOR_SOURCE_SPAN_LINES = 120
+MAX_CANDIDATE_LOCATOR_WINDOW_GAP = 2
 
 
 @dataclass(frozen=True)
@@ -131,6 +138,15 @@ class _DocumentLocatorSource:
     root: str
     scope: str
     identity_path: str
+
+
+@dataclass(frozen=True)
+class _LineLocatorRequest:
+    artifact_key: tuple[str, str]
+    source: _DocumentLocatorSource
+    start: int
+    end: int
+    claim_id: str
 
 
 def build_explore_handoff(
@@ -378,6 +394,7 @@ def _candidate_locator_items(
     order: list[tuple[tuple[str, str], str, str]] = []
     seen: set[tuple[str, tuple[str, str], str, str]] = set()
     untransportable_claim_ids: list[str] = []
+    line_requests: dict[tuple[str, str], list[_LineLocatorRequest]] = {}
     sources = _document_locator_sources(requirements, source_evidence, tool_results)
     claim_texts = _candidate_locator_claim_texts(candidate, claim_units)
     for claim_id, claim_text in claim_texts:
@@ -394,6 +411,19 @@ def _candidate_locator_items(
                 if key in seen:
                     continue
                 seen.add(key)
+                if locator.kind == "line":
+                    line_range = parse_document_line_range(
+                        locator.value,
+                        max_lines=MAX_CANDIDATE_LOCATOR_SOURCE_SPAN_LINES,
+                    )
+                    if line_range is None:
+                        if parse_document_line_range(locator.value, max_lines=None) is not None:
+                            untransportable_claim_ids.append(claim_id)
+                        continue
+                    line_requests.setdefault(artifact_key, []).append(
+                        _LineLocatorRequest(artifact_key, source, line_range[0], line_range[1], claim_id)
+                    )
+                    continue
                 excerpt = document_locator_excerpt(source.content, locator)
                 if not excerpt:
                     continue
@@ -418,8 +448,134 @@ def _candidate_locator_items(
                 )
                 if prior is None:
                     order.append(bucket_key)
+    line_buckets, line_order, line_untransportable = _packed_line_locator_items(line_requests)
+    for key, item in line_buckets.items():
+        buckets[key] = item
+    order.extend(line_order)
+    untransportable_claim_ids.extend(line_untransportable)
     items, omitted_claim_ids = _fair_candidate_locator_items(buckets, order)
     return items, tuple(dict.fromkeys((*omitted_claim_ids, *untransportable_claim_ids)))
+
+
+def _packed_line_locator_items(
+    requests_by_artifact: dict[tuple[str, str], list[_LineLocatorRequest]],
+) -> tuple[
+    dict[tuple[tuple[str, str], str, str], ClaimEvidenceItem],
+    list[tuple[tuple[str, str], str, str]],
+    tuple[str, ...],
+]:
+    buckets: dict[tuple[tuple[str, str], str, str], ClaimEvidenceItem] = {}
+    order: list[tuple[tuple[str, str], str, str]] = []
+    untransportable_claim_ids: list[str] = []
+    for artifact_key, requests in requests_by_artifact.items():
+        segments: list[tuple[int, int, tuple[str, ...], _DocumentLocatorSource]] = []
+        for request in requests:
+            current = request.start
+            while current <= request.end:
+                end = min(request.end, current + MAX_CANDIDATE_LOCATOR_WINDOW_LINES - 1)
+                segments.append((current, end, (request.claim_id,), request.source))
+                current = end + 1
+        merged = _merge_line_segments(segments)
+        for start, end, claim_ids, source in merged:
+            chunks = _line_locator_summary_chunks(source, start, end)
+            if not chunks:
+                untransportable_claim_ids.extend(claim_ids)
+                continue
+            for chunk_start, chunk_end, summary in chunks:
+                key = (artifact_key, "line", f"{chunk_start}-{chunk_end}")
+                buckets[key] = ClaimEvidenceItem(
+                    "requirement_locator",
+                    "read_file",
+                    source.path,
+                    source.root,
+                    source.scope,
+                    "ok",
+                    summary,
+                    identity_path=source.identity_path,
+                    claim_id=claim_ids[0],
+                    claim_ids=claim_ids,
+                )
+                order.append(key)
+    return buckets, order, tuple(dict.fromkeys(untransportable_claim_ids))
+
+
+def _merge_line_segments(
+    segments: list[tuple[int, int, tuple[str, ...], _DocumentLocatorSource]],
+) -> list[tuple[int, int, tuple[str, ...], _DocumentLocatorSource]]:
+    merged: list[tuple[int, int, tuple[str, ...], _DocumentLocatorSource]] = []
+    for start, end, claim_ids, source in sorted(segments, key=lambda item: (item[0], item[1], item[2])):
+        if not merged:
+            merged.append((start, end, claim_ids, source))
+            continue
+        prior_start, prior_end, prior_claim_ids, prior_source = merged[-1]
+        combined_end = max(prior_end, end)
+        can_merge = (
+            start <= prior_end + MAX_CANDIDATE_LOCATOR_WINDOW_GAP
+            and combined_end - prior_start + 1 <= MAX_CANDIDATE_LOCATOR_WINDOW_LINES
+            and prior_source == source
+        )
+        if can_merge:
+            merged[-1] = (
+                prior_start,
+                combined_end,
+                tuple(dict.fromkeys((*prior_claim_ids, *claim_ids))),
+                prior_source,
+            )
+            continue
+        merged.append((start, end, claim_ids, source))
+    return merged
+
+
+def _line_locator_summary_chunks(
+    source: _DocumentLocatorSource,
+    start: int,
+    end: int,
+) -> tuple[tuple[int, int, str], ...]:
+    locator = DocumentLocator(source.path, "line", f"{start}-{end}" if start != end else str(start))
+    excerpt = document_locator_excerpt(source.content, locator)
+    if not excerpt:
+        return ()
+    rows = _summary_rows_from_excerpt(excerpt)
+    if not rows:
+        return ()
+    chunks: list[tuple[int, int, str]] = []
+    current: list[tuple[int, str]] = []
+    current_chars = 0
+    for number, line in rows:
+        if len(line) > _line_summary_body_budget(number, number):
+            return ()
+        projected_chars = current_chars + len(line) + (1 if current else 0)
+        if current and projected_chars > _line_summary_body_budget(current[0][0], number):
+            chunks.append(_render_line_summary_chunk(current))
+            current = []
+            current_chars = 0
+        current.append((number, line))
+        current_chars += len(line) + (1 if len(current) > 1 else 0)
+    if current:
+        chunks.append(_render_line_summary_chunk(current))
+    return tuple(chunks)
+
+
+def _summary_rows_from_excerpt(excerpt: str) -> tuple[tuple[int, str], ...]:
+    rows: list[tuple[int, str]] = []
+    for raw_line in (excerpt or "").splitlines():
+        match = re.match(r"^(?:.*?:)?(\d{1,6})\s*[:：]\s*(.*)$", raw_line.strip())
+        if not match:
+            continue
+        rows.append((int(match.group(1)), f"{int(match.group(1))}: {match.group(2).strip()}"))
+    return tuple(rows)
+
+
+def _line_summary_body_budget(start: int, end: int) -> int:
+    prefix = f"line {start}-{end}:" if start != end else f"line {start}:"
+    return MAX_CANDIDATE_LOCATOR_SUMMARY_CHARS - len(prefix) - 1
+
+
+def _render_line_summary_chunk(rows: list[tuple[int, str]]) -> tuple[int, int, str]:
+    start = rows[0][0]
+    end = rows[-1][0]
+    prefix = f"line {start}-{end}:" if start != end else f"line {start}:"
+    return start, end, f"{prefix}\n" + "\n".join(line for _, line in rows)
 
 
 def _candidate_locator_claim_texts(candidate: str, claim_units: Iterable[Any]) -> tuple[tuple[str, str], ...]:
@@ -542,12 +698,12 @@ def _fair_candidate_locator_items(
     order: list[tuple[tuple[str, str], str, str]],
 ) -> tuple[list[ClaimEvidenceItem], tuple[str, ...]]:
     items: list[ClaimEvidenceItem] = []
-    resolved_claim_ids: set[str] = {
+    resolved_claim_counts: Counter[str] = Counter(
         claim_id
         for item in buckets.values()
         for claim_id in item.claim_ids
-    }
-    transported_claim_ids: set[str] = set()
+    )
+    transported_claim_counts: Counter[str] = Counter()
     total_summary_chars = 0
     by_artifact: dict[tuple[str, str], list[tuple[tuple[str, str], str, str]]] = {}
     artifact_order: list[tuple[str, str]] = []
@@ -569,7 +725,7 @@ def _fair_candidate_locator_items(
                 if total_summary_chars + len(item.summary) > MAX_CANDIDATE_LOCATOR_TOTAL_CHARS:
                     continue
                 items.append(item)
-                transported_claim_ids.update(item.claim_ids)
+                transported_claim_counts.update(item.claim_ids)
                 total_summary_chars += len(item.summary)
                 made_progress = True
                 break
@@ -577,7 +733,11 @@ def _fair_candidate_locator_items(
                 break
         if not made_progress:
             break
-    omitted_claim_ids = [claim_id for claim_id in sorted(resolved_claim_ids) if claim_id not in transported_claim_ids]
+    omitted_claim_ids = [
+        claim_id
+        for claim_id, required_count in sorted(resolved_claim_counts.items())
+        if transported_claim_counts[claim_id] < required_count
+    ]
     return items, tuple(omitted_claim_ids)
 
 
