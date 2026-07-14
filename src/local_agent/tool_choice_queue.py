@@ -593,7 +593,7 @@ def evaluate_tool_choice_state(
             explore_decision.discovery_patterns
         )
         if explore_decision.exact_read_candidates:
-            bounded_read_paths = explore_decision.exact_read_candidates[:1]
+            bounded_read_paths = explore_decision.exact_read_candidates
         elif closure_candidate_read:
             bounded_read_paths = explore_decision.read_candidates[:1]
         else:
@@ -672,7 +672,11 @@ def evaluate_tool_choice_state(
                 () if explore_decision.discovery_patterns else explore_decision.discovery_roots
             ),
             required_tool_arguments_json=(
-                _read_file_arguments_json(explore_decision.exact_read_candidates[0])
+                (
+                    _read_file_arguments_json(explore_decision.exact_read_candidates[0])
+                    if len(explore_decision.exact_read_candidates) == 1
+                    else ""
+                )
                 if explore_decision.exact_read_candidates
                 else _read_file_arguments_json(explore_decision.read_candidates[0])
                 if closure_candidate_read

@@ -359,6 +359,52 @@ class ToolChoiceQueueTests(unittest.TestCase):
         self.assertEqual(json.loads(decision.required_tool_arguments_json), {"path": str(source)})
         self.assertIn(str(source), decision.tool_call_hints[0])
 
+    def test_cross_root_exact_candidates_keep_each_missing_root_readable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            backend = Path(tmp, "backend").resolve()
+            frontend = Path(tmp, "frontend").resolve()
+            backend_source = backend / "src" / "PrepareOrderApplication.java"
+            frontend_source = frontend / "src" / "views" / "preOrderManagement" / "list.vue"
+            backend_source.parent.mkdir(parents=True)
+            frontend_source.parent.mkdir(parents=True)
+            backend_source.write_text("class PrepareOrderApplication {}\n", encoding="utf-8")
+            frontend_source.write_text("<template />\n", encoding="utf-8")
+            backend_glob = ToolResultSummary(
+                "glob_files",
+                str(backend_source),
+                metadata={
+                    "searched_roots": [str(backend)],
+                    "files": [str(backend_source)],
+                    "patterns": [str(backend_source)],
+                    "negative_evidence_type": "path_match",
+                },
+            )
+            frontend_glob = ToolResultSummary(
+                "glob_files",
+                str(frontend_source),
+                metadata={
+                    "searched_roots": [str(frontend)],
+                    "files": [str(frontend_source)],
+                    "patterns": [str(frontend_source)],
+                    "negative_evidence_type": "path_match",
+                },
+            )
+            decision = evaluate_tool_choice_state(
+                task_kind="read-only",
+                prompt="只读分析 owner 和设计影响。",
+                tool_results=(backend_glob, frontend_glob),
+                workspace_roots=(str(backend), str(frontend)),
+                read_only_review_profile="design",
+            )
+
+        self.assertEqual(decision.allowed_tool_names, frozenset({"read_file"}))
+        self.assertEqual(
+            decision.scoped_read_paths,
+            (str(backend_source), str(frontend_source)),
+        )
+        self.assertEqual(decision.scoped_read_budget, 1)
+        self.assertEqual(decision.required_tool_arguments_json, "")
+
     def test_completed_source_only_glob_requires_one_model_selected_source_read(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp).resolve()
