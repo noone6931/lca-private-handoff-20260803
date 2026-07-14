@@ -596,6 +596,7 @@ def evaluate_tool_choice_state(
         inventory_candidate_read = (
             bool(explore_decision.inventory_read_candidates)
             and not bool(explore_decision.exact_read_candidates)
+            and not bool(explore_decision.read_candidates)
             and not closure_candidate_read
             and not bool(explore_decision.discovery_patterns)
         )
@@ -616,15 +617,20 @@ def evaluate_tool_choice_state(
             bounded_read_paths = explore_decision.exact_read_candidates
         elif closure_candidate_read:
             bounded_read_paths = explore_decision.read_candidates[:1]
+        elif explore_decision.read_candidates:
+            bounded_read_paths = explore_decision.read_candidates
         else:
             bounded_read_paths = ()
         return ToolChoiceDecision(
             steering_required=True,
             allowed_tool_names=_allowed_subset(
                 {"read_file"}
-                if explore_decision.exact_read_candidates or closure_candidate_read or inventory_candidate_read
-                else PRECISE_EVIDENCE_TOOLS
-                if explore_decision.read_candidates
+                if (
+                    explore_decision.exact_read_candidates
+                    or explore_decision.read_candidates
+                    or closure_candidate_read
+                    or inventory_candidate_read
+                )
                 else {"glob_files"}
                 if explore_decision.discovery_roots and not open_after_broad_inventory
                 else BOUNDED_EXPLORE_TOOLS,
@@ -633,7 +639,7 @@ def evaluate_tool_choice_state(
             reason=(
                 "read_only_profile_explore active: "
                 + (
-                    "prefer reading typed search/LSP candidates, or continue bounded precise search when needed; "
+                    "read one typed search/LSP source candidate for the current target root before any new discovery; "
                     if explore_decision.read_candidates
                     else "read one source candidate for the current target root before any new broad discovery; "
                     if inventory_candidate_read
@@ -653,6 +659,8 @@ def evaluate_tool_choice_state(
                 if explore_decision.exact_read_candidates
                 else "read_only_profile_explore_closure_read"
                 if closure_candidate_read
+                else "read_only_profile_explore_candidate_read"
+                if explore_decision.read_candidates
                 else "read_only_profile_explore_inventory_read"
                 if inventory_candidate_read
                 else "read_only_profile_explore_exact_cross_root"
@@ -670,7 +678,19 @@ def evaluate_tool_choice_state(
                 else ("search_code", "read_file", "glob_files")
             ),
             tool_call_hints=(
-                ("read_file candidates: " + ", ".join(explore_decision.read_candidates),)
+                ("read_file candidates: " + ", ".join(explore_decision.exact_read_candidates),)
+                if explore_decision.exact_read_candidates
+                else (
+                    (
+                        "Choose and read one typed source candidate for this target root: "
+                        + ", ".join(
+                            (
+                                *_roots_for_paths(explore_decision.read_candidates, explore_decision.missing_roots),
+                                *explore_decision.read_candidates,
+                            )
+                        )
+                    ),
+                )
                 if explore_decision.read_candidates
                 else (
                     "Choose and read one relevant source candidate for this target root: "
@@ -712,6 +732,8 @@ def evaluate_tool_choice_state(
                 if explore_decision.exact_read_candidates
                 else _read_file_arguments_json(explore_decision.read_candidates[0])
                 if closure_candidate_read
+                else ""
+                if explore_decision.read_candidates
                 else ""
                 if inventory_candidate_read
                 else _precise_glob_arguments_json(explore_decision.discovery_patterns)

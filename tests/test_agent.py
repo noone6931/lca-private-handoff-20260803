@@ -485,11 +485,11 @@ class _OwnerExploreFollowUpReadClient:
                         "content": None,
                         "tool_calls": [
                             {
-                                "id": "read-dependency",
+                                "id": "read-owner",
                                 "type": "function",
                                 "function": {
                                     "name": "read_file",
-                                    "arguments": json.dumps({"path": "src/Dependency.java"}),
+                                    "arguments": json.dumps({"path": "src/Owner.java"}),
                                 },
                             }
                         ],
@@ -499,7 +499,11 @@ class _OwnerExploreFollowUpReadClient:
         return type(
             "Response",
             (),
-            {"message": {"content": "Dependency.java was actively followed from current evidence; owner remains scoped."}},
+            {
+                "message": {
+                    "content": "Owner.java was directly read. Dependency.java is only a symbol observed in Owner.java, not a directly read owner file."
+                }
+            },
         )()
 
 
@@ -4110,7 +4114,7 @@ class AgentRuntimeTests(unittest.TestCase):
             call for call in _OwnerExploreDirectReadClient.calls
             if not any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in call["messages"])
         ]
-        self.assertEqual(_tool_names_from_schema_call(primary_calls[1]["tools"]), {"read_file", "search_code"})
+        self.assertEqual(_tool_names_from_schema_call(primary_calls[1]["tools"]), {"read_file"})
         self.assertEqual(_tool_names_from_schema_call(primary_calls[2]["tools"]), set())
         direct_read_event = [
             record for record in records
@@ -4118,7 +4122,7 @@ class AgentRuntimeTests(unittest.TestCase):
         ]
         self.assertGreaterEqual(len(direct_read_event), 1)
 
-    def test_owner_explore_candidate_hint_does_not_block_follow_up_key_read(self) -> None:
+    def test_owner_explore_candidate_commit_keeps_unlisted_follow_up_scoped(self) -> None:
         _OwnerExploreFollowUpReadClient.calls = []
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp).resolve()
@@ -4143,7 +4147,8 @@ class AgentRuntimeTests(unittest.TestCase):
                 )
                 result = runtime.run("只读分析当前服务 owner 和影响范围，不要修改。")
 
-        self.assertIn("Dependency.java", result)
+        self.assertIn("Owner.java", result)
+        self.assertIn("not a directly read owner file", result)
         self.assertEqual(runtime._last_run_summary["termination_reason"], "final")
         self.assertEqual(runtime._last_run_summary["tool_counts"], {"search_code": 1, "read_file": 1})
         self.assertFalse(any(item.is_error for item in runtime._run.tool_choice_results if item.name == "read_file"))
@@ -4152,11 +4157,18 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertIn("src/Owner.java", evidence_paths)
         self.assertNotIn("src/Dependency.java", evidence_paths)
         self.assertNotIn(str(dependency), evidence_paths)
+        read_paths = {
+            str(item.path or item.metadata.get("resolved_path") or "")
+            for item in runtime._run.tool_choice_results
+            if item.name == "read_file"
+        }
+        self.assertTrue(any(path == "src/Owner.java" or path.endswith("/src/Owner.java") for path in read_paths))
+        self.assertFalse(any(path == "src/Dependency.java" or path.endswith("/src/Dependency.java") for path in read_paths))
         primary_calls = [
             call for call in _OwnerExploreFollowUpReadClient.calls
             if not any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in call["messages"])
         ]
-        self.assertEqual(_tool_names_from_schema_call(primary_calls[1]["tools"]), {"read_file", "search_code"})
+        self.assertEqual(_tool_names_from_schema_call(primary_calls[1]["tools"]), {"read_file"})
 
     def test_owner_explore_allows_bounded_precise_calls_before_later_root_fair_call(self) -> None:
         _OwnerExploreRootFairBatchClient.calls = []

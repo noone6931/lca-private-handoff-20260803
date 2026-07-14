@@ -1,6 +1,6 @@
 {
   "id": "readonly-exact-toolchoice",
-  "title": "Read-only owner exploration treats search candidates as soft read hints",
+  "title": "Read-only owner exploration commits search candidates to one bounded read",
   "prompt": "只读分析当前服务 owner、调用链和影响范围，不要修改文件。",
   "budget_seconds": 90,
   "workspace_files": {
@@ -100,12 +100,13 @@
     ],
     "termination_reason": "final",
     "run_summary": {
-      "tool_calls": 5,
+      "tool_calls": 3,
       "tool_errors": 1,
-      "suppressed_tool_executions": 0
+      "provider_schema_violations": 2,
+      "suppressed_tool_executions": 2
     },
     "tool_choice_exact": {
-      "forces": 0,
+      "forces": 3,
       "exhausted": 0
     },
     "read_only_reviewer": {
@@ -114,5 +115,5 @@
     },
     "max_tool_errors": 1
   },
-  "residual_risk": "The fixture proves that read-only semantic candidates remain soft hints: extra precise searches can continue, invalid reads are bounded, and a later direct read is still required before review."
+  "residual_risk": "The fixture proves that read-only semantic candidates commit to a bounded read_file lifecycle: detours are suppressed, malformed reads are bounded, and direct read evidence is still required before review."
 }

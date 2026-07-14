@@ -121,9 +121,10 @@ class ToolChoiceQueueTests(unittest.TestCase):
         self.assertIn(str(second), initial.tool_call_hints[0])
         self.assertIn(str(second), after_first_root.tool_call_hints[0])
         self.assertNotIn(str(first), after_first_root.tool_call_hints[0])
-        self.assertEqual(read_candidate.rule_id, "read_only_profile_explore")
-        self.assertEqual(read_candidate.allowed_tool_names, frozenset({"read_file", "search_code"}))
-        self.assertEqual(read_candidate.scoped_read_paths, ())
+        self.assertEqual(read_candidate.rule_id, "read_only_profile_explore_candidate_read")
+        self.assertEqual(read_candidate.allowed_tool_names, frozenset({"read_file"}))
+        self.assertEqual(read_candidate.scoped_read_paths, (str(source),))
+        self.assertEqual(read_candidate.scoped_read_budget, 1)
         self.assertIn(str(source), read_candidate.tool_call_hints[0])
 
     def test_general_code_evidence_flow_still_exposes_lsp(self) -> None:
@@ -751,6 +752,46 @@ class ToolChoiceQueueTests(unittest.TestCase):
         self.assertEqual(action.kind, "force")
         self.assertEqual(action.attempt, 1)
 
+    def test_semantic_candidate_read_identity_change_resets_exact_force_attempts(self) -> None:
+        owner = ToolChoiceDirectiveOwner()
+        first = ToolChoiceDecision(
+            steering_required=True,
+            allowed_tool_names=frozenset({"read_file"}),
+            reason="read semantic source candidate",
+            rule_id="read_only_profile_explore_candidate_read",
+            missing_requirements=("code_read:/repo/backend", "code_read:/repo/frontend"),
+            preferred_tool_names=("read_file",),
+            tool_call_hints=("backend candidates",),
+            scoped_read_paths=("/repo/backend/src/Owner.java",),
+            scoped_read_budget=1,
+        )
+        second = ToolChoiceDecision(
+            steering_required=True,
+            allowed_tool_names=frozenset({"read_file"}),
+            reason="read semantic source candidate",
+            rule_id="read_only_profile_explore_candidate_read",
+            missing_requirements=("code_read:/repo/frontend",),
+            preferred_tool_names=("read_file",),
+            tool_call_hints=("frontend candidates",),
+            scoped_read_paths=("/repo/frontend/src/Owner.ts",),
+            scoped_read_budget=1,
+        )
+
+        self.assertEqual(owner.begin_decision(first, []).kind, "none")
+        self.assertEqual(
+            owner.observe_turn([
+                {"function": {"name": "glob_files", "arguments": "{}"}},
+            ]).attempt,
+            1,
+        )
+        self.assertEqual(owner.begin_decision(second, []).kind, "none")
+        action = owner.observe_turn([
+            {"function": {"name": "glob_files", "arguments": "{}"}},
+        ])
+
+        self.assertEqual(action.kind, "force")
+        self.assertEqual(action.attempt, 1)
+
     def test_model_selected_source_read_completes_root_coverage(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp).resolve()
@@ -1260,7 +1301,7 @@ class ToolChoiceQueueTests(unittest.TestCase):
         self.assertEqual(after_first_read.allowed_tool_names, frozenset({"glob_files"}))
         self.assertEqual(after_first_read.required_glob_roots, (str(second),))
 
-    def test_owner_explore_projects_typed_search_candidates_as_read_only_schema(self) -> None:
+    def test_owner_explore_projects_typed_search_candidates_as_scoped_read_requirement(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp).resolve()
             source = root / "src" / "Owner.java"
@@ -1280,19 +1321,21 @@ class ToolChoiceQueueTests(unittest.TestCase):
                 read_only_review_profile="owner_impact",
             )
 
-        self.assertEqual(decision.rule_id, "read_only_profile_explore")
-        self.assertEqual(decision.allowed_tool_names, frozenset({"read_file", "search_code"}))
+        self.assertEqual(decision.rule_id, "read_only_profile_explore_candidate_read")
+        self.assertEqual(decision.allowed_tool_names, frozenset({"read_file"}))
         self.assertEqual(decision.preferred_tool_names, ("read_file",))
-        self.assertEqual(decision.scoped_read_paths, ())
+        self.assertEqual(decision.scoped_read_paths, (str(source),))
+        self.assertEqual(decision.scoped_read_budget, 1)
         self.assertIn(str(source), decision.tool_call_hints[0])
 
-    def test_owner_explore_semantic_candidates_are_not_source_suffix_limited(self) -> None:
+    def test_owner_explore_semantic_candidates_filter_non_source_suffixes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp).resolve()
             sql = root / "db" / "owner.sql"
             xml = root / "mapper" / "OwnerMapper.xml"
             yaml = root / "config" / "route.yaml"
-            for path in (sql, xml, yaml):
+            css = root / "src" / "assets" / "style.css"
+            for path in (sql, xml, yaml, css):
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text("owner: evidence\n", encoding="utf-8")
             decision = evaluate_read_only_explore(
@@ -1301,13 +1344,119 @@ class ToolChoiceQueueTests(unittest.TestCase):
                     ToolResultSummary(
                         "search_code",
                         "semantic hits",
-                        metadata={"evidence_root": str(root), "evidence_paths": [str(sql), str(xml), str(yaml)]},
+                        metadata={"evidence_root": str(root), "evidence_paths": [str(css), str(sql), str(xml), str(yaml)]},
                     ),
                 ),
                 code_roots=(str(root),),
             )
 
-        self.assertEqual(decision.read_candidates[:2], (str(sql), str(xml)))
+        self.assertEqual(decision.read_candidates, (str(sql), str(xml)))
+
+    def test_owner_explore_css_search_hit_stays_bounded_open_not_candidate_read(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            css = root / "src" / "assets" / "style" / "index.css"
+            css.parent.mkdir(parents=True)
+            css.write_text(".owner { color: red; }\n", encoding="utf-8")
+            hit = ToolResultSummary(
+                "search_code",
+                f"{css}:1:.owner",
+                metadata={"evidence_root": str(root), "evidence_paths": [str(css)]},
+            )
+            broad = ToolResultSummary(
+                "glob_files",
+                str(css),
+                metadata={
+                    "evidence_root": str(root),
+                    "searched_roots": [str(root)],
+                    "patterns": [str(root)],
+                    "files": [str(css)],
+                    "truncated": True,
+                    "negative_evidence_type": "incomplete",
+                },
+            )
+            explore = evaluate_read_only_explore(
+                profile="owner_impact",
+                tool_results=(hit, broad),
+                code_roots=(str(root),),
+            )
+            after_css_read = evaluate_read_only_explore(
+                profile="owner_impact",
+                tool_results=(
+                    hit,
+                    ToolResultSummary(
+                        "read_file",
+                        ".owner { color: red; }\n",
+                        path=str(css),
+                        metadata={"resolved_path": str(css)},
+                    ),
+                ),
+                code_roots=(str(root),),
+            )
+            decision = evaluate_tool_choice_state(
+                task_kind="read-only",
+                prompt="只读定位这个仓库的 owner。",
+                tool_results=(hit, broad),
+                workspace_roots=(str(root),),
+                read_only_review_profile="owner_impact",
+            )
+
+        self.assertEqual(explore.read_candidates, ())
+        self.assertEqual(explore.missing_roots, (str(root),))
+        self.assertEqual(after_css_read.missing_roots, (str(root),))
+        self.assertEqual(decision.rule_id, "read_only_profile_explore")
+        self.assertIn("search_code", decision.allowed_tool_names)
+        self.assertIn("glob_files", decision.allowed_tool_names)
+        self.assertNotEqual(decision.allowed_tool_names, frozenset({"read_file"}))
+
+    def test_owner_explore_source_search_candidate_targets_one_root_shortlist(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp).resolve()
+            backend = base / "backend"
+            frontend = base / "frontend"
+            backend_sources = []
+            frontend_sources = []
+            for index in range(3):
+                source = backend / "src" / f"BackendOwner{index}.java"
+                source.parent.mkdir(parents=True, exist_ok=True)
+                source.write_text(f"class BackendOwner{index} {{}}\n", encoding="utf-8")
+                backend_sources.append(str(source))
+                front = frontend / "src" / f"FrontendOwner{index}.ts"
+                front.parent.mkdir(parents=True, exist_ok=True)
+                front.write_text(f"export const FrontendOwner{index} = true;\n", encoding="utf-8")
+                frontend_sources.append(str(front))
+            backend_hit = ToolResultSummary(
+                "search_code",
+                "\n".join(backend_sources),
+                metadata={"evidence_root": str(backend), "evidence_paths": backend_sources},
+            )
+            frontend_hit = ToolResultSummary(
+                "search_code",
+                "\n".join(frontend_sources),
+                metadata={"evidence_root": str(frontend), "evidence_paths": frontend_sources},
+            )
+            explore = evaluate_read_only_explore(
+                profile="design",
+                tool_results=(backend_hit, frontend_hit),
+                code_roots=(str(backend), str(frontend)),
+            )
+            decision = evaluate_tool_choice_state(
+                task_kind="read-only",
+                prompt="只读做证据化技术设计。",
+                tool_results=(backend_hit, frontend_hit),
+                workspace_roots=(str(backend), str(frontend)),
+                read_only_review_profile="design",
+            )
+
+        self.assertEqual(explore.read_candidates, tuple(backend_sources[:2]))
+        self.assertTrue(all(path.startswith(str(backend) + "/") for path in explore.read_candidates))
+        self.assertEqual(decision.rule_id, "read_only_profile_explore_candidate_read")
+        self.assertEqual(decision.allowed_tool_names, frozenset({"read_file"}))
+        self.assertEqual(decision.preferred_tool_names, ("read_file",))
+        self.assertEqual(decision.scoped_read_paths, tuple(backend_sources[:2]))
+        self.assertEqual(decision.scoped_read_budget, 1)
+        self.assertIn(str(backend), decision.tool_call_hints[0])
+        self.assertNotIn(str(frontend), decision.tool_call_hints[0])
 
     def test_relative_evidence_paths_bind_only_to_typed_search_scope(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1497,11 +1646,11 @@ class ToolChoiceQueueTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp).resolve()
             config = root / "config" / "datasource.properties"
-            manual = root / "notes" / "manual-owner.txt"
+            manual = root / "notes" / "manual_owner.py"
             config.parent.mkdir(parents=True)
             manual.parent.mkdir(parents=True)
             config.write_text("url=jdbc:test\n", encoding="utf-8")
-            manual.write_text("manual exact owner observation\n", encoding="utf-8")
+            manual.write_text("MANUAL_OWNER = True\n", encoding="utf-8")
             inventory_read = evaluate_read_only_explore(
                 profile="owner_impact",
                 tool_results=(
@@ -1519,7 +1668,7 @@ class ToolChoiceQueueTests(unittest.TestCase):
                 tool_results=(
                     ToolResultSummary(
                         "read_file",
-                        "manual exact owner observation\n",
+                        "MANUAL_OWNER = True\n",
                         path=str(manual),
                         metadata={"resolved_path": str(manual)},
                     ),

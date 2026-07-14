@@ -1,0 +1,146 @@
+{
+  "id": "readonly-semantic-candidate-commit",
+  "title": "Read-only explore commits typed semantic source candidates to one bounded read",
+  "prompt": "请只读定位两个代码根的 owner 和影响范围；先搜索证据，再读取关键源码。不要修改文件，不要把样式或目录清单当作 owner 结论。",
+  "budget_seconds": 90,
+  "workspace_files": {
+    "src/assets/style/index.css": ".semantic-noise { color: red; }\n",
+    "src/BackendOwner.java": "class BackendOwner { void handle() {} }\n"
+  },
+  "additional_roots": {
+    "frontend": {
+      "src/FrontendOwner.ts": "export const FrontendOwner = { route: 'main' };\n",
+      "assets/style.css": ".frontend-noise { color: blue; }\n"
+    }
+  },
+  "scripted_responses": [
+    {
+      "tool_calls": [
+        {
+          "name": "search_code",
+          "arguments": {
+            "path": "src",
+            "pattern": "semantic-noise"
+          }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "search_code",
+          "arguments": {
+            "path": "src",
+            "pattern": "BackendOwner"
+          }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "glob_files",
+          "arguments": {
+            "paths": [
+              "**/*Owner*.java"
+            ],
+            "limit": 5
+          }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "src/BackendOwner.java"
+          }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "search_code",
+          "arguments": {
+            "path": "{{root:frontend}}/src",
+            "pattern": "FrontendOwner"
+          }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "{{root:frontend}}/src/FrontendOwner.ts"
+          }
+        }
+      ]
+    },
+    {
+      "content": "已读证据：src/BackendOwner.java 定义 BackendOwner；frontend/src/FrontendOwner.ts 定义 FrontendOwner。样式文件命中只作为普通搜索噪声，未作为 owner 结论。其余调用链仍待确认。"
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "submit_read_only_review",
+          "arguments": {
+            "verdict": "pass",
+            "confidence": 0.97,
+            "reason": "The answer cites direct source reads for both roots and keeps the CSS hit out of owner conclusions."
+          }
+        }
+      ]
+    }
+  ],
+  "acceptance": {
+    "required_tools": [
+      "search_code",
+      "read_file"
+    ],
+    "forbidden_tools": [
+      "list_files",
+      "apply_patch",
+      "write_file",
+      "shell",
+      "run_tests"
+    ],
+    "changed_files": [],
+    "answer_all_of": [
+      "BackendOwner.java",
+      "FrontendOwner.ts",
+      "样式文件",
+      "普通搜索噪声",
+      "仍待确认"
+    ],
+    "answer_forbidden_regex": [
+      "style/index\\.css.*owner 结论",
+      "样式文件(被|足以|可以|可).*作为 owner 结论",
+      "完整.*调用链"
+    ],
+    "termination_reason": "final",
+    "run_summary": {
+      "tool_calls": 5,
+      "tool_errors": 0,
+      "provider_schema_violations": 1,
+      "provider_protocol_violations": 0,
+      "suppressed_tool_executions": 1
+    },
+    "tool_choice_exact": {
+      "forces": 1,
+      "exhausted": 0
+    },
+    "read_only_reviewer": {
+      "triggers": 1,
+      "typed_submits": 1
+    },
+    "safe_partial_report": {
+      "emitted": 0
+    },
+    "max_tool_errors": 0
+  },
+  "residual_risk": "This fixture locks semantic source-candidate commitment and non-source hit filtering; live provider search quality and larger repository ranking still need immutable-candidate gates."
+}

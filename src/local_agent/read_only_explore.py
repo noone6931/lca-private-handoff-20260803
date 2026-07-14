@@ -32,6 +32,7 @@ OBSERVATION_TOOLS = CANDIDATE_EVIDENCE_TOOLS | {"glob_files", "list_files"}
 MAX_OWNER_DESIGN_EXPLORE_CALLS = 12
 SOFT_EXPLORE_CALLS_PER_ROOT = 2
 HARD_EXPLORE_CALLS_PER_ROOT = 4
+MAX_SEMANTIC_READ_CHOICES_PER_DIRECTIVE = 2
 MAX_SOURCE_INVENTORY_READ_CHOICES_PER_ROOT = 16
 MAX_SOURCE_INVENTORY_READ_CHOICES_PER_DIRECTIVE = 5
 SOURCE_FILE_SUFFIXES = frozenset(
@@ -58,8 +59,21 @@ SOURCE_FILE_SUFFIXES = frozenset(
         ".ts",
         ".tsx",
         ".vue",
+        ".xml",
         ".yaml",
         ".yml",
+    }
+)
+NON_SOURCE_MANIFEST_FILENAMES = frozenset(
+    {
+        "build.gradle",
+        "gradle.properties",
+        "package-lock.json",
+        "package.json",
+        "pnpm-lock.yaml",
+        "pom.xml",
+        "settings.gradle",
+        "yarn.lock",
     }
 )
 
@@ -118,6 +132,7 @@ def evaluate_read_only_explore(
     soft_budget = max(2, len(roots) * SOFT_EXPLORE_CALLS_PER_ROOT)
     hard_budget = min(MAX_OWNER_DESIGN_EXPLORE_CALLS, max(4, len(roots) * HARD_EXPLORE_CALLS_PER_ROOT))
     semantic_candidates = _semantic_candidate_paths_by_root(results, roots)
+    non_source_semantic_paths = _non_source_semantic_paths_by_root(results, roots)
     inventory_paths = _inventory_paths_by_root(results, roots)
     requested_artifacts = tuple(requested_source_artifacts)
     precise_source_inventory = _precise_source_inventory_paths_by_root(
@@ -137,12 +152,18 @@ def evaluate_read_only_explore(
         roots,
         covered_candidate_paths,
         inventory_paths,
+        non_source_semantic_paths,
         requested_source_artifacts=requested_artifacts,
     )
     missing = tuple(root for root in roots if root not in covered)
     root_attempts = _root_attempts(results, roots)
     preferred_roots = _least_observed_roots(missing, root_attempts)
-    read_candidates = _read_candidates_for_missing_roots(candidate_paths, missing)
+    candidate_target_roots = _inventory_read_target_roots(candidate_paths, missing, root_attempts)
+    read_candidates = _read_candidates_for_missing_roots(
+        candidate_paths,
+        candidate_target_roots,
+        per_root_limit=MAX_SEMANTIC_READ_CHOICES_PER_DIRECTIVE,
+    )
     exact_read_candidates = _read_candidates_for_missing_roots(precise_source_inventory, missing)
     inventory_target_roots = _inventory_read_target_roots(source_inventory, missing, root_attempts)
     inventory_read_candidates = _read_candidates_for_missing_roots(
@@ -289,6 +310,7 @@ def _covered_roots(
     roots: tuple[str, ...],
     semantic_candidates: dict[str, tuple[str, ...]],
     inventory_paths: dict[str, tuple[str, ...]],
+    non_source_semantic_paths: dict[str, tuple[str, ...]],
     *,
     requested_source_artifacts: tuple[str, ...] = (),
 ) -> set[str]:
@@ -305,6 +327,8 @@ def _covered_roots(
                 continue
             if _matches_requested_source_artifact(path, root, requested_source_artifacts):
                 covered.add(root)
+                continue
+            if path in non_source_semantic_paths.get(root, ()):
                 continue
             if path in inventory_paths.get(root, ()):
                 if _is_source_evidence_path(path):
@@ -342,7 +366,8 @@ def _matches_requested_source_artifact(path: str, root: str, references: tuple[s
 
 
 def _is_source_evidence_path(path: str) -> bool:
-    return Path(path).suffix.lower() in SOURCE_FILE_SUFFIXES
+    candidate = Path(path)
+    return candidate.name.lower() not in NON_SOURCE_MANIFEST_FILENAMES and candidate.suffix.lower() in SOURCE_FILE_SUFFIXES
 
 
 def _canonical_path(result: ToolResultSummary) -> str | None:
@@ -399,11 +424,39 @@ def _semantic_candidate_paths_by_root(
         if not isinstance(values, (list, tuple)):
             continue
         for root, rendered in _scoped_evidence_paths(result, roots):
+            if not _is_source_evidence_path(rendered):
+                continue
             if (root, rendered) in seen:
                 continue
             seen.add((root, rendered))
             candidates[root].append(rendered)
     return {root: tuple(paths) for root, paths in candidates.items()}
+
+
+def _non_source_semantic_paths_by_root(
+    results: Iterable[ToolResultSummary],
+    roots: tuple[str, ...],
+) -> dict[str, tuple[str, ...]]:
+    paths: dict[str, list[str]] = {root: [] for root in roots}
+    seen: set[tuple[str, str]] = set()
+    for result in results:
+        if (
+            result.name not in CANDIDATE_EVIDENCE_TOOLS - {"read_file"}
+            or not _is_executed_explore_attempt(result)
+            or result.is_error
+        ):
+            continue
+        if result.metadata.get("evidence_paths_overflow"):
+            continue
+        values = result.metadata.get("evidence_paths")
+        if not isinstance(values, (list, tuple)):
+            continue
+        for root, rendered in _scoped_evidence_paths(result, roots):
+            if _is_source_evidence_path(rendered) or (root, rendered) in seen:
+                continue
+            seen.add((root, rendered))
+            paths[root].append(rendered)
+    return {root: tuple(values) for root, values in paths.items()}
 
 
 def _inventory_paths_by_root(
@@ -498,7 +551,7 @@ def _model_selected_source_inventory_paths_by_root(
         )
         for root, rendered in scoped_paths:
             if (
-                Path(rendered).suffix.lower() not in SOURCE_FILE_SUFFIXES
+                not _is_source_evidence_path(rendered)
                 or (root, rendered) in seen
                 or len(candidates[root]) >= MAX_SOURCE_INVENTORY_READ_CHOICES_PER_ROOT
             ):
@@ -564,9 +617,9 @@ def _pattern_is_precise_source_selector(
             bool(scoped_roots) and _precise_relative_source_pattern(rendered) is not None
         )
     name = Path(rendered).name
-    suffix = Path(name).suffix.lower()
-    if suffix not in SOURCE_FILE_SUFFIXES:
+    if not _is_source_evidence_path(name):
         return False
+    suffix = Path(name).suffix.lower()
     stem = name[: -len(suffix)] if suffix else name
     literal = re.sub(r"[*?\[\]{}!]", "", stem).strip()
     return bool(literal) and any(char.isalnum() for char in literal)
@@ -592,7 +645,7 @@ def _exact_source_basename(raw_pattern: object) -> str | None:
     name = Path(raw_pattern.strip()).name
     if not name or any(char in name for char in "*?["):
         return None
-    if Path(name).suffix.lower() not in SOURCE_FILE_SUFFIXES:
+    if not _is_source_evidence_path(name):
         return None
     return name
 
@@ -792,7 +845,7 @@ def _precise_relative_source_pattern(raw: object) -> str | None:
     if path.is_absolute() or any(part == ".." for part in path.parts):
         return None
     filename = path.name
-    if any(char in filename for char in "*?[") or path.suffix.lower() not in SOURCE_FILE_SUFFIXES:
+    if any(char in filename for char in "*?[") or not _is_source_evidence_path(filename):
         return None
     return path.as_posix()
 
