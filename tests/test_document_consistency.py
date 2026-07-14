@@ -132,6 +132,22 @@ class DocumentConsistencyTests(unittest.TestCase):
             candidate_reconciliation_stance("两份资料存在差异，可由资料维护方确认以哪份为准。"),
             "conditional_reconciliation",
         )
+        self.assertEqual(
+            candidate_reconciliation_stance("资料冲突：2 项未解决，其余无冲突。"),
+            "reported_unresolved",
+        )
+        self.assertEqual(
+            candidate_reconciliation_stance("文档与图片的差异未解决，无法判定是否真实冲突。"),
+            "reported_unresolved",
+        )
+        self.assertEqual(
+            candidate_reconciliation_stance("各资料未建立早于或优先于其他资料的约束关系，冲突待确认。"),
+            "reported_unresolved",
+        )
+        self.assertEqual(
+            candidate_reconciliation_stance("两份资料的冲突尚未解决，但其实无冲突。"),
+            "asserted_reconciled",
+        )
 
     def test_pass_cannot_disguise_asserted_reconciliation_as_unresolved(self) -> None:
         handoff = _handoff()
@@ -183,6 +199,24 @@ class DocumentConsistencyTests(unittest.TestCase):
                 assessment,
                 handoff,
                 candidate=scoped_candidate,
+                verdict="pass",
+            )
+        )
+
+        bounded_summary = (
+            "policy.md 与 prototype.html 在其他字段上一致。"
+            "资料冲突：policy.md 与 example.png 的 2 项差异未解决，其余无冲突。"
+            "各资料未建立谁早于或优先于其他资料的约束关系，冲突待确认。"
+        )
+        self.assertEqual(
+            candidate_reconciliation_stance_for_conflict(bounded_summary, conflicts, handoff.items),
+            "reported_unresolved",
+        )
+        self.assertIsNone(
+            validate_document_consistency_assessment(
+                assessment,
+                handoff,
+                candidate=bounded_summary,
                 verdict="pass",
             )
         )

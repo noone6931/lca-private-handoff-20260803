@@ -470,6 +470,9 @@ def _candidate_reconciliation_stance(
         if conditional and unresolved:
             saw_conditional = True
             continue
+        if unresolved and _assertions_only_reconcile_remaining_items(clause, assertions):
+            saw_unresolved = True
+            continue
         return "asserted_reconciled"
     if saw_conditional:
         return "conditional_reconciliation"
@@ -807,6 +810,20 @@ _UNRESOLVED_MARKER = re.compile(
     r"(?:未说明|不明确|无法确认|待确认|未消解|未解决|(?:可由|需由|需要|请).{0,24}(?:确认|决定)))",
     flags=re.IGNORECASE,
 )
+_EPISTEMIC_UNCERTAINTY_MATCH = re.compile(
+    r"(?:尚)?无法(?:判定|判断|确认|说明).{0,24}(?:是否)?.{0,12}(?:冲突|矛盾)|"
+    r"(?:cannot|unable\s+to).{0,24}(?:determine|confirm|establish).{0,24}(?:conflict|consistent|reconciled)",
+    flags=re.IGNORECASE,
+)
+_NEGATED_RELATION_PREFIX = re.compile(
+    r"(?:(?:未|没有|尚未).{0,20}(?:建立|说明|明确|确认)|"
+    r"\b(?:no|not)\b.{0,28}\b(?:established|specified|confirmed)\b).{0,16}$",
+    flags=re.IGNORECASE,
+)
+_REMAINING_ITEMS_PREFIX = re.compile(
+    r"(?:其余|其他|剩余|除此之外|\b(?:other|remaining|the\s+rest)\b).{0,8}$",
+    flags=re.IGNORECASE,
+)
 
 
 def _candidate_clauses(candidate: str) -> tuple[str, ...]:
@@ -829,7 +846,25 @@ def _positive_reconciliation_matches(clause: str) -> tuple[re.Match[str], ...]:
         match
         for match in _ASSERTED_RECONCILIATION_MARKER.finditer(clause)
         if not any(match.start() < conflict.end() and conflict.start() < match.end() for conflict in conflicts)
+        and not _is_epistemically_negated_reconciliation(clause, match)
         and _assertion_is_document_scoped(clause, match)
+    )
+
+
+def _is_epistemically_negated_reconciliation(clause: str, match: re.Match[str]) -> bool:
+    matched = match.group(0)
+    if _EPISTEMIC_UNCERTAINTY_MATCH.fullmatch(matched):
+        return True
+    prefix = clause[max(0, match.start() - 56) : match.start()]
+    return bool(_NEGATED_RELATION_PREFIX.search(prefix))
+
+
+def _assertions_only_reconcile_remaining_items(clause: str, assertions: tuple[re.Match[str], ...]) -> bool:
+    if not assertions or not _EXPLICIT_CONFLICT_MARKER.search(clause):
+        return False
+    return all(
+        _REMAINING_ITEMS_PREFIX.search(clause[max(0, match.start() - 20) : match.start()])
+        for match in assertions
     )
 
 
