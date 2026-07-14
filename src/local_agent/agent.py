@@ -31,7 +31,7 @@ from .compaction import truncate_recent_tool_outputs as _truncate_recent_tool_ou
 from .chat_runtime import call_chat_with_timeout
 from .config import AgentConfig
 from .config import normalize_approval_mode
-from .design_evidence import cross_root_design_evidence_roots
+from .design_evidence import project_workspace_evidence_roots
 from .delivery_report import render_delivery_report
 from .evidence import EvidenceRecord
 from .evidence import first_result_line_paths
@@ -444,11 +444,13 @@ class AgentRuntime:
         model_prompt = _with_workflow_nudge(prompt)
         requirement_contract = generate_requirement_contract(prompt)
         requirement_contract_context = render_contract_context(requirement_contract)
-        design_evidence_roots = (
-            cross_root_design_evidence_roots(self._workspace_context.primary, self._workspace_context.additional_roots, prompt)
-            if requirement_contract.task_kind == "read-only" and not requirement_contract.inspection_forbidden
-            else ()
+        workspace_evidence_roots = project_workspace_evidence_roots(
+            self._workspace_context.primary,
+            self._workspace_context.additional_roots,
+            read_only_review_profile=requirement_contract.read_only_review_profile,
+            inspection_forbidden=requirement_contract.inspection_forbidden,
         )
+        design_evidence_roots = workspace_evidence_roots.cross_root_coverage_roots
         self._run.begin(
             run_id=run_id,
             started_monotonic=started_monotonic,

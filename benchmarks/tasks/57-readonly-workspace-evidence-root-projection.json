@@ -1,0 +1,131 @@
+{
+  "id": "readonly-workspace-evidence-root-projection",
+  "title": "Read-only owner profile projects code evidence roots separately from authorized document roots",
+  "prompt": "请定位两个代码根的 owner 和影响范围，先读取 requirements.md，再给出代码证据。",
+  "budget_seconds": 90,
+  "workspace_files": {
+    "requirements.md": "# Requirement\nCoordinate backend and frontend owner handoff; keep uncertainty explicit.\n",
+    "prototype.html": "<html><body>reference artifact</body></html>\n"
+  },
+  "additional_roots": {
+    "backend": {
+      "pom.xml": "<project/>",
+      "src/BackendOwner.java": "class BackendOwner { void handle() {} }\n"
+    },
+    "frontend": {
+      "package.json": "{\"name\":\"frontend\"}\n",
+      "src/FrontendOwner.ts": "export const FrontendOwner = { route: 'handoff' };\n"
+    }
+  },
+  "scripted_responses": [
+    {
+      "tool_calls": [
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "requirements.md"
+          }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "search_code",
+          "arguments": {
+            "path": "{{root:backend}}/src",
+            "pattern": "BackendOwner"
+          }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "{{root:backend}}/src/BackendOwner.java"
+          }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "search_code",
+          "arguments": {
+            "path": "{{root:frontend}}/src",
+            "pattern": "FrontendOwner"
+          }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "{{root:frontend}}/src/FrontendOwner.ts"
+          }
+        }
+      ]
+    },
+    {
+      "content": "需求依据：requirements.md 要求 backend/frontend owner handoff 并保留不确定性。代码证据：backend/src/BackendOwner.java 定义 BackendOwner；frontend/src/FrontendOwner.ts 定义 FrontendOwner。未定位项：完整调用链和其他 owner 仍待确认。"
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "submit_read_only_review",
+          "arguments": {
+            "verdict": "pass",
+            "confidence": 0.97,
+            "reason": "The answer uses the document as requirements evidence and direct source reads for both code roots without treating the document root as a code root."
+          }
+        }
+      ]
+    }
+  ],
+  "acceptance": {
+    "required_tools": [
+      "read_file",
+      "search_code"
+    ],
+    "forbidden_tools": [
+      "list_files",
+      "apply_patch",
+      "write_file",
+      "shell",
+      "run_tests"
+    ],
+    "changed_files": [],
+    "answer_all_of": [
+      "requirements.md",
+      "BackendOwner.java",
+      "FrontendOwner.ts",
+      "仍待确认"
+    ],
+    "answer_forbidden_regex": [
+      "code_read:.*requirements",
+      "requirements.*read_only_explore.*incomplete",
+      "document root.*code root",
+      "已证实.*完整.*owner"
+    ],
+    "termination_reason": "final",
+    "run_summary": {
+      "tool_calls": 5,
+      "tool_errors": 0,
+      "provider_schema_violations": 0,
+      "provider_protocol_violations": 0
+    },
+    "read_only_reviewer": {
+      "triggers": 1,
+      "typed_submits": 1
+    },
+    "safe_partial_report": {
+      "emitted": 0
+    },
+    "max_tool_errors": 0
+  },
+  "residual_risk": "This fixture locks typed code-root projection for owner profiles when the primary workspace is a document root; live search quality and larger repository ranking remain covered by immutable gates."
+}

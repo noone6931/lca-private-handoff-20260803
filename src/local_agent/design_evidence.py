@@ -50,6 +50,15 @@ _MAX_FOLLOWUP_TOOL_CALLS = 6
 
 
 @dataclass(frozen=True)
+class WorkspaceEvidenceRootProjection:
+    """Typed workspace roots for high-risk read-only evidence collection."""
+
+    authorized_roots: tuple[str, ...]
+    code_evidence_roots: tuple[str, ...]
+    cross_root_coverage_roots: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class DesignEvidenceCoverageDecision:
     kind: str
     payload: dict[str, object]
@@ -149,6 +158,33 @@ def cross_root_design_evidence_roots(
     return tuple(roots) if len(roots) >= 2 else ()
 
 
+def project_workspace_evidence_roots(
+    workspace: Path,
+    allowed_dirs: tuple[Path, ...],
+    *,
+    read_only_review_profile: str | None,
+    inspection_forbidden: bool,
+) -> WorkspaceEvidenceRootProjection:
+    """Project authorized workspace roots into typed evidence roles.
+
+    Workspace authorization and source-evidence coverage are separate facts:
+    requirement/document roots can remain readable without becoming code roots.
+    The runtime queue consumes this projection instead of guessing from every
+    authorized path.
+    """
+
+    authorized = _unique_resolved_paths((workspace, *allowed_dirs))
+    if inspection_forbidden or read_only_review_profile not in {"owner_impact", "design"}:
+        code_roots: tuple[str, ...] = ()
+    else:
+        code_roots = tuple(root for root in authorized if _looks_like_code_root(Path(root)))
+    return WorkspaceEvidenceRootProjection(
+        authorized_roots=authorized,
+        code_evidence_roots=code_roots,
+        cross_root_coverage_roots=code_roots,
+    )
+
+
 def missing_design_evidence_roots(
     roots: Iterable[str],
     read_paths: Iterable[str | None],
@@ -163,6 +199,15 @@ def missing_design_evidence_roots(
 
 def _looks_like_code_root(path: Path) -> bool:
     return path.is_dir() and any((path / marker).exists() for marker in _CODE_ROOT_MARKERS)
+
+
+def _unique_resolved_paths(paths: Iterable[Path]) -> tuple[str, ...]:
+    roots: list[str] = []
+    for path in paths:
+        rendered = str(path.resolve())
+        if rendered not in roots:
+            roots.append(rendered)
+    return tuple(roots)
 
 
 def _is_code_source_path(path: str) -> bool:

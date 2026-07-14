@@ -4225,6 +4225,7 @@ class AgentRuntimeTests(unittest.TestCase):
             (workspace / "src").mkdir(parents=True)
             (additional / "config").mkdir(parents=True)
             (workspace / "config").mkdir(parents=True)
+            (additional / "package.json").write_text("{}", encoding="utf-8")
             (workspace / "config" / "payment-datasource.properties").write_text("alphabetical inventory noise\n", encoding="utf-8")
             (workspace / "src" / "Primary.sql").write_text("select 'PrimaryOwner';\n", encoding="utf-8")
             (additional / "config" / "AdditionalRoute.yaml").write_text("owner: AdditionalOwner\n", encoding="utf-8")
@@ -4631,7 +4632,7 @@ class AgentRuntimeTests(unittest.TestCase):
                         ),
                     ),
                 ):
-                    result = runtime.run("请只读分析两个项目的跨项目设计方案，不要修改文件。")
+                    result = runtime.run("请只读做证据化技术设计，分析两个项目的跨项目方案，不要修改文件。")
                 records = [
                     json.loads(line)
                     for line in runtime._session.path.read_text(encoding="utf-8").splitlines()

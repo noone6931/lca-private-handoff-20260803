@@ -570,7 +570,11 @@ def evaluate_tool_choice_state(
     explore_decision = evaluate_read_only_explore(
         profile=read_only_review_profile,
         tool_results=results,
-        code_roots=tuple(design_evidence_roots or workspace_roots or ()),
+        code_roots=tuple(
+            design_evidence_roots
+            if design_evidence_roots is not None
+            else workspace_roots or ()
+        ),
         requested_source_artifacts=source_artifacts,
     )
     if explore_decision.is_applicable:

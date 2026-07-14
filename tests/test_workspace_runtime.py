@@ -9,6 +9,7 @@ from unittest.mock import patch
 from local_agent.agent import AgentRuntime
 from local_agent.config import AgentConfig
 from local_agent.design_evidence import cross_root_design_evidence_roots
+from local_agent.design_evidence import project_workspace_evidence_roots
 from local_agent.protocol.events import ListEventSink
 from local_agent.state import workspace_state_dir
 from local_agent.tools.base import ToolResult
@@ -104,6 +105,53 @@ class WorkspaceRuntimeTests(unittest.TestCase):
             )
 
         self.assertEqual(roots, (str(primary), str(frontend)))
+
+    def test_workspace_evidence_root_projection_recomputes_after_root_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            docs = root / "requirements"
+            backend = root / "backend"
+            frontend = root / "frontend"
+            docs.mkdir()
+            backend.mkdir()
+            frontend.mkdir()
+            (docs / "policy.md").write_text("# Policy\n", encoding="utf-8")
+            (backend / "pom.xml").write_text("<project/>", encoding="utf-8")
+            (frontend / "package.json").write_text("{}", encoding="utf-8")
+            runtime = AgentRuntime(_config(docs), show_tool_logs=False)
+
+            initial = project_workspace_evidence_roots(
+                runtime._workspace_context.primary,
+                runtime._workspace_context.additional_roots,
+                read_only_review_profile="owner_impact",
+                inspection_forbidden=False,
+            )
+            runtime.add_workspace_root(str(backend))
+            with_backend = project_workspace_evidence_roots(
+                runtime._workspace_context.primary,
+                runtime._workspace_context.additional_roots,
+                read_only_review_profile="owner_impact",
+                inspection_forbidden=False,
+            )
+            runtime.add_workspace_root(str(frontend))
+            with_both = project_workspace_evidence_roots(
+                runtime._workspace_context.primary,
+                runtime._workspace_context.additional_roots,
+                read_only_review_profile="owner_impact",
+                inspection_forbidden=False,
+            )
+            runtime.remove_workspace_root(str(backend))
+            after_remove = project_workspace_evidence_roots(
+                runtime._workspace_context.primary,
+                runtime._workspace_context.additional_roots,
+                read_only_review_profile="owner_impact",
+                inspection_forbidden=False,
+            )
+
+        self.assertEqual(initial.code_evidence_roots, ())
+        self.assertEqual(with_backend.code_evidence_roots, (str(backend),))
+        self.assertEqual(with_both.code_evidence_roots, (str(backend), str(frontend)))
+        self.assertEqual(after_remove.code_evidence_roots, (str(frontend),))
 
     def test_add_root_append_failure_preserves_authorization_and_session(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

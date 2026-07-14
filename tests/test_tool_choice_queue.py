@@ -127,6 +127,25 @@ class ToolChoiceQueueTests(unittest.TestCase):
         self.assertEqual(read_candidate.scoped_read_budget, 1)
         self.assertIn(str(source), read_candidate.tool_call_hints[0])
 
+    def test_owner_profile_empty_projected_code_roots_do_not_fallback_to_authorized_roots(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            docs = root / "requirements"
+            docs.mkdir()
+            (docs / "policy.md").write_text("# Policy\n", encoding="utf-8")
+
+            decision = evaluate_tool_choice_state(
+                task_kind="unclear",
+                prompt="请只读定位 owner 和影响范围，并引用证据。",
+                tool_results=(),
+                workspace_roots=(str(docs),),
+                design_evidence_roots=(),
+                read_only_review_profile="owner_impact",
+            )
+
+        self.assertNotEqual(decision.rule_id, "read_only_profile_explore")
+        self.assertNotIn(f"code_read:{docs}", decision.missing_requirements)
+
     def test_general_code_evidence_flow_still_exposes_lsp(self) -> None:
         decision = evaluate_tool_choice_state(
             task_kind="read-only",
