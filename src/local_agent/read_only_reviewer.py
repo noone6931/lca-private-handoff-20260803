@@ -31,6 +31,7 @@ MAX_CLAIM_UNITS = 100
 MAX_CLAIM_UNIT_CHARS = 500
 MAX_CLAIM_TOTAL_CHARS = 40000
 MAX_TRANSPORT_RESIDUAL_PRUNE_CLAIMS = 2
+MAX_TRANSPORT_RESIDUAL_PROJECTION_ROUNDS = 2
 
 
 @dataclass(frozen=True)
@@ -118,6 +119,7 @@ class ReadOnlyReviewState:
     transport_rewrite_exhausted: bool = False
     transport_original_omitted_count: int = 0
     transport_pruned_claim_ids: tuple[str, ...] = ()
+    transport_projection_rounds: int = 0
     verdict: str | None = None
     reason: str | None = None
     findings: tuple[ReviewerFinding, ...] = ()
@@ -152,6 +154,7 @@ class ReadOnlyReviewState:
         self.transport_rewrite_exhausted = False
         self.transport_original_omitted_count = 0
         self.transport_pruned_claim_ids = ()
+        self.transport_projection_rounds = 0
         self.verdict = None
         self.reason = None
         self.findings = ()
@@ -187,6 +190,7 @@ class ReadOnlyReviewState:
             "transport_rewrite_exhausted": self.transport_rewrite_exhausted,
             "transport_original_omitted_count": self.transport_original_omitted_count,
             "transport_pruned_claim_ids": list(self.transport_pruned_claim_ids),
+            "transport_projection_rounds": self.transport_projection_rounds,
             "verdict": self.verdict,
             "reason": self.reason,
             "reviewed_claim_ids": [item.claim_id for item in self.findings],

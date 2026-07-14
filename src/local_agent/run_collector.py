@@ -59,6 +59,7 @@ class RunStats:
     read_only_reviewer_claim_transport_rewrite_acceptances: int = 0
     read_only_reviewer_claim_transport_rewrite_exhausted: int = 0
     read_only_reviewer_claim_transport_pruned_claims: int = 0
+    read_only_reviewer_claim_transport_projection_rounds: int = 0
     read_only_reviewer_findings: int = 0
     read_only_reviewer_reviewed_claims: int = 0
     read_only_reviewer_attempts: int = 0
@@ -323,6 +324,7 @@ class RunCollector:
     def record_read_only_review_claim_transport_pruned(self, claims: int) -> None:
         if self._stats is not None:
             self._stats.read_only_reviewer_claim_transport_pruned_claims += max(0, claims)
+            self._stats.read_only_reviewer_claim_transport_projection_rounds += 1
 
     def record_read_only_review_error(self, reason: str) -> None:
         if self._stats is not None:
@@ -506,6 +508,7 @@ class RunCollector:
                 "claim_transport_rewrite_acceptances": stats.read_only_reviewer_claim_transport_rewrite_acceptances,
                 "claim_transport_rewrite_exhausted": stats.read_only_reviewer_claim_transport_rewrite_exhausted,
                 "claim_transport_pruned_claims": stats.read_only_reviewer_claim_transport_pruned_claims,
+                "claim_transport_projection_rounds": stats.read_only_reviewer_claim_transport_projection_rounds,
                 "findings": stats.read_only_reviewer_findings,
                 "reviewed_claims": stats.read_only_reviewer_reviewed_claims,
                 "attempts": stats.read_only_reviewer_attempts,

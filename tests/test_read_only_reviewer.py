@@ -2474,6 +2474,93 @@ class _TransportResidualPruneClient:
         )()
 
 
+class _PostReviewTransportResidualPruneClient:
+    calls: list[dict] = []
+
+    def __init__(self, config: AgentConfig):
+        self._primary_calls = 0
+        self._review_calls = 0
+
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
+        if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages):
+            self._review_calls += 1
+            payload = next(
+                json.loads(message["content"])
+                for message in messages
+                if message.get("role") == "user" and "LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content"))
+            )
+            claims = payload.get("candidate_claims") or ()
+            claim_text = "\n".join(str(item.get("text") or "") for item in claims)
+            if "1-999" in claim_text or "unlocated source statement" in claim_text:
+                raise AssertionError("post-review transport residual reached reviewer")
+            if self._review_calls == 1:
+                first = next(item for item in claims if "defines Owner" in str(item.get("text") or ""))
+                return _review_tool_calls_response(
+                    [
+                        _finding_call(
+                            "scope-owner",
+                            str(first["claim_id"]),
+                            str(first["text"]),
+                            issue="definition wording is broader than the observed declaration",
+                            action="state only that line 1 declares Owner",
+                        ),
+                        _final_call(
+                            "scope-revise",
+                            {"verdict": "revise", "confidence": 0.99, "reason": "scope the declaration claim"},
+                        ),
+                    ]
+                )
+            return _review_tool_calls_response(
+                [_final_call("scope-pass", {"verdict": "pass", "confidence": 0.99, "reason": "rewrite is scoped"})]
+            )
+        self._primary_calls += 1
+        if self._primary_calls == 1:
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "read-owner",
+                                "type": "function",
+                                "function": {"name": "read_file", "arguments": '{"path":"src/Owner.java"}'},
+                            }
+                        ],
+                    }
+                },
+            )()
+        latest_user = next(
+            (str(message.get("content") or "") for message in reversed(messages) if message.get("role") == "user"),
+            "",
+        )
+        if "bounded transport recovery" in latest_user:
+            content = (
+                "## 源码当前事实\n"
+                "- src/Owner.java:1 defines Owner.\n"
+                "- src/Owner.java:1-999 is the verified settlement owner.\n"
+                "- src/Owner.java:1-999 proves the complete settlement lifecycle."
+            )
+        elif latest_user.startswith("[Read-only evidence review]"):
+            content = (
+                "## 源码当前事实\n"
+                "- src/Owner.java:1 declares Owner.\n"
+                "- src/Owner.java:1-999 is an unlocated source statement.\n"
+                "- src/Owner.java:1-999 is another unlocated source statement."
+            )
+        else:
+            content = (
+                "## 源码当前事实\n"
+                "- src/Owner.java:1 defines Owner.\n"
+                "- Owner currently owns settlement.\n"
+                "- Owner integrates payment.\n"
+                "- Owner proves the complete lifecycle."
+            )
+        return type("Response", (), {"message": {"content": content}})()
+
+
 class _TransportRecoveryDocumentClient:
     calls: list[dict] = []
 
@@ -4216,10 +4303,35 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertEqual(summary["claim_transport_rewrites"], 1)
         self.assertEqual(summary["claim_transport_rewrite_acceptances"], 1)
         self.assertEqual(summary["claim_transport_pruned_claims"], 2)
+        self.assertEqual(summary["claim_transport_projection_rounds"], 1)
         self.assertEqual(summary["claim_transport_rewrite_exhausted"], 0)
         self.assertEqual(summary["triggers"], 1)
         self.assertEqual(summary["verdicts"], {"pass": 1})
         self.assertEqual(runtime._run.read_only_review.transport_pruned_claim_ids, ("c002", "c003"))
+
+    def test_reviewer_rewrite_gets_one_second_exact_transport_projection_before_verification(self) -> None:
+        _PostReviewTransportResidualPruneClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            (workspace / "src").mkdir()
+            (workspace / "src/Owner.java").write_text("class Owner {}\n", encoding="utf-8")
+            with patch("local_agent.agent.OpenAICompatibleClient", _PostReviewTransportResidualPruneClient):
+                runtime = AgentRuntime(_config(workspace), show_tool_logs=False)
+                answer = runtime.run("读取 src/Owner.java 并输出证据化技术设计，不要修改文件。")
+
+        self.assertEqual(runtime._last_run_summary["termination_reason"], "final")
+        self.assertIn("src/Owner.java:1 declares Owner", answer)
+        self.assertNotIn("1-999", answer)
+        self.assertNotIn("unlocated source statement", answer)
+        summary = runtime._last_run_summary["read_only_reviewer"]
+        self.assertEqual(summary["claim_transport_rewrites"], 1)
+        self.assertEqual(summary["claim_transport_rewrite_acceptances"], 1)
+        self.assertEqual(summary["claim_transport_pruned_claims"], 4)
+        self.assertEqual(summary["claim_transport_projection_rounds"], 2)
+        self.assertEqual(summary["rewrites"], 1)
+        self.assertEqual(summary["rewrite_acceptances"], 1)
+        self.assertEqual(summary["rewrite_verification_rounds"], 1)
+        self.assertEqual(summary["verdicts"], {"revise": 1, "pass": 1})
 
     def test_transport_omission_without_finalization_budget_keeps_safe_partial(self) -> None:
         _TransportOmittedClaimClient.calls = []

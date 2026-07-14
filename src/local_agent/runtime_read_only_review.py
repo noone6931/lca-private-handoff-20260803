@@ -11,6 +11,7 @@ from .read_only_reviewer import candidate_claim_units
 from .read_only_reviewer import candidate_claim_projection_issues
 from .read_only_reviewer import MAX_REVIEWER_FINDINGS
 from .read_only_reviewer import MAX_REVIEWER_SCHEMA_REPAIRS
+from .read_only_reviewer import MAX_TRANSPORT_RESIDUAL_PROJECTION_ROUNDS
 from .read_only_reviewer import prune_exact_transport_residual_claim_lines
 from .read_only_reviewer import ReviewerFinding
 from .read_only_reviewer import ReviewerPhaseOutcome
@@ -372,9 +373,14 @@ class ReadOnlyReviewPhase:
         omitted_claim_ids = set(getattr(handoff, "transport_omitted_claim_ids", ()) or ())
         if not omitted_claim_ids:
             return candidate, claim_units, handoff, None, False
-        can_project = (
+        improving_transport_rewrite = (
             state.transport_rewrite_requested
             and state.transport_original_omitted_count > len(omitted_claim_ids)
+        )
+        reviewer_rewrite_residual = state.rewrite_requested and state.transport_rewrite_accepted
+        can_project = (
+            state.transport_projection_rounds < MAX_TRANSPORT_RESIDUAL_PROJECTION_ROUNDS
+            and (improving_transport_rewrite or reviewer_rewrite_residual)
         )
         if can_project:
             projected_candidate, pruned_ids = prune_exact_transport_residual_claim_lines(
@@ -386,15 +392,24 @@ class ReadOnlyReviewPhase:
                 projected_units = candidate_claim_units(projected_candidate)
                 projected_handoff = self._handoff(projected_candidate, claim_units=projected_units)
                 if not getattr(projected_handoff, "transport_omitted_claim_ids", ()):
-                    state.transport_pruned_claim_ids = pruned_ids
+                    state.transport_pruned_claim_ids = (*state.transport_pruned_claim_ids, *pruned_ids)
+                    state.transport_projection_rounds += 1
                     runtime._run.collector.record_read_only_review_claim_transport_pruned(len(pruned_ids))
                     runtime._session.append(
                         "read_only_reviewer",
-                        {"event": "claim_transport_residual_pruned", "claim_ids": list(pruned_ids)},
+                        {
+                            "event": "claim_transport_residual_pruned",
+                            "claim_ids": list(pruned_ids),
+                            "projection_round": state.transport_projection_rounds,
+                        },
                     )
                     runtime._events.emit(
                         "ContextUpdated",
-                        {"kind": "read_only_reviewer_claim_transport_residual_pruned", "claims": len(pruned_ids)},
+                        {
+                            "kind": "read_only_reviewer_claim_transport_residual_pruned",
+                            "claims": len(pruned_ids),
+                            "projection_round": state.transport_projection_rounds,
+                        },
                     )
                     return projected_candidate, projected_units, projected_handoff, None, True
         outcome = self._request_transport_rewrite_or_unverified(handoff, omitted_claim_ids, claim_units)

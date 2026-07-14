@@ -1,0 +1,110 @@
+{
+  "id": "readonly-post-review-transport-projection",
+  "title": "Reviewer rewrite residuals are projected before fresh verification",
+  "prompt": "读取 src/Owner.java 并输出证据化技术设计，不要修改文件。",
+  "budget_seconds": 90,
+  "workspace_files": {
+    "src/Owner.java": "class Owner {}\n"
+  },
+  "scripted_responses": [
+    {
+      "tool_calls": [
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "src/Owner.java"
+          }
+        }
+      ]
+    },
+    {
+      "content": "## 源码当前事实\n- src/Owner.java:1 defines Owner.\n- Owner currently owns settlement.\n- Owner integrates payment.\n- Owner proves the complete lifecycle."
+    },
+    {
+      "content": "## 源码当前事实\n- src/Owner.java:1 defines Owner.\n- src/Owner.java:1-999 is the verified settlement owner.\n- src/Owner.java:1-999 proves the complete settlement lifecycle."
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "report_read_only_finding",
+          "arguments": {
+            "claim_id": "c001",
+            "claim": "- src/Owner.java:1 defines Owner.",
+            "finding_scope": "candidate_defect",
+            "issue": "definition wording is broader than the observed declaration",
+            "action": "state only that line 1 declares Owner"
+          }
+        },
+        {
+          "name": "submit_read_only_review",
+          "arguments": {
+            "verdict": "revise",
+            "confidence": 0.99,
+            "reason": "scope the declaration claim"
+          }
+        }
+      ]
+    },
+    {
+      "content": "## 源码当前事实\n- src/Owner.java:1 declares Owner.\n- src/Owner.java:1-999 is an unlocated source statement.\n- src/Owner.java:1-999 is another unlocated source statement."
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "submit_read_only_review",
+          "arguments": {
+            "verdict": "pass",
+            "confidence": 0.99,
+            "reason": "the rewritten declaration claim is scoped and its transport residuals are absent"
+          }
+        }
+      ]
+    }
+  ],
+  "acceptance": {
+    "required_tools": [
+      "read_file"
+    ],
+    "forbidden_tools": [
+      "glob_files",
+      "search_code",
+      "list_files",
+      "apply_patch",
+      "write_file",
+      "shell",
+      "run_tests"
+    ],
+    "changed_files": [],
+    "answer_all_of": [
+      "src/Owner.java:1 declares Owner"
+    ],
+    "answer_forbidden_regex": [
+      "1-999",
+      "unlocated source statement",
+      "verified settlement owner",
+      "complete settlement lifecycle"
+    ],
+    "termination_reason": "final",
+    "run_summary": {
+      "tool_calls": 1,
+      "tool_errors": 0
+    },
+    "read_only_reviewer": {
+      "claim_transport_rewrites": 1,
+      "claim_transport_rewrite_acceptances": 1,
+      "claim_transport_pruned_claims": 4,
+      "claim_transport_projection_rounds": 2,
+      "claim_transport_rewrite_exhausted": 0,
+      "triggers": 2,
+      "rewrites": 1,
+      "rewrite_acceptances": 1,
+      "rewrite_verification_rounds": 1,
+      "typed_submits": 3
+    },
+    "safe_partial_report": {
+      "emitted": 0
+    },
+    "max_tool_errors": 0
+  },
+  "residual_risk": "The second projection is still deletion-only and bounded; a non-pass verification or a third transport residual fails closed."
+}
