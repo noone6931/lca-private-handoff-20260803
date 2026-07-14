@@ -431,17 +431,19 @@ class ToolChoiceQueueTests(unittest.TestCase):
             root = Path(tmp).resolve()
             source = root / "src" / "Owner.java"
             manifest = root / "package.json"
+            pom = root / "pom.xml"
             source.parent.mkdir()
             source.write_text("class Owner {}\n", encoding="utf-8")
             manifest.write_text("{}\n", encoding="utf-8")
+            pom.write_text("<project />\n", encoding="utf-8")
             inventory = ToolResultSummary(
                 "glob_files",
-                f"{manifest}\n{source}",
+                f"{manifest}\n{pom}\n{source}",
                 metadata={
                     "evidence_root": str(root),
                     "searched_roots": [str(root)],
-                    "files": [str(manifest), str(source)],
-                    "patterns": ["**/package.json", "**/src/**/*.*"],
+                    "files": [str(manifest), str(pom), str(source)],
+                    "patterns": ["**/package.json", "**/pom.xml", "**/src/**/*.*"],
                     "negative_evidence_type": "path_match",
                     "truncated": True,
                 },

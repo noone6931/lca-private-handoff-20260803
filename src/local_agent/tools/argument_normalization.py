@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 
 
@@ -27,6 +28,7 @@ def normalize_compatibility_arguments(name: str, arguments: dict[str, Any]) -> t
         _rename_alias(normalized, "cmd", "command", notes)
     elif name == "glob_files":
         _normalize_glob_pattern(normalized, notes)
+        _normalize_glob_paths(normalized, notes)
         _normalize_glob_path_scope(normalized, notes)
         _normalize_glob_paths(normalized, notes)
         _normalize_bounded_integer(normalized, "limit", notes)
@@ -140,6 +142,20 @@ def _normalize_glob_paths(arguments: dict[str, Any], notes: list[str]) -> None:
     """Drop accidental blank siblings, but never guess a missing discovery scope."""
 
     paths = arguments.get("paths")
+    if isinstance(paths, str) and paths.strip():
+        stripped = paths.strip()
+        try:
+            parsed = json.loads(stripped)
+        except json.JSONDecodeError:
+            parsed = None
+        if isinstance(parsed, list) and parsed and all(isinstance(path, str) for path in parsed):
+            paths = parsed
+            arguments["paths"] = paths
+            notes.append("paths JSON string -> array")
+        elif parsed is None:
+            paths = [stripped]
+            arguments["paths"] = paths
+            notes.append("paths string -> array")
     if not isinstance(paths, list) or not all(isinstance(path, str) for path in paths):
         return
     non_empty = [path.strip() for path in paths if path.strip()]

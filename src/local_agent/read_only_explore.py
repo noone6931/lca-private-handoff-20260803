@@ -56,7 +56,6 @@ SOURCE_FILE_SUFFIXES = frozenset(
         ".ts",
         ".tsx",
         ".vue",
-        ".xml",
         ".yaml",
         ".yml",
     }

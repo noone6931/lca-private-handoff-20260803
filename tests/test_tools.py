@@ -783,6 +783,23 @@ class ToolTests(unittest.TestCase):
             ["pattern -> paths[0]", "path scope applied to relative paths", "limit string -> integer"],
         )
 
+    def test_registry_normalizes_json_encoded_glob_paths_array(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            source = workspace / "src" / "App.java"
+            source.parent.mkdir()
+            source.write_text("class App {}\n", encoding="utf-8")
+            result = ToolRegistry(search_tools()).execute(
+                "glob_files",
+                {"paths": json.dumps(["src/**/*.java"])},
+                ToolContext(workspace=workspace, approval_mode="yolo"),
+            )
+
+        payload = json.loads(result.content)
+        self.assertFalse(result.is_error)
+        self.assertEqual(payload["files"], ["src/App.java"])
+        self.assertEqual(result.metadata["compatibility_normalized"], ["paths JSON string -> array"])
+
     def test_registry_drops_blank_glob_siblings_but_rejects_an_empty_scope(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp).resolve()
