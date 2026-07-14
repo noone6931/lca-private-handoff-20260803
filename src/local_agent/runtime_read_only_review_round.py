@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from .chat_runtime import call_chat_with_timeout
+from .document_consistency import is_document_consistency_rejection_code
 from .llm import LlmError, LlmTimeoutError
 from .read_only_reviewer import MAX_REVIEWER_CAPACITY_DIRECTIVES
 from .read_only_reviewer import MAX_REVIEWER_FINDINGS
@@ -23,31 +24,6 @@ from .reviewer_output_lifecycle import invalidated_document_finding_claim_ids
 from .reviewer_output_lifecycle import parse_reviewer_output_turn
 from .reviewer_output_lifecycle import reviewer_assistant_tool_message
 from .reviewer_output_lifecycle import reviewer_tool_result_messages
-
-
-DOCUMENT_CONSISTENCY_REJECTION_CODES = frozenset(
-    {
-        "document_consistency_missing",
-        "document_consistency_keys_invalid",
-        "document_consistency_stance_invalid",
-        "document_consistency_evidence_roles_overlap",
-        "document_consistency_support_requires_explicit_stance",
-        "document_consistency_finding_reconciles_conflict",
-        "document_conflict_evidence_invalid",
-        "document_conflict_evidence_unknown",
-        "document_conflict_evidence_duplicate",
-        "document_conflict_evidence_not_observation",
-        "document_conflict_evidence_insufficient",
-        "document_conflict_disposition_missing",
-        "document_consistency_stance_mismatch",
-        "document_reconciliation_unsupported",
-        "document_reconciliation_support_missing",
-        "document_reconciliation_support_invalid",
-        "document_supporting_evidence_invalid",
-        "document_supporting_evidence_unknown",
-        "document_supporting_evidence_duplicate",
-    }
-)
 
 
 @dataclass(frozen=True)
@@ -351,13 +327,9 @@ def _blocking_rejection_category(event: Any) -> str:
     code = getattr(event, "code", "") or ""
     if code.startswith("output_tool_arguments_"):
         return "arguments"
-    if _is_document_consistency_rejection_code(code):
+    if is_document_consistency_rejection_code(code):
         return "document_consistency"
     return "protocol"
-
-
-def _is_document_consistency_rejection_code(code: str) -> bool:
-    return code in DOCUMENT_CONSISTENCY_REJECTION_CODES
 
 
 def _exhausted_lifecycle_category(corrections: dict[str, int]) -> str | None:

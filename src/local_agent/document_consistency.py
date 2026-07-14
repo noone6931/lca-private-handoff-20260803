@@ -55,6 +55,29 @@ DOCUMENT_CONSISTENCY_STANCES = (
     "asserted_reconciled",
     "explicitly_supported_reconciliation",
 )
+DOCUMENT_CONSISTENCY_REJECTION_CODES = frozenset(
+    {
+        "document_consistency_missing",
+        "document_consistency_keys_invalid",
+        "document_consistency_stance_invalid",
+        "document_consistency_evidence_roles_overlap",
+        "document_consistency_support_requires_explicit_stance",
+        "document_consistency_finding_reconciles_conflict",
+        "document_conflict_evidence_invalid",
+        "document_conflict_evidence_unknown",
+        "document_conflict_evidence_duplicate",
+        "document_conflict_evidence_not_observation",
+        "document_conflict_evidence_insufficient",
+        "document_conflict_disposition_missing",
+        "document_consistency_stance_mismatch",
+        "document_reconciliation_unsupported",
+        "document_reconciliation_support_missing",
+        "document_reconciliation_support_invalid",
+        "document_supporting_evidence_invalid",
+        "document_supporting_evidence_unknown",
+        "document_supporting_evidence_duplicate",
+    }
+)
 
 MAX_REWRITE_CONTEXT_CHARS = 4200
 MAX_REWRITE_REQUEST_CHARS = 700
@@ -63,6 +86,12 @@ MAX_REWRITE_OPTIONAL_ITEM_SUMMARY_CHARS = 220
 MAX_REWRITE_PATH_CHARS = 180
 MAX_REWRITE_ROOT_CHARS = 140
 MAX_REWRITE_SCOPE_CHARS = 80
+
+
+def is_document_consistency_rejection_code(code: str) -> bool:
+    """Return whether a reviewer output rejection belongs to this typed owner."""
+
+    return code in DOCUMENT_CONSISTENCY_REJECTION_CODES
 
 
 def document_consistency_schema(evidence_ids: Iterable[str]) -> dict[str, Any]:

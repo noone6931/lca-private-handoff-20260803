@@ -3,10 +3,12 @@ from __future__ import annotations
 import unittest
 
 from local_agent.document_consistency import DocumentConsistencyAssessment
+from local_agent.document_consistency import DOCUMENT_CONSISTENCY_REJECTION_CODES
 from local_agent.document_consistency import candidate_reconciliation_stance
 from local_agent.document_consistency import complete_document_consistency_assessment
 from local_agent.document_consistency import document_consistency_schema
 from local_agent.document_consistency import DocumentConsistencyValidationError
+from local_agent.document_consistency import is_document_consistency_rejection_code
 from local_agent.document_consistency import parse_document_consistency_assessment
 from local_agent.document_consistency import validate_document_consistency_assessment
 from local_agent.document_consistency import validate_document_consistency_findings
@@ -41,6 +43,35 @@ def _handoff(*, support: bool = False) -> ExploreHandoff:
 
 
 class DocumentConsistencyTests(unittest.TestCase):
+    def test_document_consistency_rejection_code_owner_covers_typed_semantic_codes(self) -> None:
+        expected_codes = {
+            "document_consistency_missing",
+            "document_consistency_keys_invalid",
+            "document_consistency_stance_invalid",
+            "document_consistency_evidence_roles_overlap",
+            "document_consistency_support_requires_explicit_stance",
+            "document_consistency_finding_reconciles_conflict",
+            "document_conflict_evidence_invalid",
+            "document_conflict_evidence_unknown",
+            "document_conflict_evidence_duplicate",
+            "document_conflict_evidence_not_observation",
+            "document_conflict_evidence_insufficient",
+            "document_conflict_disposition_missing",
+            "document_consistency_stance_mismatch",
+            "document_reconciliation_unsupported",
+            "document_reconciliation_support_missing",
+            "document_reconciliation_support_invalid",
+            "document_supporting_evidence_invalid",
+            "document_supporting_evidence_unknown",
+            "document_supporting_evidence_duplicate",
+        }
+
+        self.assertEqual(DOCUMENT_CONSISTENCY_REJECTION_CODES, expected_codes)
+        for code in expected_codes:
+            self.assertTrue(is_document_consistency_rejection_code(code), code)
+        self.assertFalse(is_document_consistency_rejection_code("output_tool_arguments_json_invalid"))
+        self.assertFalse(is_document_consistency_rejection_code("unknown_output_tool"))
+
     def test_candidate_stance_is_clause_local_and_keeps_adjacent_qualifiers(self) -> None:
         self.assertEqual(
             candidate_reconciliation_stance("A and B are consistent because B is the completed state."),
