@@ -33,7 +33,7 @@
       ]
     },
     {
-      "content": "## 需求明确事实\n- requirements.md:2 要求围绕 processor 设计结算流程。\n\n## 源码当前事实\n### 后端 Processor\n- 当前文件超过 14500 行，并实现完整结算能力。\n\n## 设计建议\n### 后端建议\n- 建议新增协调层。\n\n## 尚待确认项\n- 真实调用链尚未定位。"
+      "content": "## 需求明确事实\n- requirements.md:2 要求围绕 processor 设计结算流程。\n\n## 源码当前事实\n### 后端 Processor\n- 当前文件超过 14500 行，并实现完整结算能力。\n- `{{root:backend}}/src/Processor.java:1` 定义 2 个方法。\n\n## 设计建议\n### 后端建议\n- 建议新增协调层。\n\n## 尚待确认项\n- 真实调用链尚未定位。"
     },
     {
       "content": "## 需求明确事实\n- requirements.md:2 要求围绕 processor 设计结算流程。\n\n## 源码当前事实\n### 后端 Processor\n- `{{root:backend}}/src/Processor.java:1` 定义 `Processor.settle`。\n\n## 设计建议\n### 后端建议\n- 建议评估新增协调层；这是建议，不是当前实现。\n\n## 尚待确认项\n- 真实调用链与完整 Owner 尚未定位。"
@@ -73,7 +73,8 @@
     ],
     "answer_forbidden_regex": [
       "超过 14500 行",
-      "实现完整结算能力"
+      "实现完整结算能力",
+      "定义 2 个方法"
     ],
     "termination_reason": "final",
     "run_summary": {

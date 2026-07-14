@@ -175,6 +175,7 @@ def build_explore_handoff(
     """
 
     results = tuple(tool_results)
+    claims = tuple(claim_units)
     requirement_entries = tuple(requirement_evidence)
     source_entries = tuple(source_evidence)
     candidate_locator_items, transport_omitted_claim_ids = _candidate_locator_items(
@@ -182,9 +183,9 @@ def build_explore_handoff(
         requirement_entries,
         source_entries,
         results,
-        claim_units,
+        claims,
     )
-    source_fact_claim_ids = _source_fact_claim_ids(claim_units)
+    source_fact_claim_ids = _source_fact_claim_ids(claims)
     source_locator_claim_ids = {
         claim_id
         for item in candidate_locator_items
@@ -196,6 +197,7 @@ def build_explore_handoff(
             (
                 *transport_omitted_claim_ids,
                 *(claim_id for claim_id in source_fact_claim_ids if claim_id not in source_locator_claim_ids),
+                *_unsupported_derived_count_claim_ids(claims, candidate_locator_items),
             )
         )
     )
@@ -350,6 +352,56 @@ def _source_fact_claim_ids(claim_units: Iterable[Any]) -> tuple[str, ...]:
             for pattern in _SOURCE_FACT_SECTION_PATTERNS
         )
     )
+
+
+_EXPLICIT_COUNT_PATTERN = re.compile(
+    r"(?<![\dA-Za-z])(?P<number>\d{1,4}(?:\.\d+)?\s*(?:[wW万])?)\s*"
+    r"(?P<classifier>个|项|种|条|笔|处|张|类|组|套|枚|次|"
+    r"items?|variables?|fields?|methods?|buttons?|entries|records?|types?)",
+    flags=re.IGNORECASE,
+)
+
+
+def _unsupported_derived_count_claim_ids(
+    claim_units: Iterable[Any],
+    locator_items: Iterable[ClaimEvidenceItem],
+) -> tuple[str, ...]:
+    """Require an explicit source count before transporting asserted totals.
+
+    Counting table rows or list entries is semantic work.  The primary model
+    may list the observed entries, but an isolated reviewer should not receive
+    a derived numeric total as if the source had stated it.
+    """
+
+    summaries_by_claim: dict[str, list[str]] = {}
+    for item in locator_items:
+        if item.classification not in {"requirement_locator", "source_locator"}:
+            continue
+        for claim_id in item.claim_ids:
+            summaries_by_claim.setdefault(claim_id, []).append(item.summary)
+    unsupported: list[str] = []
+    for unit in claim_units:
+        claim_id = str(getattr(unit, "claim_id", "") or "")
+        if not claim_id or claim_id not in summaries_by_claim:
+            continue
+        asserted_counts = {
+            _normalized_count(match.group("number"))
+            for match in _EXPLICIT_COUNT_PATTERN.finditer(str(getattr(unit, "text", "") or ""))
+        }
+        if not asserted_counts:
+            continue
+        supported_counts = {
+            _normalized_count(match.group("number"))
+            for summary in summaries_by_claim[claim_id]
+            for match in _EXPLICIT_COUNT_PATTERN.finditer(summary)
+        }
+        if not asserted_counts.issubset(supported_counts):
+            unsupported.append(claim_id)
+    return tuple(dict.fromkeys(unsupported))
+
+
+def _normalized_count(value: str) -> str:
+    return re.sub(r"\s+", "", value or "").casefold()
 
 
 def _is_source_path_context_only(text: str) -> bool:

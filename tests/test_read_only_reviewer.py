@@ -3593,6 +3593,48 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertIn(source_claim.claim_id, handoff.transport_omitted_claim_ids)
         self.assertNotIn(proposal_claim.claim_id, handoff.transport_omitted_claim_ids)
 
+    def test_derived_count_without_explicit_source_total_requires_transport_rewrite(self) -> None:
+        contract = generate_requirement_contract("只根据 policy.md 输出证据化设计。")
+        candidate = "- policy.md:1-3 列出 2 项变量。"
+        units = candidate_claim_units(candidate)
+        handoff = build_explore_handoff(
+            request="只根据 policy.md 输出证据化设计。",
+            contract=contract,
+            requirement_evidence=(
+                RequirementEvidence(
+                    "policy.md",
+                    "1: `{first}` variable\n2: `{second}` variable\n3: `{third}` variable",
+                    root="/workspace",
+                ),
+            ),
+            source_evidence=(),
+            records=(),
+            tool_results=(),
+            candidate=candidate,
+            claim_units=units,
+        )
+
+        self.assertEqual(handoff.transport_omitted_claim_ids, (units[0].claim_id,))
+
+    def test_explicit_source_total_keeps_count_transportable(self) -> None:
+        contract = generate_requirement_contract("只根据 policy.md 输出证据化设计。")
+        candidate = "- policy.md:1 明确要求 2 项变量。"
+        units = candidate_claim_units(candidate)
+        handoff = build_explore_handoff(
+            request="只根据 policy.md 输出证据化设计。",
+            contract=contract,
+            requirement_evidence=(
+                RequirementEvidence("policy.md", "1: 文档明确要求 2 项变量。", root="/workspace"),
+            ),
+            source_evidence=(),
+            records=(),
+            tool_results=(),
+            candidate=candidate,
+            claim_units=units,
+        )
+
+        self.assertEqual(handoff.transport_omitted_claim_ids, ())
+
     def test_source_fact_section_with_claim_locator_is_transportable(self) -> None:
         contract = generate_requirement_contract("读取源码并输出证据化技术设计。")
         source_path = "/workspace/backend/src/Processor.java"
@@ -3720,6 +3762,7 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertIn("do not by themselves prove an end-to-end capability", message)
         self.assertIn("Recount asserted totals from the cited excerpt", message)
         self.assertIn("handler reference is not a method or function definition", message)
+        self.assertIn("Do not state a derived item/variable/field/method count", message)
 
     def test_rewrite_treats_reviewer_action_as_advisory_not_source_evidence(self) -> None:
         result = ReviewerResult(
