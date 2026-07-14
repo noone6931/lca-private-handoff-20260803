@@ -111,6 +111,7 @@ def run_review_round(
             message, fallback_normalizations = normalize_provider_dialect_message(
                 raw_message,
                 provider=port.provider,
+                tool_schemas=output_schemas,
             )
         else:
             message, fallback_normalizations = raw_message, ()

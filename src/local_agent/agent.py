@@ -576,6 +576,7 @@ class AgentRuntime:
             normalized_response_message, fallback_normalizations = normalize_provider_dialect_message(
                 response.message,
                 provider=self._config.provider,
+                tool_schemas=tools_for_model,
             )
             self._provider_terminal_phase.record_argument_normalizations(
                 (*getattr(response, "protocol_normalizations", ()), *fallback_normalizations),

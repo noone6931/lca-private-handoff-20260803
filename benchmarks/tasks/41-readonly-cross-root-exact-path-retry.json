@@ -120,5 +120,5 @@
     },
     "max_tool_errors": 1
   },
-  "residual_risk": "The fixture proves one typed exact-path rebase across authorized roots; it does not infer a target root from arbitrary content or retry broad patterns."
+  "residual_risk": "The fixture proves one typed exact-path rebase across authorized roots; provider-specific stringified arguments are covered separately at the adapter boundary."
 }

@@ -8,6 +8,73 @@ from local_agent.provider_protocol import normalize_provider_dialect_message
 
 
 class ProviderProtocolTests(unittest.TestCase):
+    def test_normalizes_stringified_json_values_from_active_tool_schema(self) -> None:
+        schemas = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "glob_files",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "paths": {"type": "array", "items": {"type": "string"}},
+                            "limit": {"type": "integer"},
+                            "hidden": {"type": "boolean"},
+                            "note": {"type": "string"},
+                        },
+                    },
+                },
+            }
+        ]
+        message, artifacts = normalize_provider_dialect_message(
+            {
+                "tool_calls": [
+                    {
+                        "id": "call-glob",
+                        "type": "function",
+                        "function": {
+                            "name": "glob_files",
+                            "arguments": json.dumps(
+                                {
+                                    "paths": '["**/list.vue"]',
+                                    "limit": "200",
+                                    "hidden": "false",
+                                    "note": '["keep this string"]',
+                                }
+                            ),
+                        },
+                    }
+                ]
+            },
+            provider="bailian",
+            tool_schemas=schemas,
+        )
+
+        arguments = json.loads(message["tool_calls"][0]["function"]["arguments"])
+        self.assertEqual(arguments["paths"], ["**/list.vue"])
+        self.assertEqual(arguments["limit"], 200)
+        self.assertIs(arguments["hidden"], False)
+        self.assertEqual(arguments["note"], '["keep this string"]')
+        self.assertEqual(len(artifacts), 1)
+        self.assertEqual(artifacts[0].kind, "bailian_schema_typed_arguments")
+        self.assertEqual(artifacts[0].parameter_names, ("paths", "limit", "hidden"))
+
+    def test_does_not_retype_stringified_json_without_matching_schema(self) -> None:
+        original = '{"paths":"[\\"**/list.vue\\"]"}'
+        message, artifacts = normalize_provider_dialect_message(
+            {
+                "tool_calls": [
+                    {
+                        "function": {"name": "glob_files", "arguments": original},
+                    }
+                ]
+            },
+            provider="bailian",
+        )
+
+        self.assertEqual(message["tool_calls"][0]["function"]["arguments"], original)
+        self.assertEqual(artifacts, ())
+
     def test_normalizes_complete_bailian_xml_inside_matching_structured_tool_call(self) -> None:
         message, artifacts = normalize_provider_dialect_message(
             {
