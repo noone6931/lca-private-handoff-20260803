@@ -3578,6 +3578,7 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertIn("Requirement facts do not need to be observed in repository source", prompt)
         self.assertIn("A failed or missing path in one root never invalidates a successful read in another root", prompt)
         self.assertIn("every candidate statement presented as a current repository/source fact", prompt)
+        self.assertIn("they never substitute for claim-scoped support", prompt)
         self.assertIn("A bare path, symbol name, or assertion that files were read is not evidence", prompt)
         self.assertIn("Do not review design taste, completeness, naming preference", prompt)
         self.assertIn("is not itself a candidate-answer defect", prompt)
@@ -3616,6 +3617,19 @@ class ReadOnlyReviewerTests(unittest.TestCase):
             with self.subTest(text=text):
                 locators = parse_document_locators(text, "policy.md")
                 self.assertEqual([(locator.kind, locator.value) for locator in locators], [("line", expected)])
+
+    def test_tool_content_tag_line_range_is_a_path_bound_locator(self) -> None:
+        content = (
+            "源码事实（[PrepareOrderApplication.java#5007b19a], L90-104）："
+            "cancelPrepareOrder performs a guarded status transition."
+        )
+
+        locators = parse_document_locators(content, "/workspace/backend/PrepareOrderApplication.java")
+
+        self.assertEqual(
+            [(locator.path, locator.kind, locator.value) for locator in locators],
+            [("PrepareOrderApplication.java", "line", "90-104")],
+        )
 
     def test_claim_scoped_locator_items_inherit_heading_range_and_serialize_claim_id(self) -> None:
         contract = generate_requirement_contract(

@@ -127,12 +127,21 @@ def parse_document_locators(content: str, path: str) -> tuple[DocumentLocator, .
     patterns: list[tuple[str, str, str]] = []
     for ref in refs:
         prefix = rf"`?{re.escape(ref)}`?\s*"
+        content_tag_prefix = (
+            rf"\[\s*`?{re.escape(ref)}`?#[0-9a-f]{{8,64}}\s*\]\s*[,，]?\s*"
+        )
         patterns.extend(
             (
                 (ref, "line", prefix + r"(?::#L|#L|:)\s*(L?\d+(?:\s*[-–]\s*L?\d+)?)"),
+                (ref, "line", content_tag_prefix + r"L(\d+(?:\s*[-–]\s*L?\d+)?)"),
                 (ref, "page", prefix + r"(?:P|page|页)\s*(\d+)"),
                 (ref, "section", prefix + r"第\s*([\d.]+)\s*节"),
-                (ref, "section", prefix + r"(?:#|§|章节|章|节|section|heading)\s*([^\n`，,。;；:：]+)"),
+                (
+                    ref,
+                    "section",
+                    prefix
+                    + r"(?:#(?![0-9a-f]{8,64}\])|§|章节|章|节|section|heading)\s*([^\n`，,。;；:：]+)",
+                ),
                 (ref, "heading", prefix + r"(?:标题|title)\s*[:：]?\s*([^\n`，,。;；:：]+)"),
             )
         )
