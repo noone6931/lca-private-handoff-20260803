@@ -133,7 +133,6 @@ def normalize_provider_dialect_message(
     message: dict[str, Any],
     *,
     provider: str,
-    tool_schemas: list[dict[str, Any]] | None = None,
 ) -> tuple[dict[str, Any], tuple[ProviderProtocolArtifact, ...]]:
     """Normalize only recognized provider dialects; preserve all other wire shapes."""
 
@@ -160,13 +159,6 @@ def normalize_provider_dialect_message(
             outer_tool_name=tool_name,
             arguments=arguments.strip(),
         )
-        if normalized is None:
-            normalized = _parse_schema_typed_bailian_arguments(
-                provider=provider,
-                tool_name=tool_name,
-                arguments=arguments.strip(),
-                tool_schemas=tool_schemas or [],
-            )
         if normalized is None:
             normalized_calls.append(tool_call)
             continue
@@ -301,82 +293,6 @@ def _parse_bailian_parameter_value(value: str) -> Any:
         if stripped == "None":
             return None
         return stripped
-
-
-def _parse_schema_typed_bailian_arguments(
-    *,
-    provider: str,
-    tool_name: str,
-    arguments: str,
-    tool_schemas: list[dict[str, Any]],
-) -> tuple[dict[str, Any], ProviderProtocolArtifact] | None:
-    """Repair JSON values stringified contrary to the active tool schema."""
-
-    if provider.strip().lower() not in _BAILIAN_PROVIDER_NAMES or not arguments:
-        return None
-    try:
-        parsed = json.loads(arguments)
-    except json.JSONDecodeError:
-        return None
-    if not isinstance(parsed, dict):
-        return None
-    properties = _tool_schema_properties(tool_name, tool_schemas)
-    if not properties:
-        return None
-    normalized = dict(parsed)
-    changed: list[str] = []
-    for name, value in parsed.items():
-        if not isinstance(value, str):
-            continue
-        property_schema = properties.get(name)
-        expected_type = property_schema.get("type") if isinstance(property_schema, Mapping) else None
-        if expected_type not in {"array", "object", "boolean", "integer", "number", "null"}:
-            continue
-        try:
-            decoded = json.loads(value.strip())
-        except json.JSONDecodeError:
-            continue
-        if not _json_value_matches_schema_type(decoded, expected_type):
-            continue
-        normalized[name] = decoded
-        changed.append(name)
-    if not changed:
-        return None
-    parameter_names = tuple(changed)
-    return normalized, ProviderProtocolArtifact(
-        kind="bailian_schema_typed_arguments",
-        tool_name=tool_name,
-        parameter_names=parameter_names,
-        preview=_structural_preview(tool_name, parameter_names),
-    )
-
-
-def _tool_schema_properties(
-    tool_name: str,
-    tool_schemas: list[dict[str, Any]],
-) -> Mapping[str, Any]:
-    for schema in tool_schemas:
-        function = schema.get("function") if isinstance(schema, Mapping) else None
-        if not isinstance(function, Mapping) or function.get("name") != tool_name:
-            continue
-        parameters = function.get("parameters")
-        properties = parameters.get("properties") if isinstance(parameters, Mapping) else None
-        return properties if isinstance(properties, Mapping) else {}
-    return {}
-
-
-def _json_value_matches_schema_type(value: Any, expected_type: str) -> bool:
-    if expected_type == "array":
-        return isinstance(value, list)
-    if expected_type == "object":
-        return isinstance(value, dict)
-    if expected_type == "boolean":
-        return isinstance(value, bool)
-    if expected_type == "integer":
-        return isinstance(value, int) and not isinstance(value, bool)
-    if expected_type == "number":
-        return isinstance(value, (int, float)) and not isinstance(value, bool)
-    return value is None
 
 
 def _inside_fenced_code(content: str, position: int) -> bool:

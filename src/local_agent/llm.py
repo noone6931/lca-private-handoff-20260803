@@ -147,7 +147,6 @@ class OpenAICompatibleClient:
         normalized_message, normalizations = normalize_provider_dialect_message(
             message,
             provider=self._config.provider,
-            tool_schemas=tools,
         )
         return ChatResponse(
             message=normalized_message,

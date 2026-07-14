@@ -115,55 +115,6 @@ class LlmClientTests(unittest.TestCase):
         self.assertEqual(response.message["content"], "reviewed")
         self.assertEqual(captured_payload["model"], "review-model")
 
-    def test_chat_normalizes_schema_typed_bailian_arguments_before_runtime(self) -> None:
-        body = json.dumps(
-            {
-                "choices": [
-                    {
-                        "message": {
-                            "content": None,
-                            "tool_calls": [
-                                {
-                                    "id": "call-glob",
-                                    "type": "function",
-                                    "function": {
-                                        "name": "glob_files",
-                                        "arguments": '{"paths":"[\\"**/list.vue\\"]"}',
-                                    },
-                                }
-                            ],
-                        }
-                    }
-                ]
-            }
-        ).encode("utf-8")
-        schemas = [
-            {
-                "type": "function",
-                "function": {
-                    "name": "glob_files",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {"paths": {"type": "array", "items": {"type": "string"}}},
-                    },
-                },
-            }
-        ]
-        with tempfile.TemporaryDirectory() as tmp:
-            config = AgentConfig(
-                provider="bailian",
-                api_base_url="https://example.invalid/v1",
-                api_key="token",
-                model="main-model",
-                workspace=Path(tmp).resolve(),
-            )
-            with patch("urllib.request.urlopen", return_value=_FakeResponse(body)):
-                response = OpenAICompatibleClient(config).chat([], schemas)
-
-        arguments = json.loads(response.message["tool_calls"][0]["function"]["arguments"])
-        self.assertEqual(arguments["paths"], ["**/list.vue"])
-        self.assertEqual(response.protocol_normalizations[0].kind, "bailian_schema_typed_arguments")
-
     def test_inspect_image_uses_a_vision_model_and_keeps_image_payload_in_provider_request(self) -> None:
         captured_payload: dict = {}
 
