@@ -53,8 +53,14 @@ class ReviewerOutputEvent:
         }
 
     @property
+    def is_recoverable_rejection(self) -> bool:
+        return self.is_capacity_rejection or (
+            self.kind == "finding_rejected" and self.code == "claim_id_conflict"
+        )
+
+    @property
     def is_blocking_rejection(self) -> bool:
-        return self.is_rejected and not self.is_capacity_rejection
+        return self.is_rejected and not self.is_recoverable_rejection
 
     def to_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {"kind": self.kind, "tool_call_id": self.tool_call_id}
@@ -85,6 +91,14 @@ class ReviewerOutputTurn:
     @property
     def capacity_rejections(self) -> tuple[ReviewerOutputEvent, ...]:
         return tuple(event for event in self.events if event.is_capacity_rejection)
+
+    @property
+    def claim_conflict_rejections(self) -> tuple[ReviewerOutputEvent, ...]:
+        return tuple(
+            event
+            for event in self.events
+            if event.kind == "finding_rejected" and event.code == "claim_id_conflict"
+        )
 
     @property
     def has_terminal_result(self) -> bool:
@@ -291,6 +305,11 @@ def reviewer_tool_result_content(event: ReviewerOutputEvent) -> str:
             return "finding rejected: capacity reached; finding not recorded; call submit_read_only_review now"
         if event.code == "finding_not_allowed_after_capacity":
             return "finding rejected: findings are closed; call submit_read_only_review now"
+        if event.code == "claim_id_conflict":
+            return (
+                "finding rejected: that claim already has an immutable recorded finding; "
+                "the first finding remains recorded; call submit_read_only_review now"
+            )
         return f"finding rejected: {event.code}; correct that finding or submit the final verdict"
     if event.kind == "final_rejected":
         invalidated = invalidated_document_finding_claim_ids((event,))

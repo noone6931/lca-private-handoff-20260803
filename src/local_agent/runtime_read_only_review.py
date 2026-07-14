@@ -290,7 +290,13 @@ class ReadOnlyReviewPhase:
                     handoff=handoff,
                     rewrite_message=self._rewrite_correction_message(),
                 )
-            verification = self._run_rewrite_verification(candidate, handoff, claim_units, closure_findings)
+            verification = self._run_rewrite_verification(
+                candidate,
+                handoff,
+                claim_units,
+                closure_findings,
+                historical_claim_ids=tuple(unit.claim_id for unit in state.claim_units),
+            )
             if isinstance(verification, ReviewerPhaseOutcome):
                 return verification
             if verification.verdict != "pass":
@@ -370,6 +376,8 @@ class ReadOnlyReviewPhase:
         handoff: Any,
         claim_units: tuple[Any, ...],
         closure_findings: tuple[ReviewerFinding, ...],
+        *,
+        historical_claim_ids: tuple[str, ...],
     ) -> ReviewerResult | ReviewerPhaseOutcome:
         runtime = self._runtime
         state = runtime._run.read_only_review
@@ -399,7 +407,12 @@ class ReadOnlyReviewPhase:
             "ContextUpdated",
             {"kind": "read_only_reviewer_rewrite_verification_triggered", "items": len(handoff.items)},
         )
-        messages = reviewer_rewrite_verification_messages(handoff, claim_units, closure_findings)
+        messages = reviewer_rewrite_verification_messages(
+            handoff,
+            claim_units,
+            closure_findings,
+            historical_claim_ids=historical_claim_ids,
+        )
         round_outcome = run_review_round(
             self._round_port(),
             messages=messages,

@@ -263,6 +263,16 @@ def run_review_round(
                         "reason": "final_arguments_invalid",
                     },
                 )
+            if not finding_submission_closed and turn.claim_conflict_rejections:
+                finding_submission_closed = True
+                port.session.append(
+                    "read_only_reviewer",
+                    {
+                        "event": f"{event_prefix}finding_submission_closed",
+                        "attempt": provider_turn,
+                        "reason": "claim_id_conflict",
+                    },
+                )
             if turn.blocking_rejections:
                 for category in _blocking_rejection_categories(turn.blocking_rejections):
                     blocking_lifecycle_corrections[category] = blocking_lifecycle_corrections.get(category, 0) + 1

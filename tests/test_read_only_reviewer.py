@@ -509,6 +509,48 @@ class _ReviewerFindingReplayAfterMalformedFinalClient(_ReviewerFindingMalformedF
         return type("Response", (), {"message": {"content": SCOPED_OWNER_AFTER_REVIEW}})()
 
 
+class _ReviewerConflictingFindingThenFinalClient(_ReviewerFindingMalformedFinalThenPassClient):
+    calls: list[dict] = []
+
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
+        if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages):
+            self._review_calls += 1
+            if self._review_calls == 1:
+                return _review_tool_calls_response([
+                    _finding_call(
+                        "first-finding",
+                        "c001",
+                        _candidate_claim(messages, "c001"),
+                        issue="owner evidence is insufficient",
+                        action="mark owner unlocated",
+                    )
+                ])
+            if self._review_calls == 2:
+                return _review_tool_calls_response([
+                    _finding_call(
+                        "conflicting-finding",
+                        "c001",
+                        _candidate_claim(messages, "c001"),
+                        issue="a second defect for the same claim",
+                        action="replace the first immutable finding",
+                    )
+                ])
+            if self._review_calls == 3:
+                return _review_tool_calls_response([
+                    _final_call(
+                        "valid-final",
+                        {"verdict": "revise", "confidence": 0.9, "reason": "first finding preserved"},
+                    )
+                ])
+            return _review_tool_calls_response([
+                _final_call("rewrite-pass", {"verdict": "pass", "confidence": 0.95, "reason": "rewrite scoped"})
+            ])
+        self._primary_calls += 1
+        content = SCOPED_OWNER_AFTER_REVIEW if self._review_calls else SCOPED_OWNER_BEFORE_REVIEW
+        return type("Response", (), {"message": {"content": content}})()
+
+
 class _ReviewerProviderSafeContinuationClient(_ReviewerFindingMalformedFinalThenPassClient):
     calls: list[dict] = []
 
@@ -861,7 +903,7 @@ class _RewriteVerificationSameClaimIdClient:
                         "verification-finding",
                         "c001",
                         _candidate_claim(messages, "c001"),
-                        issue="paraphrased owner absence still overstates evidence",
+                        issue="c001 paraphrased owner absence still overstates evidence",
                         action="make owner absence pending confirmation",
                         include_claim=False,
                     ),
@@ -876,8 +918,10 @@ class _RewriteVerificationSameClaimIdClient:
                 ]
                 originals = closure_payloads[-1]["original_findings"]
                 issues = {item["issue"] for item in originals}
-                if len(originals) != 1 or issues != {"paraphrased owner absence still overstates evidence"}:
+                if len(originals) != 1 or issues != {"the prior claim paraphrased owner absence still overstates evidence"}:
                     raise AssertionError(f"current closure findings were not isolated: {originals!r}")
+                if "c001" in json.dumps(originals, ensure_ascii=False):
+                    raise AssertionError(f"stale candidate id leaked through historical prose: {originals!r}")
                 return _review_tool_calls_response([
                     _final_call("verification-pass", {"verdict": "pass", "confidence": 0.95, "reason": "all closure findings scoped"})
                 ])
@@ -5257,8 +5301,12 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         ]
         current_findings = verification_payloads[-1]["original_findings"]
         self.assertEqual(len(current_findings), 1)
-        self.assertEqual(current_findings[0]["issue"], "paraphrased owner absence still overstates evidence")
+        self.assertEqual(
+            current_findings[0]["issue"],
+            "the prior claim paraphrased owner absence still overstates evidence",
+        )
         self.assertNotIn("claim_id", current_findings[0])
+        self.assertNotIn("c001", json.dumps(current_findings, ensure_ascii=False))
 
     def test_explicit_design_proposal_with_pending_reuse_check_can_pass_review(self) -> None:
         _ProposalSemanticsClient.calls = []
@@ -5438,6 +5486,34 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertEqual(summary["output_lifecycle_exhausted"], 0)
         self.assertEqual(summary["errors"], {})
         self.assertIn('"event": "finding_replayed"', session)
+
+    def test_conflicting_second_finding_closes_finding_channel_and_preserves_first(self) -> None:
+        _ReviewerConflictingFindingThenFinalClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            (workspace / "src").mkdir()
+            (workspace / "src/Evidence.java").write_text("class Evidence {}\n", encoding="utf-8")
+            with patch("local_agent.agent.OpenAICompatibleClient", _ReviewerConflictingFindingThenFinalClient):
+                runtime = AgentRuntime(_config(workspace), show_tool_logs=False)
+                answer = runtime.run("只读分析当前服务 owner 和影响范围，不要修改文件。")
+            session = runtime._session.path.read_text(encoding="utf-8")
+
+        self.assertIn("analogous candidate", answer)
+        summary = runtime._last_run_summary["read_only_reviewer"]
+        self.assertEqual(summary["finding_submits"], 1)
+        self.assertEqual(summary["rejected_finding_submits"], 1)
+        self.assertEqual(summary["output_lifecycle_exhausted"], 0)
+        self.assertEqual(summary["errors"], {})
+        review_calls = [
+            call
+            for call in _ReviewerConflictingFindingThenFinalClient.calls
+            if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in call["messages"])
+        ]
+        self.assertEqual(
+            [tool["function"]["name"] for tool in review_calls[2]["tools"]],
+            [REVIEWER_OUTPUT_TOOL_NAME],
+        )
+        self.assertIn('"reason": "claim_id_conflict"', session)
 
     def test_reviewer_continuation_canonicalizes_malformed_tool_arguments(self) -> None:
         _ReviewerProviderSafeContinuationClient.calls = []
