@@ -2156,6 +2156,7 @@ class ReadOnlyReviewerTests(unittest.TestCase):
                 "- policy.md:74 states markdown rule 74.",
                 "- policy.md:86-90 states markdown rule 86.",
                 "- policy.md#L93-L128 states markdown rule 127.",
+                "- policy.md:93-218 states aggregate page rules.",
                 "- policy.md:94-95 states markdown rule 95.",
                 "- policy.md:96-106 states markdown rule 106.",
                 "- policy.md:107-126 states markdown rule 126.",
@@ -2181,6 +2182,7 @@ class ReadOnlyReviewerTests(unittest.TestCase):
             claim_units=units,
         )
         locator_items = [item for item in handoff.items if item.classification == "requirement_locator"]
+        aggregate_claim = next(unit.claim_id for unit in units if "93-218" in unit.text)
         late_claim = next(unit.claim_id for unit in units if "275-312" in unit.text)
         html_claim = next(unit.claim_id for unit in units if "prototype.html" in unit.text)
 
@@ -2192,8 +2194,52 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertTrue(any("176:" in item.summary for item in locator_items))
         self.assertTrue(any("178:" in item.summary for item in locator_items))
         self.assertTrue(any("252:" in item.summary for item in locator_items))
+        self.assertTrue(any("93:" in item.summary and aggregate_claim in item.claim_ids for item in locator_items))
+        self.assertTrue(any("133:" in item.summary and aggregate_claim in item.claim_ids for item in locator_items))
+        self.assertTrue(any("173:" in item.summary and aggregate_claim in item.claim_ids for item in locator_items))
+        self.assertTrue(any("218:" in item.summary and aggregate_claim in item.claim_ids for item in locator_items))
         self.assertTrue(any("277:" in item.summary and late_claim in item.claim_ids for item in locator_items))
         self.assertTrue(any("203:" in item.summary and html_claim in item.claim_ids for item in locator_items))
+
+    def test_locator_source_span_is_derived_from_window_budget(self) -> None:
+        contract = generate_requirement_contract(
+            "只根据 Markdown 分析资料一致性，不要检查代码。"
+        )
+        content = "\n".join(f"{index}: rule {index}" for index in range(1, 220))
+
+        allowed_units = candidate_claim_units("- policy.md:1-160 states the bounded rule.")
+        allowed = build_explore_handoff(
+            request="只根据 Markdown 分析资料一致性，不要检查代码。",
+            contract=contract,
+            requirement_evidence=(RequirementEvidence("policy.md", content, root="/workspace"),),
+            source_evidence=(),
+            records=(),
+            tool_results=(),
+            candidate="- policy.md:1-160 states the bounded rule.",
+            claim_units=allowed_units,
+        )
+        allowed_items = [item for item in allowed.items if item.classification == "requirement_locator"]
+        self.assertEqual(allowed.transport_omitted_claim_ids, ())
+        self.assertEqual(len(allowed_items), 4)
+        self.assertTrue(any("1:" in item.summary for item in allowed_items))
+        self.assertTrue(any("160:" in item.summary for item in allowed_items))
+
+        too_wide_units = candidate_claim_units("- policy.md:1-161 states an over-wide rule.")
+        too_wide = build_explore_handoff(
+            request="只根据 Markdown 分析资料一致性，不要检查代码。",
+            contract=contract,
+            requirement_evidence=(RequirementEvidence("policy.md", content, root="/workspace"),),
+            source_evidence=(),
+            records=(),
+            tool_results=(),
+            candidate="- policy.md:1-161 states an over-wide rule.",
+            claim_units=too_wide_units,
+        )
+        self.assertEqual(
+            [item for item in too_wide.items if item.classification == "requirement_locator"],
+            [],
+        )
+        self.assertEqual(too_wide.transport_omitted_claim_ids, ("c001",))
 
     def test_runtime_reviewer_receives_late_packed_locator_evidence(self) -> None:
         _PackedLocatorRuntimeClient.calls = []
