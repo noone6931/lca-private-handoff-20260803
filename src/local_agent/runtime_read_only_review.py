@@ -275,7 +275,8 @@ class ReadOnlyReviewPhase:
                         },
                     )
             if result is None:
-                blocking_lifecycle_errors += len(blocking_rejected_events)
+                if blocking_rejected_events:
+                    blocking_lifecycle_errors += 1
                 if capacity_rejected_events:
                     capacity_directives += 1
                 collected_findings = (*collected_findings, *turn.accepted_findings)

@@ -584,6 +584,41 @@ class _ReviewerTenFindingsClient(_ReviewerEightFindingsClient):
         return type("Response", (), {"message": {"content": content}})()
 
 
+class _ReviewerMixedRejectedTurnThenFinalClient(_ReviewerEightFindingsClient):
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
+        if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages):
+            self._review_calls += 1
+            if self._review_calls == 1:
+                return _review_tool_calls_response([
+                    _finding_call(f"finding-{index}", f"c{index:03d}", _candidate_claim(messages, f"c{index:03d}"))
+                    for index in range(1, 8)
+                ])
+            if self._review_calls == 2:
+                return _review_tool_calls_response([
+                    _finding_call("bad-finding", "c008", _candidate_claim(messages, "c008") + " paraphrased"),
+                    {
+                        "id": "unknown-output",
+                        "type": "function",
+                        "function": {"name": "read_file", "arguments": json.dumps({"path": "secret.txt"})},
+                    },
+                    _finding_call("finding-8", "c008", _candidate_claim(messages, "c008")),
+                    _finding_call("finding-9", "c009", _candidate_claim(messages, "c009")),
+                    _final_call("bad-final", "{not json"),
+                ])
+            if self._review_calls == 3:
+                return _review_tool_calls_response([
+                    _final_call("final-revise", {"verdict": "revise", "confidence": 0.9, "reason": "eight findings recorded"})
+                ])
+            return _review_submit({"verdict": "pass", "confidence": 0.9, "findings": [], "reason": "rewrite scoped"})
+        self._primary_calls += 1
+        if self._review_calls >= 3:
+            content = "All owner claims are now scoped as unlocated."
+        else:
+            content = "\n".join(f"- Unsupported owner claim {index}" for index in range(1, 10))
+        return type("Response", (), {"message": {"content": content}})()
+
+
 class _ReviewerInvalidFindingThenPassClient(_ReviewerFindingMalformedFinalThenPassClient):
     def chat(self, messages, tools, *, timeout=None):
         type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
@@ -1930,8 +1965,8 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertEqual(summary["final_submits"], 0)
         self.assertEqual(summary["finding_submits"], 0)
         self.assertEqual(summary["verdicts"], {})
-        self.assertEqual(summary["rejected_final_submits"], 2)
-        self.assertEqual(summary["rejected_finding_submits"], 2)
+        self.assertEqual(summary["rejected_final_submits"], 3)
+        self.assertEqual(summary["rejected_finding_submits"], 3)
         self.assertEqual(summary["output_lifecycle_exhausted"], 1)
         self.assertEqual(summary["errors"], {"invalid_output": 1})
 
@@ -2009,6 +2044,33 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         tool_results = [message for message in review_calls[1]["messages"] if message.get("role") == "tool"]
         for index in range(1, 11):
             self.assertEqual(len([message for message in tool_results if message.get("tool_call_id") == f"finding-{index}"]), 1)
+
+    def test_mixed_rejected_turn_counts_as_one_correction_opportunity(self) -> None:
+        _ReviewerMixedRejectedTurnThenFinalClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch("local_agent.agent.OpenAICompatibleClient", _ReviewerMixedRejectedTurnThenFinalClient):
+                runtime = AgentRuntime(_config(Path(tmp).resolve()), show_tool_logs=False)
+                answer = runtime.run("只读分析当前服务 owner 和影响范围，不要修改文件。")
+        self.assertIn("unlocated", answer)
+        summary = runtime._last_run_summary["read_only_reviewer"]
+        self.assertEqual(summary["finding_submits"], 8)
+        self.assertEqual(summary["rejected_finding_submits"], 2)
+        self.assertEqual(summary["rejected_final_submits"], 1)
+        self.assertEqual(summary["protocol_failures"], 1)
+        self.assertEqual(summary["finding_limit_hits"], 1)
+        self.assertEqual(summary["output_lifecycle_exhausted"], 0)
+        self.assertEqual(summary["final_submits"], 2)
+        review_calls = [
+            call for call in _ReviewerMixedRejectedTurnThenFinalClient.calls
+            if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in call["messages"])
+        ]
+        self.assertEqual(
+            [tool["function"]["name"] for tool in review_calls[2]["tools"]],
+            [REVIEWER_OUTPUT_TOOL_NAME],
+        )
+        tool_results = [message for message in review_calls[2]["messages"] if message.get("role") == "tool"]
+        for call_id in ("bad-finding", "unknown-output", "finding-8", "finding-9", "bad-final"):
+            self.assertEqual(len([message for message in tool_results if message.get("tool_call_id") == call_id]), 1)
 
     def test_ninth_finding_plus_valid_final_assembles_top_eight(self) -> None:
         _ReviewerNineFindingsWithFinalClient.calls = []
