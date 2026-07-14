@@ -43,7 +43,11 @@ class DocumentConsistencyValidationError(ValueError):
 
 MAX_REWRITE_CONTEXT_CHARS = 4200
 MAX_REWRITE_REQUEST_CHARS = 700
-MAX_REWRITE_ITEM_CHARS = 520
+MAX_REWRITE_PRIMARY_ITEM_SUMMARY_CHARS = 180
+MAX_REWRITE_OPTIONAL_ITEM_SUMMARY_CHARS = 220
+MAX_REWRITE_PATH_CHARS = 180
+MAX_REWRITE_ROOT_CHARS = 140
+MAX_REWRITE_SCOPE_CHARS = 80
 
 
 def parse_document_consistency_assessment(
@@ -160,10 +164,10 @@ def document_consistency_rewrite_context(
     ]
     if conflict_items:
         lines.append("- Cited conflict observations:")
-        lines.extend(f"  * {_format_rewrite_item(item)}" for item in conflict_items)
+        lines.extend(f"  * {_format_rewrite_item(item, summary_limit=MAX_REWRITE_PRIMARY_ITEM_SUMMARY_CHARS)}" for item in conflict_items[:2])
     if support_items:
         lines.append("- Cited lifecycle/precedence support observations:")
-        lines.extend(f"  * {_format_rewrite_item(item)}" for item in support_items)
+        lines.extend(f"  * {_format_rewrite_item(item, summary_limit=MAX_REWRITE_PRIMARY_ITEM_SUMMARY_CHARS)}" for item in support_items[:2])
         lines.append("- Any reconciliation may use only the cited support observations and only within their stated scope.")
     else:
         lines.append("- No valid supporting evidence in this handoff establishes artifact lifecycle, role, or precedence.")
@@ -176,7 +180,20 @@ def document_consistency_rewrite_context(
             "- Do not describe either artifact as mockup, reference-only, example-only, historical, later, final, "
             "offline-filled, authoritative, stronger, or the source of truth unless a cited support id explicitly says so."
         )
-    return _bounded_rewrite_lines(lines)
+    optional_lines: list[str] = []
+    if len(conflict_items) > 2:
+        optional_lines.append("- Additional cited conflict observations, if space permits:")
+        optional_lines.extend(
+            f"  * {_format_rewrite_item(item, summary_limit=MAX_REWRITE_OPTIONAL_ITEM_SUMMARY_CHARS)}"
+            for item in conflict_items[2:]
+        )
+    if len(support_items) > 2:
+        optional_lines.append("- Additional cited support observations, if space permits:")
+        optional_lines.extend(
+            f"  * {_format_rewrite_item(item, summary_limit=MAX_REWRITE_OPTIONAL_ITEM_SUMMARY_CHARS)}"
+            for item in support_items[2:]
+        )
+    return _bounded_rewrite_lines(lines, optional_lines)
 
 
 def explicit_reconciliation_excerpt(value: str) -> str | None:
@@ -252,16 +269,29 @@ def _is_explicit_reconciliation_support(item: ClaimEvidenceItem) -> bool:
     return explicit_reconciliation_excerpt(item.summary) is not None
 
 
-def _format_rewrite_item(item: ClaimEvidenceItem) -> str:
+def _format_rewrite_item(item: ClaimEvidenceItem, *, summary_limit: int) -> str:
     parts = [
         f"evidence_id={item.evidence_id}",
         f"tool={item.tool}",
-        f"path={item.path or '(unknown)'}",
-        f"root={item.root or '(unknown)'}",
-        f"scope={item.scope or '(unknown)'}",
-        f"summary={_clip_for_rewrite(item.summary, MAX_REWRITE_ITEM_CHARS)}",
+        f"path={_clip_for_rewrite(item.path or '(unknown)', MAX_REWRITE_PATH_CHARS)}",
+        f"root={_clip_for_rewrite(item.root or '(unknown)', MAX_REWRITE_ROOT_CHARS)}",
+        f"scope={_clip_for_rewrite(item.scope or '(unknown)', MAX_REWRITE_SCOPE_CHARS)}",
+        f"summary={_safe_rewrite_summary(item.summary, summary_limit)}",
     ]
     return "; ".join(parts)
+
+
+def _safe_rewrite_summary(value: str, limit: int) -> str:
+    compact = " ".join((value or "").split())
+    if _looks_like_embedded_binary_payload(compact):
+        return "[omitted data-url/base64 payload; use path/tool provenance only]"
+    return _clip_for_rewrite(compact, limit)
+
+
+def _looks_like_embedded_binary_payload(value: str) -> bool:
+    if re.search(r"data:[^,\s;]+(?:;[^,\s]+)*;base64,", value, flags=re.IGNORECASE):
+        return True
+    return bool(re.search(r"\b[A-Za-z0-9+/]{180,}={0,2}\b", value))
 
 
 def _clip_for_rewrite(value: str, limit: int) -> str:
@@ -271,17 +301,29 @@ def _clip_for_rewrite(value: str, limit: int) -> str:
     return compact[: max(0, limit - 1)].rstrip() + "..."
 
 
-def _bounded_rewrite_lines(lines: list[str]) -> tuple[str, ...]:
-    total = 0
-    rendered: list[str] = []
-    for line in lines:
-        remaining = MAX_REWRITE_CONTEXT_CHARS - total
-        if remaining <= 0:
+def _bounded_rewrite_lines(mandatory_lines: list[str], optional_lines: list[str]) -> tuple[str, ...]:
+    rendered = list(mandatory_lines)
+    while _joined_context_len(rendered) > MAX_REWRITE_CONTEXT_CHARS and rendered:
+        # The constants above should keep mandatory lines under budget.  If a
+        # future path/root format violates that assumption, remove the least
+        # important mandatory variable line rather than returning malformed
+        # partial metadata.
+        removable = next((index for index, line in reversed(tuple(enumerate(rendered))) if line.startswith("  * ")), None)
+        if removable is None:
             break
-        bounded = line if len(line) <= remaining else line[: max(0, remaining - 1)].rstrip() + "..."
-        rendered.append(bounded)
-        total += len(bounded) + 1
+        del rendered[removable]
+    for line in optional_lines:
+        if _joined_context_len((*rendered, line)) > MAX_REWRITE_CONTEXT_CHARS:
+            continue
+        rendered.append(line)
     return tuple(rendered)
+
+
+def _joined_context_len(lines: Iterable[str]) -> int:
+    items = tuple(lines)
+    if not items:
+        return 0
+    return sum(len(line) for line in items) + len(items) - 1
 
 
 _RECONCILIATION_SUPPORT_PATTERNS = (

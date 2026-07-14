@@ -10,6 +10,8 @@ from unittest.mock import patch
 from local_agent.agent import AgentRuntime
 from local_agent.config import AgentConfig
 from local_agent.document_consistency import DocumentConsistencyAssessment
+from local_agent.document_consistency import document_consistency_rewrite_context
+from local_agent.document_consistency import MAX_REWRITE_CONTEXT_CHARS
 from local_agent.explore_handoff import build_explore_handoff
 from local_agent.explore_handoff import ClaimEvidenceItem
 from local_agent.explore_handoff import ExploreHandoff
@@ -1209,6 +1211,110 @@ class _DocumentConsistencyTwoStageReviewerClient:
         return type("Response", (), {"message": {"content": "policy.md 要求字段留空；prototype.html 显示有值。资料角色未说明，因此当前仍未消解。"}})()
 
 
+class _DocumentConsistencyRewriteContextClient:
+    calls: list[dict] = []
+    rewrite_directives: list[str] = []
+
+    def __init__(self, config: AgentConfig):
+        self._primary_calls = 0
+        self._review_calls = 0
+
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
+        reviewer = any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages)
+        if reviewer:
+            self._review_calls += 1
+            if self._review_calls == 1:
+                return _review_tool_calls_response(
+                    [
+                        _finding_call(
+                            "doc-finding",
+                            "c001",
+                            "",
+                            issue="unsupported reconciliation",
+                            action="keep the discrepancy unresolved",
+                            include_claim=False,
+                        ),
+                        _final_call(
+                            "doc-final",
+                            {
+                                "verdict": "revise",
+                                "confidence": 0.9,
+                                "reason": "unsupported reconciliation",
+                                "document_consistency": {
+                                    "stance": "reported_unresolved",
+                                    "conflict_evidence_ids": ["e001", "e002"],
+                                    "supporting_evidence_ids": [],
+                                },
+                            },
+                        ),
+                    ]
+                )
+            return _review_tool_calls_response(
+                [
+                    _final_call(
+                        "doc-pass",
+                        {
+                            "verdict": "pass",
+                            "confidence": 0.95,
+                            "reason": "rewrite preserves unresolved conflict",
+                            "document_consistency": {
+                                "stance": "reported_unresolved",
+                                "conflict_evidence_ids": ["e001", "e002"],
+                                "supporting_evidence_ids": [],
+                            },
+                        },
+                    )
+                ]
+            )
+        self._primary_calls += 1
+        if self._primary_calls == 1:
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {"id": "read-policy", "type": "function", "function": {"name": "read_file", "arguments": '{"path":"policy.md"}'}},
+                            {"id": "read-prototype", "type": "function", "function": {"name": "read_file", "arguments": '{"path":"prototype.html"}'}},
+                        ],
+                    }
+                },
+            )()
+        if self._primary_calls == 2:
+            return type("Response", (), {"message": {"content": "policy.md says blank; prototype.html shows value. They are consistent because the prototype is a final state."}})()
+        rewrite_contexts = [
+            str(message.get("content") or "")
+            for message in messages
+            if "[Read-only evidence review]" in str(message.get("content") or "")
+            and "Typed document-consistency context" in str(message.get("content") or "")
+        ]
+        rewrite_context = rewrite_contexts[-1] if rewrite_contexts else ""
+        type(self).rewrite_directives.append(rewrite_context)
+        required = (
+            "Do not choose source priority or infer lifecycle",
+            "Document A says blank",
+            "Image B shows value",
+            "No valid supporting evidence",
+            "role/lifecycle/precedence is not established",
+        )
+        if all(fragment in rewrite_context for fragment in required):
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": (
+                            "policy.md says blank; prototype.html shows value. "
+                            "The artifact role/lifecycle/precedence is not established, so the discrepancy remains unresolved."
+                        )
+                    }
+                },
+            )()
+        return type("Response", (), {"message": {"content": "policy.md says blank; prototype.html shows value. The prototype is a final state."}})()
+
+
 def _config(workspace: Path, *, provider: str = "openai-compatible") -> AgentConfig:
     return AgentConfig(
         provider=provider,
@@ -1434,6 +1540,42 @@ class ReadOnlyReviewerTests(unittest.TestCase):
             [tool["function"]["name"] for tool in review_calls[1]["tools"]],
             [REVIEWER_FINDING_TOOL_NAME, REVIEWER_OUTPUT_TOOL_NAME],
         )
+
+    def test_document_consistency_rewrite_context_drives_runtime_rewrite_then_second_pass(self) -> None:
+        _DocumentConsistencyRewriteContextClient.calls = []
+        _DocumentConsistencyRewriteContextClient.rewrite_directives = []
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            (workspace / "policy.md").write_text("Document A says blank.\n", encoding="utf-8")
+            (workspace / "prototype.html").write_text("Image B shows value.\n", encoding="utf-8")
+            with patch("local_agent.agent.OpenAICompatibleClient", _DocumentConsistencyRewriteContextClient):
+                runtime = AgentRuntime(_config(workspace), show_tool_logs=False)
+                answer = runtime.run(
+                    "只根据 policy.md 和 prototype.html 分析资料一致性，不要检查代码。Do not choose source priority or infer lifecycle. "
+                    "Keep discrepancies unresolved unless evidence supports reconciliation."
+                )
+
+        self.assertIn("discrepancy remains unresolved", answer)
+        self.assertNotIn("final state", answer)
+        summary = runtime._last_run_summary["read_only_reviewer"]
+        self.assertEqual(summary["rewrites"], 1)
+        self.assertEqual(runtime._run.read_only_review.verdict, "pass")
+        self.assertEqual(summary["verdicts"], {"revise": 1, "pass": 1})
+        self.assertEqual(summary["errors"], {})
+        self.assertEqual(runtime._last_run_summary["termination_reason"], "final")
+        self.assertEqual(len(_DocumentConsistencyRewriteContextClient.rewrite_directives), 1)
+        rewrite_directive = _DocumentConsistencyRewriteContextClient.rewrite_directives[0]
+        self.assertIn("Do not choose source priority or infer lifecycle", rewrite_directive)
+        self.assertIn("Document A says blank", rewrite_directive)
+        self.assertIn("Image B shows value", rewrite_directive)
+        self.assertIn("No valid supporting evidence", rewrite_directive)
+        self.assertIn("role/lifecycle/precedence is not established", rewrite_directive)
+        review_calls = [
+            call
+            for call in _DocumentConsistencyRewriteContextClient.calls
+            if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in call["messages"])
+        ]
+        self.assertEqual(len(review_calls), 2)
 
     def test_handoff_is_bounded_and_conservative_about_source_reads(self) -> None:
         contract = generate_requirement_contract("只读分析服务 owner 和影响范围，不要修改。")
@@ -1815,6 +1957,61 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertNotIn("may use only the cited support observations", message)
         self.assertIn("No valid supporting evidence", message)
         self.assertIn("role/lifecycle/precedence is not established", message)
+
+    def test_document_consistency_rewrite_context_preserves_hard_policy_under_oversized_items(self) -> None:
+        contract = generate_requirement_contract(
+            "Compare artifacts. Do not choose source priority or infer lifecycle."
+        )
+        huge = " ".join(f"detail-{index}" for index in range(500))
+        data_url = "data:image/png;base64," + ("A" * 320)
+        handoff = ExploreHandoff(
+            request="Compare artifacts. Do not choose source priority or infer lifecycle.",
+            contract=contract,
+            items=tuple(
+                ClaimEvidenceItem(
+                    "visual_observation" if index == 2 else "requirement_fact",
+                    "inspect_image" if index == 2 else "read_file",
+                    f"artifact-{index}.md",
+                    "primary",
+                    "root_local",
+                    "ok",
+                    data_url if index == 2 else f"Observation side {index}: {huge}",
+                )
+                for index in range(1, 9)
+            ),
+        )
+        context = document_consistency_rewrite_context(
+            handoff,
+            DocumentConsistencyAssessment("reported_unresolved", tuple(f"e{index:03d}" for index in range(1, 9)), ()),
+        )
+        rendered = "\n".join(context)
+
+        self.assertLessEqual(len(rendered), MAX_REWRITE_CONTEXT_CHARS)
+        self.assertIn("Do not choose source priority or infer lifecycle", rendered)
+        self.assertIn("Reviewer stance: reported_unresolved", rendered)
+        self.assertIn("No valid supporting evidence", rendered)
+        self.assertIn("Required disposition", rendered)
+        self.assertIn("Do not describe either artifact as mockup", rendered)
+        self.assertIn("evidence_id=e001", rendered)
+        self.assertIn("path=artifact-1.md", rendered)
+        self.assertIn("tool=read_file", rendered)
+        self.assertIn("root=primary", rendered)
+        self.assertIn("scope=root_local", rendered)
+        self.assertIn("Observation side 1", rendered)
+        self.assertIn("evidence_id=e002", rendered)
+        self.assertIn("path=artifact-2.md", rendered)
+        self.assertIn("tool=inspect_image", rendered)
+        self.assertIn("[omitted data-url/base64 payload", rendered)
+        self.assertNotIn("data:image/png;base64", rendered)
+        self.assertNotIn("A" * 200, rendered)
+        for line in context:
+            if line.startswith("  * "):
+                self.assertIn("evidence_id=", line)
+                self.assertIn("tool=", line)
+                self.assertIn("path=", line)
+                self.assertIn("root=", line)
+                self.assertIn("scope=", line)
+                self.assertIn("summary=", line)
 
     def test_document_consistency_overlap_repair_requires_empty_support_for_unresolved(self) -> None:
         contract = generate_requirement_contract(
