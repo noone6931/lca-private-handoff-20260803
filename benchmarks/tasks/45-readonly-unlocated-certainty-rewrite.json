@@ -1,0 +1,92 @@
+{
+  "id": "readonly-unlocated-certainty-rewrite",
+  "title": "An unlocated owner answer cannot escalate to no impact or mandatory greenfield implementation",
+  "prompt": "请只读分析 OwnerApplication 的 Owner 和影响范围，结论必须基于源码证据，不要修改文件。",
+  "budget_seconds": 90,
+  "workspace_files": {
+    "src/OwnerApplication.java": "class OwnerApplication { void execute() {} }\n"
+  },
+  "scripted_responses": [
+    {
+      "tool_calls": [
+        {
+          "name": "glob_files",
+          "arguments": {
+            "paths": [
+              "**/*Owner*.java"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "src/OwnerApplication.java"
+          }
+        }
+      ]
+    },
+    {
+      "content": "源码事实：`OwnerApplication.execute` 已直接读取。Owner 仍未定位。结论：无直接影响。该功能需要从零开发。"
+    },
+    {
+      "content": "## 源码事实\n- `src/OwnerApplication.java` 定义 `OwnerApplication.execute`。\n\n## 结论边界\n- 完整 Owner 和影响范围仍未定位；是否复用现有模块或新建实现均需继续确认。"
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "submit_read_only_review",
+          "arguments": {
+            "verdict": "pass",
+            "confidence": 0.98,
+            "reason": "The rewritten candidate keeps owner, impact, and reuse decisions unlocated instead of escalating them to certainty."
+          }
+        }
+      ]
+    }
+  ],
+  "acceptance": {
+    "required_tools": [
+      "glob_files",
+      "read_file"
+    ],
+    "forbidden_tools": [
+      "search_code",
+      "list_files",
+      "apply_patch",
+      "write_file",
+      "shell",
+      "run_tests"
+    ],
+    "changed_files": [],
+    "answer_all_of": [
+      "OwnerApplication.execute",
+      "完整 Owner 和影响范围仍未定位",
+      "是否复用现有模块或新建实现均需继续确认"
+    ],
+    "answer_none_of": [
+      "无直接影响",
+      "需要从零开发"
+    ],
+    "termination_reason": "final",
+    "run_summary": {
+      "tool_calls": 2,
+      "tool_errors": 0,
+      "provider_schema_violations": 0,
+      "provider_protocol_violations": 0
+    },
+    "read_only_reviewer": {
+      "triggers": 1,
+      "rewrites": 0,
+      "typed_submits": 1
+    },
+    "safe_partial_report": {
+      "emitted": 0
+    },
+    "max_tool_errors": 0
+  },
+  "residual_risk": "The deterministic audit catches explicit certainty escalation after an unlocated stance; nuanced semantic overreach still belongs to the isolated reviewer."
+}

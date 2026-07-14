@@ -7,6 +7,7 @@ from ..negative_evidence import allowed_tools_for_negative_claims
 from ..negative_evidence import negative_claim_metrics
 from ..negative_evidence import render_negative_existence_issues
 from ..negative_evidence import unsupported_negative_existence_claims
+from ..negative_evidence import unsupported_unlocated_escalations
 from ..read_only_root_coverage import read_only_root_coverage
 from ..requirement_evidence import requirement_citation_examples
 from ..requirement_evidence import requirement_fact_citation_issues
@@ -267,11 +268,17 @@ class NegativeExistenceSteerer:
         ):
             return None
         issues = unsupported_negative_existence_claims(context.content, context.tool_results)
-        if not issues:
+        escalations = unsupported_unlocated_escalations(context.content)
+        if not issues and not escalations:
             return None
         claim_metrics = negative_claim_metrics(context.content, context.tool_results)
         allowed_tools = set(allowed_tools_for_negative_claims(issues))
-        issue_lines = "\n".join(f"- {issue}" for issue in render_negative_existence_issues(issues))
+        rendered_issues = render_negative_existence_issues(issues)
+        rendered_issues.extend(
+            f"{claim!r} upgrades an explicitly unlocated/unverified answer to unsupported certainty"
+            for claim in escalations
+        )
+        issue_lines = "\n".join(f"- {issue}" for issue in rendered_issues)
         if allowed_tools:
             action = (
                 "Use glob_files for file/extension/source-tree absence, or read_file/list_files for an exact path. "
@@ -283,7 +290,7 @@ class NegativeExistenceSteerer:
                 "tell the user to use /move before making a Git-repository conclusion about an additional root."
             )
         steering = (
-            "Runtime steering: the previous final answer made a path/source/Git absence claim without matching "
+            "Runtime steering: the previous final answer made an absence or certainty claim without matching "
             "evidence. Do not present it as verified.\n"
             f"{issue_lines}\n{action}"
             f"{final_answer_request_summary(context.request)}"
@@ -292,9 +299,10 @@ class NegativeExistenceSteerer:
             kind=self.kind,
             message=steering,
             payload={
-                "issues": render_negative_existence_issues(issues),
+                "issues": rendered_issues,
                 "claim_metrics": claim_metrics,
-                "blocked_assertion_count": len(issues),
+                "blocked_assertion_count": len(issues) + len(escalations),
+                "unlocated_escalations": list(escalations),
             },
             force_final_answer_without_tools=not allowed_tools,
             temporary_tool_allowlist=allowed_tools or None,

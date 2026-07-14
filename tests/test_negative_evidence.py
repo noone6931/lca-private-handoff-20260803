@@ -9,6 +9,7 @@ from local_agent.negative_evidence import OBSERVED_NO_MATCH
 from local_agent.negative_evidence import QUOTED_OR_HYPOTHETICAL
 from local_agent.negative_evidence import negative_claim_metrics
 from local_agent.negative_evidence import parse_negative_evidence_claims
+from local_agent.negative_evidence import unsupported_unlocated_escalations
 from local_agent.steering.final_answer import FinalAnswerContext
 from local_agent.steering.final_answer import NegativeExistenceSteerer
 from local_agent.task_contract import generate_requirement_contract
@@ -16,6 +17,27 @@ from local_agent.tool_choice_queue import ToolResultSummary
 
 
 class NegativeEvidenceTests(unittest.TestCase):
+    def test_unlocated_answer_cannot_escalate_to_from_scratch_or_no_impact(self) -> None:
+        content = (
+            "前端和后端 Owner 仍未定位。"
+            "结论：无直接影响。"
+            "该功能需要从零开发。"
+        )
+
+        self.assertEqual(
+            unsupported_unlocated_escalations(content),
+            ("结论：无直接影响", "需要从零开发"),
+        )
+
+    def test_conditional_or_qualified_unlocated_options_do_not_escalate(self) -> None:
+        for content in (
+            "Owner 仍未定位；若复用审计未命中，建议从零实现。",
+            "Owner remains unlocated. If no reusable owner is found, build it from scratch.",
+            "Owner 未定位，因此不能据此断言无直接影响。",
+        ):
+            with self.subTest(content=content):
+                self.assertEqual(unsupported_unlocated_escalations(content), ())
+
     def test_qualified_observation_is_not_an_asserted_absence(self) -> None:
         content = "我未发现任何 Java 源码，但这不等于证明 primary 无 Java。"
 
@@ -474,6 +496,33 @@ class NegativeEvidenceTests(unittest.TestCase):
         self.assertFalse(decision.force_final_answer_without_tools)
         self.assertEqual(decision.temporary_tool_allowlist, {"glob_files"})
         self.assertEqual(decision.payload["claim_metrics"]["blocked_assertions"], 1)
+
+    def test_unlocated_certainty_escalation_rewrites_without_reopening_discovery(self) -> None:
+        request = "只读定位 Owner 和影响范围；没有证据的结论标记未定位。"
+        context = FinalAnswerContext(
+            request=request,
+            content="Owner 仍未定位。结论：无直接影响，因此该功能需要从零开发。",
+            messages=[],
+            run_start_index=0,
+            requirement_contract=generate_requirement_contract(request),
+            tool_results=[],
+            read_file_evidence_paths=[],
+            source_evidence=[],
+            open_todos=[],
+            is_code_implementation_request=False,
+            steer_counts={},
+        )
+
+        decision = NegativeExistenceSteerer(max_steers=2).decide(context)
+
+        self.assertIsNotNone(decision)
+        self.assertTrue(decision.force_final_answer_without_tools)
+        self.assertIsNone(decision.temporary_tool_allowlist)
+        self.assertEqual(decision.payload["blocked_assertion_count"], 2)
+        self.assertEqual(
+            decision.payload["unlocated_escalations"],
+            ["结论：无直接影响", "需要从零开发"],
+        )
 
     def test_negative_existence_steerer_respects_its_bounded_retry_cap(self) -> None:
         request = "只读确认当前目录是否有 Java 文件。"

@@ -58,6 +58,29 @@ _ENTITY_CLAIM = re.compile(
     r"|\bno\s+(?P<english>[A-Za-z_][A-Za-z0-9_.-]{1,})\s+exists\b",
     re.IGNORECASE,
 )
+_UNLOCATED_MARKER = re.compile(
+    r"(?:未定位|未验证|尚未验证|未确认|尚未确认|证据不足)|"
+    r"\b(?:unlocated|unverified|not\s+located|not\s+verified|not\s+confirmed|insufficient\s+evidence)\b",
+    re.IGNORECASE,
+)
+_UNLOCATED_CERTAINTY_ESCALATION = re.compile(
+    r"(?:需要|需|必须|应当|应该)\s*(?:完全)?\s*从零(?:开始)?(?:开发|实现|构建)|"
+    r"(?:结论\s*[:：]?\s*)?(?:无|没有)\s*(?:任何)?\s*直接影响|"
+    r"\b(?:must|need(?:s)?\s+to|require(?:s|d)?)\s+(?:be\s+)?(?:built|implemented)\s+from\s+scratch\b|"
+    r"\b(?:build|implement)\s+(?:it\s+)?from\s+scratch\b|"
+    r"\bno\s+direct\s+impact\b",
+    re.IGNORECASE,
+)
+_CONDITIONAL_OR_PROPOSAL = re.compile(
+    r"(?:如果|若|假如|前提是|待确认|建议|可考虑|候选方案)|"
+    r"\b(?:if|assuming|provided\s+that|proposal|recommend(?:ed|ation)?|option)\b",
+    re.IGNORECASE,
+)
+_EPISTEMIC_NEGATION = re.compile(
+    r"(?:不能|无法|不足以|尚不能|并非|不应)\s*(?:据此\s*)?(?:确认|断言|认定|证明|得出)?|"
+    r"\b(?:cannot|can't|do\s+not|don't|not\s+enough\s+to)\s+(?:conclude|claim|establish|prove)\b",
+    re.IGNORECASE,
+)
 
 _FENCED_CODE = re.compile(r"```.*?```", re.DOTALL)
 _INLINE_CODE = re.compile(r"`[^`]*`")
@@ -154,6 +177,22 @@ def unsupported_negative_existence_claims(
         if claim.stance in {ASSERTED_ABSENCE, OBSERVED_NO_MATCH}
         and not _claim_has_matching_evidence(claim, results)
     )
+
+
+def unsupported_unlocated_escalations(content: str) -> tuple[str, ...]:
+    """Return certainty claims that contradict an answer's unlocated stance."""
+
+    sanitized = _non_code_text(content)
+    if not _UNLOCATED_MARKER.search(sanitized):
+        return ()
+    issues: list[str] = []
+    for start, end in _clause_spans(sanitized):
+        clause = sanitized[start:end].strip()
+        if not clause or _CONDITIONAL_OR_PROPOSAL.search(clause) or _EPISTEMIC_NEGATION.search(clause):
+            continue
+        for match in _UNLOCATED_CERTAINTY_ESCALATION.finditer(clause):
+            issues.append(match.group(0).strip())
+    return tuple(dict.fromkeys(issues))
 
 
 def negative_claim_metrics(content: str, tool_results: Iterable[ToolResultSummary]) -> dict[str, int]:
@@ -398,4 +437,5 @@ __all__ = [
     "parse_negative_evidence_claims",
     "render_negative_existence_issues",
     "unsupported_negative_existence_claims",
+    "unsupported_unlocated_escalations",
 ]
