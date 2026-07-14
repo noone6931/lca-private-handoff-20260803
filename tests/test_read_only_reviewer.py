@@ -3555,6 +3555,30 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertIn("There is no target finding count", prompt)
         self.assertIn("Requirement facts do not need to be observed in repository source", prompt)
         self.assertIn("A failed or missing path in one root never invalidates a successful read in another root", prompt)
+        self.assertIn("Do not review design taste, completeness, naming preference", prompt)
+        self.assertIn("is not itself a candidate-answer defect", prompt)
+
+    def test_rewrite_treats_reviewer_action_as_advisory_not_source_evidence(self) -> None:
+        result = ReviewerResult(
+            verdict="revise",
+            confidence=0.9,
+            findings=(
+                ReviewerFinding(
+                    "c001",
+                    "the proposal needs a rollback state",
+                    "add ROLLBACK and GenerateReqNoUtils",
+                    "建议新增回退流程。",
+                    "candidate_defect",
+                ),
+            ),
+            reason="revise",
+        )
+
+        message = reviewer_rewrite_message(result, profile="design")
+
+        self.assertIn("Reviewer issue/action text is advisory, not evidence", message)
+        self.assertIn("Prefer deleting or narrowly downgrading", message)
+        self.assertIn("Never copy a reviewer-suggested class, field, state, service", message)
 
     def test_path_bound_line_locator_variants_parse_full_ranges(self) -> None:
         variants = (
