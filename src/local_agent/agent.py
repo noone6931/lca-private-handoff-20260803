@@ -44,8 +44,6 @@ from .llm import LlmTimeoutError
 from .llm import OpenAICompatibleClient
 from .provider_protocol import ProviderProtocolArtifact
 from .provider_protocol import provider_safe_assistant_message as _provider_safe_assistant_message
-from .provider_protocol import protocol_violation_message
-from .provider_protocol import protocol_violation_payload
 from .provider_protocol import classify_provider_content_artifact
 from .lsp.client import close_all_clients
 from .negative_evidence import negative_claim_metrics as _negative_claim_metrics
@@ -580,22 +578,44 @@ class AgentRuntime:
             if artifact is None:
                 artifact = classify_provider_content_artifact(self._config.provider, raw_message.get("content"))
             if force_final_answer and isinstance(raw_tool_calls, list) and raw_tool_calls:
-                return self._stop_for_provider_protocol_violation(
-                    deadline,
-                    run_start_index,
+                protocol_outcome = self._provider_terminal_phase.handle_protocol_violation(
                     phase="forced_final",
                     forced_final_kind=forced_final_kind or "runtime_forced_final",
                     artifact_kind="structured_tool_calls",
                     tool_calls=raw_tool_calls,
+                    deadline=deadline,
                 )
-            if isinstance(artifact, ProviderProtocolArtifact):
-                return self._stop_for_provider_protocol_violation(
+                if protocol_outcome.action == "retry":
+                    step += 1
+                    continue
+                return self._finish_run(
+                    protocol_outcome.terminal_message,
                     deadline,
                     run_start_index,
+                    reason=protocol_outcome.terminal_reason or "forced_final_protocol_violation",
+                    skip_memory_consolidation=True,
+                    preserve_terminal_content=True,
+                )
+            if isinstance(artifact, ProviderProtocolArtifact):
+                protocol_outcome = self._provider_terminal_phase.handle_protocol_violation(
                     phase="forced_final" if force_final_answer else "ordinary",
                     forced_final_kind=(forced_final_kind or "runtime_forced_final") if force_final_answer else None,
                     artifact_kind=artifact.kind,
                     artifact=artifact,
+                    deadline=deadline,
+                )
+                if protocol_outcome.action == "retry":
+                    step += 1
+                    continue
+                return self._finish_run(
+                    protocol_outcome.terminal_message,
+                    deadline,
+                    run_start_index,
+                    reason=protocol_outcome.terminal_reason or (
+                        "forced_final_protocol_violation" if force_final_answer else "provider_protocol_violation"
+                    ),
+                    skip_memory_consolidation=True,
+                    preserve_terminal_content=True,
                 )
             if not raw_tool_calls:
                 tool_choice_outcome = self._tool_choice_directive_phase.after_model_turn([])
@@ -628,7 +648,7 @@ class AgentRuntime:
                         terminal_outcome.terminal_message,
                         deadline,
                         run_start_index,
-                        reason="provider_non_substantive_response",
+                        reason=terminal_outcome.terminal_reason or "provider_non_substantive_response",
                         skip_memory_consolidation=True,
                         preserve_terminal_content=True,
                     )
@@ -1058,19 +1078,6 @@ class AgentRuntime:
     def _record_synthetic_tool_result_for_run(self, *, count_as_error: bool = True) -> None:
         self._run.collector.record_synthetic_tool_result(is_error=count_as_error)
 
-    def _record_provider_protocol_violation_for_run(
-        self,
-        *,
-        phase: str,
-        artifact_kind: str,
-        suppressed_tool_calls: int,
-    ) -> None:
-        self._run.collector.record_provider_protocol_violation(
-            phase=phase,
-            artifact_kind=artifact_kind,
-            suppressed_tool_calls=suppressed_tool_calls,
-        )
-
     def _finish_run_summary(self, reason: str) -> dict[str, Any]:
         payload = self._run.collector.finish(
             reason,
@@ -1180,49 +1187,6 @@ class AgentRuntime:
             run_start_index,
             reason=reason,
             skip_memory_consolidation=True,
-        )
-
-    def _stop_for_provider_protocol_violation(
-        self,
-        deadline: float | None,
-        run_start_index: int,
-        *,
-        phase: str,
-        forced_final_kind: str | None,
-        artifact_kind: str,
-        tool_calls: list[object] = (),
-        artifact: ProviderProtocolArtifact | None = None,
-    ) -> str:
-        outcome = (
-            self._run.finalization.reject_forced_final_protocol_response(
-                artifact_kind=artifact_kind,
-                suppressed_tool_calls=len(tool_calls),
-            )
-            if phase == "forced_final"
-            else None
-        )
-        self._record_provider_protocol_violation_for_run(
-            phase=phase,
-            artifact_kind=artifact_kind,
-            suppressed_tool_calls=len(tool_calls),
-        )
-        payload = protocol_violation_payload(
-            phase=phase,
-            artifact_kind=artifact_kind,
-            steering_kind=forced_final_kind or (outcome.steering_kind if outcome is not None else None),
-            tool_calls=tool_calls,
-            artifact=artifact,
-        )
-        self._session.append("provider_protocol_violation", payload)
-        reason = "forced_final_protocol_violation" if phase == "forced_final" else "provider_protocol_violation"
-        self._events.emit("ErrorEvent", {"kind": reason, **payload})
-        return self._finish_run(
-            protocol_violation_message(phase=phase),
-            deadline,
-            run_start_index,
-            reason=reason,
-            skip_memory_consolidation=True,
-            preserve_terminal_content=True,
         )
 
     def _execute_tool_with_repeat_guard(

@@ -7,6 +7,10 @@ import time
 MAX_FORCED_FINAL_ANSWER_CONTINUATIONS = 8
 MAX_FINALIZATION_ATTEMPTS = 8
 MAX_NON_SUBSTANTIVE_RESPONSE_RETRIES = 3
+# OMP retries invalid terminal stops up to three times.  LCA applies the same
+# bounded shape to forced-final provider protocol artifacts, while still
+# failing closed on exhaustion.
+MAX_FORCED_FINAL_PROTOCOL_RECOVERIES = 3
 FINALIZATION_REWRITE_RESERVE_SECONDS = 45.0
 MIN_FINALIZATION_REWRITE_RESERVE_SECONDS = 1.0
 FINAL_ANSWER_STEERING_HARD = "hard"
@@ -32,6 +36,10 @@ class ForcedFinalProtocolOutcome:
     steering_kind: str
     artifact_kind: str
     suppressed_tool_calls: int
+    retry: bool
+    attempt: int
+    max_attempts: int
+    reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -58,9 +66,12 @@ class FinalizationCoordinator:
         self.unresolved_gate: UnresolvedFinalAnswerGate | None = None
         self.terminal_phase_entered = False
         self.forced_final_protocol_violations = 0
+        self.forced_final_protocol_recoveries = 0
+        self.forced_final_protocol_recovery_exhausted = 0
         self.non_substantive_response_retries = 0
         self.non_substantive_response_exhausted = 0
         self._consecutive_non_substantive_responses = 0
+        self._consecutive_forced_final_protocol_responses = 0
 
     def can_queue(self) -> bool:
         return self.continuations < MAX_FORCED_FINAL_ANSWER_CONTINUATIONS
@@ -151,6 +162,7 @@ class FinalizationCoordinator:
         # A real tool step can clear the short no-tool retry window, but we keep
         # the aggregate finalization budget consumed for the run.
         self.continuations = 0
+        self._consecutive_forced_final_protocol_responses = 0
         self.clear_pending_request()
 
     def reject_forced_final_protocol_response(
@@ -158,14 +170,45 @@ class FinalizationCoordinator:
         *,
         artifact_kind: str,
         suppressed_tool_calls: int = 0,
+        deadline_monotonic: float | None = None,
+        run_started_monotonic: float | None = None,
+        now: float | None = None,
     ) -> ForcedFinalProtocolOutcome:
-        """Close a terminal-only turn that still carried a provider tool protocol."""
+        """Reject a terminal-only provider tool protocol and maybe re-arm finalization."""
         self.forced_final_protocol_violations += 1
-        self.pending_force_final = False
+        self._consecutive_forced_final_protocol_responses += 1
+        attempt = self._consecutive_forced_final_protocol_responses
+        current_kind = self.kind
+        current_severity = self.severity
+        reason = "recovery_limit" if attempt > MAX_FORCED_FINAL_PROTOCOL_RECOVERIES else None
+        if reason is None:
+            request = self.request(
+                kind=current_kind,
+                severity=current_severity,
+                deadline_monotonic=deadline_monotonic,
+                run_started_monotonic=run_started_monotonic,
+                now=now,
+            )
+            if request.accepted:
+                self.forced_final_protocol_recoveries += 1
+                retry = True
+            else:
+                reason = request.reason or "finalization_rejected"
+                self.forced_final_protocol_recovery_exhausted += 1
+                self.pending_force_final = False
+                retry = False
+        else:
+            self.forced_final_protocol_recovery_exhausted += 1
+            self.pending_force_final = False
+            retry = False
         return ForcedFinalProtocolOutcome(
             steering_kind=self.kind,
             artifact_kind=artifact_kind,
             suppressed_tool_calls=max(0, suppressed_tool_calls),
+            retry=retry,
+            attempt=attempt,
+            max_attempts=MAX_FORCED_FINAL_PROTOCOL_RECOVERIES,
+            reason=reason,
         )
 
     def observe_non_substantive_response(self, *, forced_final: bool, kind: str) -> NonSubstantiveResponseOutcome:
@@ -195,9 +238,12 @@ class FinalizationCoordinator:
 
     def observe_substantive_response(self) -> None:
         self._consecutive_non_substantive_responses = 0
+        self._consecutive_forced_final_protocol_responses = 0
 
     def terminal_response_snapshot(self) -> dict[str, int]:
         return {
             "non_substantive_retries": self.non_substantive_response_retries,
             "non_substantive_exhausted": self.non_substantive_response_exhausted,
+            "forced_final_protocol_recoveries": self.forced_final_protocol_recoveries,
+            "forced_final_protocol_recovery_exhausted": self.forced_final_protocol_recovery_exhausted,
         }

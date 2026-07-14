@@ -189,8 +189,8 @@ def _inside_fenced_code(content: str, position: int) -> bool:
 
 
 def _structural_preview(tool_name: str, parameter_names: tuple[str, ...]) -> str:
-    parameters = "".join(f"<parameter={name}>…</parameter>" for name in parameter_names)
-    return f"<tool_call><function={tool_name}>{parameters}</function></tool_call>"
+    parameters = ",".join(parameter_names) if parameter_names else "(none)"
+    return f"tool={tool_name}; parameters={parameters}"
 
 
 __all__ = [

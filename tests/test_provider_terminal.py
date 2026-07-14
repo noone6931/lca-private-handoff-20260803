@@ -8,6 +8,8 @@ from unittest.mock import patch
 from local_agent.agent import AgentRuntime
 from local_agent.config import AgentConfig
 from local_agent.finalization import FinalizationCoordinator
+from local_agent.finalization import MAX_FINALIZATION_ATTEMPTS
+from local_agent.finalization import MAX_FORCED_FINAL_ANSWER_CONTINUATIONS
 from local_agent.provider_terminal import assess_terminal_content
 from local_agent.steering.final_answer import SteeringDecision
 
@@ -58,7 +60,58 @@ class ProviderTerminalTests(unittest.TestCase):
             self.assertTrue(coordinator.begin_forced_final_turn())
         exhausted = coordinator.observe_non_substantive_response(forced_final=True, kind="detached_single_token")
         self.assertFalse(exhausted.retry)
-        self.assertEqual(coordinator.terminal_response_snapshot(), {"non_substantive_retries": 3, "non_substantive_exhausted": 1})
+        self.assertEqual(
+            coordinator.terminal_response_snapshot(),
+            {
+                "non_substantive_retries": 3,
+                "non_substantive_exhausted": 1,
+                "forced_final_protocol_recoveries": 0,
+                "forced_final_protocol_recovery_exhausted": 0,
+            },
+        )
+
+    def test_forced_final_protocol_recovery_preserves_finalization_hard_gates(self) -> None:
+        coordinator = FinalizationCoordinator()
+        coordinator.aggregate_attempts = MAX_FINALIZATION_ATTEMPTS
+        exhausted = coordinator.reject_forced_final_protocol_response(
+            artifact_kind="bailian_xml_tool_envelope",
+            deadline_monotonic=None,
+            run_started_monotonic=None,
+        )
+        self.assertFalse(exhausted.retry)
+        self.assertEqual(exhausted.reason, "aggregate_limit")
+        self.assertEqual(coordinator.forced_final_protocol_recovery_exhausted, 1)
+
+        coordinator = FinalizationCoordinator()
+        coordinator.continuations = MAX_FORCED_FINAL_ANSWER_CONTINUATIONS
+        exhausted = coordinator.reject_forced_final_protocol_response(
+            artifact_kind="bailian_xml_tool_envelope",
+            deadline_monotonic=None,
+            run_started_monotonic=None,
+        )
+        self.assertFalse(exhausted.retry)
+        self.assertEqual(exhausted.reason, "continuation_limit")
+        self.assertEqual(coordinator.forced_final_protocol_recovery_exhausted, 1)
+
+    def test_forced_final_protocol_recovery_respects_deadline_reserve(self) -> None:
+        coordinator = FinalizationCoordinator()
+        accepted = coordinator.request(
+            kind="completion_audit",
+            deadline_monotonic=100.0,
+            run_started_monotonic=0.0,
+            now=0.0,
+        )
+        self.assertTrue(accepted.accepted)
+        self.assertTrue(coordinator.begin_forced_final_turn())
+        exhausted = coordinator.reject_forced_final_protocol_response(
+            artifact_kind="bailian_xml_tool_envelope",
+            deadline_monotonic=100.0,
+            run_started_monotonic=0.0,
+            now=90.0,
+        )
+        self.assertFalse(exhausted.retry)
+        self.assertEqual(exhausted.reason, "deadline_reserve")
+        self.assertFalse(coordinator.pending_force_final)
 
     def test_runtime_recovers_once_in_ordinary_and_forced_final_phases_without_persisting_placeholders(self) -> None:
         _TerminalRecoveryClient.calls = []
@@ -88,7 +141,15 @@ class ProviderTerminalTests(unittest.TestCase):
         self.assertEqual(_TerminalRecoveryClient.calls[2]["tools"], [])
         self.assertEqual(_TerminalRecoveryClient.calls[3]["tools"], [])
         self.assertNotIn("nulla", records)
-        self.assertEqual(runtime._last_run_summary["provider_terminal"], {"non_substantive_retries": 2, "non_substantive_exhausted": 0})
+        self.assertEqual(
+            runtime._last_run_summary["provider_terminal"],
+            {
+                "non_substantive_retries": 2,
+                "non_substantive_exhausted": 0,
+                "forced_final_protocol_recoveries": 0,
+                "forced_final_protocol_recovery_exhausted": 0,
+            },
+        )
 
 
 if __name__ == "__main__":

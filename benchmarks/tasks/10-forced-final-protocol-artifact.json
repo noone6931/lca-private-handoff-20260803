@@ -1,6 +1,6 @@
 {
   "id": "forced-final-protocol-artifact",
-  "title": "Forced-final Bailian markup is terminal-only and suppressed",
+  "title": "Repeated forced-final Bailian markup exhausts bounded recovery and is suppressed",
   "prompt": "只读读取 README.md，并用一个表格总结当前项目。",
   "budget_seconds": 90,
   "workspace_files": {
@@ -49,8 +49,10 @@
       "run_summary": {
         "tool_calls": 1,
         "tool_errors": 0,
-        "forced_final_protocol_violations": 1,
-        "provider_markup_artifacts": 1,
+        "forced_final_protocol_violations": 4,
+        "forced_final_protocol_recoveries": 3,
+        "forced_final_protocol_recovery_exhausted": 1,
+        "provider_markup_artifacts": 4,
         "suppressed_tool_executions": 0
       }
     },

@@ -34,6 +34,8 @@ class RunStats:
     provider_schema_violations: int = 0
     provider_protocol_violations: int = 0
     forced_final_protocol_violations: int = 0
+    forced_final_protocol_recoveries: int = 0
+    forced_final_protocol_recovery_exhausted: int = 0
     forced_final_structured_tool_calls: int = 0
     provider_markup_artifacts: int = 0
     suppressed_tool_executions: int = 0
@@ -216,6 +218,14 @@ class RunCollector:
                 self._stats.forced_final_structured_tool_calls += 1
         else:
             self._stats.provider_markup_artifacts += 1
+
+    def record_forced_final_protocol_recovery(self, *, exhausted: bool = False) -> None:
+        if self._stats is None:
+            return
+        if exhausted:
+            self._stats.forced_final_protocol_recovery_exhausted += 1
+        else:
+            self._stats.forced_final_protocol_recoveries += 1
 
     def record_session_evidence(
         self,
@@ -403,6 +413,8 @@ class RunCollector:
             "provider_schema_violations": stats.provider_schema_violations,
             "provider_protocol_violations": stats.provider_protocol_violations,
             "forced_final_protocol_violations": stats.forced_final_protocol_violations,
+            "forced_final_protocol_recoveries": stats.forced_final_protocol_recoveries,
+            "forced_final_protocol_recovery_exhausted": stats.forced_final_protocol_recovery_exhausted,
             "forced_final_structured_tool_calls": stats.forced_final_structured_tool_calls,
             "provider_markup_artifacts": stats.provider_markup_artifacts,
             "suppressed_tool_executions": stats.suppressed_tool_executions,

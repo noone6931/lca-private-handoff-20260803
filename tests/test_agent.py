@@ -845,7 +845,7 @@ class _ForcedFinalHangingClient:
 
 class _ForcedFinalProtocolClient:
     calls: list[dict] = []
-    mode = "structured"
+    mode: object = "structured"
     first_content = "draft requiring a final rewrite"
 
     def __init__(self, config: AgentConfig):
@@ -855,7 +855,11 @@ class _ForcedFinalProtocolClient:
         type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
         if len(type(self).calls) == 1:
             return type("Response", (), {"message": {"content": type(self).first_content}})()
-        if type(self).mode == "structured":
+        mode = type(self).mode
+        if isinstance(mode, (list, tuple)):
+            index = min(len(type(self).calls) - 2, len(mode) - 1)
+            mode = mode[index]
+        if mode == "structured":
             return type(
                 "Response",
                 (),
@@ -872,7 +876,7 @@ class _ForcedFinalProtocolClient:
                     }
                 },
             )()
-        if type(self).mode == "markup":
+        if mode == "markup":
             return type(
                 "Response",
                 (),
@@ -885,7 +889,7 @@ class _ForcedFinalProtocolClient:
                     }
                 },
             )()
-        return type("Response", (), {"message": {"content": type(self).mode}})()
+        return type("Response", (), {"message": {"content": mode}})()
 
 
 class _InitialHangingClient:
@@ -4115,7 +4119,88 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertIn("完成验收", result or "")
         self.assertEqual(runtime._last_run_summary["termination_reason"], "forced_final_timeout_unverified")
 
-    def test_forced_final_structured_tool_call_is_suppressed_and_terminal(self) -> None:
+    def test_forced_final_structured_tool_call_recovers_once_without_execution(self) -> None:
+        _ForcedFinalProtocolClient.calls = []
+        _ForcedFinalProtocolClient.mode = ("structured", "Corrected final answer from existing observations.")
+        _ForcedFinalProtocolClient.first_content = "draft requiring a final rewrite"
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            sink = ListEventSink()
+            config = AgentConfig(
+                provider="bailian",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=workspace,
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _ForcedFinalProtocolClient):
+                runtime = AgentRuntime(config, show_tool_logs=False, event_sink=sink)
+                with patch.object(
+                    runtime,
+                    "_decide_final_answer_steering",
+                    side_effect=(SteeringDecision(kind="completion_audit", message="rewrite", payload={}), None),
+                ):
+                    result = runtime.run("请给出最终答案。")
+            records = [json.loads(line) for line in runtime._session.path.read_text(encoding="utf-8").splitlines()]
+
+        self.assertEqual(result, "Corrected final answer from existing observations.")
+        self.assertNotIn("should-not-run.py", result)
+        self.assertEqual(len(_ForcedFinalProtocolClient.calls), 3)
+        self.assertEqual(_tool_names_from_schema_call(_ForcedFinalProtocolClient.calls[1]["tools"]), set())
+        self.assertEqual(_tool_names_from_schema_call(_ForcedFinalProtocolClient.calls[2]["tools"]), set())
+        self.assertFalse(any(event.type == "ToolStarted" for event in sink.events))
+        self.assertEqual(runtime._last_run_summary["termination_reason"], "final")
+        self.assertEqual(runtime._last_run_summary["forced_final_protocol_violations"], 1)
+        self.assertEqual(runtime._last_run_summary["forced_final_protocol_recoveries"], 1)
+        self.assertEqual(runtime._last_run_summary["forced_final_protocol_recovery_exhausted"], 0)
+        self.assertEqual(runtime._last_run_summary["forced_final_structured_tool_calls"], 1)
+        self.assertEqual(runtime._last_run_summary["suppressed_tool_executions"], 1)
+        violation = next(record for record in records if record.get("event") == "provider_protocol_violation")
+        self.assertEqual(violation["payload"]["kind"], "structured_tool_calls")
+        self.assertEqual(violation["payload"]["recovery_action"], "retry")
+        self.assertNotIn("should-not-run.py", json.dumps(violation, ensure_ascii=False))
+
+    def test_forced_final_bailian_markup_artifact_recovers_without_leaking_values(self) -> None:
+        _ForcedFinalProtocolClient.calls = []
+        _ForcedFinalProtocolClient.mode = ("markup", "Corrected final answer after redacted recovery.")
+        _ForcedFinalProtocolClient.first_content = "draft requiring a final rewrite"
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            config = AgentConfig(
+                provider="bailian",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=workspace,
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _ForcedFinalProtocolClient):
+                runtime = AgentRuntime(config, show_tool_logs=False)
+                with patch.object(
+                    runtime,
+                    "_decide_final_answer_steering",
+                    side_effect=(SteeringDecision(kind="completion_audit", message="rewrite", payload={}), None),
+                ):
+                    result = runtime.run("请给出最终答案。")
+            session_text = runtime._session.path.read_text(encoding="utf-8")
+
+        self.assertEqual(result, "Corrected final answer after redacted recovery.")
+        self.assertNotIn("<tool_call>", result)
+        self.assertNotIn("should-not-appear.py", session_text)
+        self.assertNotIn("<tool_call>", session_text)
+        self.assertEqual(_tool_names_from_schema_call(_ForcedFinalProtocolClient.calls[1]["tools"]), set())
+        self.assertEqual(_tool_names_from_schema_call(_ForcedFinalProtocolClient.calls[2]["tools"]), set())
+        self.assertEqual(runtime._last_run_summary["provider_markup_artifacts"], 1)
+        self.assertEqual(runtime._last_run_summary["forced_final_protocol_recoveries"], 1)
+        self.assertEqual(runtime._last_run_summary["forced_final_protocol_recovery_exhausted"], 0)
+        self.assertEqual(runtime._last_run_summary["suppressed_tool_executions"], 0)
+
+    def test_repeated_forced_final_protocol_artifacts_exhaust_recovery(self) -> None:
         _ForcedFinalProtocolClient.calls = []
         _ForcedFinalProtocolClient.mode = "structured"
         _ForcedFinalProtocolClient.first_content = "draft requiring a final rewrite"
@@ -4140,53 +4225,18 @@ class AgentRuntimeTests(unittest.TestCase):
                     return_value=SteeringDecision(kind="completion_audit", message="rewrite", payload={}),
                 ):
                     result = runtime.run("请给出最终答案。")
-            records = [json.loads(line) for line in runtime._session.path.read_text(encoding="utf-8").splitlines()]
-
-        self.assertIn("未完成/未验证", result)
-        self.assertNotIn("should-not-run.py", result)
-        self.assertEqual(len(_ForcedFinalProtocolClient.calls), 2)
-        self.assertEqual(_tool_names_from_schema_call(_ForcedFinalProtocolClient.calls[1]["tools"]), set())
-        self.assertFalse(any(event.type == "ToolStarted" for event in sink.events))
-        self.assertEqual(runtime._last_run_summary["termination_reason"], "forced_final_protocol_violation")
-        self.assertEqual(runtime._last_run_summary["forced_final_protocol_violations"], 1)
-        self.assertEqual(runtime._last_run_summary["forced_final_structured_tool_calls"], 1)
-        self.assertEqual(runtime._last_run_summary["suppressed_tool_executions"], 1)
-        violation = next(record for record in records if record.get("event") == "provider_protocol_violation")
-        self.assertEqual(violation["payload"]["kind"], "structured_tool_calls")
-        self.assertNotIn("should-not-run.py", json.dumps(violation, ensure_ascii=False))
-
-    def test_forced_final_bailian_markup_artifact_is_suppressed_without_leaking_values(self) -> None:
-        _ForcedFinalProtocolClient.calls = []
-        _ForcedFinalProtocolClient.mode = "markup"
-        _ForcedFinalProtocolClient.first_content = "draft requiring a final rewrite"
-        with tempfile.TemporaryDirectory() as tmp:
-            workspace = Path(tmp).resolve()
-            config = AgentConfig(
-                provider="bailian",
-                api_base_url="https://example.invalid/v1",
-                api_key="token",
-                model="model",
-                workspace=workspace,
-                max_steps=0,
-                budget_seconds=None,
-                approval_mode="yolo",
-            )
-            with patch("local_agent.agent.OpenAICompatibleClient", _ForcedFinalProtocolClient):
-                runtime = AgentRuntime(config, show_tool_logs=False)
-                with patch.object(
-                    runtime,
-                    "_decide_final_answer_steering",
-                    return_value=SteeringDecision(kind="completion_audit", message="rewrite", payload={}),
-                ):
-                    result = runtime.run("请给出最终答案。")
             session_text = runtime._session.path.read_text(encoding="utf-8")
 
         self.assertIn("未完成/未验证", result)
-        self.assertNotIn("<tool_call>", result)
-        self.assertNotIn("should-not-appear.py", session_text)
-        self.assertEqual(_tool_names_from_schema_call(_ForcedFinalProtocolClient.calls[1]["tools"]), set())
-        self.assertEqual(runtime._last_run_summary["provider_markup_artifacts"], 1)
-        self.assertEqual(runtime._last_run_summary["suppressed_tool_executions"], 0)
+        self.assertNotIn("should-not-run.py", result)
+        self.assertNotIn("should-not-run.py", session_text)
+        self.assertEqual(len(_ForcedFinalProtocolClient.calls), 5)
+        self.assertFalse(any(event.type == "ToolStarted" for event in sink.events))
+        self.assertEqual(runtime._last_run_summary["termination_reason"], "forced_final_protocol_violation")
+        self.assertEqual(runtime._last_run_summary["forced_final_protocol_violations"], 4)
+        self.assertEqual(runtime._last_run_summary["forced_final_protocol_recoveries"], 3)
+        self.assertEqual(runtime._last_run_summary["forced_final_protocol_recovery_exhausted"], 1)
+        self.assertEqual(runtime._last_run_summary["forced_final_structured_tool_calls"], 4)
 
     def test_xml_examples_remain_visible_when_not_a_forced_final_protocol_violation(self) -> None:
         sample = "```xml\n<tool_call><function=read_file><parameter=path>example.py</parameter></function></tool_call>\n```"

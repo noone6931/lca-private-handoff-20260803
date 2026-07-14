@@ -17,6 +17,8 @@ class ProviderProtocolTests(unittest.TestCase):
         self.assertEqual(artifact.tool_name, "read_file")
         self.assertEqual(artifact.parameter_names, ("path",))
         self.assertNotIn("secret/path.py", artifact.preview)
+        self.assertNotIn("<tool_call>", artifact.preview)
+        self.assertIn("tool=read_file", artifact.preview)
 
     def test_does_not_classify_code_fence_quotes_or_unknown_xml(self) -> None:
         samples = (
