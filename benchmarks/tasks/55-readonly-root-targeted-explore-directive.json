@@ -1,0 +1,168 @@
+{
+  "id": "readonly-root-targeted-explore-directive",
+  "title": "Read-only explore keeps broad root inventory soft and targets each root with precise candidates",
+  "prompt": "只读定位两个代码根的 owner 和影响范围；如果 broad inventory 只给目录清单，必须继续用有界搜索形成候选再读取，不要修改文件。",
+  "budget_seconds": 90,
+  "workspace_files": {
+    "src/BackendOwner.java": "class BackendOwner { void handle() {} }\n",
+    "config/app.properties": "name=backend\n"
+  },
+  "additional_roots": {
+    "frontend": {
+      "src/FrontendOwner.ts": "export const FrontendOwner = 'route';\n",
+      "assets/style.css": ".x { color: red; }\n"
+    }
+  },
+  "scripted_responses": [
+    {
+      "tool_calls": [
+        {
+          "name": "search_code",
+          "arguments": {
+            "path": "src",
+            "pattern": "MissingOwnerToken"
+          }
+        },
+        {
+          "name": "search_code",
+          "arguments": {
+            "path": "{{root:frontend}}/src",
+            "pattern": "MissingOwnerToken"
+          }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "glob_files",
+          "arguments": {
+            "paths": [
+              "."
+            ],
+            "limit": 1
+          }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "search_code",
+          "arguments": {
+            "path": "src",
+            "pattern": "BackendOwner"
+          }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "src/BackendOwner.java"
+          }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "glob_files",
+          "arguments": {
+            "paths": [
+              "{{root:frontend}}"
+            ],
+            "limit": 1
+          }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "search_code",
+          "arguments": {
+            "path": "{{root:frontend}}/src",
+            "pattern": "FrontendOwner"
+          }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "{{root:frontend}}/src/FrontendOwner.ts"
+          }
+        }
+      ]
+    },
+    {
+      "content": "已读证据：src/BackendOwner.java 和 frontend/src/FrontendOwner.ts 均由 broad root inventory 之后的精确搜索命中再直接读取；目录 inventory 没有被当作 owner 结论。完整调用链仍需后续确认。"
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "submit_read_only_review",
+          "arguments": {
+            "verdict": "pass",
+            "confidence": 0.97,
+            "reason": "Both roots have direct reads derived from precise searches after broad inventory, and the final answer keeps owner scope bounded."
+          }
+        }
+      ]
+    }
+  ],
+  "acceptance": {
+    "required_tools": [
+      "search_code",
+      "glob_files",
+      "read_file"
+    ],
+    "forbidden_tools": [
+      "list_files",
+      "apply_patch",
+      "write_file",
+      "shell",
+      "run_tests"
+    ],
+    "changed_files": [],
+    "answer_all_of": [
+      "BackendOwner.java",
+      "FrontendOwner.ts",
+      "精确搜索",
+      "直接读取",
+      "仍需后续确认"
+    ],
+    "answer_forbidden_regex": [
+      "目录 inventory(被|足以|可以|可).*作为 owner 结论",
+      "已证实.*完整.*owner",
+      "不存在.*其他 owner"
+    ],
+    "termination_reason": "final",
+    "run_summary": {
+      "tool_calls": 8,
+      "tool_errors": 0,
+      "provider_schema_violations": 0,
+      "provider_protocol_violations": 0,
+      "suppressed_tool_executions": 0,
+      "file_discovery_calls": 2
+    },
+    "tool_choice_exact": {
+      "forces": 0,
+      "exhausted": 0
+    },
+    "read_only_reviewer": {
+      "triggers": 1,
+      "typed_submits": 1
+    },
+    "safe_partial_report": {
+      "emitted": 0
+    },
+    "max_tool_errors": 0
+  },
+  "residual_risk": "This fixture locks root-targeted directive lifecycle and broad-inventory softness; live provider search quality and repository scale still need immutable-candidate gates."
+}

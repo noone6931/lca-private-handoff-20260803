@@ -659,7 +659,7 @@ class _OwnerExploreFallbackRootFairClient:
                                 "type": "function",
                                 "function": {
                                     "name": "glob_files",
-                                    "arguments": json.dumps({"paths": [str(self.config.workspace), str(additional)], "limit": 200}),
+                                    "arguments": json.dumps({"paths": [str(self.config.workspace / "**" / "*Primary*.sql")], "limit": 200}),
                                 },
                             },
                         ],
@@ -695,6 +695,26 @@ class _OwnerExploreFallbackRootFairClient:
                         "content": None,
                         "tool_calls": [
                             {
+                                "id": "glob-additional",
+                                "type": "function",
+                                "function": {
+                                    "name": "glob_files",
+                                    "arguments": json.dumps({"paths": [str(additional / "**" / "*AdditionalRoute*.yaml")], "limit": 200}),
+                                },
+                            }
+                        ],
+                    }
+                },
+            )()
+        if self._primary_calls == 6:
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {
                                 "id": "read-additional",
                                 "type": "function",
                                 "function": {
@@ -706,7 +726,7 @@ class _OwnerExploreFallbackRootFairClient:
                     }
                 },
             )()
-        if self._primary_calls == 6:
+        if self._primary_calls == 7:
             return type(
                 "Response",
                 (),
@@ -4222,7 +4242,7 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertIn("AdditionalRoute.yaml", result)
         summary = runtime._last_run_summary
         self.assertEqual(summary["termination_reason"], "final")
-        self.assertEqual(summary["tool_counts"], {"glob_files": 1, "list_files": 3, "read_file": 2, "search_code": 2})
+        self.assertEqual(summary["tool_counts"], {"glob_files": 2, "list_files": 3, "read_file": 2, "search_code": 2})
         self.assertGreaterEqual(summary["provider_schema_violations"], 3)
         self.assertEqual(summary["read_only_reviewer"]["triggers"], 1)
         self.assertEqual(

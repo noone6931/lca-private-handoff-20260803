@@ -314,6 +314,7 @@ class ToolChoiceQueueTests(unittest.TestCase):
                     "evidence_root": str(root),
                     "searched_roots": [str(root)],
                     "files": [str(source)],
+                    "patterns": ["**/*Owner*.java"],
                     "negative_evidence_type": "path_match",
                 },
             )
@@ -326,8 +327,8 @@ class ToolChoiceQueueTests(unittest.TestCase):
             )
 
         self.assertEqual(decision.allowed_tool_names, frozenset({"read_file"}))
-        self.assertEqual(decision.scoped_read_paths, ())
-        self.assertEqual(decision.required_tool_arguments_json, "")
+        self.assertEqual(decision.scoped_read_paths, (str(source),))
+        self.assertEqual(decision.scoped_read_budget, 1)
         self.assertIn(str(source), decision.tool_call_hints[0])
 
     def test_exact_source_filename_glob_becomes_a_bounded_read_candidate(self) -> None:
@@ -436,9 +437,319 @@ class ToolChoiceQueueTests(unittest.TestCase):
 
         self.assertEqual(decision.rule_id, "read_only_profile_explore_inventory_read")
         self.assertEqual(decision.allowed_tool_names, frozenset({"read_file"}))
-        self.assertEqual(decision.scoped_read_paths, ())
-        self.assertIsNone(decision.scoped_read_budget)
+        self.assertEqual(decision.scoped_read_paths, (str(application), str(controller)))
+        self.assertEqual(decision.scoped_read_budget, 1)
         self.assertIn("OwnerApplication.java", decision.tool_call_hints[0])
+
+    def test_root_only_truncated_glob_does_not_force_inventory_read(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            source = root / "src" / "OwnerApplication.java"
+            source.parent.mkdir()
+            source.write_text("class OwnerApplication {}\n", encoding="utf-8")
+            no_match = ToolResultSummary(
+                "search_code",
+                "No matches.",
+                useless=True,
+                metadata={"evidence_root": str(root), "negative_evidence_type": "content_no_match"},
+            )
+            root_inventory = ToolResultSummary(
+                "glob_files",
+                str(source),
+                metadata={
+                    "evidence_root": str(root),
+                    "searched_roots": [str(root)],
+                    "files": [str(source)],
+                    "patterns": [str(root)],
+                    "negative_evidence_type": "incomplete",
+                    "truncated": True,
+                    "complete": False,
+                },
+            )
+            explore = evaluate_read_only_explore(
+                profile="owner_impact",
+                tool_results=(no_match, root_inventory),
+                code_roots=(str(root),),
+            )
+            decision = evaluate_tool_choice_state(
+                task_kind="read-only",
+                prompt="只读定位 owner 和调用链。",
+                tool_results=(no_match, root_inventory),
+                workspace_roots=(str(root),),
+                read_only_review_profile="owner_impact",
+            )
+
+        self.assertNotIn("inventory_read", decision.rule_id)
+        self.assertIn("search_code", decision.allowed_tool_names)
+        self.assertIn("glob_files", decision.allowed_tool_names)
+        self.assertEqual(explore.inventory_read_candidates, ())
+
+    def test_direct_source_read_from_broad_inventory_covers_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            source = root / "src" / "OwnerApplication.java"
+            source.parent.mkdir()
+            source.write_text("class OwnerApplication {}\n", encoding="utf-8")
+            inventory = ToolResultSummary(
+                "glob_files",
+                str(source),
+                metadata={
+                    "evidence_root": str(root),
+                    "searched_roots": [str(root)],
+                    "files": [str(source)],
+                    "patterns": [str(root)],
+                    "negative_evidence_type": "incomplete",
+                    "truncated": True,
+                    "complete": False,
+                },
+            )
+            read = ToolResultSummary(
+                "read_file",
+                "class OwnerApplication {}",
+                path=str(source),
+                metadata={"resolved_path": str(source)},
+            )
+            explore = evaluate_read_only_explore(
+                profile="owner_impact",
+                tool_results=(inventory, read),
+                code_roots=(str(root),),
+            )
+            decision = evaluate_tool_choice_state(
+                task_kind="read-only",
+                prompt="只读定位 owner 和调用链。",
+                tool_results=(inventory, read),
+                workspace_roots=(str(root),),
+                read_only_review_profile="owner_impact",
+            )
+
+        self.assertEqual(explore.missing_roots, ())
+        self.assertEqual(decision.rule_id, "read_only_profile_explore_final")
+
+    def test_direct_config_read_from_broad_inventory_does_not_cover_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            config = root / "config" / "app.properties"
+            config.parent.mkdir()
+            config.write_text("name=demo\n", encoding="utf-8")
+            inventory = ToolResultSummary(
+                "glob_files",
+                str(config),
+                metadata={
+                    "evidence_root": str(root),
+                    "searched_roots": [str(root)],
+                    "files": [str(config)],
+                    "patterns": [str(root)],
+                    "negative_evidence_type": "incomplete",
+                    "truncated": True,
+                    "complete": False,
+                },
+            )
+            read = ToolResultSummary(
+                "read_file",
+                "name=demo",
+                path=str(config),
+                metadata={"resolved_path": str(config)},
+            )
+            explore = evaluate_read_only_explore(
+                profile="owner_impact",
+                tool_results=(inventory, read),
+                code_roots=(str(root),),
+            )
+            decision = evaluate_tool_choice_state(
+                task_kind="read-only",
+                prompt="只读定位 owner 和调用链。",
+                tool_results=(inventory, read),
+                workspace_roots=(str(root),),
+                read_only_review_profile="owner_impact",
+            )
+
+        self.assertEqual(explore.missing_roots, (str(root),))
+        self.assertNotEqual(decision.rule_id, "read_only_profile_explore_final")
+
+    def test_pure_extension_glob_does_not_force_inventory_read(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            source = root / "src" / "OwnerApplication.java"
+            source.parent.mkdir()
+            source.write_text("class OwnerApplication {}\n", encoding="utf-8")
+            inventory = ToolResultSummary(
+                "glob_files",
+                str(source),
+                metadata={
+                    "evidence_root": str(root),
+                    "searched_roots": [str(root)],
+                    "files": [str(source)],
+                    "patterns": ["**/*.java"],
+                    "negative_evidence_type": "path_match",
+                    "truncated": False,
+                },
+            )
+            decision = evaluate_tool_choice_state(
+                task_kind="read-only",
+                prompt="只读定位 owner 和调用链。",
+                tool_results=(inventory,),
+                workspace_roots=(str(root),),
+                read_only_review_profile="owner_impact",
+            )
+
+        self.assertEqual(decision.rule_id, "read_only_profile_explore")
+        self.assertIn("search_code", decision.allowed_tool_names)
+        self.assertIn("glob_files", decision.allowed_tool_names)
+
+    def test_punctuation_only_glob_does_not_force_inventory_read(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            source = root / "src" / "a-b.java"
+            source.parent.mkdir()
+            source.write_text("class A {}\n", encoding="utf-8")
+            inventory = ToolResultSummary(
+                "glob_files",
+                str(source),
+                metadata={
+                    "evidence_root": str(root),
+                    "searched_roots": [str(root)],
+                    "files": [str(source)],
+                    "patterns": ["**/*-*.java"],
+                    "negative_evidence_type": "path_match",
+                    "truncated": False,
+                },
+            )
+            decision = evaluate_tool_choice_state(
+                task_kind="read-only",
+                prompt="只读定位 owner 和调用链。",
+                tool_results=(inventory,),
+                workspace_roots=(str(root),),
+                read_only_review_profile="owner_impact",
+            )
+
+        self.assertEqual(decision.rule_id, "read_only_profile_explore")
+        self.assertIn("search_code", decision.allowed_tool_names)
+        self.assertIn("glob_files", decision.allowed_tool_names)
+
+    def test_inventory_read_targets_one_root_with_short_candidate_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            backend = Path(tmp, "backend").resolve()
+            frontend = Path(tmp, "frontend").resolve()
+            backend_sources = []
+            frontend_sources = []
+            for index in range(8):
+                backend_source = backend / "src" / f"BackendOwner{index}.java"
+                frontend_source = frontend / "src" / f"FrontendOwner{index}.ts"
+                backend_source.parent.mkdir(parents=True, exist_ok=True)
+                frontend_source.parent.mkdir(parents=True, exist_ok=True)
+                backend_source.write_text(f"class BackendOwner{index} {{}}\n", encoding="utf-8")
+                frontend_source.write_text(f"export const FrontendOwner{index} = true;\n", encoding="utf-8")
+                backend_sources.append(str(backend_source))
+                frontend_sources.append(str(frontend_source))
+            backend_glob = ToolResultSummary(
+                "glob_files",
+                "\n".join(backend_sources),
+                metadata={
+                    "evidence_root": str(backend),
+                    "searched_roots": [str(backend)],
+                    "files": backend_sources,
+                    "patterns": ["**/*Owner*.java"],
+                    "negative_evidence_type": "path_match",
+                    "truncated": False,
+                },
+            )
+            frontend_glob = ToolResultSummary(
+                "glob_files",
+                "\n".join(frontend_sources),
+                metadata={
+                    "evidence_root": str(frontend),
+                    "searched_roots": [str(frontend)],
+                    "files": frontend_sources,
+                    "patterns": ["**/*Owner*.ts"],
+                    "negative_evidence_type": "path_match",
+                    "truncated": False,
+                },
+            )
+            first_explore = evaluate_read_only_explore(
+                profile="owner_impact",
+                tool_results=(backend_glob, frontend_glob),
+                code_roots=(str(backend), str(frontend)),
+            )
+            first = evaluate_tool_choice_state(
+                task_kind="read-only",
+                prompt="只读定位 owner 和调用链。",
+                tool_results=(backend_glob, frontend_glob),
+                workspace_roots=(str(backend), str(frontend)),
+                read_only_review_profile="owner_impact",
+            )
+            backend_read = ToolResultSummary(
+                "read_file",
+                "class BackendOwner0 {}",
+                path=backend_sources[0],
+                metadata={"resolved_path": backend_sources[0]},
+            )
+            second_explore = evaluate_read_only_explore(
+                profile="owner_impact",
+                tool_results=(backend_glob, frontend_glob, backend_read),
+                code_roots=(str(backend), str(frontend)),
+            )
+            second = evaluate_tool_choice_state(
+                task_kind="read-only",
+                prompt="只读定位 owner 和调用链。",
+                tool_results=(backend_glob, frontend_glob, backend_read),
+                workspace_roots=(str(backend), str(frontend)),
+                read_only_review_profile="owner_impact",
+            )
+
+        self.assertEqual(first.rule_id, "read_only_profile_explore_inventory_read")
+        self.assertEqual(first.allowed_tool_names, frozenset({"read_file"}))
+        self.assertEqual(first.scoped_read_paths, first_explore.inventory_read_candidates)
+        self.assertEqual(first.scoped_read_budget, 1)
+        self.assertLessEqual(len(first_explore.inventory_read_candidates), 5)
+        self.assertTrue(all(path.startswith(str(backend) + "/") for path in first_explore.inventory_read_candidates))
+        self.assertIn(str(backend), first.tool_call_hints[0])
+        self.assertNotIn(str(frontend), first.tool_call_hints[0])
+        self.assertEqual(second.rule_id, "read_only_profile_explore_inventory_read")
+        self.assertNotEqual(first.scoped_read_paths, second.scoped_read_paths)
+        self.assertLessEqual(len(second_explore.inventory_read_candidates), 5)
+        self.assertTrue(all(path.startswith(str(frontend) + "/") for path in second_explore.inventory_read_candidates))
+        self.assertIn(str(frontend), second.tool_call_hints[0])
+        self.assertNotIn(str(backend_sources[1]), second.tool_call_hints[0])
+
+    def test_inventory_read_identity_change_resets_exact_force_attempts(self) -> None:
+        owner = ToolChoiceDirectiveOwner()
+        first = ToolChoiceDecision(
+            steering_required=True,
+            allowed_tool_names=frozenset({"read_file"}),
+            reason="read inventory candidate",
+            rule_id="read_only_profile_explore_inventory_read",
+            missing_requirements=("code_read:/repo/backend", "code_read:/repo/frontend"),
+            preferred_tool_names=("read_file",),
+            tool_call_hints=("backend candidates",),
+            scoped_read_paths=("/repo/backend/src/Owner.java",),
+            scoped_read_budget=1,
+        )
+        second = ToolChoiceDecision(
+            steering_required=True,
+            allowed_tool_names=frozenset({"read_file"}),
+            reason="read inventory candidate",
+            rule_id="read_only_profile_explore_inventory_read",
+            missing_requirements=("code_read:/repo/frontend",),
+            preferred_tool_names=("read_file",),
+            tool_call_hints=("frontend candidates",),
+            scoped_read_paths=("/repo/frontend/src/Owner.ts",),
+            scoped_read_budget=1,
+        )
+
+        self.assertEqual(owner.begin_decision(first, []).kind, "none")
+        self.assertEqual(
+            owner.observe_turn([
+                {"function": {"name": "search_code", "arguments": "{}"}},
+            ]).attempt,
+            1,
+        )
+        self.assertEqual(owner.begin_decision(second, []).kind, "none")
+        action = owner.observe_turn([
+            {"function": {"name": "search_code", "arguments": "{}"}},
+        ])
+
+        self.assertEqual(action.kind, "force")
+        self.assertEqual(action.attempt, 1)
 
     def test_model_selected_source_read_completes_root_coverage(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -490,7 +801,7 @@ class ToolChoiceQueueTests(unittest.TestCase):
                     "evidence_root": str(root),
                     "searched_roots": [str(root)],
                     "files": [str(manifest), str(pom), str(source)],
-                    "patterns": ["**/package.json", "**/pom.xml", "**/src/**/*.*"],
+                    "patterns": ["**/package.json", "**/pom.xml", "**/*Owner*.java"],
                     "negative_evidence_type": "path_match",
                     "truncated": True,
                 },
@@ -624,6 +935,50 @@ class ToolChoiceQueueTests(unittest.TestCase):
         self.assertEqual(decision.rule_id, "read_only_profile_explore_exact_cross_root")
         self.assertEqual(decision.allowed_tool_names, frozenset({"glob_files"}))
         self.assertEqual(required["paths"], [str(second / "**" / "list.vue")])
+
+    def test_broad_inventory_does_not_override_precise_retry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            first = Path(tmp, "backend").resolve()
+            second = Path(tmp, "frontend").resolve()
+            first.mkdir()
+            second_source = second / "src" / "TargetOwner.java"
+            second_source.parent.mkdir(parents=True)
+            second_source.write_text("class TargetOwner {}\n", encoding="utf-8")
+            precise_miss = ToolResultSummary(
+                "glob_files",
+                '{"files":[]}',
+                useless=True,
+                metadata={
+                    "searched_roots": [str(first)],
+                    "patterns": ["**/TargetOwner.java"],
+                    "negative_evidence_type": "path_no_match",
+                },
+            )
+            broad_inventory = ToolResultSummary(
+                "glob_files",
+                str(second_source),
+                metadata={
+                    "evidence_root": str(second),
+                    "searched_roots": [str(second)],
+                    "files": [str(second_source)],
+                    "patterns": [str(second)],
+                    "negative_evidence_type": "incomplete",
+                    "truncated": True,
+                    "complete": False,
+                },
+            )
+            decision = evaluate_tool_choice_state(
+                task_kind="read-only",
+                prompt="只读分析 owner 和设计影响。",
+                tool_results=(precise_miss, broad_inventory),
+                workspace_roots=(str(first), str(second)),
+                read_only_review_profile="design",
+            )
+
+        required = json.loads(decision.required_tool_arguments_json)
+        self.assertEqual(decision.rule_id, "read_only_profile_explore_exact_cross_root")
+        self.assertEqual(decision.allowed_tool_names, frozenset({"glob_files"}))
+        self.assertEqual(required["paths"], [str(second / "**" / "TargetOwner.java")])
 
     def test_primary_scoped_precise_miss_rebases_across_all_code_roots(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -882,8 +1237,9 @@ class ToolChoiceQueueTests(unittest.TestCase):
                 read_only_review_profile="owner_impact",
             )
 
-        self.assertEqual(decision.allowed_tool_names, frozenset({"read_file"}))
-        self.assertEqual(decision.scoped_read_paths, ())
+        self.assertIn("glob_files", decision.allowed_tool_names)
+        self.assertNotIn("read_file", decision.allowed_tool_names)
+        self.assertNotEqual(decision.rule_id, "read_only_profile_explore_inventory_read")
         # After the first root is read, the second root must still be eligible
         # for its own fallback; a positive candidate from a truncated listing
         # is useful without pretending the other root was inspected.
@@ -1092,7 +1448,7 @@ class ToolChoiceQueueTests(unittest.TestCase):
                 source_artifacts=("src/PrepareOrderApplication.java",),
             )
 
-        self.assertEqual(ordinary.missing_roots, (str(root),))
+        self.assertEqual(ordinary.missing_roots, ())
         self.assertEqual(requested.rule_id, "read_only_profile_explore_final")
         self.assertTrue(requested.force_final_answer_without_tools)
 

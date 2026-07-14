@@ -1,6 +1,7 @@
 """Typed, bounded exploration policy for high-risk read-only profiles."""
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Literal
@@ -32,6 +33,7 @@ MAX_OWNER_DESIGN_EXPLORE_CALLS = 12
 SOFT_EXPLORE_CALLS_PER_ROOT = 2
 HARD_EXPLORE_CALLS_PER_ROOT = 4
 MAX_SOURCE_INVENTORY_READ_CHOICES_PER_ROOT = 16
+MAX_SOURCE_INVENTORY_READ_CHOICES_PER_DIRECTIVE = 5
 SOURCE_FILE_SUFFIXES = frozenset(
     {
         ".c",
@@ -77,6 +79,7 @@ class ReadOnlyExploreDecision:
     preferred_roots: tuple[str, ...] = ()
     discovery_roots: tuple[str, ...] = ()
     discovery_patterns: tuple[str, ...] = ()
+    broad_inventory_roots: tuple[str, ...] = ()
 
     @property
     def is_applicable(self) -> bool:
@@ -137,16 +140,18 @@ def evaluate_read_only_explore(
         requested_source_artifacts=requested_artifacts,
     )
     missing = tuple(root for root in roots if root not in covered)
-    read_candidates = _read_candidates_for_missing_roots(candidate_paths, missing)
-    exact_read_candidates = _read_candidates_for_missing_roots(precise_source_inventory, missing)
-    inventory_read_candidates = _read_candidates_for_missing_roots(
-        source_inventory,
-        missing,
-        per_root_limit=MAX_SOURCE_INVENTORY_READ_CHOICES_PER_ROOT,
-    )
     root_attempts = _root_attempts(results, roots)
     preferred_roots = _least_observed_roots(missing, root_attempts)
+    read_candidates = _read_candidates_for_missing_roots(candidate_paths, missing)
+    exact_read_candidates = _read_candidates_for_missing_roots(precise_source_inventory, missing)
+    inventory_target_roots = _inventory_read_target_roots(source_inventory, missing, root_attempts)
+    inventory_read_candidates = _read_candidates_for_missing_roots(
+        source_inventory,
+        inventory_target_roots,
+        per_root_limit=MAX_SOURCE_INVENTORY_READ_CHOICES_PER_DIRECTIVE,
+    )
     exact_discovery_roots, exact_discovery_patterns = _cross_root_exact_glob_retry(results, roots, missing)
+    broad_inventory_roots = _broad_inventory_roots(results, roots, missing)
     discovery_roots = exact_discovery_roots or (
         ()
         if inventory_read_candidates
@@ -171,6 +176,7 @@ def evaluate_read_only_explore(
             preferred_roots=preferred_roots,
             discovery_roots=discovery_roots,
             discovery_patterns=exact_discovery_patterns,
+            broad_inventory_roots=broad_inventory_roots,
         )
     if observation_calls >= hard_budget and not (
         read_candidates or exact_read_candidates or inventory_read_candidates
@@ -189,6 +195,7 @@ def evaluate_read_only_explore(
             preferred_roots=preferred_roots,
             discovery_roots=discovery_roots,
             discovery_patterns=exact_discovery_patterns,
+            broad_inventory_roots=broad_inventory_roots,
         )
     fallback_reserve = min(hard_budget, max(0, len(discovery_roots) * 2))
     if discovery_roots and observation_calls >= hard_budget - fallback_reserve:
@@ -206,6 +213,7 @@ def evaluate_read_only_explore(
             preferred_roots=preferred_roots,
             discovery_roots=discovery_roots,
             discovery_patterns=exact_discovery_patterns,
+            broad_inventory_roots=broad_inventory_roots,
         )
     return ReadOnlyExploreDecision(
         "precise",
@@ -221,6 +229,7 @@ def evaluate_read_only_explore(
         preferred_roots=preferred_roots,
         discovery_roots=discovery_roots,
         discovery_patterns=exact_discovery_patterns,
+        broad_inventory_roots=broad_inventory_roots,
     )
 
 
@@ -298,6 +307,8 @@ def _covered_roots(
                 covered.add(root)
                 continue
             if path in inventory_paths.get(root, ()):
+                if _is_source_evidence_path(path):
+                    covered.add(root)
                 continue
             if path == root or path.startswith(root + "/"):
                 covered.add(root)
@@ -328,6 +339,10 @@ def _matches_requested_source_artifact(path: str, root: str, references: tuple[s
         if relative == reference or relative.endswith("/" + reference):
             return True
     return False
+
+
+def _is_source_evidence_path(path: str) -> bool:
+    return Path(path).suffix.lower() in SOURCE_FILE_SUFFIXES
 
 
 def _canonical_path(result: ToolResultSummary) -> str | None:
@@ -471,6 +486,9 @@ def _model_selected_source_inventory_paths_by_root(
             or result.metadata.get("evidence_paths_overflow")
         ):
             continue
+        patterns = result.metadata.get("patterns")
+        if not isinstance(patterns, (list, tuple)) or not _glob_has_precise_source_selector(result, roots, patterns):
+            continue
         files = result.metadata.get("files")
         if not isinstance(files, (list, tuple)) or not files:
             continue
@@ -488,6 +506,70 @@ def _model_selected_source_inventory_paths_by_root(
             seen.add((root, rendered))
             candidates[root].append(rendered)
     return {root: tuple(paths) for root, paths in candidates.items()}
+
+
+def _broad_inventory_roots(
+    results: Iterable[ToolResultSummary],
+    roots: tuple[str, ...],
+    missing_roots: tuple[str, ...],
+) -> tuple[str, ...]:
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for result in results:
+        if result.name != "glob_files" or not _is_executed_explore_attempt(result) or result.is_error:
+            continue
+        patterns = result.metadata.get("patterns")
+        files = result.metadata.get("files")
+        if not isinstance(patterns, (list, tuple)) or not isinstance(files, (list, tuple)) or not files:
+            continue
+        if _glob_has_precise_source_selector(result, roots, patterns):
+            continue
+        for root, _path in _scoped_file_list_paths(result, roots, files):
+            if root in missing_roots and root not in seen:
+                seen.add(root)
+                ordered.append(root)
+    return tuple(ordered)
+
+
+def _inventory_read_target_roots(
+    source_inventory: dict[str, tuple[str, ...]],
+    missing_roots: tuple[str, ...],
+    attempts: dict[str, int],
+) -> tuple[str, ...]:
+    roots_with_candidates = tuple(root for root in missing_roots if source_inventory.get(root))
+    if not roots_with_candidates:
+        return ()
+    return _least_observed_roots(roots_with_candidates, attempts)[:1]
+
+
+def _glob_has_precise_source_selector(
+    result: ToolResultSummary,
+    roots: tuple[str, ...],
+    patterns: Iterable[object],
+) -> bool:
+    scoped_roots = _typed_scope_roots(result, roots)
+    return any(_pattern_is_precise_source_selector(raw, roots, scoped_roots) for raw in patterns)
+
+
+def _pattern_is_precise_source_selector(
+    raw: object,
+    roots: tuple[str, ...],
+    scoped_roots: tuple[str, ...],
+) -> bool:
+    if not isinstance(raw, str) or not raw.strip():
+        return False
+    rendered = raw.strip()
+    if not any(char in rendered for char in "*?["):
+        return _precise_source_pattern_binding(rendered, roots) is not None or (
+            bool(scoped_roots) and _precise_relative_source_pattern(rendered) is not None
+        )
+    name = Path(rendered).name
+    suffix = Path(name).suffix.lower()
+    if suffix not in SOURCE_FILE_SUFFIXES:
+        return False
+    stem = name[: -len(suffix)] if suffix else name
+    literal = re.sub(r"[*?\[\]{}!]", "", stem).strip()
+    return bool(literal) and any(char.isalnum() for char in literal)
 
 
 def _requested_source_artifacts_first(
