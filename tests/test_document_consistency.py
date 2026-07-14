@@ -57,6 +57,22 @@ class DocumentConsistencyTests(unittest.TestCase):
             candidate_reconciliation_stance("两份资料表面存在冲突，但示例图是完成态，因此其实没有冲突。"),
             "asserted_reconciled",
         )
+        self.assertEqual(
+            candidate_reconciliation_stance("The Markdown document is the highest priority source of truth, so the image cannot override it."),
+            "asserted_reconciled",
+        )
+        self.assertEqual(
+            candidate_reconciliation_stance("需求文档为最高优先级依据，因此示例图只作参考。"),
+            "asserted_reconciled",
+        )
+        self.assertEqual(
+            candidate_reconciliation_stance("文档和图片存在来源差异，当前仍待确认。"),
+            "reported_unresolved",
+        )
+        self.assertEqual(
+            candidate_reconciliation_stance("两份资料存在差异，可由资料维护方确认以哪份为准。"),
+            "conditional_reconciliation",
+        )
 
     def test_pass_cannot_disguise_asserted_reconciliation_as_unresolved(self) -> None:
         handoff = _handoff()
@@ -77,6 +93,15 @@ class DocumentConsistencyTests(unittest.TestCase):
                 candidate="If B is the completed state, they may coexist. The artifact role is not specified, so the conflict remains unresolved.",
                 verdict="pass",
             )
+        )
+        self.assertEqual(
+            validate_document_consistency_assessment(
+                assessment,
+                handoff,
+                candidate="需求文档为最高优先级依据，因此示例图不改变结论。",
+                verdict="pass",
+            ),
+            "document_consistency_stance_mismatch",
         )
 
     def test_conflict_candidate_requires_two_document_observation_ids(self) -> None:
@@ -106,6 +131,24 @@ class DocumentConsistencyTests(unittest.TestCase):
                 handoff,
                 candidate="A and B are not consistent; artifact role remains unresolved.",
                 verdict="unverified",
+            )
+        )
+        empty_conflicts = DocumentConsistencyAssessment("reported_unresolved", (), ())
+        self.assertEqual(
+            validate_document_consistency_assessment(
+                empty_conflicts,
+                handoff,
+                candidate="The document and image differ; the artifact role remains unresolved.",
+                verdict="pass",
+            ),
+            "document_conflict_evidence_insufficient",
+        )
+        self.assertIsNone(
+            validate_document_consistency_assessment(
+                empty_conflicts,
+                handoff,
+                candidate="This answer summarizes the document and image observations without comparing or reconciling them.",
+                verdict="pass",
             )
         )
 

@@ -1014,6 +1014,48 @@ class _SpoofedDocumentConsistencyClient:
         )()
 
 
+class _SpoofedDocumentPriorityClient(_SpoofedDocumentConsistencyClient):
+    """A reviewer that falsely passes an invented source-priority rule."""
+
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
+        reviewer = any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages)
+        if reviewer:
+            return _review_submit(
+                {
+                    "verdict": "pass",
+                    "confidence": 0.99,
+                    "findings": [],
+                    "reason": "claimed unresolved",
+                    "document_consistency": {
+                        "stance": "reported_unresolved",
+                        "conflict_evidence_ids": ["e001", "e002"],
+                        "supporting_evidence_ids": [],
+                    },
+                }
+            )
+        self._primary_calls += 1
+        if self._primary_calls == 1:
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {"id": "read-policy", "type": "function", "function": {"name": "read_file", "arguments": '{"path":"policy.md"}'}},
+                            {"id": "read-prototype", "type": "function", "function": {"name": "read_file", "arguments": '{"path":"prototype.html"}'}},
+                        ],
+                    }
+                },
+            )()
+        return type(
+            "Response",
+            (),
+            {"message": {"content": "policy.md 要求字段留空；prototype.html 显示有值。需求文档为最高优先级依据，因此 prototype 只作参考。 FORGED_PRIORITY"}},
+        )()
+
+
 class _DocumentConsistencySourceGapReviewerClient:
     def __init__(self, config: AgentConfig):
         self.config = config
@@ -1159,6 +1201,23 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertIn("policy.md", answer)
         self.assertIn("prototype.html", answer)
         self.assertNotIn("FORGED_RECONCILIATION", answer)
+        self.assertEqual(runtime._last_run_summary["termination_reason"], "read_only_reviewer_unverified")
+        self.assertEqual(runtime._last_run_summary["read_only_reviewer"]["errors"], {"invalid_output": 1})
+
+    def test_document_consistency_spoofed_source_priority_pass_becomes_safe_partial(self) -> None:
+        _SpoofedDocumentPriorityClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            (workspace / "policy.md").write_text("Field must remain blank.\n", encoding="utf-8")
+            (workspace / "prototype.html").write_text("<p>Field has a value.</p>\n", encoding="utf-8")
+            with patch("local_agent.agent.OpenAICompatibleClient", _SpoofedDocumentPriorityClient):
+                runtime = AgentRuntime(_config(workspace), show_tool_logs=False)
+                answer = runtime.run("只根据 Markdown 和 HTML 分析资料一致性，不要检查代码；不能自行选择资料优先级。")
+
+        self.assertIn("安全部分交付", answer)
+        self.assertIn("policy.md", answer)
+        self.assertIn("prototype.html", answer)
+        self.assertNotIn("FORGED_PRIORITY", answer)
         self.assertEqual(runtime._last_run_summary["termination_reason"], "read_only_reviewer_unverified")
         self.assertEqual(runtime._last_run_summary["read_only_reviewer"]["errors"], {"invalid_output": 1})
 
@@ -1459,6 +1518,8 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertIn("finding_scope to `candidate_defect`", prompt)
         self.assertIn("copy that exact candidate_claims text", prompt)
         self.assertIn("action must change the candidate answer", prompt)
+        self.assertIn("exact request is mandatory", prompt)
+        self.assertIn("source priority", prompt)
         self.assertIn("must not ask to modify the requirements, images, prototypes", prompt)
         self.assertIn("report_read_only_finding once per finding", prompt)
         self.assertIn("submit_read_only_review with verdict, confidence, and reason only", prompt)
@@ -1806,6 +1867,35 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertIn("platformPayment", tail_unit.text)
         rewritten = candidate.replace("**platformPayment** is verified owner", "analogous candidate").replace("platformPayment is the true owner", "the true owner is unlocated")
         self.assertTrue(rewrite_complies_with_review(rewritten, units, result.findings))
+
+    def test_claim_unit_sampling_preserves_high_risk_document_consistency_windows(self) -> None:
+        lines = [f"- filler claim {index}" for index in range(1, 121)]
+        lines[38] = "- context before document observation"
+        lines[39] = "- Document A says the field is blank."
+        lines[40] = "- context after document observation"
+        lines[74] = "- The prototype and image remain different; the lifecycle is unresolved."
+        lines[95] = "- context before visual observation"
+        lines[96] = "- Image B shows a visible value."
+        lines[97] = "- context after visual observation"
+        lines[116] = "- The Markdown document is the highest priority source of truth."
+
+        units = candidate_claim_units("\n".join(lines))
+        text_by_id = {unit.claim_id: unit.text for unit in units}
+        self.assertLessEqual(len(units), 80)
+        for claim_id in (
+            "c039",
+            "c040",
+            "c041",
+            "c075",
+            "c096",
+            "c097",
+            "c098",
+            "c117",
+        ):
+            self.assertIn(claim_id, text_by_id)
+        self.assertIn("field is blank", text_by_id["c040"])
+        self.assertIn("visible value", text_by_id["c097"])
+        self.assertIn("highest priority", text_by_id["c117"])
 
     def test_trigger_policy_scopes_document_consistency_and_excludes_single_document_and_git_metadata(self) -> None:
         self.assertTrue(should_review_read_only_candidate(

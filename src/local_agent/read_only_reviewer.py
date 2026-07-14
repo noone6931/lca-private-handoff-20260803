@@ -230,13 +230,14 @@ def reviewer_messages(handoff: ExploreHandoff, claim_units: tuple[CandidateClaim
 Use the output-only review tools; you have no workspace tools and must never assume unseen repository facts. For each candidate defect, call report_read_only_finding once. After all findings are reported, call submit_read_only_review exactly once.
 
 Review contract:
+- The user's exact request is mandatory context. Enforce explicit prohibitions, acceptance constraints, and requested evidence boundaries from that request; do not let the candidate invent a source priority, lifecycle, or exception that the request forbids.
 - A direct owner is justified only by evidence that explicitly binds the requested behavior to a path, symbol, or call chain.
 - Similar names, same-domain payment/order/fee capabilities, and general reusable code are analogous candidates, never verified owners.
 - Missing or incomplete searches mean unlocated within their stated scope, not absent everywhere.
 - Requirement facts, repository facts, proposals, and open questions must remain distinct.
 - A proposal must not be worded as an existing table, class, endpoint, service, approval flow, numbering prefix, or integration unless the handoff explicitly supports it.
 - When the handoff has no explicit direct binding, do not say a main owner/module judgment is correct or mostly correct. Treat same-domain code as observed or analogous and leave the owner unlocated.
-- For a document-consistency review, do not resolve conflicting document or image observations with an invented workflow, scope, actor, or precedence rule. Preserve the conflict as unresolved unless the handoff explicitly reconciles it. A candidate that accurately cites both observations, explicitly keeps the conflict unresolved, and presents only labeled options or questions for later confirmation is compliant: submit `pass` with no reported findings. A finding must identify a candidate error such as an unsupported reconciliation, a missing cited observation, or a claim that exceeds the handoff; the source materials disagreeing by itself is not a candidate defect. If the only issue is that a source owner must decide how to update source materials, submit `pass` with no reported findings.
+- For a document-consistency review, do not resolve conflicting document or image observations with an invented workflow, scope, actor, source priority, authoritative source, or precedence rule. Preserve the conflict as unresolved unless the handoff explicitly reconciles it. A candidate that accurately cites both observations, explicitly keeps the conflict unresolved, and presents only labeled options or questions for later confirmation is compliant: submit `pass` with no reported findings. A finding must identify a candidate error such as an unsupported reconciliation, a self-contradictory candidate statement, a missing cited observation, a user-request violation, or a claim that exceeds the handoff; the source materials disagreeing by itself is not a candidate defect. If the only issue is that a source owner must decide how to update source materials, submit `pass` with no reported findings.
 
 The incremental output contract is bounded and shallow. Report at most 8 findings total by calling report_read_only_finding once per finding; then call submit_read_only_review with verdict, confidence, and reason only. Findings are capacity-limited: choose the highest-risk blocking candidate defects first. Once 8 findings are recorded, stop reporting findings and submit the final verdict. A `pass` verdict requires 0 reported findings; `revise` and `unverified` require 1 to 8 reported findings. Every finding must have one unique, known claim_id plus non-empty issue and action. For every finding, choose exactly one claim_id from candidate_claims, set finding_scope to `candidate_defect`, and copy that exact candidate_claims text into `claim`. The action must change the candidate answer; it must not ask to modify the requirements, images, prototypes, or source artifacts, and must not merely ask a source owner to decide. Never invent or repeat a claim_id. Do not submit `source_material_gap` findings; those are not candidate defects. Report only the highest-risk blocking findings when there are more than 8. Keep the complete output under 9000 characters.
 Choose revise when the candidate can be corrected using the handoff. Choose unverified when the candidate cannot safely make the requested factual conclusion."""
@@ -893,13 +894,7 @@ def _sample_claim_units(indexed: list[CandidateClaimUnit]) -> tuple[CandidateCla
     if len(indexed) <= MAX_CLAIM_UNITS:
         selected = indexed
     else:
-        # Preserve the whole answer shape when an unusually long candidate
-        # exceeds the protocol cap.  Stable original IDs remain the address;
-        # evenly spaced selection avoids making middle sections invisible.
-        selected = [
-            indexed[round(position * (len(indexed) - 1) / (MAX_CLAIM_UNITS - 1))]
-            for position in range(MAX_CLAIM_UNITS)
-        ]
+        selected = _bounded_high_risk_claim_sample(indexed)
     total = 0
     bounded: list[CandidateClaimUnit] = []
     for unit in selected:
@@ -910,9 +905,72 @@ def _sample_claim_units(indexed: list[CandidateClaimUnit]) -> tuple[CandidateCla
     return tuple(bounded)
 
 
+def _bounded_high_risk_claim_sample(indexed: list[CandidateClaimUnit]) -> list[CandidateClaimUnit]:
+    """Keep risk-bearing claims and their neighbors before fair sampling.
+
+    Reviewer output is bounded, but the cap must not randomly drop the very
+    claims that adjudicate user constraints or artifact reconciliation.  Stable
+    original IDs remain the address; this only changes which IDs are projected.
+    """
+
+    selected_indices: set[int] = set()
+    for index, unit in enumerate(indexed):
+        if not _is_high_risk_candidate_claim(unit.text):
+            continue
+        for neighbor in (index - 1, index, index + 1):
+            if 0 <= neighbor < len(indexed):
+                selected_indices.add(neighbor)
+    if len(selected_indices) > MAX_CLAIM_UNITS:
+        selected_indices = set(_evenly_sample_indices(sorted(selected_indices), MAX_CLAIM_UNITS))
+    remaining = MAX_CLAIM_UNITS - len(selected_indices)
+    if remaining > 0:
+        candidates = [index for index in range(len(indexed)) if index not in selected_indices]
+        selected_indices.update(_evenly_sample_indices(candidates, remaining))
+    return [indexed[index] for index in sorted(selected_indices)]
+
+
+def _evenly_sample_indices(indices: list[int], limit: int) -> list[int]:
+    if limit <= 0 or not indices:
+        return []
+    if len(indices) <= limit:
+        return list(indices)
+    if limit == 1:
+        return [indices[0]]
+    return [
+        indices[round(position * (len(indices) - 1) / (limit - 1))]
+        for position in range(limit)
+    ]
+
+
+def _is_high_risk_candidate_claim(text: str) -> bool:
+    compact = " ".join((text or "").split())
+    return any(pattern.search(compact) for pattern in _HIGH_RISK_CLAIM_PATTERNS)
+
+
 def _is_table_row(line: str) -> bool:
     return line.count("|") >= 2
 
 
 def _is_table_separator(line: str) -> bool:
     return bool(re.fullmatch(r"\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?", line))
+
+
+_HIGH_RISK_CLAIM_PATTERNS = (
+    re.compile(
+        r"(?:\b(?:highest\s+priority|takes\s+precedence|authoritative\s+source|source\s+of\s+truth|override[sd]?)\b|"
+        r"(?:最高优先级|优先于|以.{0,24}为准|权威来源|最终依据|覆盖其他来源))",
+        flags=re.IGNORECASE,
+    ),
+    re.compile(
+        r"(?:\b(?:conflict|inconsistent|not\s+consistent|difference|discrepanc(?:y|ies)|unresolved|consistent|reconciled|resolved)\b|"
+        r"(?:冲突|矛盾|不一致|差异|未消解|未解决|待确认|一致|不矛盾|调和|解决))",
+        flags=re.IGNORECASE,
+    ),
+    re.compile(
+        r"(?:\b(?:document|markdown|html|prototype|image|screenshot|artifact|source)\b|"
+        r"(?:文档|图片|图像|截图|示例图|原型|资料|来源)).{0,80}"
+        r"(?:\b(?:blank|empty|not\s+filled|unfilled|missing|shows?|displays?|visible|populated|value)\b|"
+        r"(?:留空|空值|未填|未填写|未显示|显示|可见|有值|具体值|填入))",
+        flags=re.IGNORECASE,
+    ),
+)

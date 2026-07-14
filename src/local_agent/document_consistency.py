@@ -205,17 +205,20 @@ _RECONCILIATION_SUPPORT_PATTERNS = (
 _ASSERTED_RECONCILIATION_MARKER = re.compile(
     r"(?:\b(?:no\s+conflict|not\s+(?:a\s+)?conflict|consistent|reconciled|resolved|aligned)\b|"
     r"\b(?:is|are)\b.{0,48}\b(?:completed|final|demonstration|later)\s+state\b|"
-    r"(?:无|没有|并非).{0,12}(?:冲突|矛盾)|不矛盾|整体一致|已解决|(?:完成态|最终态|演示态|后期完成态))",
+    r"\b(?:highest\s+priority|takes\s+precedence|supersedes|overrides|authoritative\s+source|source\s+of\s+truth)\b|"
+    r"(?:无|没有|并非).{0,12}(?:冲突|矛盾)|不矛盾|整体一致|已解决|(?:完成态|最终态|演示态|后期完成态)|"
+    r"(?:最高优先级|优先于|以.{0,24}为准|权威来源|最终依据|覆盖其他来源))",
     flags=re.IGNORECASE,
 )
 _EXPLICIT_CONFLICT_MARKER = re.compile(
-    r"(?:\b(?:not\s+consistent|in\s+conflict|inconsistent|conflict\s+remains)\b|不一致|存在冲突|仍.{0,8}(?:冲突|矛盾))",
+    r"(?:\b(?:not\s+consistent|in\s+conflict|inconsistent|conflict\s+remains|source\s+differen(?:ce|ces)|artifact\s+differen(?:ce|ces)|discrepanc(?:y|ies)|(?:document|image|artifact|source)s?.{0,32}\bdiffer(?:s|ent)?)\b|"
+    r"不一致|存在冲突|仍.{0,8}(?:冲突|矛盾)|(?:资料|来源|文档|图片|图像|原型).{0,16}(?:差异|不一致)|差异.{0,16}(?:未消解|待确认|不明确))",
     flags=re.IGNORECASE,
 )
-_CONDITIONAL_MARKER = re.compile(r"(?:\b(?:if|may|might|could|perhaps)\b|如果|若|可能|或许)", flags=re.IGNORECASE)
+_CONDITIONAL_MARKER = re.compile(r"(?:\b(?:if|may|might|could|perhaps)\b|如果|若|可能|或许|可由|可以)", flags=re.IGNORECASE)
 _UNRESOLVED_MARKER = re.compile(
     r"(?:\b(?:unresolved|unclear|not\s+specified|not\s+established|pending\s+confirmation)\b|"
-    r"(?:未说明|不明确|无法确认|待确认|仍.{0,8}未解决))",
+    r"(?:未说明|不明确|无法确认|待确认|仍.{0,8}未解决|(?:可由|需由|需要|请).{0,24}(?:确认|决定)))",
     flags=re.IGNORECASE,
 )
 
