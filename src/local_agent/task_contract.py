@@ -423,6 +423,12 @@ def generate_requirement_contract(user_prompt: str) -> RequirementContract:
         )
 
     if task_kind == "read-only":
+        source_fact_requirement = (
+            "For each current repository/source fact, cite an already-read file with a path-bound line or line "
+            "range, e.g. path:42 or path:42-57, so the isolated reviewer can bind the claim to exact evidence."
+            if review_profile in {"owner_impact", "design"}
+            else "Cite concrete file paths, symbols, commands, or search terms used as evidence."
+        )
         return RequirementContract(
             objective=objective,
             scope=(
@@ -435,7 +441,7 @@ def generate_requirement_contract(user_prompt: str) -> RequirementContract:
                 "Call out any searched-for evidence that was not found.",
             ],
             evidence_requirements=[
-                "Cite concrete file paths, symbols, commands, or search terms used as evidence.",
+                source_fact_requirement,
                 "Mention when a conclusion depends on inference rather than inspected code.",
             ],
             verification_requirements=[

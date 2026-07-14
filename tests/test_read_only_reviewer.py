@@ -3555,6 +3555,8 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertIn("There is no target finding count", prompt)
         self.assertIn("Requirement facts do not need to be observed in repository source", prompt)
         self.assertIn("A failed or missing path in one root never invalidates a successful read in another root", prompt)
+        self.assertIn("every candidate statement presented as a current repository/source fact", prompt)
+        self.assertIn("A bare path, symbol name, or assertion that files were read is not evidence", prompt)
         self.assertIn("Do not review design taste, completeness, naming preference", prompt)
         self.assertIn("is not itself a candidate-answer defect", prompt)
 

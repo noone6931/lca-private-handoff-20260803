@@ -90,6 +90,15 @@ class RequirementContractTests(unittest.TestCase):
 
         self.assertEqual(contract.task_kind, "read-only")
 
+    def test_reviewed_design_contract_requires_path_bound_source_facts(self) -> None:
+        contract = generate_requirement_contract(
+            "请读取前后端源码，输出证据化技术设计，区分源码事实与设计建议，不要修改文件。"
+        )
+
+        self.assertEqual(contract.read_only_review_profile, "design")
+        self.assertTrue(any("path-bound line" in item for item in contract.evidence_requirements))
+        self.assertTrue(any("isolated reviewer" in item for item in contract.evidence_requirements))
+
     def test_very_short_plain_question_contract_is_unclear(self) -> None:
         contract = generate_requirement_contract("能吗？")
 
