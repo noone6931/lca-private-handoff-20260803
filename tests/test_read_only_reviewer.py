@@ -5241,6 +5241,10 @@ class ReadOnlyReviewerTests(unittest.TestCase):
             if message.get("role") == "tool" and message.get("tool_call_id") == "valid-finding"
         ]
         self.assertEqual(len(prior_tool_results), 1)
+        self.assertEqual(
+            [tool["function"]["name"] for tool in review_calls[3]["tools"]],
+            [REVIEWER_OUTPUT_TOOL_NAME],
+        )
 
     def test_final_before_finding_is_rejected_instead_of_passed(self) -> None:
         _ReviewerFinalBeforeFindingClient.calls = []

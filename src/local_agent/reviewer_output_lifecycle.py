@@ -167,6 +167,27 @@ def parse_reviewer_output_turn(
             )
             continue
         if name == REVIEWER_FINDING_TOOL_NAME:
+            raw_claim_id = payload.get("claim_id") if isinstance(payload, dict) else None
+            prior_finding = finding_by_claim_id.get(raw_claim_id) if isinstance(raw_claim_id, str) else None
+            if prior_finding is not None:
+                try:
+                    finding = parse_reviewer_finding_payload(payload, claim_units=claim_units)
+                except ReviewerValidationError as exc:
+                    events.append(_event("finding_rejected", call_id, exc.code, index, exc.diagnostics))
+                    continue
+                if finding == prior_finding:
+                    events.append(ReviewerOutputEvent("finding_replayed", call_id, index, finding=prior_finding))
+                else:
+                    events.append(
+                        _event(
+                            "finding_rejected",
+                            call_id,
+                            "claim_id_conflict",
+                            index,
+                            {"conflicting_claim_id_count": 1},
+                        )
+                    )
+                continue
             if not allow_findings:
                 events.append(_event("finding_rejected", call_id, "finding_not_allowed_after_capacity", index, diagnostics))
                 continue
@@ -185,21 +206,6 @@ def parse_reviewer_output_turn(
                 finding = parse_reviewer_finding_payload(payload, claim_units=claim_units)
             except ReviewerValidationError as exc:
                 events.append(_event("finding_rejected", call_id, exc.code, index, exc.diagnostics))
-                continue
-            prior_finding = finding_by_claim_id.get(finding.claim_id)
-            if prior_finding is not None:
-                if finding == prior_finding:
-                    events.append(ReviewerOutputEvent("finding_replayed", call_id, index, finding=prior_finding))
-                else:
-                    events.append(
-                        _event(
-                            "finding_rejected",
-                            call_id,
-                            "claim_id_conflict",
-                            index,
-                            {"conflicting_claim_id_count": 1},
-                        )
-                    )
                 continue
             finding_by_claim_id[finding.claim_id] = finding
             local_findings.append(finding)

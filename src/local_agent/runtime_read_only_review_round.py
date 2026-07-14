@@ -75,6 +75,7 @@ def run_review_round(
     blocking_lifecycle_corrections: dict[str, int] = {}
     capacity_directives = 0
     finding_capacity_reached = False
+    finding_submission_closed = False
     while provider_turn < max_provider_turns:
         provider_turn += 1
         state.provider_attempts += 1
@@ -83,7 +84,11 @@ def run_review_round(
             claim_units,
             document_consistency=document_consistency,
             evidence_ids=handoff.evidence_ids,
-            include_finding_tool=not finding_capacity_reached and len(collected_findings) < MAX_REVIEWER_FINDINGS,
+            include_finding_tool=(
+                not finding_submission_closed
+                and not finding_capacity_reached
+                and len(collected_findings) < MAX_REVIEWER_FINDINGS
+            ),
         )
         try:
             response = call_chat_with_timeout(port.client, messages, output_schemas, timeout=timeout)
@@ -107,7 +112,11 @@ def run_review_round(
                 candidate=candidate,
                 required_candidate_claim_ids=required_candidate_claim_ids,
                 collected_findings=collected_findings,
-                allow_findings=not finding_capacity_reached and len(collected_findings) < MAX_REVIEWER_FINDINGS,
+                allow_findings=(
+                    not finding_submission_closed
+                    and not finding_capacity_reached
+                    and len(collected_findings) < MAX_REVIEWER_FINDINGS
+                ),
                 validate_document_consistency=validate_document_consistency,
             )
         except ReviewerValidationError as exc:
@@ -240,6 +249,20 @@ def run_review_round(
                     },
                 )
         if result is None:
+            if not finding_submission_closed and any(
+                event.kind == "final_rejected"
+                and event.code in {"output_tool_arguments_type_invalid", "output_tool_arguments_json_invalid"}
+                for event in turn.events
+            ):
+                finding_submission_closed = True
+                port.session.append(
+                    "read_only_reviewer",
+                    {
+                        "event": f"{event_prefix}finding_submission_closed",
+                        "attempt": provider_turn,
+                        "reason": "final_arguments_invalid",
+                    },
+                )
             if turn.blocking_rejections:
                 for category in _blocking_rejection_categories(turn.blocking_rejections):
                     blocking_lifecycle_corrections[category] = blocking_lifecycle_corrections.get(category, 0) + 1
@@ -271,6 +294,7 @@ def run_review_round(
                     dict.fromkeys((*required_candidate_claim_ids, *invalidated_claim_ids))
                 )
                 finding_capacity_reached = False
+                finding_submission_closed = False
             if len(collected_findings) >= MAX_REVIEWER_FINDINGS:
                 finding_capacity_reached = True
             messages.append(reviewer_assistant_tool_message(message, turn.events))
