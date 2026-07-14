@@ -48,6 +48,10 @@ def parse_markdown_tables(markdown: str) -> list[SheetData]:
             continue
         if current_name and line.lstrip().startswith("|"):
             table_lines.append(line)
+        elif table_lines and not line.strip():
+            # Markdown authors often add visual spacing inside one long table.
+            # Keep the current table open until content or a new section ends it.
+            continue
         elif table_lines:
             flush()
     flush()
@@ -56,13 +60,60 @@ def parse_markdown_tables(markdown: str) -> list[SheetData]:
 
 def parse_table(lines: list[str]) -> list[list[str]]:
     rows: list[list[str]] = []
-    for line in lines:
-        cells = [cell.strip().replace("<br>", "\n") for cell in line.strip().strip("|").split("|")]
+    expected_width: int | None = None
+    for line_number, line in enumerate(lines, start=1):
+        cells = [cell.strip().replace("<br>", "\n") for cell in split_markdown_row(line)]
+        if expected_width is None:
+            expected_width = len(cells)
+        elif len(cells) != expected_width:
+            raise ValueError(
+                f"Markdown table row {line_number} has {len(cells)} columns; "
+                f"expected {expected_width}: {line}"
+            )
         if cells and all(re.fullmatch(r":?-{3,}:?", cell) for cell in cells):
             continue
         rows.append(cells)
-    width = max(len(row) for row in rows)
-    return [row + [""] * (width - len(row)) for row in rows]
+    return rows
+
+
+def split_markdown_row(line: str) -> list[str]:
+    """Split a Markdown table row without treating code-span pipes as columns."""
+    text = line.strip()
+    if text.startswith("|"):
+        text = text[1:]
+    if text.endswith("|") and not text.endswith(r"\|"):
+        text = text[:-1]
+
+    cells: list[str] = []
+    cell: list[str] = []
+    code_ticks = 0
+    index = 0
+    while index < len(text):
+        char = text[index]
+        if char == "\\" and index + 1 < len(text) and text[index + 1] == "|":
+            cell.append("|")
+            index += 2
+            continue
+        if char == "`":
+            end = index + 1
+            while end < len(text) and text[end] == "`":
+                end += 1
+            tick_count = end - index
+            if code_ticks == 0:
+                code_ticks = tick_count
+            elif code_ticks == tick_count:
+                code_ticks = 0
+            cell.append(text[index:end])
+            index = end
+            continue
+        if char == "|" and code_ticks == 0:
+            cells.append("".join(cell))
+            cell = []
+        else:
+            cell.append(char)
+        index += 1
+    cells.append("".join(cell))
+    return cells
 
 
 def write_xlsx(path: Path, sheets: list[SheetData]) -> None:

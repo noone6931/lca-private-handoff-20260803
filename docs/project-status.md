@@ -1,6 +1,6 @@
 # Local Coding Agent 项目状态
 
-更新时间：2026-07-13
+更新时间：2026-07-14
 
 本文档是开发 `local-coding-agent` 时给参与开发的人和协作 Agent 读取的项目管理基线。`docs/local-coding-agent-project-management.xlsx` 继续作为人工查看的表格视图；本 Markdown 文件作为后续开发时优先读取的项目状态、路线、Todo 和决策来源。它不是 LCA 运行时自己的 memory 或用户项目记忆。
 
@@ -30,7 +30,7 @@
 
 ## 当前进度
 
-当前项目已完成 P8 前端协议与交互基础 MVP，P9 真实需求使用准备已覆盖项目边界、源码验证、LSP 韧性和服务费结算链路压测，并进入 P10/P11 Intelligence Runtime 与 P12 只读收敛性收束。用户可以用自然语言描述任务，而不是每次手写工具顺序；Runtime 通过 RequirementContract、Planner/Explore、MiniToolChoiceQueue、CompletionAudit、二阶段 Patch Reviewer、VerificationPlan/TestPlanner/DeliveryAudit、bounded finalization coordinator、T-144 session evidence continuity、T-145 claim taxonomy、T-146 provider protocol boundary、T-147 intent/evidence closure、T-150 run-scoped temporary tool directive、T-151 isolated read-only evidence reviewer、T-152 reviewer schema repair/typed explore budget、T-153 document-only/no-edit、T-154 output-only reviewer yield/second-review last gate、T-155 pre-review audit aggregation、T-156 image observation/safe partial delivery 和 T-157 document reconciliation stance 保持任务目标、证据、写入、测试和 diff 的闭环。T-157 把资料冲突的“已消解”也变成 evidence-backed claim：视觉观察只说明图上内容，不能证明作者意图、生命周期或优先级；没有显式文档支持时，候选只能保留未消解边界或进入安全部分交付。成功 compaction 会安装可恢复的 active checkpoint，避免同一旧前缀每轮重复摘要。665 个单测和 21/21 离线 benchmark 已通过；真实 provider S1 已完整收束，S2/S3 仍需继续改善日用收敛，独立 review 前不发布 stable。完整 async Command Bus/streaming follow-up queue 仍后置。
+当前项目已完成 P8 前端协议与交互基础 MVP、P9 真实需求使用准备的阶段性验证和 P10/P11 Intelligence Runtime 骨架，正在收束 P12 只读证据与 reviewer 生命周期。T-158~T-180 将 document/reviewer 的 claim binding、incremental yield、transport、rewrite、safe-partial 和 exact tool-choice 生命周期继续拆回各自 Owner；T-181~T-187 修复了文档改写闭环、读文档后 repository intent 保持、finding replay 幂等、未解决差异语序识别和 reviewer 改写后的有界 transport recovery。T-188 直接参考 OMP `grep.ts` / `read.ts` 的列宽与每文件结果限制，在工具 Owner 内限制 `search_code`/`read_file` 的超长单行输出，避免 minified CSS 将 20KB/232KB 注入上下文。T-189 修复 Markdown-to-Excel 生成器的 code-span pipe、表内空行和列数校验，保证项目状态 Excel 仍是事实源的可靠投影。当前完整门禁为 830 个单测、35/35 deterministic benchmark 和 7/7 architecture checks；`agent.py` 为 1,866 行/71 个方法，`steering/final_answer.py` 为 59 行。默认 stable 仍是已验证的 T-149 release `20260712T053754Z-39cf362f4f3f-2c9b80db01e9`；T-188 release `20260714T170102Z-c248d3598dc2-6f417eb9e525` 只是 immutable runtime candidate。真实 provider S1~S3 仍存在 reviewer/provider 协议与日用收敛残余，小牙线程本轮没有产出独立执行结果，因此不得宣称 P12 stable 已发布。
 
 已具备的核心能力：
 
@@ -39,7 +39,7 @@
 - 支持 `bailian` provider，对接阿里云百炼 OpenAI-compatible API。
 - Agent Runtime 已支持工具调用循环。
 - 工具注册、schema 校验、审批模式已经可用。
-- 文件读取、目录浏览、filename/path discovery（`glob_files`）、代码搜索、shell、测试、git 状态、git diff、anchored patch、patch rollback、Markdown memory、learn 已经可用。
+- 文件读取、目录浏览、filename/path discovery（`glob_files`）、代码搜索、shell、测试、git 状态、git diff、anchored patch、patch rollback、Markdown memory、learn 已经可用；`search_code` 与 `read_file` 对 minified/超长单行提供 typed truncation metadata。
 - `apply_patch` 已支持 `replace`、`insert_before`、`insert_after`，并兼容 Python 3.12。
 - 非交互审批、LLM 非 JSON 响应、session 恢复坏尾部、search_code 绝对路径泄漏等问题已经修复。
 - 已完成 Agent 自举测试：能够通过百炼模型调用工具读取、修改、测试和查看 diff。
@@ -150,8 +150,9 @@
 | P7 | 高级工程能力轻量版 | 已完成 MVP 版 | 已完成 OMP 风格 auto summary、多语言 LSP/light fallback、LSP 兼容别名、multi-root workspace roots 与工具观察提示、allowed-dir soft tool requirement、Markdown memory 启动注入、learn、可选 memory consolidation、authored skills discovery、综合压测记录、重复工具调用熔断、duplicate-tool forced-final steering、同文件切片读取漂移 guard、search_code 空搜索词跨路径 guard、path escape roots hint、LSP 空 query guard、Current task contract、Evidence Ledger、tool result pruning、todo steering、跨项目 env-file、用户级 `--state-dir` runtime state 分层、relevance gate、implementation-quality reviewer、safe new-file policy、no-edit final hygiene 和 path-scoped rules；DAP、subagents、完整 reviewer、AST edit、managed skills 继续后置。 |
 | P8 | 前端协议与交互基础 | 已完成 MVP 版 | T-076 已完成 Event/Command Protocol v1、EventSink、CLI stderr renderer 和 session `event_v1`；T-077 已完成 terminal-native frontend，而不是 fullscreen 重 TUI。 |
 | P9 | 真实需求使用准备 | 已完成阶段性 MVP | 已完成项目边界分析、真实需求模板、企业项目只读源码验证、Java LSP 韧性、拓展服务费结算链路压测和服务范围复核；后续继续按真实需求推进设计/实现切片。 |
-| P10 | Intelligence Runtime 骨架 | 已完成，进入 P11/P12 稳定收束 | 按 OMP 架构原则补单 Agent 内部的目标契约、工具选择队列、完成审计、两阶段计划和 reviewer。T-123~T-157 已完成 ToolLoop registry、RunCollector/RunContext、最终 steering 拆分、runtime phase owner、临时工具 directive、document-only 证据域、isolated read-only reviewer、pre-review audit coordinator、图片观察、安全部分交付与资料调和 stance；`agent.py` 当前 1,948 行/74 methods。 |
-| P12 | Read-only Convergence Closure | T-150~T-157 离线完成；live provider 收敛继续观察 | 临时工具限制已变为有界 lifecycle，document-only 需求分析与源码调查已拆成 typed evidence domain；T-154 将 reviewer 收束为 output-only typed yield，T-155 把 bounded explore 后同一候选的多个 hard audit 合并、按 evidence revision 最多两轮收敛，T-156 在 reviewer non-pass 时只输出 typed evidence handoff 的安全部分报告，T-157 要求 document reconciliation 也有 content-bearing lifecycle/precedence evidence。命名 session 仅在 read policy 预授权时安全恢复经磁盘 hash 复核的正向 read evidence。 |
+| P10 | Intelligence Runtime 骨架 | 已完成 | 按 OMP 架构原则补单 Agent 内部的目标契约、工具选择队列、完成审计、两阶段计划和 reviewer；phase 通过显式 Protocol ports 协作，领域策略不回流 Runtime。 |
+| P11 | Runtime Ownership / Release Discipline | 已完成 MVP 版 | T-148 将 `agent.py` 从 3,638 行/113 methods 收为薄编排 facade；T-149 发布并保留当前 stable。T-181~T-188 后 facade 仍为 1,866 行/71 methods，连续变更没有回涨到架构阈值。 |
+| P12 | Read-only Convergence Closure | 离线闭环增强中；live 未达发布线 | 临时工具、document evidence、isolated reviewer、safe partial、document reconciliation 和 transport/rewrite 生命周期已有明确 Owner；830 tests、35 benchmark、7 architecture checks 全绿。真实 provider S1~S3 尚未连续自然通过，独立 immutable candidate 回归缺失，因此 T-188 只保留 candidate。 |
 
 ## 已完成功能
 
@@ -166,7 +167,7 @@
 | Agent Runtime | 已完成 | `src/local_agent/agent.py` 实现模型调用、工具分发和循环。 |
 | Tool Registry | 已完成 | `src/local_agent/tools/base.py` 管理工具、审批、异常包装。 |
 | 文件工具 | 已完成 | `read_file`、`list_files`、`write_file` 已可用，写文件为 create-only。 |
-| 搜索工具 | 已完成 | `search_code` 使用 `rg`，输出 workspace 相对路径并做总结果截断。 |
+| 搜索工具 | 已完成 | `search_code` 使用 `rg`，输出 workspace 相对路径；单行按 512 列预览、每文件最多 20 个结果，并返回总量/每文件/列宽截断 metadata。 |
 | Shell / Test 工具 | 已完成 | `shell`、`run_tests` 可用，执行类工具需要审批。 |
 | Git 工具 | 已完成 | `git_status`、`git_diff` 可用，空 diff 时提示 untracked 文件；`git_diff` 追加 diff summary 和 run attribution。 |
 | Anchored Patch | 已完成 | `apply_patch` 使用 tag、line、old_text 校验，并返回 diff。 |
@@ -215,7 +216,7 @@
 | no-edit evidence gate | 已完成 | CompletionAudit 不再接受只有“blocked/unexecuted”的文字自述；必须有 search/LSP 未命中、路径缺失、relevance/approval 拒绝等工具证据，才允许实现任务在无 diff 时收尾。 |
 | ToolRegistry 参数归一 | 已完成 MVP 版 | `src/local_agent/tools/argument_normalization.py` 在 schema 校验前仅映射已观测 scalar alias；冲突值直接拒绝，随后仍执行原 schema、approval、path/hash 和 anchored patch 校验。 |
 | 跨 root owner / impact evidence matrix | 已完成 MVP 版 | “设计/架构”以及“owner 定位/影响范围/调用链”的多 root 只读任务共用 requirement + 每 root source-read + 六次补证据预算；避免任务名称不是“设计”就无限探索。 |
-| 测试基线 | 已完成 | 本地正常环境下 657 个测试通过；离线 benchmark 20/20。 |
+| 测试基线 | 已完成 | 本地正常环境下 830 个测试通过；离线 benchmark 35/35；architecture checks 7/7。 |
 
 ## 下一步 Todo
 
@@ -364,6 +365,14 @@
 | T-156 | Real Mother-Demand Closure | 代码/离线门禁完成；待合成 live 与独立 review，未发布 | P12 | 需求文档分析无法读图片、citation 只接受行号；owner/design 候选被 reviewer 二次拒绝后安全但只剩一行失败，已读证据丢失。 | 新增 read-tier `inspect_image`：`read_file` 以有界 header 返回 PNG/JPEG/GIF/WEBP metadata，只有显式 `AI_VISION_MODEL` 且文件不超过 8MB 才进行一次 vision observation，base64 不进入 Evidence 或 session JSONL。citation 支持路径加行号、页码、章节/heading。`SafePartialReport` 只消费 typed handoff，在 reviewer second non-pass/不可改写时返回可信工具观察、root/scope、未定位和检查限制；最终正文、safe-partial event 与 RunSummary 均不包含被拒候选的表、字段、接口、Owner 或数值推断。成功 compaction 会写入并恢复 active checkpoint；相同未变化的超预算前缀只记 skip。owner/design 的 read/search active-tool 子集是为减少 provider schema 参数混淆的阶段策略，普通代码任务仍可用 LSP。657 tests、benchmark 20/20；不读取企业源码，provider 复测使用临时合成 fixture。 |
 
 | T-157 | S1 Unsupported Reconciliation Closure | 代码/离线门禁完成；真实 S1 完整安全收束，S2/S3 日用收敛待继续，未发布 | P12 | 多资料任务中，图片观察与文档要求表面矛盾时，模型可把“完成态/后期态/无冲突”当作事实；仅靠 reviewer prompt 可能错误 pass。 | 新增 `document_consistency.py`，以 clause-local stance 区分 reported-unresolved、conditional、asserted 与 explicit-supported reconciliation。document reviewer 必须提交 typed conflict/support IDs；Runtime 只接受当前 handoff 中可见、非视觉、明确说明 lifecycle/precedence 的 content-bearing support。`pass` 若把 asserted candidate 伪装为 unresolved，或 support ID 不足，进入 bounded rewrite；second non-pass 仅交付 SafePartialReport。视觉观察保留为“模型生成、可能含 OCR/识别不确定性”的记录，不可证明作者意图；其 handoff 上限独立为 2400 字，避免关键视觉字段被 700 字通用截断。新增 benchmark 21；665 tests、21/21 benchmark。真实 S1 session `20260713T085040961741Z`/run `cb23b2bd5fcf4a499e5c8c679558efa4`：MD+HTML+PNG 均成功读取，reviewer 两轮后 `read_only_reviewer_unverified`，终态明确保留未消解资料冲突且没有释放无证据调和。S2 run `496861a543254115b2cbcd4a8f4a9ca8` 有 session cache hit=2、second non-pass；S3 run `73d3f2d21f2f4053a6f11983d4e37886` cache hit=3，但 reviewer 前预算不足，均安全部分交付，不能视为自然 final 通过。 |
+| T-158~T-180 | Reviewer Lifecycle / Evidence Transport Closure | 离线完成；live 持续压测，未发布 | P12 | T-157 后真实 provider 持续暴露 reviewer finding 与 claim locator、incremental yield、vision evidence、rewrite transport、document conflict context、forced-final artifact、scoped stance、evidence continuity、exact tool-choice retry 和 safe-partial 交接之间的生命周期断点。 | 变更分别落在 `read_only_reviewer.py`、`runtime_read_only_review.py`、`document_consistency.py`、`explore_handoff.py`、`runtime_read_only_explore.py`、`tool_choice_queue.py` 等 Owner；输出工具保持 isolated，不进入 ToolRegistry。T-169~T-172 明确 reviewer rewrite gate、forced-final protocol artifact、scoped reconciliation 和 evidence continuity；T-179/T-180 收束 transport、safe partial 与 document synthesis。未在 `agent.py` 增加业务/文档关键词 guard。 |
+| T-181 | Document Rewrite Lifecycle Closure | 已完成，candidate only | P12 | document consistency rewrite 可能在终态前丢失 pending lifecycle。 | 收束 rewrite 的 queued/in-flight/resolved/rejected 状态，提交 `76402f0`。 |
+| T-182 | Repository Intent Preservation | 已完成，candidate only | P12 | 读取需求文档后，owner/design 任务可能退化为纯 document task，不再覆盖代码根。 | 在 typed contract/phase Owner 中保持 repository intent，提交 `76f1305`。 |
+| T-183~T-185 | Reviewer Replay / Stance / Recovery Hardening | 已完成，candidate only | P12 | provider 会重放同一 finding、改变“未解决差异”的词序，或在非 final-submit 阶段误触 recovery。 | finding replay 幂等；未解决差异解析覆盖真实语序；recovery 仅限 final submit。提交 `d93468a`、`b613b4c`、`272eecd`。 |
+| T-186 | Post-review Transport Recovery | 已完成，candidate only | P12 | reviewer 生成的改写仍可能超出 transport 限制，旧逻辑无法使用尚未消费的一次 recovery。 | 在 `runtime_read_only_review.py` 复用有界 one-shot transport rewrite；已消费时失败关闭。该批 825 tests、35/35 benchmark、7/7 architecture checks 通过，提交 `d7231f8`。 |
+| T-187 | Scoped Unresolved Document Differences | 已完成，candidate only | P12 | “2 项未解决，其余无冲突”“无法判定是否真实冲突”等限定句被误判为已调和。 | 仅在 `document_consistency.py` 修正 clause-local stance；仍拒绝“尚未解决，但其实无冲突”这类 asserted reconciliation。提交 `9c5faac`。 |
+| T-188 | OMP-aligned Search / Read Output Bounds | 已完成；immutable candidate 待独立回归 | P12 | S2 命中 minified CSS 时，`search_code` 返回约 20KB，随后单行 `read_file` 注入约 232KB，挤占上下文并破坏收敛。 | 参考 OMP `grep.ts` 的 512 列和 per-file 20、`read.ts`/settings 的 768 列：`search_code` 返回 result/per-file/line truncation metadata，`read_file` 截断展示但保持完整文件 hash。原 CSS 样本降为约 566/947 字符。827 tests、35/35 benchmark、7/7 architecture checks；candidate `20260714T170102Z-c248d3598dc2-6f417eb9e525`，stable 未变。 |
+| T-189 | Project Status Workbook Integrity | 已完成 | P2/P12 | 项目状态 Excel 生成器会把反引号代码中的 `|` 拆成额外列，表内空行拆出同名 worksheet，格式错误只能到 Excel 打开时才暴露。 | `scripts/sync_project_excel.py` 现在识别 code-span/escaped pipe、保留同一表内空行，并对列数不一致 fail-fast；新增 3 个回归测试。生成后用 artifact-tool 检查 9 个唯一 sheet、0 公式错误并渲染全 sheet 视觉复核。Excel 仍由 Markdown 生成，不手工编辑。 |
 
 ## 风险清单
 
@@ -402,7 +411,7 @@
 | R-031 | 真实实现任务可能产生无关 patch | 已缓解，继续观察 | T-072 session `20260709T013441841983Z` 读取正确需求后漂移到 Nacos/Redis 配置，并把无关注释当成实现锚点；这说明 dry_run/hash 校验只能保证位置正确，不能保证业务相关。 | 已完成 T-073：真实写入前要求目标文件已读；代码实现任务修改部署/配置类低相关路径会被拦截或要求用户确认；workspace-root evidence 进入 Evidence Ledger；`git_diff` 增加 reviewer 提示。T-073 复跑未再触碰 `deployMessage/nacos`。 |
 | R-032 | 真实实现可能退化成低价值注释 patch | 已缓解并复跑 | T-073 复跑 session `20260709T021349259159Z` 中模型定位到相关 Java 文件，但因 `write_file` 被 deny，最终只给 DTO 字段补 JavaDoc；这不能算真实业务实现。 | T-074 已补 implementation-quality reviewer：本轮代码 diff 若只有注释/文档改动，`git_diff` 会提醒不能声称行为、校验、解析或测试覆盖变化。复跑 session `20260709T025706579604Z` 没有再做 comment-only patch，而是在当前仓库缺目标实现时停止说明。 |
 | R-053 | 源码证据型最终回答可能误报数字/状态码 | 已关闭 MVP 版，继续压测 | T-105 中模型读到 `PreOrderStatusEnum.MAKING(2)` / `MADE(3)`，最终却误报为 `50/60`。 | 参考 OMP runtime evidence / steering：已新增 source-grounded numeric final steerer，最终回答涉及枚举、状态码、接口、字段等数字事实且与已读源码不一致时，会强制无工具重写。 |
-| R-054 | `agent.py` steering/guard 继续膨胀 | T-148 已关闭，连续不回涨 1/3 | review 指出 compaction 已拆出，但 final/read-only/semantic guard 继续堆在 `agent.py`。 | T-148 已将 final steering、provider context、workspace/session roots、evidence/verification/session cache、memory consolidation 迁入职责 owner；主文件从 3,638 行/113 methods 降至 1,837 行/74 methods。architecture boundary tests 锁定 `<=2,100` 行、`<=75` methods、禁止 `__getattr__` delegation 与 helper 回流；后续三个连续变更批次继续记录不回涨。 |
+| R-054 | `agent.py` steering/guard 继续膨胀 | 已关闭，连续不回涨超过 3 批 | review 指出 compaction 已拆出，但 final/read-only/semantic guard 继续堆在 `agent.py`。 | T-148 已迁出领域职责；T-181~T-188 后主文件为 1,866 行/71 methods，仍低于 architecture boundary 的 `<=2,100` 行、`<=75` methods，且没有新增业务/文档 domain guard。 |
 | R-055 | 无效 tool_call 参数会污染下一轮 provider 请求 | 已关闭 HTTP 400，兼容性继续观察 | T-108 首轮复测中百炼拒绝历史消息：无效工具调用的 `function.arguments` 为空或畸形 JSON，导致下一轮 HTTP 400；T-132C session `20260711T131716175598Z` 仍可观测 provider-invalid name/arguments。 | assistant message 入历史前统一归一工具名、id、arguments 为 provider-safe JSON object 字符串；空/畸形参数写入 `_invalid_arguments` 并作为可审计 tool error，而非重开 schema alias 或污染下一轮 provider 请求。 |
 | R-056 | read_file 行号会干扰源码数字事实比对 | 已关闭 MVP 版 | T-108 窄复测中，模型把枚举状态误报成 1/3/5；numeric guard 因 read_file 内容含 `1:`、`3:`、`5:` 行号而误以为这些数字有源码证据。 | source numeric guard 比对前会剥离 read_file 行号前缀，再判断状态码/枚举值是否出现在源码内容中；新增回归测试覆盖错误数字刚好等于行号的情况。 |
 | R-057 | provider 的工具参数方言导致有效任务无法进入写入/验证闭环 | 已缓解，继续观察 | T-115 真实复测已跑通源码、测试、定向测试和 diff；安全的 scalar alias 已集中归一。 | 只在 ToolRegistry 映射明确已观测的 scalar alias，原 schema、hash、approval 和 anchored patch 校验仍生效；raw diff / bulk todo 继续拒绝并由 T-116 处理。 |
@@ -511,10 +520,10 @@
 | 项目 | 结论 | 依据 |
 |---|---|---|
 | 主链路 | 通过 | 百炼真实小改复测已跑通 todo、dry_run、apply_patch、session allow、rollback、run_tests、git_diff。 |
-| 测试 | 通过 | P5 收口时 90 个 unittest、compileall、xlsx 检查、diff check 均通过；当前代码已跑通 657 个 unittest。 |
+| 测试 | 通过 | P5 收口时 90 个 unittest、compileall、xlsx 检查、diff check 均通过；当前代码已跑通 830 个 unittest、35/35 benchmark 和 7/7 architecture checks。 |
 | 日用入口 | 通过 | README 已补只读分析和小改任务命令模板。 |
 | 开放风险 | 可接受 | shell 仍非沙箱、prompt injection 仍需靠审批和封闭 VM；provider/model 专用 tokenizer、输出 reserve、managed skills、完整 reviewer 和完整 OMP ToolChoiceQueue 继续后置评估。 |
-| 下一阶段 | P11 继续收束 | T-109~T-144 已完成 Intelligence Runtime 骨架、自主小改候选收束、dynamic workspace roots、有界 inventory、terminal nested interaction、stable/dev 隔离、benchmark 基线、bounded finalization / provider failure closure / multi-root provenance / Runtime delivery report，以及同 session evidence continuity。下一步优先取得结算单 DDL、模板/下载中心或正确业务 owner 的源码证据，再验证 move 后的明确目标小改链路。 |
+| 下一阶段 | P12 release gate | T-150~T-188 已完成只读 evidence/reviewer 的离线闭环增强。下一步只做 immutable candidate 的独立 S1~S3 黑盒回归；自然 final、证据分层、输出有界和 reviewer 不自创方案同时通过后才替换 T-149 stable。 |
 
 ## 推荐工作流
 
@@ -549,6 +558,6 @@
 
 用户确认本文件后，建议按以下顺序继续：
 
-1. 以真实服务的明确 owner root 和结算 DDL/模板契约重跑只读设计；证据齐全后在同一 session `/move` 到确认的 primary。
-2. 选择验收边界明确的小切片，完成 read -> preview -> patch -> test -> diff -> reviewer 的真实实现验证；只在真实失败证明存在安全等价映射时扩展 ToolRegistry 参数归一。
-3. T-134 只在真实 `/move` 后 history 分区确实影响日用时实现；完整 async Command Bus/streaming follow-up queue 保持后置。
+1. 用 T-188 immutable candidate 独立重跑母需求 S1~S3；核对 release/digest、fresh state、工具输出上限、自然终态和 reviewer 语义质量。当前小牙线程未实际执行最近两次任务，不能把“已派发”计为回归通过。
+2. 若 S1~S3 全部达到日用发布线，再运行 publish gate 并原子替换 stable；否则只记录可复现失败，先对照 OMP Owner/lifecycle，再按一批修复、一批回归处理。
+3. stable 通过后进入第一个真实小切片，完成 read -> preview -> patch -> test -> diff -> reviewer；Subagent、Browser、AST/LSP write 和完整 TUI 仍按既定优先级后置。

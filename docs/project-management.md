@@ -1,6 +1,6 @@
 # Local Coding Agent 开发项目管理数据源
 
-更新时间：2026-07-13
+更新时间：2026-07-14
 
 本文件是开发 `local-coding-agent` 过程中的项目管理数据源，给参与开发本项目的人和协作 Agent 读取。它不是 LCA 运行时自己的 memory 或用户项目记忆。
 
@@ -17,10 +17,10 @@ python3 scripts/sync_project_excel.py
 | 字段 | 当前值 | 说明 |
 |---|---|---|
 | 最终目标 | 个人本地编程助手 Agent | 本地优先、封闭 VM 可用、只访问指定 AI API，能读代码、搜代码、改代码、跑测试、生成 diff、沉淀项目记忆。 |
-| 当前阶段 | P12：只读收敛性与日用稳定 | T-128~T-157 已完成 dynamic workspace roots、`/move`、跨 root 只读设计、有界 inventory、path-scoped rules、stable/dev 通道、benchmark、Runtime-owned VerificationPlan / TestPlanner / DeliveryAudit、session evidence continuity、negative-evidence stance、provider protocol boundary、intent/evidence closure、finalization budget、bounded temporary-tool directive/document-only evidence domain、isolated read-only reviewer、pre-review audit aggregation、图片证据 MVP、安全部分交付与 evidence-backed document reconciliation stance。T-157 保持 reviewer 对候选事实的严格拒绝：没有可见 lifecycle/precedence 支持时，不能把资料冲突表述为已消解；二次 non-pass 或预算/超时提前终止时，仅由 Runtime 返回可审计的工具观察、覆盖边界和检查限制。成功 compaction 会持久化 active checkpoint，命名 session 恢复后不重复压缩同一前缀。665 个单测与 21/21 离线 benchmark 通过。真实 provider 收敛和独立 review 前不发布 stable。 |
+| 当前阶段 | P12：只读收敛性与日用稳定 | T-158~T-187 继续收束 reviewer claim/yield/transport/rewrite/safe-partial 生命周期，T-188 参考 OMP `grep.ts`/`read.ts` 在工具 Owner 内限制 minified/超长单行输出；T-189 修复 Markdown-to-Excel 投影完整性。830 个单测、35/35 deterministic benchmark、7/7 architecture checks 通过；`agent.py` 1,866 行/71 methods、`final_answer.py` 59 行。默认 stable 仍为 T-149；T-188 是 immutable runtime candidate，真实 provider S1~S3 和小牙独立回归未同时通过，不发布 stable。 |
 | 推荐入口 | `./agent "阅读当前项目"` | 自动设置 `PYTHONPATH=src`，默认当前目录为 workspace。 |
 | Token 配置 | 环境变量 / `--env-file` / `.env` | 优先级为真实环境变量、显式 env-file、用户级 `${AGENT_CONFIG_DIR:-~/.config/local-coding-agent}/.env`、workspace `.env`；stable snapshot 不携带密钥。 |
-| 测试数 | 665 | T-157 已通过完整 unittest、compileall、diff check 与 deterministic benchmark 21/21；Excel 由本 Markdown 生成。 |
+| 测试数 | 830 | 当前已通过完整 unittest、compileall、diff check、deterministic benchmark 35/35 与 architecture checks 7/7；Excel 由本 Markdown 生成。 |
 | 默认 budget_seconds | 600 | 单次任务默认 10 分钟墙钟预算；`--budget-seconds 0` 可关闭。 |
 | 默认 max_steps | 0 | 表示不限步；仅在用户显式设置时作为防失控保险丝。 |
 | 预算执行 | 细粒度 | LLM 请求和 shell/run_tests timeout 会按剩余预算夹紧；deadline 到期会补齐未执行工具结果。 |
@@ -34,7 +34,7 @@ python3 scripts/sync_project_excel.py
 | 默认工作流落地 | 已完成 MVP 版 | system prompt + tool descriptions + runtime workflow reminder 已落地，用户不需要每次手写工具顺序。 |
 | LSP / Light fallback | 已完成 MVP 版 | `lsp_symbols` / `lsp_workspace_symbols` / `lsp_document_symbols` / `lsp_definition` / `lsp_references` / `lsp_diagnostics` / `lsp_status`，覆盖 Python、Java、JavaScript、TypeScript、Vue；默认可用则外部 LSP，不可用则 light fallback。 |
 | Multi-root workspace | 已完成 MVP 版 | `--allow-dir` / `AGENT_ALLOWED_DIRS` 支持显式授权额外目录给文件、搜索、LSP、patch 工具；system prompt 和 `list_files`/path-not-found 等工具观察会列出 primary workspace 和 allowed dirs；需求/文档类任务会先用 soft tool requirement 要求读取 allowed-dir 文档；shell/git/显式项目 memory/skills 仍锚定 `--cwd`，session/todo/patch logs 和默认 consolidation memory 走 state dir。 |
-| Stable / Dev release channels | 已完成 MVP 版 | `lca` 指向已验证的不可变 source snapshot，`lca-dev` 指向当前源码；`lca-release publish` 先跑离线 gate 再原子 promote，失败保留旧 stable snapshot。 |
+| Stable / Dev release channels | 已完成 MVP 版 | `lca` 指向已验证的不可变 source snapshot，`lca-dev` 指向当前源码；当前 stable 为 T-149 `20260712T053754Z-39cf362f4f3f-2c9b80db01e9`，T-188 `20260714T170102Z-c248d3598dc2-6f417eb9e525` 仅为 candidate。`lca-release publish` 先跑离线 gate 再原子 promote，失败保留旧 stable。 |
 | Path-scoped rules | 已完成 MVP 版 | 每个 canonical workspace root 可定义 `.local-agent/rules/*.md`；每轮只注入轻量 metadata，用户或工具路径命中时才注入对应规则正文，规则不改变工具权限。 |
 | Offline benchmark / eval | 已完成 MVP 版 | `benchmarks/tasks` 的隔离 fixture 默认使用 deterministic fake provider 跑真实 Runtime，并输出 JSON/Markdown 结果；`--live` 才显式使用外部 provider。 |
 | Startup context / sticky rules | 已完成 MVP 版 | 用户级和项目级 `AGENTS.md` 启动注入；用户级和项目级 `RULES.md` 每次 provider request 前注入。 |
@@ -49,7 +49,7 @@ python3 scripts/sync_project_excel.py
 | Event/Command Protocol | 已完成 MVP 版 | `src/local_agent/protocol/events.py` / `commands.py` 提供 dataclass event/command shape；Runtime 可注入 `EventSink`，CLI 使用 `StderrEventSink` 渲染，session JSONL 写入 `event_v1`。 |
 | Terminal Frontend | 已完成 MVP 版 | `./agent`、`./agent --chat`、`./agent chat` 进入 terminal-native 交互；可选 `prompt_toolkit` / `rich` 增强输入和输出，缺失时降级；支持 `/help`、`/status`、`/tools`、`/approval`，并对 `/`、`/workspace`、`/approval` 提供带说明的 Tab 补全。 |
 | Run summary / coverage | 已完成 MVP 版 | 每轮结束写 `run_summary` session 事件和 `RunSummary` typed event；`/status` 可看最近一轮终止原因、LLM/工具次数、guard/steering/compaction 统计。 |
-| VerificationPlan / TestPlanner / DeliveryAudit | 已完成 MVP 版 | `verification_plan.py` / `test_planner.py` / `verification_timeline.py` | contract 业务验收保持未机器验证；只有路径关联代码证据、当前本轮净 diff、最后写入后测试、deterministic reviewer 进入 delivery checks。测试候选明确标记 module/project/blocked，绝不绕过 approval。 |
+| VerificationPlan / TestPlanner / DeliveryAudit | 已完成 MVP 版 | `verification_plan.py` / `test_planner.py` / `verification_timeline.py`：contract 业务验收保持未机器验证；只有路径关联代码证据、当前本轮净 diff、最后写入后测试、deterministic reviewer 进入 delivery checks。测试候选明确标记 module/project/blocked，绝不绕过 approval。 |
 | 项目边界分析 | 已完成 MVP 版 | 企业服务边界和项目范围分析工作流放入本机 `.local-agent/memory` / `.local-agent/skills`；runtime 新增 analysis-only 任务识别、named skill soft requirement、自定义 memory_read 安全读取和 final structure gate。 |
 | Memory / Skills 设计 | 已完成 | 见 `docs/memory-skills-implementation-plan.md`；Markdown memory 注入、`learn`、memory consolidation、authored skills discovery 与 T-139 path-scoped rules 已完成，managed skills 后置。 |
 
@@ -66,8 +66,10 @@ python3 scripts/sync_project_excel.py
 | P6 | 日用体验与默认工作流固化 | OMP 默认工作流本地化：system prompt、工具描述、轻量 runtime nudge | 已完成 MVP 版 | 100% | 进入真实任务压测。 |
 | P7 | 高级工程能力轻量版 | OMP 风格 auto summary、多语言 LSP/light fallback、LSP 兼容别名、LSP best-effort 置信度提示、multi-root workspace roots、allowed-dir soft tool requirement、startup context/rules、startup memory、learn、memory consolidation、authored skills discovery、path-scoped rules、重复工具调用熔断、duplicate-tool forced-final steering、同文件切片读取漂移 guard、空搜索词跨路径 guard、path escape roots hint、LSP 空 query guard、Current task contract、Evidence Ledger、tool result pruning、todo steering、跨项目 env-file、runtime state dir、真实项目压测记录、relevance gate / diff reviewer、implementation-quality reviewer、safe new-file policy、no-edit final hygiene | 已完成 MVP 版 | 100% | 高级轻量能力主线已收口，后续按真实压测失败形态补完整 reviewer 或 ToolChoiceQueue；架构债按 OMP 原则渐进拆 `agent.py`。 |
 | P8 | 前端协议与交互基础 | Event/Command Protocol、event replay、terminal-native frontend | 已完成 MVP 版 | 100% | T-076/T-077 已完成；完整 async command bus 和更重 UI 后置，下一步按用户项目边界做项目清单分析压测。 |
-| P9 | 真实需求使用准备 | 项目边界分析、用户确认项目范围、源码验证、实现设计 | 进行中 | 40% | T-078 已完成项目边界分析 MVP；T-083 已固化压测模板；T-084 已完成 qwen3-coder-next 只读源码验证压测并记录新问题。 |
-| P10 | Intelligence Runtime 骨架 | RequirementContract、CompletionAudit、MiniToolChoiceQueue、Planner/Explore、Reviewer | 进行中 | 98% | 已完成 RequirementContract、CompletionAudit、MiniToolChoiceQueue、Planner/Explore、post-diff Patch Reviewer、VerificationPlan/TestPlanner/DeliveryAudit、no-edit evidence gate、ToolRegistry 参数归一、preview contract、pinned requirement evidence 与 cross-root evidence matrix；下一步以真实 owner 的明确小改持续验证协同效果。 |
+| P9 | 真实需求使用准备 | 项目边界分析、用户确认项目范围、源码验证、实现设计 | 已完成阶段性 MVP | 80% | 母需求 S1~S3 已形成固定验收矩阵；业务 Owner/DDL/模板/下载中心证据仍不完整，因此尚未进入真实实现切片。 |
+| P10 | Intelligence Runtime 骨架 | RequirementContract、CompletionAudit、MiniToolChoiceQueue、Planner/Explore、Reviewer | 已完成 | 100% | 目标契约、阶段队列、完成审计、计划/探索、patch reviewer、VerificationPlan/TestPlanner/DeliveryAudit 与 cross-root evidence matrix 已有明确 Owner。 |
+| P11 | Runtime Ownership / Release Discipline | 薄 agent-loop、职责 Owner、stable/dev/candidate 隔离 | 已完成 MVP 版 | 100% | T-148 将 Runtime 收为 facade，T-149 stable 保持可回滚；T-181~T-188 后 `agent.py` 仍为 1,866 行/71 methods。 |
+| P12 | Read-only Convergence Closure | document evidence、isolated reviewer、safe partial、provider terminal closure | 增强中，未发布 | 85% | 离线门禁全绿；下一步只做 T-188 immutable candidate 的独立 S1~S3 黑盒回归。安全拒绝不等于日用通过，三场景需自然 final 且 reviewer 不自创方案。 |
 
 ## 已完成功能
 
@@ -78,9 +80,9 @@ python3 scripts/sync_project_excel.py
 | Bailian Provider | 已完成 | `--provider bailian` 已实测 | OpenAI-compatible API | 保留 base_url/model 可配置 |
 | Agent Runtime | 已完成 | 模型调用、tool_calls、tool_result 回灌闭环 | `max_steps=0` 不限步，budget 控制时间 | P4 做上下文治理 |
 | Tool Registry | 已完成 | 统一 Tool/ToolResult/ToolContext | schema 校验、审批、state/interaction 工具类型 | 保持 |
-| read_file | 已完成 | hash tag + 行号输出 | 限制大小和行数 | 保持 |
+| read_file | 已完成 | hash tag + 行号输出 | 限制大小和行数；展示单行最多 768 列并返回截断 metadata，完整文件 hash 不变 | 保持 |
 | list_files | 已完成 | 跳过 `.git`、`.local-agent`、cache | 相对路径输出 | 保持 |
-| search_code | 已完成 | `rg` 搜索，相对路径输出，总结果截断 | 已修绝对路径泄漏 | 保持 |
+| search_code | 已完成 | `rg` 搜索，相对路径输出；512 列预览、每文件最多 20 个结果 | 区分总结果、每文件和列宽截断；参考 OMP grep tool | 保持 |
 | shell/run_tests | 已完成 | 本地命令和测试执行 | 带审批和超时 | per-tool auto allow 可选 |
 | git_status/git_diff | 已完成 | untracked 时解释空 diff 原因；git_diff 输出 diff summary 和 attribution | 初始 commit 后 diff 更清晰；脏工作区下能区分运行前已有和本轮 patch | 保持 |
 | apply_patch | 已完成 | replace/insert_before/insert_after/dry_run | hash + old_text 校验；dry_run 只预览不写入 | 保持 |
@@ -130,7 +132,7 @@ python3 scripts/sync_project_excel.py
 | Planner/Explore | 已完成 MVP 版 | `src/local_agent/planner.py`、`src/local_agent/tool_choice_queue.py`、`src/local_agent/agent.py` | 实现任务在 explore 阶段只开放 list/read/search/LSP/todo/ask/git 状态检查；读到本地证据后进入 ready_to_implement，写后进入 verify | 真实实现压测 |
 | 二阶段 Patch Reviewer | 已完成 MVP 版 | `src/local_agent/patch_reviewer.py`、`src/local_agent/steering/final_answer.py`、`src/local_agent/agent.py` | 成功 `git_diff` 后立即检查显式测试 diff、公开 API 调用方和已有 diff reviewer finding；若有风险，停止同批后续工具并只开放修复/验证/回滚，最终回答仍有兜底审查 | T-115 真实小改已复测；下一步 T-116 preview contract |
 | No-edit evidence gate | 已完成 MVP 版 | `src/local_agent/completion_audit.py` | 实现任务的 blocked/no-edit 必须由 search/LSP 未命中、路径缺失、runtime relevance/approval 拒绝等工具事实支撑；模型文本不足以放行 | 继续真实任务观察 |
-| 测试覆盖 | 已完成 | 当前 657 个测试通过 | unittest、compileall、xlsx 和 diff check 通过 | 日用反馈补测 |
+| 测试覆盖 | 已完成 | 当前 830 个测试通过 | unittest、compileall、xlsx、35/35 benchmark、7/7 architecture checks 和 diff check 通过 | 日用反馈补测 |
 
 ## 下一步 Todo
 
@@ -270,7 +272,7 @@ python3 scripts/sync_project_excel.py
 | T-132 | P0 | P11 | 文件发现与负向证据可靠性 | 已完成并真实复测 | Agent | `/add-dir` inventory 曾把 `search_code` 内容 no-match、截断 `list_files` 和 primary Git 失败错误外推为“added root 可能没有源码”。 | A/B：唯一模型可见的 `glob_files` 负责授权 multi-root 的 filename/path discovery；类型匹配负向证据进入 EvidenceLedger、CompletionAudit、FinalAnswerSteerer。C：ToolChoiceQueue 要求每个 authorized root 有成功 glob，限制为 glob/list/read，按 root 两次且总计八次 discovery 后强制收束。20260711T160120792100Z 暴露“盘点”未识别为 inventory，20260711T160317681068 暴露 inventory 错接 candidate read budget；均已修复。最终 live `20260711T160446291065Z` 为 6 LLM/7 tools/0 error，双 root 均覆盖且无 shell/Git/测试/写入。 |
 | T-133 | P1 | P11 | Terminal Command Routing / Nested Interaction + shared Command handler | 已完成最小实现 | Agent + 小红 | `/workspace` / `/move` 已有 command dataclass，但 terminal frontend 仍直接调用 Runtime；真实样本还证明 ask/approval 与主 prompt 共用 stdin 时，`/help` / `/workspace list` 会被误回传模型。 | 严格按 OMP：无 `/` 的文本仍是普通 prompt；shared `TerminalCommandRegistry` 已统一 help/completion/dispatch；`InteractionRequest/Result` + `CHAT/ASK/APPROVAL` focus ownership 已隔离嵌套输入。`/cancel` 回传 cancelled tool result，ASK/APPROVAL slash text 不进入主 dispatcher 或模型；完整 async Command Bus 后置。详见 `docs/terminal-command-routing-and-nested-interaction-design.md`。 |
 | T-134 | P1 | P11 | `/move` 后 terminal history 分区重绑定 | 待开始 | Agent | PromptSession/FileHistory 在 chat 启动时绑定旧 state partition，迁移后重启 history 可能断裂。 | 将 prompt/history 创建与当前 Runtime state dir 解耦；`/move` 成功后安全切换 history path，并覆盖重启回放。 |
-| T-135 | P3 | P11 | 项目状态与 Excel 同步 | 已完成并持续同步 | Agent | 文档一度仍显示 303/287 tests，无法反映当前运行基线。 | 当前已统一为 621 个 unittest；每次状态变更后由 `scripts/sync_project_excel.py` 从本 Markdown 重新生成 Excel。 |
+| T-135 | P3 | P11 | 项目状态与 Excel 同步 | 已完成并持续同步 | Agent | 文档一度仍显示 303/287 tests，无法反映当前运行基线。 | 当前为 830 个 unittest；每次状态变更后由 `scripts/sync_project_excel.py` 从本 Markdown 重新生成 Excel。生成器会保留 code-span/escaped pipe、合并表内空行并拒绝列数不一致。 |
 | T-136 | P0 | P11 | 真实服务费结算 owner 定位与 evidence 收束 | 已完成第一轮，业务 owner 仍部分缺证据 | Agent | requirement primary + 两个 code roots 的真实百炼压测暴露 soft requirement 错绑、owner 任务未触发 cross-root bounded follow-up、final evidence false positive。 | 仅在 ToolRegistry、soft requirement、evidence/final steerer 中修真实失败；OMP `glob` 方言 `path+pattern` / `maxResults` 在 registry 单点归一。最终 session `20260711T141702815603Z`：134,077 ms、27 tools、0 error、四段式 final；结算 DDL、模板/下载中心契约仍不可当作已定位。 |
 | T-137 | P1 | P11 | Terminal chat Enter 提交与多行换行 | 已完成并真实 TTY 复测 | Agent | 启用 `prompt_toolkit` 时 chat 使用多行编辑器，普通 Enter 插入换行，`/help` 和普通聊天文本都看似无响应。 | 所有 CHAT 输入改用 Enter 提交；`Esc` + `Enter` 插入多行换行。真实 TTY 已验证 `/help` 和普通文本的 Enter 行为。 |
 
@@ -295,6 +297,10 @@ python3 scripts/sync_project_excel.py
 | T-156 | P0/P1 | P12 | Real Mother-Demand Closure | 代码/离线门禁完成；待合成 live 与独立 review，未发布 | Agent | 母需求文档分析对 PNG 只有 binary error，document citation 只接受行号；owner/design 候选经第二次 reviewer non-pass 后安全拒绝，但终态只剩一行失败，丢失已读取的可信路径观察。 | 对齐 OMP `read.ts` metadata handoff 与 `inspect-image.ts` 的 read-approved vision one-shot：新增 `inspect_image` read tool，MIME 从有界 header 检测，只有显式 `AI_VISION_MODEL` 且文件不超过 8MB 才发起 vision；base64 不进入 Evidence 或 session JSONL。requirement citation 支持路径加行、页码或章节。显式请求的 Markdown/HTML/image 逐项需要 read/inspect 或 artifact-bound unavailable；`SafePartialReport` 只消费 typed handoff，second reviewer non-pass 写审查拒绝，budget/timeout/provider stop 写真实 `termination=<reason>`，均交付工具观察、root/scope、未定位和检查限制，并从最终正文、safe-partial event 与 RunSummary 排除候选虚构内容。探索 attempts 与成功/typed no-match progress 分离，suppressed/error 绝不充当证据。后续 durable checkpoint 将 compaction summary + 有界 recent history 安装为 active messages，并在 named-session 恢复时复用；owner/design profile 的 read/search 子集是阶段策略，不表示普通代码任务的 LSP 不可用。657 tests、benchmark 20/20；不访问企业源码，真实 provider 复测仅使用临时合成 fixture。 |
 
 | T-157 | P0/P1 | P12 | S1 Unsupported Reconciliation Closure | 代码/离线门禁完成；S1 完整安全收束，S2/S3 日用收敛待继续，未发布 | Agent | MD/HTML 明示某字段留空、图片观察到有值时，候选仍把图片推断为“后期完成态/非冲突”；prompt-only reviewer 的第二轮可能错误 pass。 | 新 `document_consistency.py` 是 document reviewer owner 的 clause-local stance cross-check，不依赖业务词：typed assessment 引用 conflict/support evidence IDs，asserted reconciliation 只有在 handoff 的非视觉、可见 lifecycle/precedence excerpt 支持时才允许 pass；conditional 解释必须紧邻 unresolved 限定，显式 conflict 不会吞掉同 clause 后续的 asserted reconciliation。视觉 observation 保持模型生成、可能含 OCR 不确定性，独立 2400-char bounded handoff，SafePartialReport 也明确标注并保留。benchmark 21 锁住坏调和→rewrite 与条件未消解→pass。S1 `20260713T085040961741Z`/`cb23b2bd5fcf4a499e5c8c679558efa4` 为完整 session/run/reviewer/final/run_summary：4 tools、0 errors、1 compaction、reviewer 两轮 second non-pass 后安全部分交付，保留未消解资料冲突并未释放无证据调和。S2 `496861a543254115b2cbcd4a8f4a9ca8` cache hit=2、S3 `73d3f2d21f2f4053a6f11983d4e37886` cache hit=3，均安全未验证；后者 reviewer 前 deadline reserve 终止，仍是日用效率待收敛项。665 tests、21/21 benchmark。 |
+| T-158~T-180 | P0/P1 | P12 | Reviewer Lifecycle / Evidence Transport Closure | 离线完成；live 持续压测，未发布 | Agent | 真实 provider 暴露 claim locator/binding、incremental yield、vision evidence、document conflict context、rewrite transport、forced-final artifact、safe-partial 交接和 exact tool-choice retry 的多处 lifecycle 断点。 | 各修复进入 `read_only_reviewer.py`、`runtime_read_only_review.py`、`document_consistency.py`、`explore_handoff.py`、`runtime_read_only_explore.py`、`tool_choice_queue.py` 等 Owner；output-only reviewer 不进入 ToolRegistry。T-169~T-172 收束 rewrite gate、protocol artifact、scoped stance 和 evidence continuity；T-179/T-180 收束 transport、safe partial 和 document synthesis。对齐 OMP queue/yield/turn 生命周期，不向 `agent.py` 增加业务关键词 guard。 |
+| T-181~T-187 | P0/P1 | P12 | Document Rewrite / Reviewer Recovery Hardening | 已完成；candidate only | Agent | document rewrite 可丢 lifecycle，读需求后可丢 repository intent，provider 可 replay finding、变化未解决语序、在错误阶段触发 recovery，reviewer 改写还可再次超 transport。 | 分别完成 document rewrite lifecycle、repository intent、finding replay 幂等、clause-local unresolved stance、final-submit-only recovery 与 one-shot post-review transport recovery。提交 `76402f0`、`76f1305`、`d93468a`、`b613b4c`、`272eecd`、`d7231f8`、`9c5faac`；均保持领域逻辑在 Owner 模块。 |
+| T-188 | P0 | P12 | OMP-aligned Search / Read Output Bounds | 已完成；immutable candidate 待独立回归 | Agent | S2 命中 minified CSS 时 `search_code` 返回约 20KB，随后单行 `read_file` 注入约 232KB，挤占上下文并破坏收敛。 | 参考 OMP `grep.ts` 的 512 列/per-file 20 和 `read.ts` 的 768 列输出设置：`search_code` 返回 result/per-file/line truncation metadata，`read_file` 只截断展示且保持完整 hash。原 CSS 样本降为约 566/947 字符。827 tests、35/35 benchmark、7/7 architecture checks。candidate `20260714T170102Z-c248d3598dc2-6f417eb9e525`；T-149 stable 未变，小牙本轮未实际执行，禁止提前发布。 |
+| T-189 | P1 | P2/P12 | Project Status Workbook Integrity | 已完成 | Agent | Markdown 代码片段内的 `|` 被拆列，表内空行生成重复 worksheet，错误列宽只能在 Excel 导入时发现。 | 生成器识别 code-span/escaped pipe、保留表内空行并拒绝列数不一致；3 个回归测试。Excel 从 Markdown 重建后由 artifact-tool 检查为 9 个唯一 sheet、0 公式错误，并完成全 sheet render/视觉复核。 |
 
 ## 风险与决策
 
@@ -332,7 +338,8 @@ python3 scripts/sync_project_excel.py
 | 风险 | R-030 | 中 | 过早补完整 reviewer / ToolChoiceQueue 会增加复杂度但未必命中当前痛点 | 已缓解，继续受控 | T-108/T-105 类压测证明仅靠 prompt 和 final steering 仍会出现关键证据没读够就下结论；完整 OMP ToolChoiceQueue/reviewer/subagents 仍过重。 | 已按 OMP 工具调度原则裁剪出 MiniToolChoiceQueue、Planner/Explore 和二阶段 Patch Reviewer；Reviewer 仅消费已有 diff/工具证据，不引入第二个 Agent。完整多队列调度和 subagents 继续等真实失败样本触发。 |
 | 风险 | R-031 | 高 | 真实实现任务可能产生无关 patch | 已缓解，继续观察 | T-072 session `20260709T013441841983Z` 读取正确需求后漂移到 Nacos/Redis 配置，并把无关注释当成实现锚点；dry_run/hash 校验只能保证位置正确，不能保证业务相关 | 已完成 T-073：真实写入前目标文件必须已读；代码实现任务写部署/配置类低相关路径会被拦截或要求用户确认；workspace-root evidence 和 diff reviewer 已落地；复跑未再触碰 `deployMessage/nacos`。 |
 | 风险 | R-053 | 高 | 源码证据型最终回答可能误报数字/状态码 | 已关闭 MVP 版，继续压测 | T-105 session `20260709T092951071920Z` 读到 `PreOrderStatusEnum.MAKING(2)` / `MADE(3)`，最终却误报为 `50/60` | 参考 OMP runtime evidence/steering 边界：新增 source-grounded numeric final steerer，记录本轮 `read_file` 源码证据；最终回答涉及枚举、状态码、接口、字段等数字事实时，若与已读源码片段不一致，会强制无工具重写并要求标注未确认。 |
-| 风险 | R-054 | 高 | `agent.py` steering/guard 继续膨胀 | T-148 已关闭，连续不回涨 1/3 | review 指出 compaction 已拆出，但 semantic/read-only/final guard 又继续进入 `agent.py`，不符合 OMP 一职责一文件原则 | T-148 将 final steering、provider context、workspace/session roots、evidence/verification/session cache、memory consolidation 迁到职责 owner；主文件从 3,638 行/113 methods 降至 1,837 行/74 methods。architecture boundary tests 锁定 `<=2,100` 行、`<=75` 方法、禁止 `__getattr__` phase delegation 以及已迁 helper 禁止回流；后续三个连续变更批次继续记录不回涨。 |
+| 风险 | R-054 | 高 | `agent.py` steering/guard 继续膨胀 | 已关闭，连续不回涨超过 3 批 | review 指出 compaction 已拆出，但 semantic/read-only/final guard 又继续进入 `agent.py`，不符合 OMP 一职责一文件原则 | T-148 迁出领域职责；T-181~T-188 后主文件为 1,866 行/71 methods，仍低于 `<=2,100` 行、`<=75` 方法边界，且没有新增业务/文档 domain guard。 |
+| 风险 | R-076 | 高 | minified/超长单行工具输出吞掉上下文 | 已关闭 MVP，待 candidate 黑盒复测 | T-187 S2 的 CSS 搜索返回约 20KB，随后单行读取注入约 232KB，导致 compaction 和工具选择失真。 | 对齐 OMP grep/read output shaping：搜索 512 列/per-file 20，读取展示 768 列，typed metadata 明确截断且完整 hash 不变；策略只存在工具 Owner。 |
 | 风险 | R-055 | 高 | 无效 tool_call 参数会污染下一轮 provider 请求 | 已关闭 HTTP 400，兼容性继续观察 | T-108 首轮复测中百炼拒绝历史消息：无效工具调用的 `function.arguments` 为空或畸形 JSON，导致下一轮 HTTP 400；T-132C session `20260711T131716175598Z` 仍有 provider-invalid name/arguments。 | assistant message 入历史前把工具名、id、arguments 统一归一为 provider-safe JSON object 字符串；空/畸形参数写入 `_invalid_arguments` 并作为可审计 tool error，而非新增 schema alias 或污染下一轮请求。 |
 | 风险 | R-056 | 高 | read_file 行号会干扰源码数字事实比对 | 已关闭 MVP 版 | T-108 窄复测中，模型把枚举状态误报成 1/3/5；numeric guard 因 read_file 内容含 `1:`、`3:`、`5:` 行号而误以为这些数字有源码证据 | source numeric guard 比对前会剥离 read_file 行号前缀，再判断状态码/枚举值是否出现在源码内容中；新增回归测试覆盖错误数字刚好等于行号的情况。 |
 | 风险 | R-057 | 高 | provider 的工具参数方言导致有效任务无法进入写入/验证闭环 | 已缓解，继续观察 | T-115 已收敛 `file_hash*` / `source_hash_tag` / `hash_tag`、`old_str/new_str`、`mode=edit`、整数/布尔字符串、`run_tests.cmd` 和 todo scalar 方言；真实小改已完成源码/测试/定向测试/diff。 | 按 OMP 的 tool-call 归一边界，只在 ToolRegistry 接收明确已观测的 scalar alias；schema、hash、approval 和 anchored patch 校验不变。raw diff / bulk todo 不隐式执行，交由 T-116。 |
@@ -475,7 +482,7 @@ python3 scripts/sync_project_excel.py
 | 项目 | 结论 | 依据 |
 |---|---|---|
 | 主链路 | 通过 | 百炼真实小改复测已跑通 todo、dry_run、apply_patch、session allow、rollback、run_tests、git_diff。 |
-| 测试 | 通过 | P5 收口时 90 个 unittest、compileall、xlsx 检查、diff check 均通过；当前代码已跑通 657 个 unittest。 |
+| 测试 | 通过 | P5 收口时 90 个 unittest、compileall、xlsx 检查、diff check 均通过；当前代码已跑通 830 个 unittest、35/35 benchmark 和 7/7 architecture checks。 |
 | 日用入口 | 通过 | README 已补只读分析和小改任务命令模板。 |
 | 开放风险 | 可接受 | shell 仍非沙箱、prompt injection 仍需靠审批和封闭 VM；provider/model 专用 tokenizer、输出 reserve、managed skills、完整 reviewer 和完整 OMP ToolChoiceQueue 继续后置评估。 |
 | 下一阶段 | 真实需求设计与实现压测 | 已验证默认工作流、auto summary、多语言 LSP/light fallback、multi-root、startup memory、learn、authored skills、runtime state dir、多项目只读压测主链路、relevance gate、implementation-quality gate、no-edit final hygiene、semantic exploration guard、terminal input isolation、Event/Command Protocol、Terminal Frontend MVP、项目边界分析 MVP、source-grounded numeric guard、token budget、pinned requirement evidence 和 cross-root evidence matrix；下一步进入一项边界明确的真实需求设计和小改验证。 |
