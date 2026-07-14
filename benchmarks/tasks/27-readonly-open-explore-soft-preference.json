@@ -1,0 +1,124 @@
+{
+  "id": "readonly-open-explore-soft-preference",
+  "title": "Read-only explore keeps semantic candidates open for follow-up reads and alternate search",
+  "prompt": "只读分析两个代码根的 owner、调用链和影响范围，不要修改文件。先基于证据定位，再读取必要依赖。",
+  "budget_seconds": 90,
+  "workspace_files": {
+    "src/Owner.java": "class CandidateOwner { Dependency dependency; }\n",
+    "src/Dependency.java": "class Dependency {}\n"
+  },
+  "additional_roots": {
+    "frontend": {
+      "src/Route.ts": "export const RouteOwner = 'frontend route owner';\n"
+    }
+  },
+  "scripted_responses": [
+    {
+      "tool_calls": [
+        {
+          "name": "search_code",
+          "arguments": {
+            "path": "src",
+            "pattern": "CandidateOwner"
+          }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "src/Dependency.java"
+          }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "search_code",
+          "arguments": {
+            "path": "{{root:frontend}}/src",
+            "pattern": "JavaStyleOwner"
+          }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "search_code",
+          "arguments": {
+            "path": "{{root:frontend}}/src",
+            "pattern": "RouteOwner"
+          }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "{{root:frontend}}/src/Route.ts"
+          }
+        }
+      ]
+    },
+    {
+      "content": "已读取 Dependency.java 作为 CandidateOwner 的后续依赖证据；frontend 先按 JavaStyleOwner 搜索无匹配，随后 alternate search 命中并读取 src/Route.ts。owner 结论仍限定为已读证据。"
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "submit_read_only_review",
+          "arguments": {
+            "verdict": "pass",
+            "confidence": 0.95,
+            "reason": "The answer reports direct reads for the followed dependency and alternate frontend route evidence without overclaiming owner certainty."
+          }
+        }
+      ]
+    }
+  ],
+  "acceptance": {
+    "required_tools": [
+      "search_code",
+      "read_file"
+    ],
+    "forbidden_tools": [
+      "apply_patch",
+      "write_file",
+      "shell",
+      "run_tests"
+    ],
+    "changed_files": [],
+    "answer_all_of": [
+      "Dependency.java",
+      "Route.ts",
+      "alternate search",
+      "已读证据"
+    ],
+    "answer_forbidden_regex": [
+      "out of scope",
+      "不在.*检查范围",
+      "Dependency.java.*未允许"
+    ],
+    "termination_reason": "final",
+    "run_summary": {
+      "tool_calls": 5,
+      "tool_errors": 0,
+      "suppressed_tool_executions": 0
+    },
+    "read_only_reviewer": {
+      "triggers": 1,
+      "typed_submits": 1
+    },
+    "safe_partial_report": {
+      "emitted": 0
+    },
+    "max_tool_errors": 0
+  },
+  "residual_risk": "This deterministic fixture proves open bounded exploration after semantic candidates; it does not prove live provider search-term quality on a large repository."
+}

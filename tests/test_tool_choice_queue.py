@@ -116,7 +116,8 @@ class ToolChoiceQueueTests(unittest.TestCase):
         self.assertIn(str(second), initial.tool_call_hints[0])
         self.assertIn(str(second), after_first_root.tool_call_hints[0])
         self.assertNotIn(str(first), after_first_root.tool_call_hints[0])
-        self.assertEqual(read_candidate.allowed_tool_names, frozenset({"read_file"}))
+        self.assertEqual(read_candidate.allowed_tool_names, frozenset({"read_file", "search_code"}))
+        self.assertEqual(read_candidate.scoped_read_paths, ())
         self.assertIn(str(source), read_candidate.tool_call_hints[0])
 
     def test_general_code_evidence_flow_still_exposes_lsp(self) -> None:
@@ -231,6 +232,13 @@ class ToolChoiceQueueTests(unittest.TestCase):
                 useless=True,
                 metadata={"evidence_root": str(root), "negative_evidence_type": "content_no_match"},
             )
+            alternate = evaluate_tool_choice_state(
+                task_kind="read-only",
+                prompt="只读分析 owner 和设计影响。",
+                tool_results=(no_match,),
+                workspace_roots=(str(root),),
+                read_only_review_profile="owner_impact",
+            )
             fallback = evaluate_tool_choice_state(
                 task_kind="read-only",
                 prompt="只读分析 owner 和设计影响。",
@@ -238,6 +246,8 @@ class ToolChoiceQueueTests(unittest.TestCase):
                 workspace_roots=(str(root),),
                 read_only_review_profile="owner_impact",
             )
+            self.assertEqual(alternate.allowed_tool_names, frozenset({"read_file", "search_code"}))
+            self.assertEqual(alternate.required_glob_roots, ())
             self.assertEqual(fallback.allowed_tool_names, frozenset({"glob_files"}))
             self.assertEqual(fallback.required_glob_roots, (str(root),))
 
@@ -317,7 +327,7 @@ class ToolChoiceQueueTests(unittest.TestCase):
             first_fallback = evaluate_tool_choice_state(
                 task_kind="read-only",
                 prompt="只读分析 owner 和设计影响。",
-                tool_results=(first_no_match, second_no_match),
+                tool_results=(first_no_match, second_no_match, first_no_match, second_no_match),
                 workspace_roots=(str(first), str(second)),
                 read_only_review_profile="owner_impact",
             )
@@ -334,7 +344,7 @@ class ToolChoiceQueueTests(unittest.TestCase):
             second_fallback = evaluate_tool_choice_state(
                 task_kind="read-only",
                 prompt="只读分析 owner 和设计影响。",
-                tool_results=(first_no_match, second_no_match, first_glob_no_match),
+                tool_results=(first_no_match, second_no_match, first_no_match, second_no_match, first_glob_no_match),
                 workspace_roots=(str(first), str(second)),
                 read_only_review_profile="owner_impact",
             )
@@ -380,7 +390,7 @@ class ToolChoiceQueueTests(unittest.TestCase):
             decision = evaluate_tool_choice_state(
                 task_kind="read-only",
                 prompt="只读分析 owner 和设计影响。",
-                tool_results=(first_no_match, second_no_match, combined_glob),
+                tool_results=(first_no_match, second_no_match, first_no_match, second_no_match, combined_glob),
                 workspace_roots=(str(first), str(second)),
                 read_only_review_profile="owner_impact",
             )
@@ -400,6 +410,8 @@ class ToolChoiceQueueTests(unittest.TestCase):
             task_kind="read-only",
             prompt="只读分析 owner 和设计影响。",
             tool_results=(
+                first_no_match,
+                second_no_match,
                 first_no_match,
                 second_no_match,
                 combined_glob,
@@ -433,8 +445,9 @@ class ToolChoiceQueueTests(unittest.TestCase):
             )
 
         self.assertEqual(decision.rule_id, "read_only_profile_explore")
-        self.assertEqual(decision.allowed_tool_names, frozenset({"read_file"}))
+        self.assertEqual(decision.allowed_tool_names, frozenset({"read_file", "search_code"}))
         self.assertEqual(decision.preferred_tool_names, ("read_file",))
+        self.assertEqual(decision.scoped_read_paths, ())
         self.assertIn(str(source), decision.tool_call_hints[0])
 
     def test_owner_explore_semantic_candidates_are_not_source_suffix_limited(self) -> None:

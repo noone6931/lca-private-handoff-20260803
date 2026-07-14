@@ -91,8 +91,8 @@ def extract_document_artifact_requirements(prompt: str) -> tuple[DocumentArtifac
 
 
 _MODALITY_MARKERS: dict[ArtifactKind, tuple[str, ...]] = {
-    "markdown": ("markdown", "md 文档", ".md"),
-    "html": ("html", "网页原型", "原型页", ".html", ".htm"),
+    "markdown": ("markdown", "md 文档", "需求文档", ".md"),
+    "html": ("html", "网页原型", "原型页", "原型", ".html", ".htm"),
     "image": ("示例图", "图片", "图像", "image", "png", "jpeg", "jpg", "gif", "webp"),
 }
 _ARTIFACT_ACTION_MARKERS = (
@@ -115,10 +115,21 @@ def _modality_is_requested(prompt: str, kind: ArtifactKind) -> bool:
     # erase an earlier affirmative Markdown/HTML request in the same sentence.
     for sentence in re.split(r"[。！？!?\n；;]", prompt):
         lowered = sentence.lower()
-        if not any(marker in lowered for marker in markers):
+        versioned_requirement = kind == "markdown" and re.search(
+            r"(?:v\d+(?:\.\d+)*\s*)需求|需求\s*(?:v\d+(?:\.\d+)*)",
+            lowered,
+            re.IGNORECASE,
+        )
+        if not any(marker in lowered for marker in markers) and not versioned_requirement:
             continue
         for marker in markers:
             for match in re.finditer(re.escape(marker), lowered, re.IGNORECASE):
+                if _artifact_marker_is_negated(lowered, match.start(), match.end()):
+                    continue
+                if any(action in lowered for action in _ARTIFACT_ACTION_MARKERS):
+                    return True
+        if kind == "markdown":
+            for match in re.finditer(r"(?:v\d+(?:\.\d+)*\s*)需求|需求\s*(?:v\d+(?:\.\d+)*)", lowered, re.IGNORECASE):
                 if _artifact_marker_is_negated(lowered, match.start(), match.end()):
                     continue
                 if any(action in lowered for action in _ARTIFACT_ACTION_MARKERS):

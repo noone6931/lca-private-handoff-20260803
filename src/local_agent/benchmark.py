@@ -359,8 +359,8 @@ def write_benchmark_reports(results: Iterable[BenchmarkResult], output_dir: Path
 
 def _load_benchmark_task(path: Path) -> BenchmarkTask:
     try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+        raw = _load_json_object_without_duplicate_keys(path)
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
         raise ValueError(f"Could not load benchmark task {path}: {exc}") from exc
     if not isinstance(raw, Mapping):
         raise ValueError(f"Benchmark task {path} must be a JSON object.")
@@ -397,6 +397,18 @@ def _load_benchmark_task(path: Path) -> BenchmarkTask:
         acceptance=acceptance,
         residual_risk=str(raw.get("residual_risk") or "Deterministic fixtures do not prove provider behavior on a real project."),
     )
+
+
+def _load_json_object_without_duplicate_keys(path: Path) -> Any:
+    def object_hook(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError(f"duplicate JSON key {key!r}")
+            result[key] = value
+        return result
+
+    return json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=object_hook)
 
 
 def _benchmark_config(

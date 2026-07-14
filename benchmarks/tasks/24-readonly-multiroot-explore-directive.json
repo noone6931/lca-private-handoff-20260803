@@ -40,42 +40,6 @@
           "name": "search_code",
           "arguments": {
             "path": "src",
-            "pattern": "NoSuchOwnerToken"
-          }
-        },
-        {
-          "name": "search_code",
-          "arguments": {
-            "path": "{{root:service-b}}/src",
-            "pattern": "NoSuchOwnerToken"
-          }
-        }
-      ]
-    },
-    {
-      "tool_calls": [
-        {
-          "name": "search_code",
-          "arguments": {
-            "path": "src",
-            "pattern": "NoSuchOwnerToken"
-          }
-        },
-        {
-          "name": "search_code",
-          "arguments": {
-            "path": "{{root:service-b}}/src",
-            "pattern": "NoSuchOwnerToken"
-          }
-        }
-      ]
-    },
-    {
-      "tool_calls": [
-        {
-          "name": "search_code",
-          "arguments": {
-            "path": "src",
             "pattern": "PrimaryOwner"
           }
         },
@@ -83,7 +47,46 @@
           "name": "search_code",
           "arguments": {
             "path": "{{root:service-b}}/src",
-            "pattern": "AdditionalOwner"
+            "pattern": "NoSuchOwnerToken"
+          }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+            "name": "read_file",
+            "arguments": {
+            "path": "src/Primary.java"
+            }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "search_code",
+          "arguments": {
+            "path": "{{root:service-b}}/src",
+            "pattern": "NoSuchOwnerToken"
+          }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "search_code",
+          "arguments": {
+            "path": "{{root:service-b}}/src",
+            "pattern": "detour"
+          }
+        },
+        {
+          "name": "search_code",
+          "arguments": {
+            "path": "{{root:service-b}}/src",
+            "pattern": "second detour"
           }
         }
       ]
@@ -104,40 +107,10 @@
     {
       "tool_calls": [
         {
-            "name": "glob_files",
-            "arguments": {
-              "paths": [
-              "{{workspace}}/src/*Primary*"
-              ],
-              "limit": 100
-            }
-        }
-      ]
-    },
-    {
-      "tool_calls": [
-        {
-            "name": "search_code",
-            "arguments": {
-              "path": "src",
-              "pattern": "PrimaryOwner"
-            }
-        },
-        {
             "name": "search_code",
             "arguments": {
               "path": "{{root:service-b}}/src",
               "pattern": "AdditionalOwner"
-            }
-        }
-      ]
-    },
-    {
-      "tool_calls": [
-        {
-            "name": "read_file",
-            "arguments": {
-            "path": "src/Primary.java"
             }
         },
         {
@@ -189,13 +162,13 @@
     ],
     "termination_reason": "final",
     "run_summary": {
-      "tool_calls": 11,
+      "tool_calls": 10,
       "tool_errors": 3,
-      "provider_schema_violations": 7,
-      "suppressed_tool_executions": 4
+      "provider_schema_violations": 5,
+      "suppressed_tool_executions": 2
     },
     "tool_choice_exact": {
-      "forces": 2,
+      "forces": 1,
       "exhausted": 0
     },
     "read_only_reviewer": {

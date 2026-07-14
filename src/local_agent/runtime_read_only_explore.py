@@ -61,7 +61,7 @@ class RuntimeReadOnlyExplorePhase:
             runtime._session.append(
                 "read_only_explore",
                 {
-                    "event": "direct_read_transition",
+                    "event": "read_candidate_hint",
                     "observations": decision.observation_calls,
                     "successful_observations": decision.successful_observations,
                     "soft_budget": decision.soft_budget,
@@ -69,7 +69,7 @@ class RuntimeReadOnlyExplorePhase:
                     "read_candidates": list(decision.read_candidates),
                 },
             )
-            return decision
+            return None
         if decision.action != "finalize":
             return None
         runtime._run.read_only_explore_finalized = True

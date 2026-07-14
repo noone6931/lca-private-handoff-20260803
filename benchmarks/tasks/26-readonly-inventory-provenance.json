@@ -70,12 +70,10 @@
     {
       "tool_calls": [
         {
-          "name": "glob_files",
+          "name": "search_code",
           "arguments": {
-            "paths": [
-              "{{root:backend}}/**/*payment*"
-            ],
-            "limit": 100
+            "path": "{{root:backend}}",
+            "pattern": "NoSuchOwnerToken"
           }
         }
       ]
@@ -86,7 +84,7 @@
           "name": "glob_files",
           "arguments": {
             "paths": [
-              "{{root:frontend}}/**/*route*"
+              "{{root:backend}}/**/*payment*"
             ],
             "limit": 100
           }
@@ -170,7 +168,7 @@
     "run_summary": {
       "tool_calls": 11,
       "tool_errors": 1,
-      "provider_schema_violations": 0,
+      "provider_schema_violations": 1,
       "suppressed_tool_executions": 0
     },
     "read_only_reviewer": {

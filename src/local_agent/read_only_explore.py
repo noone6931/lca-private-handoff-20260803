@@ -393,6 +393,7 @@ def _roots_needing_fallback_discovery(
         root
         for root in missing_roots
         if root not in candidate_roots and root_attempts.get(root, 0) > 0
+        and root_attempts.get(root, 0) >= SOFT_EXPLORE_CALLS_PER_ROOT
         and not _fallback_discovery_attempted(results, root)
     )
     if not roots:

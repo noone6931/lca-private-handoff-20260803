@@ -128,6 +128,44 @@ class RequirementContractTests(unittest.TestCase):
         self.assertIn("Document-only", contract.scope)
         self.assertTrue(any("document path" in item for item in contract.evidence_requirements))
 
+    def test_artifact_request_with_generic_evidence_stays_document_consistency(self) -> None:
+        contract = generate_requirement_contract(
+            "只读分析当前目录里的拓展服务费结算 V1.3 需求、原型和示例图片，说明本期范围、后期规划、"
+            "关键业务规则，以及资料之间是否有冲突。每项结论给出证据；证据不足不要推测。"
+        )
+
+        self.assertEqual(contract.task_kind, "read-only")
+        self.assertEqual(contract.evidence_domain, "requirement_documents")
+        self.assertEqual(contract.read_only_review_profile, "document_consistency")
+        self.assertEqual(
+            tuple(item.kind for item in contract.document_artifacts),
+            ("markdown", "html", "image"),
+        )
+
+    def test_document_interfaces_do_not_become_repository_code_context(self) -> None:
+        contract = generate_requirement_contract(
+            "只读分析需求文档/HTML中的接口定义和数据模型，给出证据；不要查源码。"
+        )
+
+        self.assertEqual(contract.task_kind, "read-only")
+        self.assertEqual(contract.evidence_domain, "requirement_documents")
+        self.assertEqual(contract.read_only_review_profile, "document_consistency")
+        self.assertEqual(tuple(item.kind for item in contract.document_artifacts), ("markdown", "html"))
+
+    def test_explicit_source_interface_request_stays_repository_code(self) -> None:
+        contract = generate_requirement_contract(
+            "只读检查源码中的接口实现位置，给出代码证据；不要修改文件。"
+        )
+
+        self.assertEqual(contract.task_kind, "read-only")
+        self.assertEqual(contract.evidence_domain, "repository_code")
+
+    def test_html_document_and_image_do_not_imply_markdown_artifact(self) -> None:
+        contract = generate_requirement_contract("只读分析 HTML 文档和示例图片，给出证据。")
+
+        self.assertEqual(contract.evidence_domain, "requirement_documents")
+        self.assertEqual(tuple(item.kind for item in contract.document_artifacts), ("html", "image"))
+
     def test_single_markdown_document_does_not_require_unrequested_artifacts(self) -> None:
         contract = generate_requirement_contract("只根据 `requirements.md` 分析需求；不要检查代码。")
 

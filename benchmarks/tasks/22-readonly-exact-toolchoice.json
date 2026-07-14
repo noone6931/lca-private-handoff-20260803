@@ -1,6 +1,6 @@
 {
   "id": "readonly-exact-toolchoice",
-  "title": "Read-only owner exploration forces the required direct-read tool after a detour",
+  "title": "Read-only owner exploration treats search candidates as soft read hints",
   "prompt": "只读分析当前服务 owner、调用链和影响范围，不要修改文件。",
   "budget_seconds": 90,
   "workspace_files": {
@@ -100,12 +100,12 @@
     ],
     "termination_reason": "final",
     "run_summary": {
-      "tool_calls": 3,
+      "tool_calls": 5,
       "tool_errors": 1,
-      "suppressed_tool_executions": 2
+      "suppressed_tool_executions": 0
     },
     "tool_choice_exact": {
-      "forces": 2,
+      "forces": 0,
       "exhausted": 0
     },
     "read_only_reviewer": {
@@ -114,5 +114,5 @@
     },
     "max_tool_errors": 1
   },
-  "residual_risk": "The fixture proves bounded exact-tool escalation after a schema detour and a required-tool validation error; root-fair multi-root batching is covered by unit tests, not this single-root benchmark."
+  "residual_risk": "The fixture proves that read-only semantic candidates remain soft hints: extra precise searches can continue, invalid reads are bounded, and a later direct read is still required before review."
 }

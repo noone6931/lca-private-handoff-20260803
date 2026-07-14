@@ -68,7 +68,7 @@ class CompletionAuditTests(unittest.TestCase):
         self.assertTrue(any("repository/code inspection" in item.reason for item in result.missing_items))
 
     def test_image_metadata_read_does_not_count_as_a_visual_observation(self) -> None:
-        request = "只根据需求文档和示例图分析需求；不要检查代码。"
+        request = "只根据示例图分析需求；不要检查代码。"
         result = audit_completion(
             generate_requirement_contract(request),
             request=request,
@@ -89,7 +89,7 @@ class CompletionAuditTests(unittest.TestCase):
         self.assertTrue(any("Markdown/HTML" in item.reason for item in result.missing_items))
 
     def test_successful_image_inspection_is_a_document_domain_observation(self) -> None:
-        request = "只根据需求文档和示例图分析需求；不要检查代码。"
+        request = "只根据示例图分析需求；不要检查代码。"
         result = audit_completion(
             generate_requirement_contract(request),
             request=request,

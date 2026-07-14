@@ -19,7 +19,7 @@ class BenchmarkTests(unittest.TestCase):
         tasks = load_benchmark_tasks()
         identifiers = {task.identifier for task in tasks}
 
-        self.assertEqual(len(tasks), 26)
+        self.assertEqual(len(tasks), 27)
         self.assertEqual(
             identifiers,
             {
@@ -49,6 +49,7 @@ class BenchmarkTests(unittest.TestCase):
                 "readonly-multiroot-explore-directive",
                 "document-final-submit-recovery",
                 "readonly-inventory-provenance",
+                "readonly-open-explore-soft-preference",
             },
         )
         self.assertTrue(DEFAULT_TASKS_DIR.is_dir())
@@ -60,9 +61,9 @@ class BenchmarkTests(unittest.TestCase):
             payload = json.loads((output_dir / "benchmark-report.json").read_text(encoding="utf-8"))
             markdown = (output_dir / "benchmark-report.md").read_text(encoding="utf-8")
 
-            self.assertEqual(len(results), 26)
+            self.assertEqual(len(results), 27)
         self.assertTrue(all(result.passed for result in results))
-        self.assertEqual(payload["passed"], 26)
+        self.assertEqual(payload["passed"], 27)
         self.assertEqual(payload["failed"], 0)
         self.assertIn("small-code-change-test-diff", markdown)
         self.assertIn("budget-exhausted-incomplete", markdown)
@@ -85,6 +86,7 @@ class BenchmarkTests(unittest.TestCase):
         self.assertIn("readonly-reviewer-nine-findings", markdown)
         self.assertIn("readonly-multiroot-explore-directive", markdown)
         self.assertIn("readonly-inventory-provenance", markdown)
+        self.assertIn("readonly-open-explore-soft-preference", markdown)
 
     def test_mapping_acceptance_requires_explicit_metric_values(self) -> None:
         from local_agent.benchmark import _mapping_integer_values_match
@@ -92,6 +94,26 @@ class BenchmarkTests(unittest.TestCase):
         self.assertTrue(_mapping_integer_values_match({"tool_calls": 0}, {"tool_calls": 0}))
         self.assertFalse(_mapping_integer_values_match({}, {"tool_calls": 0}))
         self.assertFalse(_mapping_integer_values_match({"tool_calls": "0"}, {"tool_calls": 0}))
+
+    def test_task_loader_rejects_duplicate_json_keys(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            task_dir = Path(tmp)
+            (task_dir / "01-duplicate.json").write_text(
+                """{
+  "id": "duplicate-key-fixture",
+  "id": "silently-overwritten",
+  "title": "Duplicate key fixture",
+  "prompt": "read",
+  "workspace_files": {},
+  "scripted_responses": [],
+  "acceptance": {}
+}
+""",
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(ValueError, "duplicate JSON key 'id'"):
+                load_benchmark_tasks(task_dir)
 
     def test_live_inventory_acceptance_uses_semantic_terms_instead_of_fixed_wording(self) -> None:
         tasks = {task.identifier: task for task in load_benchmark_tasks()}

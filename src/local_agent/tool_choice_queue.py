@@ -540,7 +540,7 @@ def evaluate_tool_choice_state(
         return ToolChoiceDecision(
             steering_required=True,
             allowed_tool_names=_allowed_subset(
-                {"read_file"}
+                PRECISE_EVIDENCE_TOOLS
                 if explore_decision.read_candidates
                 else {"glob_files"}
                 if explore_decision.discovery_roots
@@ -550,7 +550,7 @@ def evaluate_tool_choice_state(
             reason=(
                 "read_only_profile_explore active: "
                 + (
-                    "read the typed search/LSP candidates before continuing discovery; "
+                    "prefer reading typed search/LSP candidates, or continue bounded precise search when needed; "
                     if explore_decision.read_candidates
                     else "run one root-scoped fallback discovery for the current missing root before finalizing; "
                     if explore_decision.discovery_roots
@@ -587,8 +587,6 @@ def evaluate_tool_choice_state(
                 )
             ),
             required_glob_roots=explore_decision.discovery_roots,
-            scoped_read_paths=explore_decision.read_candidates,
-            scoped_read_budget=(len(explore_decision.read_candidates) if explore_decision.read_candidates else None),
         )
 
     evidence_preferred = _preferred_evidence_tools(results)

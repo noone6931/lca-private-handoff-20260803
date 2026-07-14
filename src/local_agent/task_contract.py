@@ -149,6 +149,22 @@ _CODE_EVIDENCE_MARKERS = (
     "证据",
 )
 
+_EXPLICIT_REPOSITORY_CODE_MARKERS = (
+    "代码",
+    "源码",
+    "仓库",
+    "代码证据",
+    "源码证据",
+    "源代码",
+    "code evidence",
+    "source evidence",
+    "source code",
+    "source-code",
+    "code",
+    "repo",
+    "repository",
+)
+
 _IMPLEMENTATION_MARKERS = (
     "实现",
     "开发",
@@ -525,10 +541,27 @@ def _evidence_domain(
         suffix in lower for suffix in (".md", ".markdown", ".html", ".htm", ".png", ".jpg", ".jpeg", ".gif", ".webp")
     )
     document_only = _contains_any(lower, _DOCUMENT_ONLY_ANALYSIS_MARKERS)
-    read_only_artifacts = _contains_any(lower, _READ_ONLY_MARKERS) and not _contains_any(lower, _CODE_EVIDENCE_MARKERS)
+    read_only_artifacts = _contains_any(lower, _READ_ONLY_MARKERS) and not _has_positive_repository_code_context(lower)
     if has_document_reference and (document_only or read_only_artifacts):
         return "requirement_documents"
     return "repository_code"
+
+
+def _has_positive_repository_code_context(lower_prompt: str) -> bool:
+    """Return true for code/repo evidence requests, not generic "evidence" wording.
+
+    Document-only prompts often ask for "证据/evidence" from the supplied
+    material.  That word alone must not convert a multi-artifact requirement
+    analysis into repository-code investigation, while explicit code/source
+    requests must keep their existing code-evidence contract.
+    """
+
+    text = re.sub(
+        r"(?:不要|不|无需|禁止|不得).{0,10}(?:检查|读取|读|搜索|查看|查).{0,10}(?:代码|源码|仓库|repo|repository|code)",
+        " ",
+        lower_prompt,
+    )
+    return _contains_any(text, _EXPLICIT_REPOSITORY_CODE_MARKERS)
 
 
 def _read_only_review_profile(

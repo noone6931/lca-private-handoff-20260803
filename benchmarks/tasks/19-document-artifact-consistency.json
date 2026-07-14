@@ -1,7 +1,7 @@
 {
   "id": "document-artifact-consistency",
   "title": "Multi-artifact requirement analysis covers every requested artifact and rejects invented reconciliation",
-  "prompt": "只根据 Markdown、HTML 和示例图分析需求；不要检查代码，也不要推测系统归属。必须实际检查每个资料；资料冲突时保留待确认项。",
+  "prompt": "只读分析当前目录里的 V1.3 需求、原型和示例图片，说明本期范围以及资料之间是否有冲突。每项结论给出证据；证据不足不要推测；不要检查代码。",
   "budget_seconds": 90,
   "workspace_files": {
     "requirements.md": "# Spec\nStatus must be blank.\n",

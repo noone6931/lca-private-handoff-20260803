@@ -60,6 +60,27 @@ def _tool_call_message(call_id: str) -> dict[str, object]:
     }
 
 
+def _single_read_file_gate(runtime: AgentRuntime):
+    def evaluate(**_kwargs):
+        if any(result.name == "read_file" and not result.is_error for result in runtime._run.tool_choice_results):
+            return ToolChoiceDecision(
+                steering_required=False,
+                allowed_tool_names=frozenset({"read_file", "search_code"}),
+                reason="exact read satisfied",
+            )
+        return ToolChoiceDecision(
+            steering_required=True,
+            allowed_tool_names=frozenset({"read_file"}),
+            reason="exact read_file is required for this test gate",
+            rule_id="exact_read_test",
+            missing_requirements=("read_file:src/Owner.java",),
+            preferred_tool_names=("read_file",),
+            tool_call_hints=("read_file path=src/Owner.java",),
+        )
+
+    return evaluate
+
+
 def _review_pass_response(reason: str = "scoped evidence is honest") -> object:
     return type(
         "Response",
@@ -297,6 +318,65 @@ class _OwnerExploreDirectReadClient:
             "Response",
             (),
             {"message": {"content": "Owner.java 是直接读取到的候选实现；请求行为的真实 owner 仍需调用链绑定确认。"}},
+        )()
+
+
+class _OwnerExploreFollowUpReadClient:
+    calls: list[dict] = []
+
+    def __init__(self, config: AgentConfig):
+        self.config = config
+        self._primary_calls = 0
+
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
+        if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages):
+            return _review_pass_response("follow-up read stayed evidence-bounded")
+        self._primary_calls += 1
+        if self._primary_calls == 1:
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "search-owner",
+                                "type": "function",
+                                "function": {
+                                    "name": "search_code",
+                                    "arguments": json.dumps({"path": "src", "pattern": "CandidateOwner"}),
+                                },
+                            }
+                        ],
+                    }
+                },
+            )()
+        if self._primary_calls == 2:
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "read-dependency",
+                                "type": "function",
+                                "function": {
+                                    "name": "read_file",
+                                    "arguments": json.dumps({"path": "src/Dependency.java"}),
+                                },
+                            }
+                        ],
+                    }
+                },
+            )()
+        return type(
+            "Response",
+            (),
+            {"message": {"content": "Dependency.java was actively followed from current evidence; owner remains scoped."}},
         )()
 
 
@@ -584,26 +664,6 @@ class _ExactToolChoicePairingClient:
                         "content": None,
                         "tool_calls": [
                             {
-                                "id": "search-owner",
-                                "type": "function",
-                                "function": {
-                                    "name": "search_code",
-                                    "arguments": json.dumps({"path": "src", "pattern": "CandidateOwner"}),
-                                },
-                            }
-                        ],
-                    }
-                },
-            )()
-        if self._primary_calls == 2:
-            return type(
-                "Response",
-                (),
-                {
-                    "message": {
-                        "content": None,
-                        "tool_calls": [
-                            {
                                 "id": "wrong-detour",
                                 "type": "function",
                                 "function": {
@@ -615,7 +675,7 @@ class _ExactToolChoicePairingClient:
                     }
                 },
             )()
-        if self._primary_calls == 3:
+        if self._primary_calls == 2:
             return type(
                 "Response",
                 (),
@@ -651,28 +711,8 @@ class _ExactToolChoiceNoToolClient:
             return _review_pass_response("bounded evidence")
         self._primary_calls += 1
         if self._primary_calls == 1:
-            return type(
-                "Response",
-                (),
-                {
-                    "message": {
-                        "content": None,
-                        "tool_calls": [
-                            {
-                                "id": "search-owner",
-                                "type": "function",
-                                "function": {
-                                    "name": "search_code",
-                                    "arguments": json.dumps({"path": "src", "pattern": "CandidateOwner"}),
-                                },
-                            }
-                        ],
-                    }
-                },
-            )()
-        if self._primary_calls == 2:
             return type("Response", (), {"message": {"content": ""}})()
-        if self._primary_calls == 3:
+        if self._primary_calls == 2:
             return type(
                 "Response",
                 (),
@@ -706,26 +746,9 @@ class _ExactToolChoiceExhaustionClient:
         type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout, "tool_choice": tool_choice})
         self._primary_calls += 1
         if self._primary_calls == 1:
-            return type(
-                "Response",
-                (),
-                {
-                    "message": {
-                        "content": None,
-                        "tool_calls": [
-                            {
-                                "id": "search-owner",
-                                "type": "function",
-                                "function": {
-                                    "name": "search_code",
-                                    "arguments": json.dumps({"path": "src", "pattern": "CandidateOwner"}),
-                                },
-                            }
-                        ],
-                    }
-                },
-            )()
-        tool_call_id = "wrong-detour" if self._primary_calls == 2 else f"wrong-forced-{self._primary_calls - 2}"
+            tool_call_id = "wrong-detour"
+        else:
+            tool_call_id = f"wrong-forced-{self._primary_calls - 1}"
         return type(
             "Response",
             (),
@@ -768,26 +791,6 @@ class _ExactToolChoiceErrorThenRecoveryClient:
                         "content": None,
                         "tool_calls": [
                             {
-                                "id": "search-owner",
-                                "type": "function",
-                                "function": {
-                                    "name": "search_code",
-                                    "arguments": json.dumps({"path": "src", "pattern": "CandidateOwner"}),
-                                },
-                            }
-                        ],
-                    }
-                },
-            )()
-        if self._primary_calls == 2:
-            return type(
-                "Response",
-                (),
-                {
-                    "message": {
-                        "content": None,
-                        "tool_calls": [
-                            {
                                 "id": "wrong-detour-1",
                                 "type": "function",
                                 "function": {
@@ -799,7 +802,7 @@ class _ExactToolChoiceErrorThenRecoveryClient:
                     }
                 },
             )()
-        if self._primary_calls == 3:
+        if self._primary_calls == 2:
             return type(
                 "Response",
                 (),
@@ -819,7 +822,7 @@ class _ExactToolChoiceErrorThenRecoveryClient:
                     }
                 },
             )()
-        if self._primary_calls == 4:
+        if self._primary_calls == 3:
             return type(
                 "Response",
                 (),
@@ -839,7 +842,7 @@ class _ExactToolChoiceErrorThenRecoveryClient:
                     }
                 },
             )()
-        if self._primary_calls == 5:
+        if self._primary_calls == 4:
             return type(
                 "Response",
                 (),
@@ -3914,21 +3917,61 @@ class AgentRuntimeTests(unittest.TestCase):
 
         self.assertIn("Owner.java", result)
         summary = runtime._last_run_summary
-        self.assertEqual(summary["tool_counts"], {"search_code": 1, "read_file": 1})
-        self.assertEqual(summary["suppressed_tool_executions"], 1)
+        self.assertEqual(summary["tool_counts"], {"search_code": 2, "read_file": 1})
+        self.assertEqual(summary["suppressed_tool_executions"], 0)
         primary_calls = [
             call for call in _OwnerExploreDirectReadClient.calls
             if not any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in call["messages"])
         ]
-        self.assertEqual(_tool_names_from_schema_call(primary_calls[1]["tools"]), {"read_file"})
+        self.assertEqual(_tool_names_from_schema_call(primary_calls[1]["tools"]), {"read_file", "search_code"})
         self.assertEqual(_tool_names_from_schema_call(primary_calls[2]["tools"]), set())
         direct_read_event = [
             record for record in records
-            if record.get("event") == "read_only_explore" and record.get("payload", {}).get("event") == "direct_read_transition"
+            if record.get("event") == "read_only_explore" and record.get("payload", {}).get("event") == "read_candidate_hint"
         ]
-        self.assertEqual(len(direct_read_event), 1)
+        self.assertGreaterEqual(len(direct_read_event), 1)
 
-    def test_owner_explore_suppresses_duplicate_before_later_root_fair_call(self) -> None:
+    def test_owner_explore_candidate_hint_does_not_block_follow_up_key_read(self) -> None:
+        _OwnerExploreFollowUpReadClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            (workspace / "src").mkdir()
+            owner = workspace / "src" / "Owner.java"
+            dependency = workspace / "src" / "Dependency.java"
+            owner.write_text("class CandidateOwner { Dependency dependency; }\n", encoding="utf-8")
+            dependency.write_text("class Dependency {}\n", encoding="utf-8")
+            with patch("local_agent.agent.OpenAICompatibleClient", _OwnerExploreFollowUpReadClient):
+                runtime = AgentRuntime(
+                    AgentConfig(
+                        provider="openai-compatible",
+                        api_base_url="https://example.invalid/v1",
+                        api_key="token",
+                        model="model",
+                        workspace=workspace,
+                        max_steps=0,
+                        budget_seconds=None,
+                        approval_mode="yolo",
+                    ),
+                    show_tool_logs=False,
+                )
+                result = runtime.run("只读分析当前服务 owner 和影响范围，不要修改。")
+
+        self.assertIn("Dependency.java", result)
+        self.assertEqual(runtime._last_run_summary["termination_reason"], "final")
+        self.assertEqual(runtime._last_run_summary["tool_counts"], {"search_code": 1, "read_file": 1})
+        self.assertFalse(any(item.is_error for item in runtime._run.tool_choice_results if item.name == "read_file"))
+        search_result = next(item for item in runtime._run.tool_choice_results if item.name == "search_code")
+        evidence_paths = set(search_result.metadata.get("evidence_paths", ()))
+        self.assertIn("src/Owner.java", evidence_paths)
+        self.assertNotIn("src/Dependency.java", evidence_paths)
+        self.assertNotIn(str(dependency), evidence_paths)
+        primary_calls = [
+            call for call in _OwnerExploreFollowUpReadClient.calls
+            if not any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in call["messages"])
+        ]
+        self.assertEqual(_tool_names_from_schema_call(primary_calls[1]["tools"]), {"read_file", "search_code"})
+
+    def test_owner_explore_allows_bounded_precise_calls_before_later_root_fair_call(self) -> None:
         _OwnerExploreRootFairBatchClient.calls = []
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp).resolve() / "primary"
@@ -3960,8 +4003,8 @@ class AgentRuntimeTests(unittest.TestCase):
                 ]
 
         self.assertIn("Primary.java", result)
-        self.assertEqual(runtime._last_run_summary["tool_counts"], {"search_code": 2, "read_file": 2})
-        self.assertEqual(runtime._last_run_summary["suppressed_tool_executions"], 1)
+        self.assertEqual(runtime._last_run_summary["tool_counts"], {"search_code": 3, "read_file": 2})
+        self.assertEqual(runtime._last_run_summary["suppressed_tool_executions"], 0)
         tool_results = [
             record["payload"]
             for record in records
@@ -3971,7 +4014,7 @@ class AgentRuntimeTests(unittest.TestCase):
             [payload.get("tool_call_id") for payload in tool_results if payload.get("tool_call_id") in {"search-primary-duplicate", "search-additional"}],
             ["search-primary-duplicate", "search-additional"],
         )
-        self.assertTrue(
+        self.assertFalse(
             next(payload for payload in tool_results if payload.get("tool_call_id") == "search-primary-duplicate")["is_error"]
         )
 
@@ -4031,17 +4074,20 @@ class AgentRuntimeTests(unittest.TestCase):
                 if item.name == "read_file" and not item.is_error
             },
         )
-        glob_schema_calls = [
-            call for call in _OwnerExploreFallbackRootFairClient.calls
-            if _tool_names_from_schema_call(call["tools"]) == {"glob_files"}
+        primary_schema_calls = [
+            _tool_names_from_schema_call(call["tools"])
+            for call in _OwnerExploreFallbackRootFairClient.calls
+            if not any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in call["messages"])
         ]
-        self.assertGreaterEqual(len(glob_schema_calls), 3)
-        inventory_rejections = [
+        self.assertTrue(
+            all(schema in ({"read_file", "search_code"}, set()) for schema in primary_schema_calls)
+        )
+        glob_schema_rejections = [
             item
             for item in runtime._run.tool_choice_results
-            if item.name == "glob_files" and item.is_error and item.metadata.get("inventory_contract_rejection")
+            if item.name == "glob_files" and item.is_error and item.metadata.get("provider_schema_violation")
         ]
-        self.assertEqual(len(inventory_rejections), 1)
+        self.assertEqual(len(glob_schema_rejections), 3)
 
     def test_exact_tool_choice_skipped_detour_keeps_transcript_pairing(self) -> None:
         _ExactToolChoicePairingClient.calls = []
@@ -4063,13 +4109,14 @@ class AgentRuntimeTests(unittest.TestCase):
                     ),
                     show_tool_logs=False,
                 )
-                result = runtime.run("只读分析当前服务 owner 和影响范围，不要修改。")
+                with patch.object(runtime._run.tool_choice_queue, "evaluate", side_effect=_single_read_file_gate(runtime)):
+                    result = runtime.run("只读分析当前服务 owner 和影响范围，不要修改。")
 
         self.assertIn("Owner.java", result)
         self.assertEqual(runtime._last_run_summary["tool_choice_exact"]["forces"], 1)
-        forced = _ExactToolChoicePairingClient.calls[2]["tool_choice"]
+        forced = _ExactToolChoicePairingClient.calls[1]["tool_choice"]
         self.assertEqual(forced["function"]["name"], "read_file")
-        messages = _ExactToolChoicePairingClient.calls[2]["messages"]
+        messages = _ExactToolChoicePairingClient.calls[1]["messages"]
         detour_tool_index = next(
             index for index, message in enumerate(messages)
             if message.get("role") == "tool" and message.get("tool_call_id") == "wrong-detour"
@@ -4077,7 +4124,7 @@ class AgentRuntimeTests(unittest.TestCase):
         prior = messages[detour_tool_index - 1]
         self.assertEqual(prior.get("role"), "assistant")
         self.assertEqual(prior.get("tool_calls")[0]["id"], "wrong-detour")
-        self.assertEqual(runtime._last_run_summary["tool_counts"], {"search_code": 1, "read_file": 1})
+        self.assertEqual(runtime._last_run_summary["tool_counts"], {"read_file": 1})
 
     def test_exact_tool_choice_handles_no_tool_empty_turn_before_provider_terminal_retry(self) -> None:
         _ExactToolChoiceNoToolClient.calls = []
@@ -4099,14 +4146,15 @@ class AgentRuntimeTests(unittest.TestCase):
                     ),
                     show_tool_logs=False,
                 )
-                result = runtime.run("只读分析当前服务 owner 和影响范围，不要修改。")
+                with patch.object(runtime._run.tool_choice_queue, "evaluate", side_effect=_single_read_file_gate(runtime)):
+                    result = runtime.run("只读分析当前服务 owner 和影响范围，不要修改。")
 
         self.assertIn("Owner.java", result)
         self.assertEqual(runtime._last_run_summary["tool_choice_exact"]["forces"], 1)
         self.assertEqual(runtime._last_run_summary["provider_terminal"]["non_substantive_retries"], 0)
-        forced = _ExactToolChoiceNoToolClient.calls[2]["tool_choice"]
+        forced = _ExactToolChoiceNoToolClient.calls[1]["tool_choice"]
         self.assertEqual(forced["function"]["name"], "read_file")
-        self.assertEqual(runtime._last_run_summary["tool_counts"], {"search_code": 1, "read_file": 1})
+        self.assertEqual(runtime._last_run_summary["tool_counts"], {"read_file": 1})
 
     def test_exact_tool_choice_retries_after_required_tool_validation_error(self) -> None:
         _ExactToolChoiceErrorThenRecoveryClient.calls = []
@@ -4128,12 +4176,13 @@ class AgentRuntimeTests(unittest.TestCase):
                     ),
                     show_tool_logs=False,
                 )
-                result = runtime.run("只读分析当前服务 owner 和影响范围，不要修改。")
+                with patch.object(runtime._run.tool_choice_queue, "evaluate", side_effect=_single_read_file_gate(runtime)):
+                    result = runtime.run("只读分析当前服务 owner 和影响范围，不要修改。")
 
         self.assertIn("Owner.java", result)
         self.assertEqual(runtime._last_run_summary["termination_reason"], "final")
         self.assertEqual(runtime._last_run_summary["tool_choice_exact"], {"forces": 2, "exhausted": 0})
-        self.assertEqual(runtime._last_run_summary["tool_counts"], {"read_file": 2, "search_code": 1})
+        self.assertEqual(runtime._last_run_summary["tool_counts"], {"read_file": 2})
         self.assertEqual(runtime._last_run_summary["tool_errors"], 1)
         self.assertEqual(runtime._last_run_summary["suppressed_tool_executions"], 2)
         forced_calls = [
@@ -4171,13 +4220,14 @@ class AgentRuntimeTests(unittest.TestCase):
                     ),
                     show_tool_logs=False,
                 )
-                result = runtime.run("只读分析当前服务 owner 和影响范围，不要修改。")
+                with patch.object(runtime._run.tool_choice_queue, "evaluate", side_effect=_single_read_file_gate(runtime)):
+                    result = runtime.run("只读分析当前服务 owner 和影响范围，不要修改。")
 
         self.assertIn("未完成/未验证", result)
         self.assertEqual(runtime._last_run_summary["termination_reason"], "tool_choice_exact_exhausted")
         self.assertEqual(runtime._last_run_summary["tool_choice_exact"]["forces"], 3)
         self.assertEqual(runtime._last_run_summary["tool_choice_exact"]["exhausted"], 1)
-        self.assertEqual(runtime._last_run_summary["tool_counts"], {"search_code": 1})
+        self.assertEqual(runtime._last_run_summary["tool_counts"], {})
         forced_calls = [
             call["tool_choice"]["function"]["name"]
             for call in _ExactToolChoiceExhaustionClient.calls
