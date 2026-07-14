@@ -34,6 +34,27 @@
         {
           "name": "read_file",
           "arguments": {
+            "_invalid_arguments": "<tool_call><function=list_files></function></tool_call>"
+          }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "search_code",
+          "arguments": {
+            "path": "src",
+            "pattern": "second detour"
+          }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "read_file",
+          "arguments": {
             "path": "src/Owner.java"
           }
         }
@@ -79,19 +100,19 @@
     ],
     "termination_reason": "final",
     "run_summary": {
-      "tool_calls": 2,
-      "tool_errors": 0,
-      "suppressed_tool_executions": 1
+      "tool_calls": 3,
+      "tool_errors": 1,
+      "suppressed_tool_executions": 2
     },
     "tool_choice_exact": {
-      "forces": 1,
+      "forces": 2,
       "exhausted": 0
     },
     "read_only_reviewer": {
       "triggers": 1,
       "typed_submits": 1
     },
-    "max_tool_errors": 0
+    "max_tool_errors": 1
   },
-  "residual_risk": "The fixture proves bounded exact-tool escalation after a schema detour; root-fair multi-root batching is covered by unit tests, not this single-root benchmark."
+  "residual_risk": "The fixture proves bounded exact-tool escalation after a schema detour and a required-tool validation error; root-fair multi-root batching is covered by unit tests, not this single-root benchmark."
 }

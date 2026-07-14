@@ -8,7 +8,7 @@ from .tool_choice_queue import ToolChoiceDecision
 from .tool_observation import ToolResultSummary
 
 
-MAX_EXACT_TOOL_CHOICE_ESCALATIONS = 1
+MAX_EXACT_TOOL_CHOICE_ESCALATIONS = 3
 
 
 @dataclass(frozen=True)

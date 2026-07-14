@@ -86,7 +86,11 @@ class EvidenceVerificationLifecycle:
             )
         )
         runtime._run.tool_choice_results = runtime._run.tool_choice_results[-80:]
-        runtime._run.consume_tool_choice_read(name)
+        resolved_path = metadata.get("resolved_path")
+        runtime._run.consume_tool_choice_read(
+            name,
+            canonical_path=resolved_path if isinstance(resolved_path, str) else None,
+        )
         self.refresh_verification_plan()
 
     def refresh_verification_plan(self) -> None:

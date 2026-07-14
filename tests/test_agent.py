@@ -546,7 +546,7 @@ class _ExactToolChoiceExhaustionClient:
                     }
                 },
             )()
-        tool_call_id = "wrong-detour" if self._primary_calls == 2 else "wrong-forced"
+        tool_call_id = "wrong-detour" if self._primary_calls == 2 else f"wrong-forced-{self._primary_calls - 2}"
         return type(
             "Response",
             (),
@@ -565,6 +565,125 @@ class _ExactToolChoiceExhaustionClient:
                     ],
                 }
             },
+        )()
+
+
+class _ExactToolChoiceErrorThenRecoveryClient:
+    calls: list[dict] = []
+
+    def __init__(self, config: AgentConfig):
+        self.config = config
+        self._primary_calls = 0
+
+    def chat(self, messages, tools, *, timeout=None, tool_choice=None):
+        type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout, "tool_choice": tool_choice})
+        if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages):
+            return _review_pass_response("bounded evidence")
+        self._primary_calls += 1
+        if self._primary_calls == 1:
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "search-owner",
+                                "type": "function",
+                                "function": {
+                                    "name": "search_code",
+                                    "arguments": json.dumps({"path": "src", "pattern": "CandidateOwner"}),
+                                },
+                            }
+                        ],
+                    }
+                },
+            )()
+        if self._primary_calls == 2:
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "wrong-detour-1",
+                                "type": "function",
+                                "function": {
+                                    "name": "search_code",
+                                    "arguments": json.dumps({"path": "src", "pattern": "detour"}),
+                                },
+                            }
+                        ],
+                    }
+                },
+            )()
+        if self._primary_calls == 3:
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "bad-read",
+                                "type": "function",
+                                "function": {
+                                    "name": "read_file",
+                                    "arguments": json.dumps({"_invalid_arguments": "<tool_call><function=list_files></function></tool_call>"}),
+                                },
+                            }
+                        ],
+                    }
+                },
+            )()
+        if self._primary_calls == 4:
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "wrong-detour-2",
+                                "type": "function",
+                                "function": {
+                                    "name": "list_files",
+                                    "arguments": json.dumps({"path": "src"}),
+                                },
+                            }
+                        ],
+                    }
+                },
+            )()
+        if self._primary_calls == 5:
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "good-read",
+                                "type": "function",
+                                "function": {
+                                    "name": "read_file",
+                                    "arguments": json.dumps({"path": "src/Owner.java"}),
+                                },
+                            }
+                        ],
+                    }
+                },
+            )()
+        return type(
+            "Response",
+            (),
+            {"message": {"content": "Owner.java 已读取；错误 read_file 未满足要求，第二次 exact force 后才完成。"}},
         )()
 
 
@@ -3742,6 +3861,49 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertEqual(forced["function"]["name"], "read_file")
         self.assertEqual(runtime._last_run_summary["tool_counts"], {"search_code": 1, "read_file": 1})
 
+    def test_exact_tool_choice_retries_after_required_tool_validation_error(self) -> None:
+        _ExactToolChoiceErrorThenRecoveryClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            (workspace / "src").mkdir()
+            (workspace / "src" / "Owner.java").write_text("class CandidateOwner {}\n", encoding="utf-8")
+            with patch("local_agent.agent.OpenAICompatibleClient", _ExactToolChoiceErrorThenRecoveryClient):
+                runtime = AgentRuntime(
+                    AgentConfig(
+                        provider="openai-compatible",
+                        api_base_url="https://example.invalid/v1",
+                        api_key="token",
+                        model="model",
+                        workspace=workspace,
+                        max_steps=0,
+                        budget_seconds=None,
+                        approval_mode="yolo",
+                    ),
+                    show_tool_logs=False,
+                )
+                result = runtime.run("只读分析当前服务 owner 和影响范围，不要修改。")
+
+        self.assertIn("Owner.java", result)
+        self.assertEqual(runtime._last_run_summary["termination_reason"], "final")
+        self.assertEqual(runtime._last_run_summary["tool_choice_exact"], {"forces": 2, "exhausted": 0})
+        self.assertEqual(runtime._last_run_summary["tool_counts"], {"read_file": 2, "search_code": 1})
+        self.assertEqual(runtime._last_run_summary["tool_errors"], 1)
+        self.assertEqual(runtime._last_run_summary["suppressed_tool_executions"], 2)
+        forced_calls = [
+            call["tool_choice"]["function"]["name"]
+            for call in _ExactToolChoiceErrorThenRecoveryClient.calls
+            if call["tool_choice"]
+        ]
+        self.assertEqual(forced_calls, ["read_file", "read_file"])
+        messages = runtime._messages
+        for tool_call_id in ("wrong-detour-1", "wrong-detour-2"):
+            tool_index = next(
+                index for index, message in enumerate(messages)
+                if message.get("role") == "tool" and message.get("tool_call_id") == tool_call_id
+            )
+            self.assertEqual(messages[tool_index - 1].get("role"), "assistant")
+            self.assertEqual(messages[tool_index - 1].get("tool_calls")[0]["id"], tool_call_id)
+
     def test_exact_tool_choice_exhausts_when_forced_tool_is_ignored(self) -> None:
         _ExactToolChoiceExhaustionClient.calls = []
         with tempfile.TemporaryDirectory() as tmp:
@@ -3766,12 +3928,17 @@ class AgentRuntimeTests(unittest.TestCase):
 
         self.assertIn("未完成/未验证", result)
         self.assertEqual(runtime._last_run_summary["termination_reason"], "tool_choice_exact_exhausted")
-        self.assertEqual(runtime._last_run_summary["tool_choice_exact"]["forces"], 1)
+        self.assertEqual(runtime._last_run_summary["tool_choice_exact"]["forces"], 3)
         self.assertEqual(runtime._last_run_summary["tool_choice_exact"]["exhausted"], 1)
         self.assertEqual(runtime._last_run_summary["tool_counts"], {"search_code": 1})
-        self.assertEqual(_ExactToolChoiceExhaustionClient.calls[2]["tool_choice"]["function"]["name"], "read_file")
+        forced_calls = [
+            call["tool_choice"]["function"]["name"]
+            for call in _ExactToolChoiceExhaustionClient.calls
+            if call["tool_choice"]
+        ]
+        self.assertEqual(forced_calls, ["read_file", "read_file", "read_file"])
         messages = runtime._messages
-        for tool_call_id in ("wrong-detour", "wrong-forced"):
+        for tool_call_id in ("wrong-detour", "wrong-forced-1", "wrong-forced-2", "wrong-forced-3"):
             tool_index = next(
                 index for index, message in enumerate(messages)
                 if message.get("role") == "tool" and message.get("tool_call_id") == tool_call_id

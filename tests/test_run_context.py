@@ -15,7 +15,7 @@ class RunContextTests(unittest.TestCase):
         context = RunContext()
 
         context.update_tool_choice_read_scope(("src/Service.java", "tests/ServiceTest.java"), 4)
-        context.consume_tool_choice_read("read_file")
+        context.consume_tool_choice_read("read_file", canonical_path="src/Service.java")
         context.update_tool_choice_read_scope(("src/Service.java", "tests/ServiceTest.java"), 4)
 
         self.assertEqual(context.tool_choice_read_file_remaining, 3)
@@ -24,6 +24,21 @@ class RunContextTests(unittest.TestCase):
         context.update_tool_choice_read_scope((), None)
         self.assertIsNone(context.tool_choice_read_file_paths)
         self.assertIsNone(context.tool_choice_read_file_remaining)
+
+    def test_candidate_read_budget_consumes_only_candidate_paths(self) -> None:
+        context = RunContext()
+        context.update_tool_choice_read_scope(("/workspace/src/Owner.java",), 2)
+
+        context.consume_tool_choice_read("read_file")
+        self.assertEqual(context.tool_choice_read_file_remaining, 2)
+        context.consume_tool_choice_read("read_file", canonical_path="/workspace/src/Other.java")
+        self.assertEqual(context.tool_choice_read_file_remaining, 2)
+        context.consume_tool_choice_read("search_code", canonical_path="/workspace/src/Owner.java")
+        self.assertEqual(context.tool_choice_read_file_remaining, 2)
+        context.consume_tool_choice_read("read_file", canonical_path="/workspace/src/Owner.java")
+        self.assertEqual(context.tool_choice_read_file_remaining, 1)
+        context.consume_tool_choice_read("read_file", canonical_path="/workspace/src/Owner.java")
+        self.assertEqual(context.tool_choice_read_file_remaining, 0)
 
     def test_begin_replaces_task_state_and_preserves_explicit_run_metadata(self) -> None:
         context = RunContext()

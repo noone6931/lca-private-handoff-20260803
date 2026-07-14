@@ -247,8 +247,10 @@ class RunContext:
             self.tool_choice_read_file_paths = next_paths
             self.tool_choice_read_file_remaining = budget
 
-    def consume_tool_choice_read(self, name: str) -> None:
+    def consume_tool_choice_read(self, name: str, *, canonical_path: str | None = None) -> None:
         if name != "read_file" or self.tool_choice_read_file_remaining is None:
+            return
+        if not canonical_path or self.tool_choice_read_file_paths is None or canonical_path not in self.tool_choice_read_file_paths:
             return
         self.tool_choice_read_file_remaining = max(0, self.tool_choice_read_file_remaining - 1)
 
