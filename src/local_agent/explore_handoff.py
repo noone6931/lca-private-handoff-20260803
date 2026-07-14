@@ -176,13 +176,12 @@ def build_explore_handoff(
     results = tuple(tool_results)
     requirement_entries = tuple(requirement_evidence)
     source_entries = tuple(source_evidence)
-    claim_units_tuple = tuple(claim_units)
     candidate_locator_items, transport_omitted_claim_ids = _candidate_locator_items(
         candidate or "",
         requirement_entries,
         source_entries,
         results,
-        claim_units_tuple,
+        claim_units,
     )
     requirements = [
         ClaimEvidenceItem(
