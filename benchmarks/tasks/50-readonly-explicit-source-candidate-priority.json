@@ -1,0 +1,143 @@
+{
+  "id": "readonly-explicit-source-candidate-priority",
+  "title": "Explicit source path wins among same-basename glob candidates",
+  "prompt": "请读取 requirements.md、后端 src/main/java/com/example/PrepareOrderApplication.java 和前端 src/views/preOrderManagement/list.vue，输出需求明确事实、源码当前事实、设计建议和尚待确认项，不要修改文件。",
+  "budget_seconds": 90,
+  "workspace_files": {
+    "requirements.md": "# Requirement\nDesign a settlement return flow from the named backend and frontend source files.\n",
+    "src/main/java/com/example/PrepareOrderApplication.java": "class PrepareOrderApplication { void cancelPrepareOrder() {} }\n"
+  },
+  "additional_roots": {
+    "frontend": {
+      "src/views/adjustAccountBill/list.vue": "<template><button>adjust</button></template>\n",
+      "src/views/bankJournalBill/list.vue": "<template><button>bank</button></template>\n",
+      "src/views/preOrderManagement/list.vue": "<template><button @click=\"cancelPrepareOrder\">return</button></template>\n"
+    }
+  },
+  "scripted_responses": [
+    {
+      "tool_calls": [
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "requirements.md"
+          }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "glob_files",
+          "arguments": {
+            "paths": [
+              "**/PrepareOrderApplication.java"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "src/main/java/com/example/PrepareOrderApplication.java"
+          }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "glob_files",
+          "arguments": {
+            "paths": [
+              "**/list.vue"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "glob_files",
+          "arguments": {
+            "paths": [
+              "{{root:frontend}}/**/list.vue"
+            ],
+            "limit": 200,
+            "hidden": false,
+            "gitignore": true
+          }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "{{root:frontend}}/src/views/preOrderManagement/list.vue"
+          }
+        }
+      ]
+    },
+    {
+      "content": "## 需求明确事实\n- requirements.md:2 要求基于点名的前后端源码设计结算回退流程。\n\n## 源码当前事实\n- `src/main/java/com/example/PrepareOrderApplication.java:1` 定义 `cancelPrepareOrder`。\n- `{{root:frontend}}/src/views/preOrderManagement/list.vue:1` 的模板引用同名 handler；该行不证明前后端调用链。\n\n## 设计建议\n- 建议在定位真实接口后连接回退流程；这是建议，不是当前实现。\n\n## 尚待确认项\n- 当前接口和完整调用链尚未定位。"
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "submit_read_only_review",
+          "arguments": {
+            "verdict": "pass",
+            "confidence": 0.98,
+            "reason": "The exact user-named list.vue was read despite same-basename alternatives, source claims are line-bound, and the call chain remains explicitly unverified."
+          }
+        }
+      ]
+    }
+  ],
+  "acceptance": {
+    "required_tools": [
+      "read_file",
+      "glob_files"
+    ],
+    "forbidden_tools": [
+      "search_code",
+      "list_files",
+      "apply_patch",
+      "write_file",
+      "shell",
+      "run_tests"
+    ],
+    "changed_files": [],
+    "answer_all_of": [
+      "需求明确事实",
+      "源码当前事实",
+      "cancelPrepareOrder",
+      "不证明前后端调用链",
+      "不是当前实现",
+      "尚未定位"
+    ],
+    "termination_reason": "final",
+    "run_summary": {
+      "tool_calls": 6,
+      "tool_errors": 0,
+      "provider_schema_violations": 0,
+      "provider_protocol_violations": 0
+    },
+    "read_only_reviewer": {
+      "triggers": 1,
+      "rewrites": 0,
+      "typed_submits": 1
+    },
+    "safe_partial_report": {
+      "emitted": 0
+    },
+    "max_tool_errors": 0
+  },
+  "residual_risk": "This fixture locks candidate ranking for exact user paths; live provider response and reviewer semantics still require immutable-candidate regression."
+}

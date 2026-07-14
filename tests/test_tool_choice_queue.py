@@ -1096,6 +1096,47 @@ class ToolChoiceQueueTests(unittest.TestCase):
         self.assertEqual(requested.rule_id, "read_only_profile_explore_final")
         self.assertTrue(requested.force_final_answer_without_tools)
 
+    def test_explicit_source_artifact_is_prioritized_among_same_basename_candidates(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            files = [
+                root / "src" / "views" / "adjustAccountBill" / "list.vue",
+                root / "src" / "views" / "bankJournalBill" / "list.vue",
+                root / "src" / "views" / "preOrderManagement" / "list.vue",
+            ]
+            for source in files:
+                source.parent.mkdir(parents=True, exist_ok=True)
+                source.write_text("<template />\n", encoding="utf-8")
+            glob_result = ToolResultSummary(
+                "glob_files",
+                "\n".join(str(item) for item in files),
+                metadata={
+                    "evidence_root": str(root),
+                    "patterns": ["**/list.vue"],
+                    "files": [str(item) for item in files],
+                },
+            )
+
+            ordinary = evaluate_tool_choice_state(
+                task_kind="read-only",
+                prompt="只读分析 list.vue 的 owner。",
+                tool_results=(glob_result,),
+                workspace_roots=(str(root),),
+                read_only_review_profile="owner_impact",
+            )
+            requested = evaluate_tool_choice_state(
+                task_kind="read-only",
+                prompt="只读分析 src/views/preOrderManagement/list.vue 的 owner。",
+                tool_results=(glob_result,),
+                workspace_roots=(str(root),),
+                read_only_review_profile="owner_impact",
+                source_artifacts=("src/views/preOrderManagement/list.vue",),
+            )
+
+        self.assertNotIn(str(files[2]), ordinary.scoped_read_paths)
+        self.assertEqual(requested.scoped_read_paths[0], str(files[2]))
+        self.assertIn(str(files[2]), requested.scoped_read_paths)
+
     def test_list_files_inventory_read_does_not_complete_owner_coverage(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp).resolve()

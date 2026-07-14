@@ -116,8 +116,17 @@ def evaluate_read_only_explore(
     hard_budget = min(MAX_OWNER_DESIGN_EXPLORE_CALLS, max(4, len(roots) * HARD_EXPLORE_CALLS_PER_ROOT))
     semantic_candidates = _semantic_candidate_paths_by_root(results, roots)
     inventory_paths = _inventory_paths_by_root(results, roots)
-    precise_source_inventory = _precise_source_inventory_paths_by_root(results, roots)
-    source_inventory = _model_selected_source_inventory_paths_by_root(results, roots)
+    requested_artifacts = tuple(requested_source_artifacts)
+    precise_source_inventory = _precise_source_inventory_paths_by_root(
+        results,
+        roots,
+        requested_source_artifacts=requested_artifacts,
+    )
+    source_inventory = _model_selected_source_inventory_paths_by_root(
+        results,
+        roots,
+        requested_source_artifacts=requested_artifacts,
+    )
     candidate_paths = _merge_candidate_paths(roots, semantic_candidates, precise_source_inventory)
     covered_candidate_paths = _merge_candidate_paths(roots, candidate_paths, source_inventory)
     covered = _covered_roots(
@@ -125,7 +134,7 @@ def evaluate_read_only_explore(
         roots,
         covered_candidate_paths,
         inventory_paths,
-        requested_source_artifacts=tuple(requested_source_artifacts),
+        requested_source_artifacts=requested_artifacts,
     )
     missing = tuple(root for root in roots if root not in covered)
     read_candidates = _read_candidates_for_missing_roots(candidate_paths, missing)
@@ -405,6 +414,8 @@ def _inventory_paths_by_root(
 def _precise_source_inventory_paths_by_root(
     results: Iterable[ToolResultSummary],
     roots: tuple[str, ...],
+    *,
+    requested_source_artifacts: tuple[str, ...] = (),
 ) -> dict[str, tuple[str, ...]]:
     """Promote only exact source basenames from glob output to read candidates.
 
@@ -425,7 +436,11 @@ def _precise_source_inventory_paths_by_root(
         exact_source_names = _exact_source_names_by_root(result, roots, patterns)
         if not any(exact_source_names.values()):
             continue
-        for root, rendered in _scoped_file_list_paths(result, roots, files):
+        scoped_paths = _requested_source_artifacts_first(
+            _scoped_file_list_paths(result, roots, files),
+            requested_source_artifacts,
+        )
+        for root, rendered in scoped_paths:
             if Path(rendered).name not in exact_source_names[root] or (root, rendered) in seen:
                 continue
             seen.add((root, rendered))
@@ -436,6 +451,8 @@ def _precise_source_inventory_paths_by_root(
 def _model_selected_source_inventory_paths_by_root(
     results: Iterable[ToolResultSummary],
     roots: tuple[str, ...],
+    *,
+    requested_source_artifacts: tuple[str, ...] = (),
 ) -> dict[str, tuple[str, ...]]:
     """Expose bounded source choices from any successful glob for one read.
 
@@ -457,7 +474,11 @@ def _model_selected_source_inventory_paths_by_root(
         files = result.metadata.get("files")
         if not isinstance(files, (list, tuple)) or not files:
             continue
-        for root, rendered in _scoped_file_list_paths(result, roots, files):
+        scoped_paths = _requested_source_artifacts_first(
+            _scoped_file_list_paths(result, roots, files),
+            requested_source_artifacts,
+        )
+        for root, rendered in scoped_paths:
             if (
                 Path(rendered).suffix.lower() not in SOURCE_FILE_SUFFIXES
                 or (root, rendered) in seen
@@ -467,6 +488,20 @@ def _model_selected_source_inventory_paths_by_root(
             seen.add((root, rendered))
             candidates[root].append(rendered)
     return {root: tuple(paths) for root, paths in candidates.items()}
+
+
+def _requested_source_artifacts_first(
+    entries: tuple[tuple[str, str], ...],
+    references: tuple[str, ...],
+) -> tuple[tuple[str, str], ...]:
+    if not references:
+        return entries
+    requested: list[tuple[str, str]] = []
+    other: list[tuple[str, str]] = []
+    for root, path in entries:
+        target = requested if _matches_requested_source_artifact(path, root, references) else other
+        target.append((root, path))
+    return tuple((*requested, *other))
 
 
 def _exact_source_basename(raw_pattern: object) -> str | None:
