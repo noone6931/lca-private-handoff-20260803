@@ -3,6 +3,7 @@ from __future__ import annotations
 import fnmatch
 import glob
 import json
+import re
 import subprocess
 from pathlib import Path, PurePath
 from typing import Any
@@ -17,6 +18,8 @@ SKIPPED_DIRS = {".git", ".local-agent", ".mypy_cache", ".pytest_cache", ".ruff_c
 DEFAULT_GLOB_LIMIT = 200
 MAX_GLOB_LIMIT = 1000
 MAX_GLOB_RESULT_CHARS = 30000
+MAX_SEARCH_LINE_COLUMNS = 512
+MULTI_FILE_MATCH_LIMIT = 20
 
 
 def search_tools() -> list[Tool]:
@@ -412,6 +415,11 @@ def search_code(args: dict[str, Any], context: ToolContext) -> ToolResult:
         "--column",
         "--color",
         "never",
+        "--max-columns",
+        str(MAX_SEARCH_LINE_COLUMNS),
+        "--max-columns-preview",
+        "--max-count",
+        str((max_results if path.is_file() else MULTI_FILE_MATCH_LIMIT) + 1),
         "--",
         args["pattern"],
         search_path,
@@ -446,8 +454,15 @@ def search_code(args: dict[str, Any], context: ToolContext) -> ToolResult:
             },
         )
     output = _normalize_search_output_paths(completed.stdout, context.workspace)
-    truncated_output = _truncate_search_output(output, max_results)
-    truncated = "\n... truncated after " in truncated_output
+    line_truncated_count = sum(
+        1 for line in output.splitlines() if len(_search_result_text(line)) >= MAX_SEARCH_LINE_COLUMNS
+    )
+    truncated_output, result_limit_reached, per_file_limit_reached = _bound_search_output(
+        output,
+        max_results=max_results,
+        per_file_limit=max_results if path.is_file() else MULTI_FILE_MATCH_LIMIT,
+    )
+    truncated = result_limit_reached or per_file_limit_reached
     return ToolResult(
         truncated_output[:20000],
         metadata={
@@ -455,6 +470,11 @@ def search_code(args: dict[str, Any], context: ToolContext) -> ToolResult:
             "path": str(path),
             "complete": not truncated,
             "truncated": truncated,
+            "result_limit_reached": result_limit_reached,
+            "per_file_limit_reached": per_file_limit_reached,
+            "line_truncated": line_truncated_count > 0,
+            "line_truncated_count": line_truncated_count,
+            "column_limit": MAX_SEARCH_LINE_COLUMNS,
             "negative_evidence_type": "incomplete" if truncated else "content_match",
         },
     )
@@ -491,15 +511,40 @@ def _walk_files(root: Path):
             yield child
 
 
-def _truncate_search_output(output: str, max_results: int) -> str:
+def _bound_search_output(output: str, *, max_results: int, per_file_limit: int) -> tuple[str, bool, bool]:
     if output == "No matches.":
-        return output
+        return output, False, False
     lines = output.splitlines()
-    if len(lines) <= max_results:
-        return output
-    kept = lines[:max_results]
-    kept.append(f"... truncated after {max_results} matches")
-    return "\n".join(kept)
+    kept: list[str] = []
+    counts: dict[str, int] = {}
+    per_file_limit_reached = False
+    result_limit_reached = False
+    for line in lines:
+        file_key = _search_result_file_key(line)
+        count = counts.get(file_key, 0)
+        if count >= per_file_limit:
+            per_file_limit_reached = True
+            continue
+        counts[file_key] = count + 1
+        if len(kept) >= max_results:
+            result_limit_reached = True
+            break
+        kept.append(line)
+    if per_file_limit_reached:
+        kept.append(f"... truncated after {per_file_limit} matches per file")
+    if result_limit_reached:
+        kept.append(f"... truncated after {max_results} matches")
+    return "\n".join(kept), result_limit_reached, per_file_limit_reached
+
+
+def _search_result_file_key(line: str) -> str:
+    match = re.match(r"^(.*?):\d+:\d+:", line)
+    return match.group(1) if match is not None else "(single-file)"
+
+
+def _search_result_text(line: str) -> str:
+    match = re.match(r"^.*?:\d+:\d+:(.*)$", line)
+    return match.group(1) if match is not None else line
 
 
 def _normalize_search_output_paths(output: str, workspace: Path) -> str:

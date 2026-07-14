@@ -17,6 +17,7 @@ from .base import Tool, ToolContext, ToolResult, VisionInspectionUnavailableErro
 
 MAX_READ_BYTES = 256 * 1024
 MAX_READ_LINES = 400
+MAX_READ_LINE_COLUMNS = 768
 MAX_INSPECT_IMAGE_BYTES = 8 * 1024 * 1024
 
 
@@ -201,15 +202,34 @@ def read_file(args: dict[str, Any], context: ToolContext) -> ToolResult:
     rel = display_workspace_path(context.workspace, path, context.allowed_dirs)
     tag = hash_text(text)
     rendered = [f"[{rel}#{tag}]", f"tag: {tag}"]
+    truncated_line_numbers: list[int] = []
     for index, line in enumerate(lines, start=1):
         if start_line <= index <= max_line:
-            rendered.append(f"{index}:{line}")
+            display_line = line
+            if len(display_line) > MAX_READ_LINE_COLUMNS:
+                display_line = display_line[:MAX_READ_LINE_COLUMNS].rstrip() + "..."
+                truncated_line_numbers.append(index)
+            rendered.append(f"{index}:{display_line}")
     if max_line < len(lines):
         rendered.append(
             f"... more lines exist after line {max_line}; continue with start_line/end_line only if needed for the task."
         )
+    if truncated_line_numbers:
+        preview = ", ".join(str(number) for number in truncated_line_numbers[:8])
+        suffix = "..." if len(truncated_line_numbers) > 8 else ""
+        rendered.append(
+            f"... {len(truncated_line_numbers)} line(s) truncated to {MAX_READ_LINE_COLUMNS} characters "
+            f"(lines {preview}{suffix}); use search_code or a narrower source artifact for targeted evidence."
+        )
     rendered = "\n".join(rendered)
-    return ToolResult(rendered)
+    return ToolResult(
+        rendered,
+        metadata={
+            "line_truncated": bool(truncated_line_numbers),
+            "truncated_line_count": len(truncated_line_numbers),
+            "column_limit": MAX_READ_LINE_COLUMNS,
+        },
+    )
 
 
 def inspect_image(args: dict[str, Any], context: ToolContext) -> ToolResult:

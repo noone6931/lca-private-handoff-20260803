@@ -1109,6 +1109,29 @@ class ToolTests(unittest.TestCase):
         self.assertIn("needle", result.content)
         self.assertIn("... truncated after 1 matches", result.content)
 
+    @unittest.skipIf(shutil.which("rg") is None, "ripgrep is not installed")
+    def test_search_code_bounds_minified_lines_and_per_file_matches(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            (workspace / "bundle.css").write_text(
+                "".join(f".selector-{index}{{content:'needle {'x' * 900}'}}\n" for index in range(25)),
+                encoding="utf-8",
+            )
+
+            result = search_code(
+                {"pattern": "needle", "max_results": 50},
+                ToolContext(workspace=workspace, approval_mode="yolo"),
+            )
+
+        self.assertFalse(result.is_error)
+        self.assertLess(len(result.content), 13000)
+        self.assertTrue(result.metadata["truncated"])
+        self.assertTrue(result.metadata["per_file_limit_reached"])
+        self.assertTrue(result.metadata["line_truncated"])
+        self.assertGreater(result.metadata["line_truncated_count"], 0)
+        self.assertEqual(result.metadata["column_limit"], 512)
+        self.assertIn("truncated after 20 matches per file", result.content)
+
     def test_lsp_symbols_and_definition_use_python_ast(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp).resolve()
@@ -1744,6 +1767,25 @@ class ToolTests(unittest.TestCase):
         self.assertFalse(result.is_error)
         self.assertIn("... more lines exist after line 400", result.content)
         self.assertIn("only if needed for the task", result.content)
+
+    def test_read_file_bounds_single_minified_line_without_changing_full_file_tag(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            target = workspace / "bundle.css"
+            original = ".selector{" + ("x" * 5000) + "}\n"
+            target.write_text(original, encoding="utf-8")
+
+            result = read_file(
+                {"path": "bundle.css", "start_line": 1, "end_line": 1},
+                ToolContext(workspace=workspace, approval_mode="yolo"),
+            )
+
+        self.assertFalse(result.is_error)
+        self.assertLess(len(result.content), 1100)
+        self.assertIn(f"[bundle.css#{hash_text(original)}]", result.content)
+        self.assertIn("line(s) truncated to 768 characters", result.content)
+        self.assertTrue(result.metadata["line_truncated"])
+        self.assertEqual(result.metadata["truncated_line_count"], 1)
 
     def test_write_file_refuses_to_overwrite(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
