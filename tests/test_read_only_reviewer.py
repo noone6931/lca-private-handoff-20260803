@@ -36,6 +36,7 @@ from local_agent.steering.final_answer import SourceEvidence
 from local_agent.steering.final_answer import SteeringDecision
 from local_agent.task_contract import generate_requirement_contract
 from local_agent.llm import LlmTimeoutError
+from local_agent.finalization import MAX_FINALIZATION_ATTEMPTS
 from local_agent.requirement_evidence import RequirementEvidence
 from local_agent.requirement_evidence import parse_document_locators
 from local_agent.tool_observation import ToolResultSummary
@@ -3201,6 +3202,63 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         ]
         self.assertEqual(len(transport_rewrite_calls), 1)
 
+    def test_transport_omission_without_finalization_budget_keeps_safe_partial(self) -> None:
+        _TransportOmittedClaimClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            with patch("local_agent.agent.OpenAICompatibleClient", _TransportOmittedClaimClient):
+                runtime = AgentRuntime(_config(workspace), show_tool_logs=False)
+                contract = generate_requirement_contract("只读分析当前服务 owner、调用链和影响范围，不要修改文件。")
+                started = time.monotonic()
+                runtime._run.begin(
+                    run_id="transport-budget",
+                    started_monotonic=started,
+                    deadline_monotonic=None,
+                    run_start_index=0,
+                    git_baseline={},
+                    prompt="只读分析当前服务 owner、调用链和影响范围，不要修改文件。",
+                    requirement_contract=contract,
+                    requirement_contract_context="",
+                    design_evidence_roots=(),
+                )
+                runtime._run.collector.start(
+                    "transport-budget",
+                    "只读分析当前服务 owner、调用链和影响范围，不要修改文件。",
+                    started,
+                    guard_start={},
+                    steer_start={},
+                )
+                runtime._run.tool_choice_results.append(
+                    ToolResultSummary(
+                        "read_file",
+                        "\n".join(f"{index}: rule {index}" for index in range(1, 900)),
+                        path="policy.md",
+                        metadata={"resolved_path": str(workspace / "policy.md"), "evidence_root": str(workspace)},
+                    )
+                )
+                runtime._run.finalization.aggregate_attempts = MAX_FINALIZATION_ATTEMPTS
+                candidate = "\n".join(
+                    [f"- policy.md:{index * 10} states rule {index * 10}." for index in range(1, 75)]
+                    + ["- policy.md:210 states rule 210; PayServiceImpl is the verified owner."]
+                )
+                outcome = runtime._read_only_review_phase.review_candidate(candidate)
+
+        self.assertEqual(outcome.kind, "unverified")
+        self.assertIn("安全部分交付", outcome.terminal_message)
+        self.assertIn("policy.md", outcome.terminal_message)
+        self.assertIn("rule 1", outcome.terminal_message)
+        self.assertNotIn("PayServiceImpl is the verified owner", outcome.terminal_message)
+        summary = runtime._run.read_only_review.snapshot()
+        self.assertFalse(summary["transport_rewrite_requested"])
+        self.assertFalse(summary["transport_rewrite_accepted"])
+        self.assertTrue(summary["transport_rewrite_exhausted"])
+        run_summary = runtime._run.collector.finish("read_only_reviewer_unverified", guard_values={}, steering_values={})
+        reviewer_summary = run_summary["read_only_reviewer"]
+        self.assertEqual(reviewer_summary["claim_transport_rewrites"], 0)
+        self.assertEqual(reviewer_summary["claim_transport_rewrite_acceptances"], 0)
+        self.assertEqual(reviewer_summary["claim_transport_rewrite_exhausted"], 1)
+        self.assertEqual(_TransportOmittedClaimClient.calls, [])
+
     def test_transport_omitted_claims_get_one_bounded_compact_rewrite_before_review(self) -> None:
         _TransportRecoveryDocumentClient.calls = []
         with tempfile.TemporaryDirectory() as tmp:
@@ -5184,18 +5242,43 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertEqual(runtime._last_run_summary["read_only_reviewer"]["errors"], {"invalid_output": 1})
 
     def test_deadline_reserve_skips_reviewer_without_returning_unreviewed_draft(self) -> None:
+        _InvalidReviewerClient.calls = []
         with tempfile.TemporaryDirectory() as tmp:
-            runtime = AgentRuntime(_config(Path(tmp).resolve()), show_tool_logs=False)
-            contract = generate_requirement_contract("只读分析当前服务 owner 和影响范围，不要修改。")
-            now = time.monotonic()
-            runtime._run.begin(
-                run_id="review-budget", started_monotonic=now, deadline_monotonic=now + 0.1,
-                run_start_index=0, git_baseline={}, prompt="只读分析当前服务 owner 和影响范围，不要修改。",
-                requirement_contract=contract, requirement_contract_context="", design_evidence_roots=(),
-            )
-            outcome = runtime._read_only_review_phase.review_candidate("PayServiceImpl is the verified owner.")
+            workspace = Path(tmp).resolve()
+            with patch("local_agent.agent.OpenAICompatibleClient", _InvalidReviewerClient):
+                runtime = AgentRuntime(_config(workspace), show_tool_logs=False)
+                contract = generate_requirement_contract("只读分析当前服务 owner 和影响范围，不要修改。")
+                now = time.monotonic()
+                runtime._run.begin(
+                    run_id="review-budget", started_monotonic=now, deadline_monotonic=now + 0.1,
+                    run_start_index=0, git_baseline={}, prompt="只读分析当前服务 owner 和影响范围，不要修改。",
+                    requirement_contract=contract, requirement_contract_context="", design_evidence_roots=(),
+                )
+                runtime._run.pinned_requirement_evidence = [
+                    RequirementEvidence(
+                        "requirements.md",
+                        "1: Requirement states the bounded owner analysis must remain evidence-scoped.",
+                        root=str(workspace),
+                    )
+                ]
+                runtime._run.tool_choice_results.append(
+                    ToolResultSummary(
+                        "read_file",
+                        "1: Requirement states the bounded owner analysis must remain evidence-scoped.",
+                        path="requirements.md",
+                        metadata={
+                            "resolved_path": str(workspace / "requirements.md"),
+                            "evidence_root": str(workspace),
+                        },
+                    )
+                )
+                outcome = runtime._read_only_review_phase.review_candidate("PayServiceImpl is the verified owner.")
         self.assertEqual(outcome.kind, "unverified")
-        self.assertIn("未经审查", outcome.terminal_message)
+        self.assertIn("安全部分交付", outcome.terminal_message)
+        self.assertIn("requirements.md", outcome.terminal_message)
+        self.assertIn("bounded owner analysis", outcome.terminal_message)
+        self.assertNotIn("PayServiceImpl is the verified owner", outcome.terminal_message)
+        self.assertEqual(_InvalidReviewerClient.calls, [])
 
     def test_reviewer_free_text_advice_does_not_create_second_hard_gate(self) -> None:
         _NoncompliantRewriteClient.calls = []

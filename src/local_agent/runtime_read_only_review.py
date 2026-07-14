@@ -84,9 +84,6 @@ class ReadOnlyReviewPhase:
         runtime = self._runtime
         state = runtime._run.read_only_review
         contract = runtime._run.requirement_contract
-        skip_reason = runtime._run.finalization_rewrite_skip_reason()
-        if skip_reason is not None:
-            return self._unverified("deadline_or_finalization_budget", skip_reason)
         projection_issues = candidate_claim_projection_issues(candidate)
         if projection_issues:
             return self._unverified("invalid_output", projection_issues[0].code)
@@ -97,6 +94,9 @@ class ReadOnlyReviewPhase:
         omitted_claim_ids = set(getattr(handoff, "transport_omitted_claim_ids", ()) or ())
         if omitted_claim_ids:
             return self._request_transport_rewrite_or_unverified(handoff, omitted_claim_ids)
+        skip_reason = runtime._run.finalization_rewrite_skip_reason()
+        if skip_reason is not None:
+            return self._unverified("deadline_or_finalization_budget", skip_reason, handoff=handoff)
         if state.transport_rewrite_requested and not state.transport_rewrite_accepted:
             state.transport_rewrite_requested = False
             state.transport_rewrite_accepted = True
