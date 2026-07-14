@@ -590,21 +590,26 @@ class _ReviewerMixedRejectedTurnThenFinalClient(_ReviewerEightFindingsClient):
         if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages):
             self._review_calls += 1
             if self._review_calls == 1:
-                return _review_tool_calls_response([
-                    _finding_call(f"finding-{index}", f"c{index:03d}", _candidate_claim(messages, f"c{index:03d}"))
-                    for index in range(1, 8)
-                ])
+                return _review_tool_calls_response(
+                    [
+                        _finding_call(f"finding-{index}", f"c{index:03d}", _candidate_claim(messages, f"c{index:03d}"))
+                        for index in range(1, 8)
+                    ]
+                    + [
+                        _finding_call("bad-finding", "c008", _candidate_claim(messages, "c008") + " paraphrased"),
+                        _final_call("blocked-final-1", {"verdict": "pass", "confidence": 0.9, "reason": "bad turn"}),
+                    ]
+                )
             if self._review_calls == 2:
                 return _review_tool_calls_response([
-                    _finding_call("bad-finding", "c008", _candidate_claim(messages, "c008") + " paraphrased"),
-                    {
-                        "id": "unknown-output",
-                        "type": "function",
-                        "function": {"name": "read_file", "arguments": json.dumps({"path": "secret.txt"})},
-                    },
+                    _finding_call("duplicate-1", "c001", _candidate_claim(messages, "c001")),
+                    _finding_call("duplicate-2", "c002", _candidate_claim(messages, "c002")),
+                    _finding_call("duplicate-3", "c003", _candidate_claim(messages, "c003")),
+                    _finding_call("mismatch-4", "c004", _candidate_claim(messages, "c004") + " replayed"),
+                    _finding_call("mismatch-5", "c005", _candidate_claim(messages, "c005") + " replayed"),
                     _finding_call("finding-8", "c008", _candidate_claim(messages, "c008")),
                     _finding_call("finding-9", "c009", _candidate_claim(messages, "c009")),
-                    _final_call("bad-final", "{not json"),
+                    _final_call("blocked-final-2", {"verdict": "pass", "confidence": 0.9, "reason": "still bad"}),
                 ])
             if self._review_calls == 3:
                 return _review_tool_calls_response([
@@ -2054,9 +2059,9 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertIn("unlocated", answer)
         summary = runtime._last_run_summary["read_only_reviewer"]
         self.assertEqual(summary["finding_submits"], 8)
-        self.assertEqual(summary["rejected_finding_submits"], 2)
-        self.assertEqual(summary["rejected_final_submits"], 1)
-        self.assertEqual(summary["protocol_failures"], 1)
+        self.assertEqual(summary["rejected_finding_submits"], 7)
+        self.assertEqual(summary["rejected_final_submits"], 2)
+        self.assertEqual(summary["protocol_failures"], 0)
         self.assertEqual(summary["finding_limit_hits"], 1)
         self.assertEqual(summary["output_lifecycle_exhausted"], 0)
         self.assertEqual(summary["final_submits"], 2)
@@ -2068,8 +2073,20 @@ class ReadOnlyReviewerTests(unittest.TestCase):
             [tool["function"]["name"] for tool in review_calls[2]["tools"]],
             [REVIEWER_OUTPUT_TOOL_NAME],
         )
+        first_turn_results = [message for message in review_calls[1]["messages"] if message.get("role") == "tool"]
+        for call_id in [*(f"finding-{index}" for index in range(1, 8)), "bad-finding", "blocked-final-1"]:
+            self.assertEqual(len([message for message in first_turn_results if message.get("tool_call_id") == call_id]), 1)
         tool_results = [message for message in review_calls[2]["messages"] if message.get("role") == "tool"]
-        for call_id in ("bad-finding", "unknown-output", "finding-8", "finding-9", "bad-final"):
+        for call_id in (
+            "duplicate-1",
+            "duplicate-2",
+            "duplicate-3",
+            "mismatch-4",
+            "mismatch-5",
+            "finding-8",
+            "finding-9",
+            "blocked-final-2",
+        ):
             self.assertEqual(len([message for message in tool_results if message.get("tool_call_id") == call_id]), 1)
 
     def test_ninth_finding_plus_valid_final_assembles_top_eight(self) -> None:
