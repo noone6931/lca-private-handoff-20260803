@@ -46,6 +46,7 @@ class RunStats:
     session_evidence_model_rereads: int = 0
     read_only_reviewer_triggers: int = 0
     read_only_reviewer_rewrites: int = 0
+    read_only_reviewer_rewrite_acceptances: int = 0
     read_only_reviewer_findings: int = 0
     read_only_reviewer_reviewed_claims: int = 0
     read_only_reviewer_attempts: int = 0
@@ -266,6 +267,10 @@ class RunCollector:
         if self._stats is not None:
             self._stats.read_only_reviewer_rewrites += 1
 
+    def record_read_only_review_rewrite_acceptance(self) -> None:
+        if self._stats is not None:
+            self._stats.read_only_reviewer_rewrite_acceptances += 1
+
     def record_read_only_review_error(self, reason: str) -> None:
         if self._stats is not None:
             self._stats.read_only_reviewer_errors[reason] = self._stats.read_only_reviewer_errors.get(reason, 0) + 1
@@ -413,6 +418,7 @@ class RunCollector:
             "read_only_reviewer": {
                 "triggers": stats.read_only_reviewer_triggers,
                 "rewrites": stats.read_only_reviewer_rewrites,
+                "rewrite_acceptances": stats.read_only_reviewer_rewrite_acceptances,
                 "findings": stats.read_only_reviewer_findings,
                 "reviewed_claims": stats.read_only_reviewer_reviewed_claims,
                 "attempts": stats.read_only_reviewer_attempts,

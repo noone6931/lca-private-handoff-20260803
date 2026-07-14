@@ -472,6 +472,14 @@ class DocumentConsistencyTests(unittest.TestCase):
                 verdict="pass",
             )
         )
+        self.assertIsNone(
+            validate_document_consistency_assessment(
+                assessment,
+                handoff,
+                candidate="The policy and screenshot are reconciled because lifecycle.md states the screenshot is captured after manual completion.",
+                verdict="pass",
+            )
+        )
 
     def test_file_read_without_visible_support_excerpt_cannot_authorize_reconciliation(self) -> None:
         handoff = _handoff()

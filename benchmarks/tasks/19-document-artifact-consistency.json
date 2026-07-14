@@ -68,33 +68,7 @@
       "content": "需求事实：requirements.md:2 要求状态留空；prototype.html:1 出现审核状态。待确认：图片当前不可用。这些资料没有矛盾，因为审核状态是后续流程。"
     },
     {
-      "tool_calls": [
-        {
-          "name": "report_read_only_finding",
-          "arguments": {
-            "claim_id": "c001",
-            "finding_scope": "candidate_defect",
-            "issue": "invented reconciliation remains",
-            "action": "do not release the candidate"
-          }
-        },
-        {
-          "name": "submit_read_only_review",
-          "arguments": {
-            "verdict": "revise",
-            "confidence": 0.9,
-            "reason": "conflict remains unresolved",
-            "document_consistency": {
-              "stance": "asserted_reconciled",
-              "conflict_evidence_ids": [
-                "e001",
-                "e002"
-              ],
-              "supporting_evidence_ids": []
-            }
-          }
-        }
-      ]
+      "content": "unused scripted response after deterministic noncompliance"
     }
   ],
   "acceptance": {
@@ -124,9 +98,10 @@
     "read_only_reviewer": {
       "triggers": 1,
       "rewrites": 1,
-      "typed_submits": 4,
-      "finding_submits": 2,
-      "final_submits": 2
+      "rewrite_acceptances": 0,
+      "typed_submits": 2,
+      "finding_submits": 1,
+      "final_submits": 1
     },
     "safe_partial_report": {
       "emitted": 1

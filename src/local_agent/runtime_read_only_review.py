@@ -8,6 +8,7 @@ from .chat_runtime import call_chat_with_timeout
 from .explore_handoff import build_explore_handoff
 from .llm import LlmError
 from .llm import LlmTimeoutError
+from .provider_protocol import classify_provider_content_artifact
 from .reviewer_output_lifecycle import parse_reviewer_output_turn
 from .reviewer_output_lifecycle import reviewer_assistant_tool_message
 from .reviewer_output_lifecycle import reviewer_tool_result_messages
@@ -24,6 +25,7 @@ from .read_only_reviewer import reviewer_messages
 from .read_only_reviewer import reviewer_output_tool_schemas
 from .read_only_reviewer import reviewer_repair_message
 from .read_only_reviewer import reviewer_rewrite_message
+from .read_only_reviewer import rewrite_changes_any_reviewed_claim
 from .read_only_reviewer import should_review_read_only_candidate
 from .safe_partial_report import build_safe_partial_report
 
@@ -62,13 +64,13 @@ class ReadOnlyReviewPhase:
         request = runtime._run.current_user_request
         if not should_review_read_only_candidate(contract, request):
             return ReviewerPhaseOutcome("not_applicable")
+        if state.rewrite_accepted:
+            return ReviewerPhaseOutcome("pass")
         if state.rewrite_requested:
-            if state.review_round >= 2:
-                return self._unverified("rewrite_noncompliant", "reviewer_round_limit")
-            return self._review(candidate, rewrite_round=True)
+            return self._verify_rewrite_candidate(candidate)
         if state.attempted:
             return ReviewerPhaseOutcome("pass")
-        return self._review(candidate, rewrite_round=False)
+        return self._review(candidate)
 
     def safe_partial_for_terminal(self, reason: str) -> str:
         """Return trusted observations for a bounded non-final stop, if applicable."""
@@ -82,7 +84,7 @@ class ReadOnlyReviewPhase:
             return ""
         return self._emit_safe_partial(handoff, reason)
 
-    def _review(self, candidate: str, *, rewrite_round: bool) -> ReviewerPhaseOutcome:
+    def _review(self, candidate: str) -> ReviewerPhaseOutcome:
         runtime = self._runtime
         state = runtime._run.read_only_review
         contract = runtime._run.requirement_contract
@@ -109,8 +111,7 @@ class ReadOnlyReviewPhase:
         timeout = self._review_timeout()
         max_repairs = MAX_REVIEWER_SCHEMA_REPAIRS
         max_provider_turns = MAX_REVIEWER_FINDINGS + 1 + max_repairs
-        if not rewrite_round:
-            runtime._run.collector.record_read_only_review_trigger()
+        runtime._run.collector.record_read_only_review_trigger()
         runtime._session.append(
             "read_only_reviewer",
             {
@@ -341,6 +342,7 @@ class ReadOnlyReviewPhase:
         state.reason = result.reason
         state.findings = result.findings
         state.document_consistency = result.document_consistency
+        state.review_handoff = handoff
         state.document_consistency_handoff_signature = (
             self._handoff_signature(handoff) if result.document_consistency is not None else ()
         )
@@ -357,8 +359,6 @@ class ReadOnlyReviewPhase:
         )
         if result.verdict == "pass":
             return ReviewerPhaseOutcome("pass")
-        if rewrite_round:
-            return self._unverified("second_review_nonpass", result.verdict, result=result, handoff=handoff)
         if not runtime._run.queue_finalization_rewrite(kind="read_only_reviewer"):
             return self._unverified(
                 "rewrite_unavailable",
@@ -373,6 +373,60 @@ class ReadOnlyReviewPhase:
             "rewrite",
             rewrite_message=reviewer_rewrite_message(result, profile=contract.read_only_review_profile, handoff=handoff),
         )
+
+    def _verify_rewrite_candidate(self, candidate: str) -> ReviewerPhaseOutcome:
+        runtime = self._runtime
+        state = runtime._run.read_only_review
+        projection_issues = candidate_claim_projection_issues(candidate)
+        if projection_issues:
+            return self._unverified("invalid_output", projection_issues[0].code)
+        claim_units = candidate_claim_units(candidate)
+        if not claim_units:
+            return self._unverified("invalid_output", "candidate_has_no_addressable_claim_units")
+        handoff = self._handoff(candidate, claim_units=claim_units)
+        omitted_claim_ids = set(getattr(handoff, "transport_omitted_claim_ids", ()) or ())
+        if omitted_claim_ids:
+            return self._unverified(
+                "claim_evidence_transport_incomplete",
+                f"omitted_claims={len(omitted_claim_ids)}",
+                handoff=handoff,
+            )
+        artifact = classify_provider_content_artifact(runtime._config.provider, candidate)
+        if artifact is not None:
+            return self._unverified("protocol_error", f"provider_markup_artifact:{artifact.kind}", handoff=handoff)
+        if state.findings and not rewrite_changes_any_reviewed_claim(candidate, state.claim_units, state.findings):
+            return self._unverified("rewrite_noncompliant", "no_reviewed_claim_changed", handoff=handoff)
+        if state.document_consistency is not None:
+            original_handoff = state.review_handoff
+            if original_handoff is None:
+                return self._unverified("invalid_output", "document_consistency_handoff_missing", handoff=handoff)
+            code = validate_document_consistency_assessment(
+                state.document_consistency,
+                original_handoff,
+                candidate=candidate,
+                verdict="pass",
+            )
+            if code is not None:
+                return self._unverified("rewrite_noncompliant", code, handoff=original_handoff)
+        state.rewrite_accepted = True
+        state.rewrite_requested = False
+        state.verdict = "pass"
+        state.reason = "rewrite_accepted"
+        runtime._run.collector.record_read_only_review_rewrite_acceptance()
+        runtime._session.append(
+            "read_only_reviewer",
+            {
+                "event": "rewrite_accepted",
+                "review_round": state.review_round,
+                "claim_units": len(claim_units),
+                "items": len(handoff.items),
+            },
+        )
+        runtime._events.emit(
+            "ContextUpdated",
+            {"kind": "read_only_reviewer_rewrite_accepted", "items": len(handoff.items)},
+        )
+        return ReviewerPhaseOutcome("pass")
 
     def _validate_document_consistency(self, result: Any, handoff: Any, candidate: str) -> None:
         if result.document_consistency is None:

@@ -105,9 +105,15 @@ def validate_document_consistency_assessment(
     if assessment.stance in {"conditional_reconciliation", "asserted_reconciled", "explicitly_supported_reconciliation"}:
         if _distinct_artifact_count(conflicts) < 2:
             return "document_conflict_evidence_insufficient"
+    if verdict == "pass" and assessment.conflict_evidence_ids and candidate_stance is None:
+        return "document_conflict_disposition_missing"
     if verdict == "pass" and assessment.stance in {"reported_unresolved", "conditional_reconciliation"} and candidate_stance == "asserted_reconciled":
         return "document_consistency_stance_mismatch"
-    if verdict == "pass" and assessment.stance == "asserted_reconciled":
+    if (
+        verdict == "pass"
+        and candidate_stance == "asserted_reconciled"
+        and assessment.stance != "explicitly_supported_reconciliation"
+    ):
         return "document_reconciliation_unsupported"
     if verdict != "pass" or assessment.stance != "explicitly_supported_reconciliation":
         return None

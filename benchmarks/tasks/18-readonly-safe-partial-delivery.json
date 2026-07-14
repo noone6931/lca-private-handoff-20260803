@@ -1,6 +1,6 @@
 {
   "id": "readonly-safe-partial-delivery",
-  "title": "A second reviewer nonpass releases only deterministic Runtime observations",
+  "title": "A noncompliant rewrite releases only deterministic Runtime observations",
   "prompt": "只读分析当前服务的 owner 和可实施设计；不得把未验证的表、接口或服务说成现有事实。",
   "budget_seconds": 90,
   "workspace_files": {
@@ -46,26 +46,7 @@
       "content": "已证实真实 owner 是 InventedOwner，现有 InventedTable 和 /invented API 已实现。"
     },
     {
-      "tool_calls": [
-        {
-          "name": "report_read_only_finding",
-          "arguments": {
-            "claim_id": "c001",
-            "claim": "已证实真实 owner 是 InventedOwner，现有 InventedTable 和 /invented API 已实现。",
-            "finding_scope": "candidate_defect",
-            "issue": "unsupported facts remain in the rewrite",
-            "action": "do not release the candidate"
-          }
-        },
-        {
-          "name": "submit_read_only_review",
-          "arguments": {
-            "verdict": "revise",
-            "confidence": 0.95,
-            "reason": "rewrite remains unsafe"
-          }
-        }
-      ]
+      "content": "unused scripted response after deterministic noncompliance"
     }
   ],
   "acceptance": {
@@ -97,9 +78,10 @@
     "read_only_reviewer": {
       "triggers": 1,
       "rewrites": 1,
-      "typed_submits": 4,
-      "finding_submits": 2,
-      "final_submits": 2
+      "rewrite_acceptances": 0,
+      "typed_submits": 2,
+      "finding_submits": 1,
+      "final_submits": 1
     },
     "safe_partial_report": {
       "emitted": 1,

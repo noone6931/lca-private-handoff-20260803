@@ -18,8 +18,6 @@ ReviewerVerdict = Literal["pass", "revise", "unverified"]
 ReviewerFindingScope = Literal["candidate_defect", "source_material_gap"]
 MAX_REVIEWER_FINDINGS = 8
 MAX_REVIEWER_RESPONSE_CHARS = 9000
-MAX_INITIAL_REVIEWER_PROVIDER_CALLS = 3
-MAX_REWRITE_REVIEWER_PROVIDER_CALLS = 2
 MAX_REVIEWER_SCHEMA_REPAIRS = 2
 MAX_REVIEWER_OUTPUT_LIFECYCLE_ERRORS = 2
 MAX_REVIEWER_CAPACITY_DIRECTIVES = 2
@@ -110,6 +108,7 @@ class ReadOnlyReviewState:
     claim_units: tuple[CandidateClaimUnit, ...] = ()
     document_consistency: DocumentConsistencyAssessment | None = None
     document_consistency_handoff_signature: tuple[tuple[str, ...], ...] = ()
+    review_handoff: ExploreHandoff | None = None
     provider_attempts: int = 0
     schema_failures: int = 0
     repairs: int = 0
@@ -122,6 +121,7 @@ class ReadOnlyReviewState:
     rejected_final_submits: int = 0
     finding_limit_hits: int = 0
     output_lifecycle_exhausted: bool = False
+    rewrite_accepted: bool = False
     safe_partial_emitted: bool = False
 
     def reset(self) -> None:
@@ -133,6 +133,7 @@ class ReadOnlyReviewState:
         self.claim_units = ()
         self.document_consistency = None
         self.document_consistency_handoff_signature = ()
+        self.review_handoff = None
         self.provider_attempts = 0
         self.schema_failures = 0
         self.repairs = 0
@@ -145,6 +146,7 @@ class ReadOnlyReviewState:
         self.rejected_final_submits = 0
         self.finding_limit_hits = 0
         self.output_lifecycle_exhausted = False
+        self.rewrite_accepted = False
         self.safe_partial_emitted = False
 
     def snapshot(self) -> dict[str, Any]:
@@ -156,6 +158,7 @@ class ReadOnlyReviewState:
             "reviewed_claim_ids": [item.claim_id for item in self.findings],
             "reviewed_claim_count": len({item.claim_id for item in self.findings}),
             "document_consistency_stance": self.document_consistency.stance if self.document_consistency else None,
+            "rewrite_accepted": self.rewrite_accepted,
             "provider_attempts": self.provider_attempts,
             "provider_turns": self.provider_attempts,
             "schema_failures": self.schema_failures,
@@ -763,6 +766,31 @@ def rewrite_complies_with_review(
         and _normalize_markdown(addressed[finding.claim_id].text) not in normalized_candidate
         for finding in findings
     )
+
+
+def rewrite_changes_any_reviewed_claim(
+    candidate: str,
+    original_claim_units: tuple[CandidateClaimUnit, ...],
+    findings: tuple[ReviewerFinding, ...],
+) -> bool:
+    """Require at least one addressed reviewer claim to change after the single rewrite.
+
+    Reviewer issue/action text is advisory, so the runtime does not require
+    every finding to be removed.  A rewrite that leaves every addressed claim
+    Markdown-normalized identical is a deterministic no-op and must fail closed.
+    """
+
+    normalized_candidate = _normalize_markdown(candidate)
+    original_by_id = {unit.claim_id: unit.text for unit in original_claim_units}
+    addressed_claims = tuple(
+        normalized
+        for finding in findings
+        for normalized in (_normalize_markdown(original_by_id.get(finding.claim_id, finding.claim)),)
+        if normalized
+    )
+    if not addressed_claims:
+        return True
+    return any(claim not in normalized_candidate for claim in addressed_claims)
 
 
 def _json_object(content: str) -> object:
