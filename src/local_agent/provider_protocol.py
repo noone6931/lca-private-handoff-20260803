@@ -10,6 +10,7 @@ from typing import Any
 
 _BAILIAN_PROVIDER_NAMES = frozenset({"bailian", "bailian-intl", "dashscope", "aliyun"})
 _TOOL_ENVELOPE = re.compile(r"<tool_call>\s*(?P<body>.*?)\s*</tool_call>\s*$", re.DOTALL)
+_TOOL_ENVELOPE_PART = re.compile(r"<tool_call>\s*(?P<body>.*?)\s*</tool_call>", re.DOTALL)
 _FUNCTION_ENVELOPE = re.compile(
     r"\A\s*<function=(?P<name>[A-Za-z_][A-Za-z0-9_]*)>\s*(?P<parameters>.*?)\s*</function>\s*\Z",
     re.DOTALL,
@@ -160,6 +161,27 @@ def normalize_provider_dialect_message(
             arguments=arguments.strip(),
         )
         if normalized is None:
+            normalized_batch = _parse_bailian_structured_tool_argument_batch(
+                provider=provider,
+                outer_tool_name=tool_name,
+                arguments=arguments.strip(),
+            )
+            if normalized_batch is not None:
+                base_id = tool_call.get("id")
+                for index, (parsed_arguments, artifact) in enumerate(normalized_batch):
+                    expanded_id = base_id if index == 0 else f"{base_id or 'dialect_tool_call'}__{index}"
+                    normalized_calls.append(
+                        {
+                            **tool_call,
+                            "id": expanded_id,
+                            "function": {
+                                **function,
+                                "arguments": json.dumps(parsed_arguments, ensure_ascii=False, sort_keys=True),
+                            },
+                        }
+                    )
+                    artifacts.append(artifact)
+                continue
             normalized_calls.append(tool_call)
             continue
         parsed_arguments, artifact = normalized
@@ -279,6 +301,40 @@ def _parse_bailian_structured_tool_arguments(
         parameter_names=parameter_names,
         preview=_structural_preview(outer_tool_name, parameter_names),
     )
+
+
+def _parse_bailian_structured_tool_argument_batch(
+    *,
+    provider: str,
+    outer_tool_name: str,
+    arguments: str,
+) -> tuple[tuple[dict[str, Any], ProviderProtocolArtifact], ...] | None:
+    """Expand only a complete sequence of same-name Bailian XML envelopes."""
+
+    if provider.strip().lower() not in _BAILIAN_PROVIDER_NAMES:
+        return None
+    if not arguments or len(arguments) > MAX_BAILIAN_XML_ARGUMENT_CHARS:
+        return None
+    matches = tuple(_TOOL_ENVELOPE_PART.finditer(arguments))
+    if len(matches) < 2:
+        return None
+    cursor = 0
+    parsed: list[tuple[dict[str, Any], ProviderProtocolArtifact]] = []
+    for match in matches:
+        if arguments[cursor : match.start()].strip():
+            return None
+        normalized = _parse_bailian_structured_tool_arguments(
+            provider=provider,
+            outer_tool_name=outer_tool_name,
+            arguments=match.group(0),
+        )
+        if normalized is None:
+            return None
+        parsed.append(normalized)
+        cursor = match.end()
+    if arguments[cursor:].strip():
+        return None
+    return tuple(parsed)
 
 
 def _parse_bailian_parameter_value(value: str) -> Any:
