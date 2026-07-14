@@ -20,6 +20,7 @@ from .read_only_reviewer import ReviewerResult
 from .read_only_reviewer import ReviewerValidationError
 from .read_only_reviewer import reviewer_output_tool_schemas
 from .read_only_reviewer import reviewer_repair_message
+from .provider_protocol import normalize_provider_dialect_message
 from .reviewer_output_lifecycle import invalidated_document_finding_claim_ids
 from .reviewer_output_lifecycle import parse_reviewer_output_turn
 from .reviewer_output_lifecycle import reviewer_assistant_tool_message
@@ -98,7 +99,19 @@ def run_review_round(
                 type(exc).__name__,
                 handoff,
             )
-        message = getattr(response, "message", None)
+        raw_message = getattr(response, "message", None)
+        if isinstance(raw_message, dict):
+            message, fallback_normalizations = normalize_provider_dialect_message(
+                raw_message,
+                provider=port.provider,
+            )
+        else:
+            message, fallback_normalizations = raw_message, ()
+        _record_provider_argument_normalizations(
+            port,
+            (*getattr(response, "protocol_normalizations", ()), *fallback_normalizations),
+            event_prefix=event_prefix,
+        )
         if not isinstance(message, dict):
             return _failure("protocol_error", "missing_message", handoff)
         try:
@@ -355,6 +368,28 @@ def run_review_round(
 
 def _failure(reason: str, detail: str, handoff: Any) -> ReviewRoundOutcome:
     return ReviewRoundOutcome(failure=ReviewRoundFailure(reason, detail, handoff))
+
+
+def _record_provider_argument_normalizations(
+    port: ReviewRoundPort,
+    artifacts: tuple[Any, ...],
+    *,
+    event_prefix: str,
+) -> None:
+    if not artifacts:
+        return
+    port.collector.record_provider_argument_normalization(len(artifacts))
+    for artifact in artifacts:
+        port.session.append(
+            "provider_argument_normalization",
+            {
+                "phase": f"read_only_reviewer_{event_prefix or 'initial'}",
+                "kind": artifact.kind,
+                "tool_name": artifact.tool_name,
+                "parameter_names": list(artifact.parameter_names),
+                "preview": artifact.preview,
+            },
+        )
 
 
 def _blocking_rejection_categories(events: tuple[Any, ...]) -> tuple[str, ...]:

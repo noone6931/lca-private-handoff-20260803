@@ -1762,6 +1762,41 @@ class _MalformedToolArgumentsThenFinalClient:
         return type("Response", (), {"message": {"content": "recovered from malformed args"}})()
 
 
+class _BailianXmlStructuredArgumentsThenFinalClient:
+    calls: list[dict] = []
+
+    def __init__(self, config: AgentConfig):
+        self.config = config
+
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
+        if len(type(self).calls) == 1:
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "call-bailian-read",
+                                "type": "function",
+                                "function": {
+                                    "name": "read_file",
+                                    "arguments": (
+                                        "<tool_call>\n<function=read_file>\n"
+                                        "<parameter=path>README.md</parameter>\n"
+                                        "</function>\n</tool_call>"
+                                    ),
+                                },
+                            }
+                        ],
+                    }
+                },
+            )()
+        return type("Response", (), {"message": {"content": "read through the normalized provider dialect"}})()
+
+
 class _ReadFileThenFinalClient:
     calls: list[dict] = []
 
@@ -6252,6 +6287,35 @@ class AgentRuntimeTests(unittest.TestCase):
         tool_messages = [message for message in runtime._messages if message.get("role") == "tool"]
         self.assertEqual(tool_messages[-1]["tool_call_id"], "call_bad_args")
         self.assertIn("Missing required argument(s): path", tool_messages[-1]["content"])
+
+    def test_bailian_xml_arguments_inside_structured_tool_call_are_normalized_by_provider_owner(self) -> None:
+        _BailianXmlStructuredArgumentsThenFinalClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            (workspace / "README.md").write_text("# Provider dialect\n", encoding="utf-8")
+            config = AgentConfig(
+                provider="bailian",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=workspace,
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _BailianXmlStructuredArgumentsThenFinalClient):
+                runtime = AgentRuntime(config, show_tool_logs=False)
+                result = runtime.run("read README.md")
+            records = [json.loads(line) for line in runtime._session.path.read_text(encoding="utf-8").splitlines()]
+
+        self.assertEqual(result, "read through the normalized provider dialect")
+        self.assertEqual(runtime._last_run_summary["tool_counts"], {"read_file": 1})
+        self.assertEqual(runtime._last_run_summary["tool_errors"], 0)
+        self.assertEqual(runtime._last_run_summary["provider_argument_normalizations"], 1)
+        normalization = next(record for record in records if record.get("event") == "provider_argument_normalization")
+        self.assertEqual(normalization["payload"]["tool_name"], "read_file")
+        self.assertEqual(normalization["payload"]["parameter_names"], ["path"])
+        self.assertNotIn("README.md", json.dumps(normalization, ensure_ascii=False))
 
     def test_repeated_identical_tool_calls_are_steered_to_final_answer(self) -> None:
         _RepeatingToolClient.calls = 0

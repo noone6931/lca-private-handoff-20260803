@@ -31,6 +31,23 @@ class ProviderTerminalPhase:
     def __init__(self, runtime: ProviderTerminalRuntimePort) -> None:
         self._runtime = runtime
 
+    def record_argument_normalizations(self, artifacts: tuple[ProviderProtocolArtifact, ...]) -> None:
+        """Record redacted provider-dialect normalization telemetry."""
+
+        if not artifacts:
+            return
+        runtime = self._runtime
+        runtime._run.collector.record_provider_argument_normalization(len(artifacts))
+        for artifact in artifacts:
+            payload = {
+                "kind": artifact.kind,
+                "tool_name": artifact.tool_name,
+                "parameter_names": list(artifact.parameter_names),
+                "preview": artifact.preview,
+            }
+            runtime._session.append("provider_argument_normalization", payload)
+            runtime._events.emit("ContextUpdated", {"kind": "provider_argument_normalization", **payload})
+
     def handle_no_tool_response(self, content: object, *, forced_final: bool) -> ProviderTerminalOutcome:
         runtime = self._runtime
         assessment = assess_terminal_content(

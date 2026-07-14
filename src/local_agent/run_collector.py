@@ -41,6 +41,7 @@ class RunStats:
     forced_final_protocol_recovery_exhausted: int = 0
     forced_final_structured_tool_calls: int = 0
     provider_markup_artifacts: int = 0
+    provider_argument_normalizations: int = 0
     suppressed_tool_executions: int = 0
     session_evidence_hits: int = 0
     session_evidence_misses: int = 0
@@ -231,6 +232,10 @@ class RunCollector:
                 self._stats.forced_final_structured_tool_calls += 1
         else:
             self._stats.provider_markup_artifacts += 1
+
+    def record_provider_argument_normalization(self, count: int = 1) -> None:
+        if self._stats is not None:
+            self._stats.provider_argument_normalizations += max(0, count)
 
     def record_forced_final_protocol_recovery(self, *, exhausted: bool = False) -> None:
         if self._stats is None:
@@ -475,6 +480,7 @@ class RunCollector:
             "forced_final_protocol_recovery_exhausted": stats.forced_final_protocol_recovery_exhausted,
             "forced_final_structured_tool_calls": stats.forced_final_structured_tool_calls,
             "provider_markup_artifacts": stats.provider_markup_artifacts,
+            "provider_argument_normalizations": stats.provider_argument_normalizations,
             "suppressed_tool_executions": stats.suppressed_tool_executions,
             "session_evidence": {
                 "hits": stats.session_evidence_hits,

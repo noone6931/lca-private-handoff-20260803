@@ -10,6 +10,7 @@ from typing import Any
 from .config import AgentConfig
 from .provider_protocol import ProviderProtocolArtifact
 from .provider_protocol import classify_provider_content_artifact
+from .provider_protocol import normalize_provider_dialect_message
 
 
 VISION_OBSERVATION_SYSTEM_PROMPT = """You are an evidence-first visual observation assistant.
@@ -34,6 +35,7 @@ class ChatResponse:
     message: dict[str, Any]
     finish_reason: str | None = None
     protocol_artifact: ProviderProtocolArtifact | None = None
+    protocol_normalizations: tuple[ProviderProtocolArtifact, ...] = ()
 
 
 class OpenAICompatibleClient:
@@ -141,8 +143,13 @@ class OpenAICompatibleClient:
         if not isinstance(message, dict):
             raise LlmError(f"LLM API returned malformed message: {data}")
         finish_reason = choice.get("finish_reason")
+        normalized_message, normalizations = normalize_provider_dialect_message(
+            message,
+            provider=self._config.provider,
+        )
         return ChatResponse(
-            message=message,
+            message=normalized_message,
             finish_reason=finish_reason if isinstance(finish_reason, str) else None,
             protocol_artifact=classify_provider_content_artifact(self._config.provider, message.get("content")),
+            protocol_normalizations=normalizations,
         )

@@ -45,6 +45,7 @@ from .llm import OpenAICompatibleClient
 from .provider_protocol import ProviderProtocolArtifact
 from .provider_protocol import provider_safe_assistant_message as _provider_safe_assistant_message
 from .provider_protocol import classify_provider_content_artifact
+from .provider_protocol import normalize_provider_dialect_message
 from .lsp.client import close_all_clients
 from .negative_evidence import negative_claim_metrics as _negative_claim_metrics
 from .patch.anchored import display_workspace_path
@@ -572,7 +573,14 @@ class AgentRuntime:
                 if fallback is not None:
                     return fallback
                 return self._stop_for_provider_failure(exc, deadline, run_start_index)
-            raw_message = {**response.message, "role": "assistant"}
+            normalized_response_message, fallback_normalizations = normalize_provider_dialect_message(
+                response.message,
+                provider=self._config.provider,
+            )
+            self._provider_terminal_phase.record_argument_normalizations(
+                (*getattr(response, "protocol_normalizations", ()), *fallback_normalizations),
+            )
+            raw_message = {**normalized_response_message, "role": "assistant"}
             raw_tool_calls = raw_message.get("tool_calls") or []
             artifact = getattr(response, "protocol_artifact", None)
             if artifact is None:

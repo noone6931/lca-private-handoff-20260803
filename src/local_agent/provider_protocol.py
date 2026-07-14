@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import json
+from html import unescape
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -13,8 +14,12 @@ _FUNCTION_ENVELOPE = re.compile(
     r"\A\s*<function=(?P<name>[A-Za-z_][A-Za-z0-9_]*)>\s*(?P<parameters>.*?)\s*</function>\s*\Z",
     re.DOTALL,
 )
-_PARAMETER = re.compile(r"<parameter=(?P<name>[A-Za-z_][A-Za-z0-9_]*)>.*?</parameter>", re.DOTALL)
+_PARAMETER = re.compile(
+    r"<parameter=(?P<name>[A-Za-z_][A-Za-z0-9_]*)>(?P<value>.*?)</parameter>",
+    re.DOTALL,
+)
 INVALID_TOOL_CALL_NAME = "__invalid_tool_call"
+MAX_BAILIAN_XML_ARGUMENT_CHARS = 20_000
 
 
 @dataclass(frozen=True)
@@ -124,8 +129,55 @@ def protocol_violation_message(*, phase: str) -> str:
     )
 
 
+def normalize_provider_dialect_message(
+    message: dict[str, Any],
+    *,
+    provider: str,
+) -> tuple[dict[str, Any], tuple[ProviderProtocolArtifact, ...]]:
+    """Normalize only recognized provider dialects; preserve all other wire shapes."""
+
+    tool_calls = message.get("tool_calls")
+    if not isinstance(tool_calls, list):
+        return message, ()
+    normalized_calls: list[Any] = []
+    artifacts: list[ProviderProtocolArtifact] = []
+    for tool_call in tool_calls:
+        if not isinstance(tool_call, dict):
+            normalized_calls.append(tool_call)
+            continue
+        function = tool_call.get("function")
+        if not isinstance(function, dict):
+            normalized_calls.append(tool_call)
+            continue
+        tool_name = function.get("name")
+        arguments = function.get("arguments")
+        if not isinstance(tool_name, str) or not isinstance(arguments, str):
+            normalized_calls.append(tool_call)
+            continue
+        normalized = _parse_bailian_structured_tool_arguments(
+            provider=provider,
+            outer_tool_name=tool_name,
+            arguments=arguments.strip(),
+        )
+        if normalized is None:
+            normalized_calls.append(tool_call)
+            continue
+        parsed_arguments, artifact = normalized
+        normalized_calls.append(
+            {
+                **tool_call,
+                "function": {
+                    **function,
+                    "arguments": json.dumps(parsed_arguments, ensure_ascii=False, sort_keys=True),
+                },
+            }
+        )
+        artifacts.append(artifact)
+    return {**message, "tool_calls": normalized_calls}, tuple(artifacts)
+
+
 def provider_safe_assistant_message(message: dict[str, Any]) -> dict[str, Any]:
-    """Normalize provider tool-call shapes before they enter the conversation."""
+    """Return the generic provider-safe projection without dialect parsing."""
 
     tool_calls = message.get("tool_calls")
     if not isinstance(tool_calls, list):
@@ -134,7 +186,10 @@ def provider_safe_assistant_message(message: dict[str, Any]) -> dict[str, Any]:
     return {**message, "tool_calls": safe_tool_calls}
 
 
-def _provider_safe_tool_call(tool_call: Any, index: int) -> dict[str, Any]:
+def _provider_safe_tool_call(
+    tool_call: Any,
+    index: int,
+) -> dict[str, Any]:
     if not isinstance(tool_call, dict):
         return {
             "id": f"invalid_tool_call_{index}",
@@ -146,13 +201,14 @@ def _provider_safe_tool_call(tool_call: Any, index: int) -> dict[str, Any]:
     tool_call_id = tool_call.get("id")
     if not isinstance(tool_call_id, str) or not tool_call_id.strip():
         tool_call_id = f"invalid_tool_call_{index}"
+    tool_name = _provider_safe_tool_name(function.get("name"))
     return {
         **tool_call,
         "id": tool_call_id,
         "type": tool_call.get("type") or "function",
         "function": {
             **function,
-            "name": _provider_safe_tool_name(function.get("name")),
+            "name": tool_name,
             "arguments": _provider_safe_tool_arguments(function.get("arguments")),
         },
     }
@@ -184,6 +240,61 @@ def _provider_safe_tool_arguments(arguments: Any) -> str:
     return json.dumps(parsed, ensure_ascii=False, sort_keys=True)
 
 
+def _parse_bailian_structured_tool_arguments(
+    *,
+    provider: str,
+    outer_tool_name: str,
+    arguments: str,
+) -> tuple[dict[str, Any], ProviderProtocolArtifact] | None:
+    """Parse one complete Bailian XML envelope already inside a typed tool call."""
+
+    if provider.strip().lower() not in _BAILIAN_PROVIDER_NAMES:
+        return None
+    if not arguments or len(arguments) > MAX_BAILIAN_XML_ARGUMENT_CHARS:
+        return None
+    envelope = _TOOL_ENVELOPE.fullmatch(arguments)
+    if envelope is None:
+        return None
+    function = _FUNCTION_ENVELOPE.fullmatch(envelope.group("body"))
+    if function is None or function.group("name") != outer_tool_name:
+        return None
+    parameter_block = function.group("parameters")
+    parameters = tuple(_PARAMETER.finditer(parameter_block))
+    cursor = 0
+    parsed: dict[str, Any] = {}
+    for parameter in parameters:
+        if parameter_block[cursor : parameter.start()].strip():
+            return None
+        cursor = parameter.end()
+        name = parameter.group("name")
+        if name in parsed:
+            return None
+        parsed[name] = _parse_bailian_parameter_value(parameter.group("value"))
+    if parameter_block[cursor:].strip():
+        return None
+    parameter_names = tuple(parsed)
+    return parsed, ProviderProtocolArtifact(
+        kind="bailian_xml_structured_arguments",
+        tool_name=outer_tool_name,
+        parameter_names=parameter_names,
+        preview=_structural_preview(outer_tool_name, parameter_names),
+    )
+
+
+def _parse_bailian_parameter_value(value: str) -> Any:
+    stripped = unescape(value.strip())
+    try:
+        return json.loads(stripped)
+    except json.JSONDecodeError:
+        if stripped == "True":
+            return True
+        if stripped == "False":
+            return False
+        if stripped == "None":
+            return None
+        return stripped
+
+
 def _inside_fenced_code(content: str, position: int) -> bool:
     return content[:position].count("```") % 2 == 1
 
@@ -200,5 +311,6 @@ __all__ = [
     "classify_provider_content_artifact",
     "protocol_violation_message",
     "protocol_violation_payload",
+    "normalize_provider_dialect_message",
     "provider_safe_assistant_message",
 ]
