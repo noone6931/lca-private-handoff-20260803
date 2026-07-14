@@ -294,7 +294,11 @@ class ReadOnlyReviewPhase:
             if isinstance(verification, ReviewerPhaseOutcome):
                 return verification
             if verification.verdict != "pass":
-                state.rewrite_closure_findings = self._merge_findings(closure_findings, verification.findings)
+                # The verification findings are bound to this rewritten
+                # candidate. Older claim IDs belong to a superseded candidate
+                # and must not leak into the next correction round.
+                state.claim_units = claim_units
+                state.rewrite_closure_findings = verification.findings
                 message = (
                     reviewer_rewrite_message(
                         verification,
@@ -438,22 +442,6 @@ class ReadOnlyReviewPhase:
             },
         )
         return result
-
-    def _merge_findings(
-        self,
-        existing: tuple[ReviewerFinding, ...],
-        additional: tuple[ReviewerFinding, ...],
-    ) -> tuple[ReviewerFinding, ...]:
-        merged: dict[tuple[str, str, str, str], ReviewerFinding] = {}
-        for finding in (*existing, *additional):
-            key = (
-                finding.claim,
-                finding.issue,
-                finding.action,
-                finding.finding_scope,
-            )
-            merged.setdefault(key, finding)
-        return tuple(merged.values())
 
     def _rewrite_correction_message(self) -> str:
         state = self._runtime._run.read_only_review

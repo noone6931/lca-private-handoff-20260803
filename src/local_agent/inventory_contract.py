@@ -36,15 +36,26 @@ def inventory_glob_patterns_for_roots(roots: Iterable[str]) -> list[str]:
     return patterns[:MAX_INVENTORY_GLOB_PATHS]
 
 
-def inventory_glob_call_hint(roots: Iterable[str]) -> str:
+def inventory_glob_arguments_for_roots(roots: Iterable[str]) -> dict[str, Any] | None:
+    """Return the bounded canonical call shape for one inventory directive."""
+
     cleaned_roots = _clean_roots(roots)
-    arguments = {
+    if not cleaned_roots or len(cleaned_roots) > MAX_INVENTORY_GLOB_PATHS:
+        return None
+    return {
         "paths": inventory_glob_patterns_for_roots(cleaned_roots),
         "limit": 200,
         "hidden": False,
         "gitignore": True,
     }
-    if len(cleaned_roots) > MAX_INVENTORY_GLOB_PATHS:
+
+
+def inventory_glob_call_hint(roots: Iterable[str]) -> str:
+    cleaned_roots = _clean_roots(roots)
+    arguments = inventory_glob_arguments_for_roots(cleaned_roots)
+    if arguments is None:
+        if not cleaned_roots:
+            return "No workspace root is available for the current glob_files inventory contract."
         return (
             f"Too many required roots for one glob_files call ({len(cleaned_roots)} > "
             f"{MAX_INVENTORY_GLOB_PATHS}). The current single-call inventory contract cannot represent every "

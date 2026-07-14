@@ -876,11 +876,8 @@ class _RewriteVerificationSameClaimIdClient:
                 ]
                 originals = closure_payloads[-1]["original_findings"]
                 issues = {item["issue"] for item in originals}
-                if len(originals) != 2 or {
-                    "initial owner claim unsupported",
-                    "paraphrased owner absence still overstates evidence",
-                } - issues:
-                    raise AssertionError(f"closure findings were not preserved: {originals!r}")
+                if len(originals) != 1 or issues != {"paraphrased owner absence still overstates evidence"}:
+                    raise AssertionError(f"current closure findings were not isolated: {originals!r}")
                 return _review_tool_calls_response([
                     _final_call("verification-pass", {"verdict": "pass", "confidence": 0.95, "reason": "all closure findings scoped"})
                 ])
@@ -5237,7 +5234,7 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertEqual(summary["rewrite_acceptances"], 1)
         self.assertEqual(summary["verdicts"], {"pass": 1, "revise": 2})
 
-    def test_rewrite_verification_preserves_same_local_claim_id_findings(self) -> None:
+    def test_rewrite_verification_uses_only_current_candidate_findings(self) -> None:
         _RewriteVerificationSameClaimIdClient.calls = []
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp).resolve()
@@ -5258,11 +5255,10 @@ class ReadOnlyReviewerTests(unittest.TestCase):
             if message.get("role") == "user"
             and "LCA_READ_ONLY_REWRITE_VERIFICATION" in str(message.get("content"))
         ]
-        self.assertEqual(len(verification_payloads[-1]["original_findings"]), 2)
-        self.assertEqual(
-            [item["claim_id"] for item in verification_payloads[-1]["original_findings"]],
-            ["c001", "c001"],
-        )
+        current_findings = verification_payloads[-1]["original_findings"]
+        self.assertEqual(len(current_findings), 1)
+        self.assertEqual(current_findings[0]["issue"], "paraphrased owner absence still overstates evidence")
+        self.assertNotIn("claim_id", current_findings[0])
 
     def test_explicit_design_proposal_with_pending_reuse_check_can_pass_review(self) -> None:
         _ProposalSemanticsClient.calls = []

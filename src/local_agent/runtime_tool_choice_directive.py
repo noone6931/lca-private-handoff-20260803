@@ -36,8 +36,15 @@ class RuntimeToolChoiceDirectivePhase:
     def __init__(self, runtime: ToolChoiceDirectiveRuntimePort) -> None:
         self._runtime = runtime
 
-    def begin_decision(self, decision: ToolChoiceDecision) -> None:
-        self._runtime._run.tool_choice_directive.begin_decision(decision, self._runtime._run.tool_choice_results)
+    def begin_decision(self, decision: ToolChoiceDecision) -> ToolChoiceTurnOutcome:
+        action = self._runtime._run.tool_choice_directive.begin_decision(
+            decision,
+            self._runtime._run.tool_choice_results,
+        )
+        return self._outcome_for_action(action)
+
+    def project_schemas(self, schemas: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return self._runtime._run.tool_choice_directive.project_schemas(schemas)
 
     def before_model_turn(self) -> ToolChoiceModelTurn:
         payload = self._runtime._run.tool_choice_directive.tool_choice_for_model()
@@ -45,10 +52,18 @@ class RuntimeToolChoiceDirectivePhase:
 
     def after_model_turn(self, raw_tool_calls: list[dict[str, Any]]) -> ToolChoiceTurnOutcome:
         action = self._runtime._run.tool_choice_directive.observe_turn(raw_tool_calls)
+        return self._outcome_for_action(action, raw_tool_calls=raw_tool_calls)
+
+    def _outcome_for_action(
+        self,
+        action: ToolChoiceDirectiveAction,
+        *,
+        raw_tool_calls: list[dict[str, Any]] | None = None,
+    ) -> ToolChoiceTurnOutcome:
         if action.kind == "none":
             return ToolChoiceTurnOutcome()
         self._record_action(action)
-        suppressed_count = len(raw_tool_calls)
+        suppressed_count = len(raw_tool_calls or ())
         if suppressed_count:
             self._runtime._run.collector.record_suppressed_tool_executions(suppressed_count)
         metadata = {"provider_schema_violation": True, "allowed_tools": [action.tool_name]}

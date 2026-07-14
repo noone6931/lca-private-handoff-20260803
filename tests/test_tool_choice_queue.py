@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -26,6 +27,8 @@ from local_agent.read_only_explore import evaluate_read_only_explore
 from local_agent.document_artifacts import DocumentArtifactRequirement
 from local_agent.run_context import RunContext
 from local_agent.task_contract import generate_requirement_contract
+from local_agent.tool_choice_directive import ToolChoiceDirectiveOwner
+from local_agent.tools.search import search_tools
 
 
 class ToolChoiceQueueTests(unittest.TestCase):
@@ -243,6 +246,25 @@ class ToolChoiceQueueTests(unittest.TestCase):
             )
             self.assertEqual(alternate.allowed_tool_names, frozenset({"glob_files"}))
             self.assertEqual(alternate.required_glob_roots, (str(root),))
+            required_arguments = json.loads(alternate.required_tool_arguments_json)
+            self.assertEqual(required_arguments["limit"], 200)
+            self.assertTrue(all(path.startswith(str(root) + "/") for path in required_arguments["paths"]))
+
+            owner = ToolChoiceDirectiveOwner()
+            owner.begin_decision(alternate, [])
+            glob_schema = next(tool for tool in search_tools() if tool.name == "glob_files").openai_schema()
+            projected = owner.project_schemas([glob_schema])[0]["function"]["parameters"]
+            self.assertEqual(set(projected["required"]), {"paths", "limit", "hidden", "gitignore"})
+            self.assertEqual(
+                projected["properties"]["paths"]["items"]["enum"],
+                required_arguments["paths"],
+            )
+
+            error_results: list[ToolResultSummary] = []
+            for expected in ("force", "force", "exhausted"):
+                error_results.append(ToolResultSummary("glob_files", "invalid arguments", is_error=True))
+                action = owner.begin_decision(alternate, error_results)
+                self.assertEqual(action.kind, expected)
 
             glob_no_match = ToolResultSummary(
                 "glob_files",
@@ -355,6 +377,8 @@ class ToolChoiceQueueTests(unittest.TestCase):
         self.assertIn(first_fallback.required_glob_roots[0], {str(first), str(second)})
         self.assertEqual(second_fallback.allowed_tool_names, frozenset({"glob_files"}))
         self.assertEqual(second_fallback.required_glob_roots, (str(second),))
+        self.assertIn(str(second), second_fallback.required_tool_arguments_json)
+        self.assertNotIn(str(first), second_fallback.required_tool_arguments_json)
         self.assertIn(str(second), second_fallback.tool_call_hints[0])
         self.assertNotIn(str(first), second_fallback.tool_call_hints[0])
 

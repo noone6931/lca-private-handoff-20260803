@@ -1,0 +1,82 @@
+{
+  "id": "readonly-fallback-argument-exhaustion",
+  "title": "Read-only fallback rejects repeated invalid required-tool arguments within the exact directive budget",
+  "prompt": "只读定位当前代码根的 owner 和影响范围；空搜索后换一种有界策略，不要修改文件。",
+  "budget_seconds": 90,
+  "workspace_files": {
+    "src/Owner.java": "class Owner { void coordinate() {} }\n"
+  },
+  "scripted_responses": [
+    {
+      "tool_calls": [
+        {
+          "name": "search_code",
+          "arguments": {
+            "path": "src",
+            "pattern": "MissingOwnerToken"
+          }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "glob_files",
+          "arguments": {}
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "glob_files",
+          "arguments": {}
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "glob_files",
+          "arguments": {}
+        }
+      ]
+    }
+  ],
+  "acceptance": {
+    "required_tools": [
+      "search_code",
+      "glob_files"
+    ],
+    "forbidden_tools": [
+      "list_files",
+      "read_file",
+      "apply_patch",
+      "write_file",
+      "shell",
+      "run_tests"
+    ],
+    "changed_files": [],
+    "answer_all_of": [
+      "未完成/未验证",
+      "glob_files"
+    ],
+    "termination_reason": "tool_choice_exact_exhausted",
+    "run_summary": {
+      "tool_calls": 4,
+      "tool_errors": 3,
+      "provider_protocol_violations": 0
+    },
+    "tool_choice_exact": {
+      "forces": 2,
+      "exhausted": 1
+    },
+    "safe_partial_report": {
+      "emitted": 1,
+      "observations": 0,
+      "missing": 2
+    },
+    "max_tool_errors": 3
+  },
+  "residual_risk": "The deterministic fixture proves malformed required-tool calls cannot loop indefinitely; live providers may still need one or two retries before following the narrowed schema."
+}

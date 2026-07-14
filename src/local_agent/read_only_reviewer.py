@@ -384,14 +384,14 @@ def reviewer_rewrite_verification_messages(
             "This is a bounded verification of a primary rewrite after an earlier revise verdict. "
             "Submit pass only if the rewritten candidate closes the original candidate defects: each addressed original "
             "claim must now be removed, downgraded to unverified/unlocated/proposal/pending confirmation, or supported by "
-            "the current handoff. If any original blocking defect remains under paraphrase, report revise with findings "
-            "against the rewritten candidate claims."
+            "the current handoff. Prior candidate claim IDs are intentionally omitted because they are invalid for this "
+            "rewritten candidate. If any original blocking defect remains under paraphrase, report revise with findings "
+            "using only IDs from the current candidate_claims list."
         ),
         "original_findings": [
             {
                 "finding_ordinal": index,
                 "source_round": "prior_reviewer_round",
-                "claim_id": finding.claim_id,
                 "claim": _clip(finding.claim, 360),
                 "finding_scope": finding.finding_scope,
                 "issue": _clip(finding.issue, 360),

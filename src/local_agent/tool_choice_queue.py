@@ -9,7 +9,7 @@ from typing import Any
 from .design_evidence import missing_design_evidence_roots
 from .document_artifacts import DocumentArtifactRequirement
 from .document_artifacts import document_artifact_coverage
-from .inventory_contract import inventory_glob_call_hint
+from .inventory_contract import inventory_glob_arguments_for_roots, inventory_glob_call_hint
 from .negative_evidence import allowed_tools_for_negative_claims, parse_negative_evidence_claims, unsupported_negative_existence_claims
 from .read_only_explore import PRECISE_EVIDENCE_TOOLS, evaluate_read_only_explore
 from .task_contract import is_inspection_forbidden
@@ -293,6 +293,7 @@ class ToolChoiceDecision:
     preferred_tool_names: tuple[str, ...] = ()
     tool_call_hints: tuple[str, ...] = ()
     required_glob_roots: tuple[str, ...] = ()
+    required_tool_arguments_json: str = ""
     scoped_read_paths: tuple[str, ...] = ()
     scoped_read_budget: int | None = None
     stop_message: str | None = None
@@ -632,6 +633,7 @@ def evaluate_tool_choice_state(
                 )
             ),
             required_glob_roots=explore_decision.discovery_roots,
+            required_tool_arguments_json=_inventory_glob_arguments_json(explore_decision.discovery_roots),
         )
 
     evidence_preferred = _preferred_evidence_tools(results)
@@ -891,6 +893,7 @@ def _workspace_inventory_decision(
             preferred_tool_names=("glob_files",),
             tool_call_hints=(_inventory_glob_call_hint(roots),),
             required_glob_roots=roots,
+            required_tool_arguments_json=_inventory_glob_arguments_json(roots),
         )
     covered_roots = _inventory_covered_roots(successful_globs)
     missing_roots = tuple(root for root in roots if root not in covered_roots)
@@ -907,6 +910,7 @@ def _workspace_inventory_decision(
             preferred_tool_names=("glob_files",),
             tool_call_hints=(_inventory_glob_call_hint(missing_roots),),
             required_glob_roots=missing_roots,
+            required_tool_arguments_json=_inventory_glob_arguments_json(missing_roots),
         )
     return ToolChoiceDecision(
         steering_required=False,
@@ -1047,6 +1051,11 @@ def _inventory_covered_roots(results: Iterable[ToolResultSummary]) -> set[str]:
 
 def _inventory_glob_call_hint(roots: Iterable[str]) -> str:
     return inventory_glob_call_hint(roots)
+
+
+def _inventory_glob_arguments_json(roots: Iterable[str]) -> str:
+    arguments = inventory_glob_arguments_for_roots(roots)
+    return json.dumps(arguments, ensure_ascii=False, sort_keys=True) if arguments is not None else ""
 
 
 def _is_implementation_task(task_kind: str, prompt: str) -> bool:

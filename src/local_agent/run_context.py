@@ -45,6 +45,7 @@ class RunContext:
     tool_choice_read_file_paths: set[str] | None = None
     tool_choice_read_file_remaining: int | None = None
     tool_choice_required_glob_roots: set[str] | None = None
+    tool_choice_stop_reason: str | None = None
     tool_choice_steering_signatures: set[str] = field(default_factory=set)
     tool_choice_force_final_signatures: set[str] = field(default_factory=set)
     tool_choice_results: list[ToolResultSummary] = field(default_factory=list)
@@ -162,6 +163,8 @@ class RunContext:
         self.tool_choice_allowed_tool_names = None
         self.tool_choice_read_file_paths = None
         self.tool_choice_read_file_remaining = None
+        self.tool_choice_required_glob_roots = None
+        self.tool_choice_stop_reason = None
         self.tool_choice_steering_signatures.clear()
         self.tool_choice_force_final_signatures.clear()
         self.tool_choice_results.clear()

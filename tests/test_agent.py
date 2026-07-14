@@ -4366,7 +4366,7 @@ class AgentRuntimeTests(unittest.TestCase):
 
         self.assertIn("Owner.java", result)
         self.assertEqual(runtime._last_run_summary["termination_reason"], "final")
-        self.assertEqual(runtime._last_run_summary["tool_choice_exact"], {"forces": 2, "exhausted": 0})
+        self.assertEqual(runtime._last_run_summary["tool_choice_exact"], {"forces": 3, "exhausted": 0})
         self.assertEqual(runtime._last_run_summary["tool_counts"], {"read_file": 2})
         self.assertEqual(runtime._last_run_summary["tool_errors"], 1)
         self.assertEqual(runtime._last_run_summary["suppressed_tool_executions"], 2)
@@ -4375,7 +4375,7 @@ class AgentRuntimeTests(unittest.TestCase):
             for call in _ExactToolChoiceErrorThenRecoveryClient.calls
             if call["tool_choice"]
         ]
-        self.assertEqual(forced_calls, ["read_file", "read_file"])
+        self.assertEqual(forced_calls, ["read_file", "read_file", "read_file"])
         messages = runtime._messages
         for tool_call_id in ("wrong-detour-1", "wrong-detour-2"):
             tool_index = next(

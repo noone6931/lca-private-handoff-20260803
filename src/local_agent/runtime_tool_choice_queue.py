@@ -52,7 +52,10 @@ class RuntimeToolChoiceQueuePhase:
         runtime._run.tool_choice_allowed_tool_names = set(decision.allowed_tool_names)
         runtime._run.update_tool_choice_read_scope(decision.scoped_read_paths, decision.scoped_read_budget)
         runtime._run.tool_choice_required_glob_roots = set(decision.required_glob_roots) or None
-        runtime._tool_choice_directive_phase.begin_decision(decision)
+        directive_outcome = runtime._tool_choice_directive_phase.begin_decision(decision)
+        if directive_outcome.kind == "exhausted":
+            runtime._run.tool_choice_stop_reason = directive_outcome.terminal_reason
+            return directive_outcome.terminal_message
         if decision.force_final_answer_without_tools:
             signature = tool_choice_steering_signature(decision, len(runtime._run.tool_choice_results))
             if signature not in runtime._run.tool_choice_force_final_signatures:

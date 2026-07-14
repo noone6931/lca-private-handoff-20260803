@@ -522,7 +522,7 @@ class AgentRuntime:
                     reason=(
                         "unverified_final_gate"
                         if self._run.unresolved_final_answer_gate is not None
-                        else "tool_choice_queue"
+                        else self._run.tool_choice_stop_reason or "tool_choice_queue"
                     ),
                 )
             if self._tool_directive_phase.before_model_turn():
@@ -870,17 +870,19 @@ class AgentRuntime:
             return []
         denied_names = self._denied_model_tool_names()
         if allowed_names is None:
-            return [
+            schemas = [
                 schema
                 for schema in _registry_schemas_for_context(self._registry, self._tool_context)
                 if schema.get("function", {}).get("name") not in denied_names
             ]
-        return [
-            schema
-            for schema in _registry_schemas_for_context(self._registry, self._tool_context)
-            if schema.get("function", {}).get("name") in allowed_names
-            and schema.get("function", {}).get("name") not in denied_names
-        ]
+        else:
+            schemas = [
+                schema
+                for schema in _registry_schemas_for_context(self._registry, self._tool_context)
+                if schema.get("function", {}).get("name") in allowed_names
+                and schema.get("function", {}).get("name") not in denied_names
+            ]
+        return self._tool_choice_directive_phase.project_schemas(schemas)
 
     def _denied_model_tool_names(self) -> set[str]:
         denied = {

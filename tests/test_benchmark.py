@@ -20,7 +20,7 @@ class BenchmarkTests(unittest.TestCase):
         tasks = load_benchmark_tasks()
         identifiers = {task.identifier for task in tasks}
 
-        self.assertEqual(len(tasks), 37)
+        self.assertEqual(len(tasks), 38)
         self.assertEqual(
             identifiers,
             {
@@ -61,6 +61,7 @@ class BenchmarkTests(unittest.TestCase):
                 "document-unresolved-difference-word-order",
                 "readonly-first-miss-fallback",
                 "generic-technical-design-review",
+                "readonly-fallback-argument-exhaustion",
             },
         )
         self.assertTrue(DEFAULT_TASKS_DIR.is_dir())
@@ -72,9 +73,9 @@ class BenchmarkTests(unittest.TestCase):
             payload = json.loads((output_dir / "benchmark-report.json").read_text(encoding="utf-8"))
             markdown = (output_dir / "benchmark-report.md").read_text(encoding="utf-8")
 
-            self.assertEqual(len(results), 37)
+            self.assertEqual(len(results), 38)
         self.assertTrue(all(result.passed for result in results))
-        self.assertEqual(payload["passed"], 37)
+        self.assertEqual(payload["passed"], 38)
         self.assertEqual(payload["failed"], 0)
         self.assertIn("small-code-change-test-diff", markdown)
         self.assertIn("budget-exhausted-incomplete", markdown)
@@ -108,6 +109,7 @@ class BenchmarkTests(unittest.TestCase):
         self.assertIn("document-unresolved-difference-word-order", markdown)
         self.assertIn("readonly-first-miss-fallback", markdown)
         self.assertIn("generic-technical-design-review", markdown)
+        self.assertIn("readonly-fallback-argument-exhaustion", markdown)
 
     def test_scripted_tool_call_can_emit_raw_malformed_arguments(self) -> None:
         client = ScriptedBenchmarkClient(
