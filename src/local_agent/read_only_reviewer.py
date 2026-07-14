@@ -36,9 +36,16 @@ class CandidateClaimUnit:
 
     claim_id: str
     text: str
+    locator_context: str = ""
 
     def to_dict(self) -> dict[str, str]:
         return {"claim_id": self.claim_id, "text": self.text}
+
+
+@dataclass(frozen=True)
+class CandidateClaimProjectionIssue:
+    code: str
+    detail: str = ""
 
 
 @dataclass(frozen=True)
@@ -187,6 +194,14 @@ def should_review_read_only_candidate(contract: RequirementContract | None, requ
 
 
 def candidate_claim_units(candidate: str) -> tuple[CandidateClaimUnit, ...]:
+    return _extract_candidate_claim_units(candidate)[0]
+
+
+def candidate_claim_projection_issues(candidate: str) -> tuple[CandidateClaimProjectionIssue, ...]:
+    return _extract_candidate_claim_units(candidate)[1]
+
+
+def _extract_candidate_claim_units(candidate: str) -> tuple[tuple[CandidateClaimUnit, ...], tuple[CandidateClaimProjectionIssue, ...]]:
     """Index Markdown claims, then deterministically sample both head and tail.
 
     Structural lines are independent units. Ordinary paragraphs split on common
@@ -195,7 +210,12 @@ def candidate_claim_units(candidate: str) -> tuple[CandidateClaimUnit, ...]:
     """
 
     indexed: list[CandidateClaimUnit] = []
+    issues: list[CandidateClaimProjectionIssue] = []
     paragraph: list[str] = []
+    locator_context = ""
+
+    def record_issue(code: str, detail: str = "") -> None:
+        issues.append(CandidateClaimProjectionIssue(code, detail))
 
     def flush_paragraph() -> None:
         if not paragraph:
@@ -203,25 +223,38 @@ def candidate_claim_units(candidate: str) -> tuple[CandidateClaimUnit, ...]:
             return
         text = "\n".join(paragraph).strip()
         paragraph.clear()
-        for sentence in _paragraph_units(text):
-            indexed.append(CandidateClaimUnit(f"c{len(indexed) + 1:03d}", sentence))
+        units, overflow = _paragraph_units(text)
+        if overflow:
+            record_issue("candidate_claim_projection_overflow", "paragraph")
+        for sentence in units:
+            indexed.append(CandidateClaimUnit(f"c{len(indexed) + 1:03d}", sentence, locator_context))
 
-    for raw_line in (candidate or "").splitlines():
+    raw_lines = (candidate or "").splitlines()
+    for index, raw_line in enumerate(raw_lines):
         line = raw_line.strip()
         if not line:
             flush_paragraph()
             continue
-        structural = line.startswith(("#", "- ", "* ", "+ ", "> ")) or _is_table_row(line)
+        if _is_markdown_heading(line):
+            flush_paragraph()
+            locator_context = line if _line_has_path_bound_locator(line) else ""
+            continue
+        structural = line.startswith(("- ", "* ", "+ ", "> ")) or _is_table_row(line)
         if structural:
             flush_paragraph()
-            if not _is_table_separator(line):
-                indexed.append(CandidateClaimUnit(f"c{len(indexed) + 1:03d}", _clip_unit(line)))
+            next_line = raw_lines[index + 1].strip() if index + 1 < len(raw_lines) else ""
+            if not _is_table_separator(line) and not (_is_table_row(line) and _is_table_separator(next_line)):
+                units, overflow = _structural_units(line)
+                if overflow:
+                    record_issue("candidate_claim_projection_overflow", "table_row" if _is_table_row(line) else "structural_line")
+                for unit in units:
+                    indexed.append(CandidateClaimUnit(f"c{len(indexed) + 1:03d}", unit, locator_context))
             continue
         paragraph.append(raw_line)
     flush_paragraph()
-    if not indexed and candidate.strip():
+    if not indexed and candidate.strip() and not issues:
         indexed.append(CandidateClaimUnit("c001", _clip_unit(candidate)))
-    return _sample_claim_units(indexed)
+    return _sample_claim_units(indexed), tuple(issues)
 
 
 def reviewer_messages(handoff: ExploreHandoff, claim_units: tuple[CandidateClaimUnit, ...]) -> list[dict[str, str]]:
@@ -236,6 +269,7 @@ Review contract:
 - Similar names, same-domain payment/order/fee capabilities, and general reusable code are analogous candidates, never verified owners.
 - Missing or incomplete searches mean unlocated within their stated scope, not absent everywhere.
 - Requirement facts, repository facts, proposals, and open questions must remain distinct.
+- Some handoff claim_matrix items include claim_ids. Those are claim-scoped evidence excerpts for those candidate claims only; check that the addressed claim_id is a member of claim_ids before using the excerpt, and do not use an image observation to prove a Markdown requirement rule or vice versa.
 - A proposal must not be worded as an existing table, class, endpoint, service, approval flow, numbering prefix, or integration unless the handoff explicitly supports it.
 - When the handoff has no explicit direct binding, do not say a main owner/module judgment is correct or mostly correct. Treat same-domain code as observed or analogous and leave the owner unlocated.
 - For a document-consistency review, do not resolve conflicting document or image observations with an invented workflow, scope, actor, source priority, authoritative source, or precedence rule. Preserve the conflict as unresolved unless the handoff explicitly reconciles it. A candidate that accurately cites both observations, explicitly keeps the conflict unresolved, and presents only labeled options or questions for later confirmation is compliant: submit `pass` with no reported findings. A finding must identify a candidate error such as an unsupported reconciliation, a self-contradictory candidate statement, a missing cited observation, a user-request violation, or a claim that exceeds the handoff; the source materials disagreeing by itself is not a candidate defect. If the only issue is that a source owner must decide how to update source materials, submit `pass` with no reported findings.
@@ -887,16 +921,66 @@ def _clip_unit(value: str) -> str:
     return text if len(text) <= MAX_CLAIM_UNIT_CHARS else text[: MAX_CLAIM_UNIT_CHARS - 1].rstrip() + "..."
 
 
-def _paragraph_units(value: str) -> tuple[str, ...]:
-    sentences = [part.strip() for part in re.split(r"(?<=[.!?。！？])\s*", value) if part.strip()]
+def _paragraph_units(value: str) -> tuple[tuple[str, ...], bool]:
+    sentences = [part.strip() for part in re.split(r"(?<=[.!?。！？])(?=\s+|$)", value) if part.strip()]
     units: list[str] = []
+    overflow = False
     for sentence in sentences or [value.strip()]:
         if len(sentence) <= MAX_CLAIM_UNIT_CHARS:
             units.append(sentence)
             continue
-        for start in range(0, len(sentence), MAX_CLAIM_UNIT_CHARS):
-            units.append(sentence[start : start + MAX_CLAIM_UNIT_CHARS])
-    return tuple(units)
+        split_units, split_overflow = _split_long_complete_unit(sentence)
+        units.extend(split_units)
+        overflow = overflow or split_overflow
+    return tuple(units), overflow
+
+
+def _structural_units(line: str) -> tuple[tuple[str, ...], bool]:
+    if _is_table_row(line):
+        compact = " ".join(line.split())
+        if len(compact) <= MAX_CLAIM_UNIT_CHARS:
+            return (compact,), False
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|") if cell.strip()]
+        overflow = any(len(cell) > MAX_CLAIM_UNIT_CHARS for cell in cells)
+        return tuple(cell for cell in cells if len(cell) <= MAX_CLAIM_UNIT_CHARS), overflow
+    compact = " ".join(line.split())
+    if len(compact) <= MAX_CLAIM_UNIT_CHARS:
+        return (compact,), False
+    return _split_long_complete_unit(compact)
+
+
+def _split_long_complete_unit(value: str) -> tuple[tuple[str, ...], bool]:
+    pieces = [piece.strip() for piece in re.split(r"(?<=[;；,，])\s*", value) if piece.strip()]
+    units: list[str] = []
+    current = ""
+    overflow = False
+    for piece in pieces:
+        if len(piece) > MAX_CLAIM_UNIT_CHARS:
+            if current:
+                units.append(current)
+                current = ""
+            overflow = True
+            continue
+        candidate = f"{current} {piece}".strip() if current else piece
+        if len(candidate) <= MAX_CLAIM_UNIT_CHARS:
+            current = candidate
+            continue
+        if current:
+            units.append(current)
+        current = piece
+    if current:
+        units.append(current)
+    if not units and len((value or "").strip()) > MAX_CLAIM_UNIT_CHARS:
+        overflow = True
+    return tuple(units), overflow
+
+
+def _is_markdown_heading(line: str) -> bool:
+    return bool(re.fullmatch(r"#{1,6}\s+\S.*", line))
+
+
+def _line_has_path_bound_locator(line: str) -> bool:
+    return bool(re.search(r"\.(?:md|markdown|html?|png|jpe?g|gif|webp)\s*[:#（(；;，, ]", line, flags=re.IGNORECASE))
 
 
 def _sample_claim_units(indexed: list[CandidateClaimUnit]) -> tuple[CandidateClaimUnit, ...]:

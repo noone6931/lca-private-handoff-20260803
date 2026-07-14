@@ -100,7 +100,7 @@ def validate_document_consistency_assessment(
     if any(not _is_document_observation(item) for item in conflicts):
         return "document_conflict_evidence_not_observation"
     candidate_stance = candidate_reconciliation_stance(candidate)
-    if candidate_stance is not None and _distinct_artifact_count(conflicts) < 2:
+    if (assessment.conflict_evidence_ids or candidate_stance is not None) and _distinct_artifact_count(conflicts) < 2:
         return "document_conflict_evidence_insufficient"
     if assessment.stance in {"conditional_reconciliation", "asserted_reconciled", "explicitly_supported_reconciliation"}:
         if _distinct_artifact_count(conflicts) < 2:

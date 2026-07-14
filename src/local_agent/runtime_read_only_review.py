@@ -11,6 +11,7 @@ from .llm import LlmTimeoutError
 from .reviewer_output_lifecycle import parse_reviewer_output_turn
 from .reviewer_output_lifecycle import reviewer_tool_result_messages
 from .read_only_reviewer import candidate_claim_units
+from .read_only_reviewer import candidate_claim_projection_issues
 from .read_only_reviewer import MAX_REVIEWER_FINDINGS
 from .read_only_reviewer import MAX_REVIEWER_CAPACITY_DIRECTIVES
 from .read_only_reviewer import MAX_REVIEWER_OUTPUT_LIFECYCLE_ERRORS
@@ -87,10 +88,18 @@ class ReadOnlyReviewPhase:
         skip_reason = runtime._run.finalization_rewrite_skip_reason()
         if skip_reason is not None:
             return self._unverified("deadline_or_finalization_budget", skip_reason)
-        handoff = self._handoff(candidate)
+        projection_issues = candidate_claim_projection_issues(candidate)
+        if projection_issues:
+            return self._unverified("invalid_output", projection_issues[0].code)
         claim_units = candidate_claim_units(candidate)
         if not claim_units:
             return self._unverified("invalid_output", "candidate_has_no_addressable_claim_units")
+        handoff = self._handoff(candidate, claim_units=claim_units)
+        omitted_claim_ids = set(getattr(handoff, "transport_omitted_claim_ids", ()) or ())
+        if omitted_claim_ids:
+            claim_units = tuple(unit for unit in claim_units if unit.claim_id not in omitted_claim_ids)
+            if not claim_units:
+                return self._unverified("invalid_output", "claim_evidence_transport_omitted_all_reviewable_claims")
         state.attempted = True
         state.review_round += 1
         state.claim_units = claim_units
@@ -424,7 +433,7 @@ class ReadOnlyReviewPhase:
             safe_partial_report=safe_partial_report,
         )
 
-    def _handoff(self, candidate: str | None = None):
+    def _handoff(self, candidate: str | None = None, *, claim_units: tuple[Any, ...] = ()):
         runtime = self._runtime
         return build_explore_handoff(
             request=runtime._run.current_user_request or "",
@@ -434,6 +443,7 @@ class ReadOnlyReviewPhase:
             records=runtime._run.evidence.records,
             tool_results=runtime._run.tool_choice_results,
             candidate=candidate,
+            claim_units=claim_units,
         )
 
     def _emit_safe_partial(self, handoff: Any, reason: str) -> str:

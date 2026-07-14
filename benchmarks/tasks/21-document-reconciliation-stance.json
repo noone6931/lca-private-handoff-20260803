@@ -32,8 +32,7 @@
         {
           "name": "report_read_only_finding",
           "arguments": {
-            "claim_id": "c004",
-            "claim": "To confirm: The prototype is the completed state, so no conflict exists.",
+            "claim_id": "c002",
             "finding_scope": "candidate_defect",
             "issue": "the candidate asserts a lifecycle reconciliation without direct support",
             "action": "retain the conflict as unresolved"

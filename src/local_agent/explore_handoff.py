@@ -21,7 +21,7 @@ from .task_contract import RequirementContract
 from .tool_observation import ToolResultSummary
 
 
-MAX_HANDOFF_ITEMS = 24
+MAX_HANDOFF_ITEMS = 32
 MAX_HANDOFF_CONTENT_CHARS = 700
 MAX_VISUAL_OBSERVATION_CHARS = 2400
 MAX_REQUIREMENT_ITEMS = 4
@@ -29,7 +29,9 @@ MAX_SOURCE_ITEMS_PER_ROOT = 1
 MAX_RECORD_ITEMS_PER_ROOT = 1
 MAX_RESULT_ITEMS = 4
 MAX_DOCUMENT_ARTIFACT_ITEMS = 6
-MAX_CANDIDATE_LOCATOR_ITEMS = 6
+MAX_CANDIDATE_LOCATOR_ITEMS = 16
+MAX_CANDIDATE_LOCATOR_SUMMARY_CHARS = 2200
+MAX_CANDIDATE_LOCATOR_TOTAL_CHARS = 12000
 
 
 @dataclass(frozen=True)
@@ -46,9 +48,11 @@ class ClaimEvidenceItem:
     count: int = 1
     evidence_id: str = ""
     identity_path: str = ""
+    claim_id: str = ""
+    claim_ids: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "classification": self.classification,
             "tool": self.tool,
             "path": self.path,
@@ -59,6 +63,11 @@ class ClaimEvidenceItem:
             "count": self.count,
             "evidence_id": self.evidence_id,
         }
+        if self.claim_ids:
+            payload["claim_ids"] = list(self.claim_ids)
+        elif self.claim_id:
+            payload["claim_id"] = self.claim_id
+        return payload
 
 
 @dataclass(frozen=True)
@@ -68,6 +77,7 @@ class ExploreHandoff:
     request: str
     contract: RequirementContract
     items: tuple[ClaimEvidenceItem, ...]
+    transport_omitted_claim_ids: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         # IDs address only this bounded handoff. They are not filesystem or
@@ -106,6 +116,7 @@ class ExploreHandoff:
                 "Requirement facts, repository observations, proposals, and unlocated questions must remain distinct.",
                 "Visual observations describe what is shown, not an artifact author's intent, lifecycle, precedence, or role.",
             ],
+            "transport_omitted_claim_ids": list(self.transport_omitted_claim_ids),
         }
 
     @property
@@ -131,6 +142,7 @@ def build_explore_handoff(
     records: Iterable[EvidenceRecord],
     tool_results: Iterable[ToolResultSummary],
     candidate: str | None = None,
+    claim_units: Iterable[Any] = (),
 ) -> ExploreHandoff:
     """Build a conservative matrix from existing Runtime observations only.
 
@@ -143,10 +155,13 @@ def build_explore_handoff(
 
     results = tuple(tool_results)
     requirement_entries = tuple(requirement_evidence)
-    candidate_locator_items = _candidate_locator_items(
+    source_entries = tuple(source_evidence)
+    candidate_locator_items, transport_omitted_claim_ids = _candidate_locator_items(
         candidate or "",
         requirement_entries,
+        source_entries,
         results,
+        claim_units,
     )
     requirements = [
         ClaimEvidenceItem(
@@ -167,7 +182,7 @@ def build_explore_handoff(
                 "observed_candidate",
                 "read_file", item.path, item.root or "(unknown)", item.scope or "root_local", "ok", _head_tail(item.content),
             )
-            for item in source_evidence
+            for item in source_entries
         ),
         MAX_SOURCE_ITEMS_PER_ROOT,
     )
@@ -271,7 +286,12 @@ def build_explore_handoff(
             *record_items,
         ]
     )
-    return ExploreHandoff(request=request, contract=contract, items=tuple(items[:MAX_HANDOFF_ITEMS]))
+    return ExploreHandoff(
+        request=request,
+        contract=contract,
+        items=tuple(items[:MAX_HANDOFF_ITEMS]),
+        transport_omitted_claim_ids=tuple(transport_omitted_claim_ids),
+    )
 
 
 def _clip(value: str, *, limit: int = MAX_HANDOFF_CONTENT_CHARS) -> str:
@@ -346,48 +366,68 @@ def _document_reconciliation_support_items(
 def _candidate_locator_items(
     candidate: str,
     requirements: Iterable[RequirementEvidence],
+    source_evidence: Iterable[SourceEvidence],
     tool_results: Iterable[ToolResultSummary],
-) -> list[ClaimEvidenceItem]:
+    claim_units: Iterable[Any] = (),
+) -> tuple[list[ClaimEvidenceItem], tuple[str, ...]]:
     """Project only already-read document excerpts cited by the candidate."""
 
     if not candidate:
-        return []
-    buckets: dict[tuple[str, str], list[ClaimEvidenceItem]] = {}
-    order: list[tuple[str, str]] = []
-    seen: set[tuple[tuple[str, str], str, str]] = set()
-    sources = _document_locator_sources(requirements, tool_results)
-    for source in sources:
-        artifact_key = document_artifact_identity(
-            root=source.root,
-            path=source.path,
-            identity_path=source.identity_path,
-        )
-        for locator in _candidate_locators_for_source(candidate, source):
-            if _locator_is_ambiguous(locator.path, source, sources):
-                continue
-            key = (artifact_key, locator.kind, locator.value)
-            if key in seen:
-                continue
-            seen.add(key)
-            excerpt = document_locator_excerpt(source.content, locator)
-            if not excerpt:
-                continue
-            if artifact_key not in buckets:
-                buckets[artifact_key] = []
-                order.append(artifact_key)
-            buckets[artifact_key].append(
-                ClaimEvidenceItem(
+        return [], ()
+    buckets: dict[tuple[tuple[str, str], str, str], ClaimEvidenceItem] = {}
+    order: list[tuple[tuple[str, str], str, str]] = []
+    seen: set[tuple[str, tuple[str, str], str, str]] = set()
+    sources = _document_locator_sources(requirements, source_evidence, tool_results)
+    claim_texts = _candidate_locator_claim_texts(candidate, claim_units)
+    for claim_id, claim_text in claim_texts:
+        for source in sources:
+            artifact_key = document_artifact_identity(
+                root=source.root,
+                path=source.path,
+                identity_path=source.identity_path,
+            )
+            for locator in _candidate_locators_for_source(claim_text, source):
+                if _locator_is_ambiguous(locator.path, source, sources):
+                    continue
+                key = (claim_id, artifact_key, locator.kind, locator.value)
+                if key in seen:
+                    continue
+                seen.add(key)
+                excerpt = document_locator_excerpt(source.content, locator)
+                if not excerpt:
+                    continue
+                summary = _locator_summary(locator, excerpt)
+                if not summary:
+                    continue
+                bucket_key = (artifact_key, locator.kind, locator.value)
+                prior = buckets.get(bucket_key)
+                claim_ids = (claim_id,) if prior is None else tuple(dict.fromkeys((*prior.claim_ids, claim_id)))
+                buckets[bucket_key] = ClaimEvidenceItem(
                     "requirement_locator",
                     "read_file",
                     source.path,
                     source.root,
                     source.scope,
                     "ok",
-                    f"{locator.kind} {locator.value}: {excerpt}",
+                    summary,
                     identity_path=source.identity_path,
+                    claim_id=claim_ids[0],
+                    claim_ids=claim_ids,
                 )
-            )
+                if prior is None:
+                    order.append(bucket_key)
     return _fair_candidate_locator_items(buckets, order)
+
+
+def _candidate_locator_claim_texts(candidate: str, claim_units: Iterable[Any]) -> tuple[tuple[str, str], ...]:
+    items: list[tuple[str, str]] = []
+    for index, unit in enumerate(claim_units):
+        claim_id = str(getattr(unit, "claim_id", "") or f"candidate-{index + 1:03d}")
+        text = str(getattr(unit, "text", "") or "")
+        if text:
+            context = str(getattr(unit, "locator_context", "") or "")
+            items.append((claim_id, f"{context}\n{text}" if context else text))
+    return tuple(items) or (("candidate", candidate),)
 
 
 def _candidate_locators_for_source(candidate: str, source: _DocumentLocatorSource) -> tuple[Any, ...]:
@@ -409,6 +449,7 @@ def _candidate_locators_for_source(candidate: str, source: _DocumentLocatorSourc
 
 def _document_locator_sources(
     requirements: Iterable[RequirementEvidence],
+    source_evidence: Iterable[SourceEvidence],
     tool_results: Iterable[ToolResultSummary],
 ) -> list[_DocumentLocatorSource]:
     sources: dict[tuple[str, str], _DocumentLocatorSource] = {}
@@ -420,6 +461,17 @@ def _document_locator_sources(
             root=root,
             scope=item.scope or "root_local",
             identity_path=document_artifact_identity(root=root, path=item.path)[1],
+        )
+        _store_document_locator_source(sources, source)
+    for item in source_evidence:
+        if not str(item.path or "").lower().endswith((".md", ".markdown", ".html", ".htm")):
+            continue
+        source = _DocumentLocatorSource(
+            path=item.path,
+            content=item.content,
+            root=item.root or "(unknown)",
+            scope=item.scope or "root_local",
+            identity_path=item.path,
         )
         _store_document_locator_source(sources, source)
     for item in tool_results:
@@ -483,26 +535,87 @@ def _citation_matches_source(cited_path: str, source: _DocumentLocatorSource) ->
 
 
 def _fair_candidate_locator_items(
-    buckets: dict[tuple[str, str], list[ClaimEvidenceItem]],
-    order: list[tuple[str, str]],
-) -> list[ClaimEvidenceItem]:
+    buckets: dict[tuple[tuple[str, str], str, str], ClaimEvidenceItem],
+    order: list[tuple[tuple[str, str], str, str]],
+) -> tuple[list[ClaimEvidenceItem], tuple[str, ...]]:
     items: list[ClaimEvidenceItem] = []
-    cursors = {key: 0 for key in order}
+    resolved_claim_ids: set[str] = {
+        claim_id
+        for item in buckets.values()
+        for claim_id in item.claim_ids
+    }
+    transported_claim_ids: set[str] = set()
+    total_summary_chars = 0
+    by_artifact: dict[tuple[str, str], list[tuple[tuple[str, str], str, str]]] = {}
+    artifact_order: list[tuple[str, str]] = []
+    for key in order:
+        artifact_key = key[0]
+        if artifact_key not in by_artifact:
+            by_artifact[artifact_key] = []
+            artifact_order.append(artifact_key)
+        by_artifact[artifact_key].append(key)
+    cursors = {artifact_key: 0 for artifact_key in artifact_order}
     while len(items) < MAX_CANDIDATE_LOCATOR_ITEMS:
-        added = False
-        for key in order:
-            cursor = cursors[key]
-            bucket = buckets[key]
-            if cursor >= len(bucket):
-                continue
-            items.append(bucket[cursor])
-            cursors[key] = cursor + 1
-            added = True
+        made_progress = False
+        for artifact_key in artifact_order:
+            keys = by_artifact[artifact_key]
+            while cursors[artifact_key] < len(keys):
+                key = keys[cursors[artifact_key]]
+                cursors[artifact_key] += 1
+                item = buckets[key]
+                if total_summary_chars + len(item.summary) > MAX_CANDIDATE_LOCATOR_TOTAL_CHARS:
+                    continue
+                items.append(item)
+                transported_claim_ids.update(item.claim_ids)
+                total_summary_chars += len(item.summary)
+                made_progress = True
+                break
             if len(items) >= MAX_CANDIDATE_LOCATOR_ITEMS:
                 break
-        if not added:
+        if not made_progress:
             break
-    return items
+    omitted_claim_ids = [claim_id for claim_id in sorted(resolved_claim_ids) if claim_id not in transported_claim_ids]
+    return items, tuple(omitted_claim_ids)
+
+
+def _locator_summary(locator: Any, excerpt: str) -> str:
+    prefix = f"{locator.kind} {locator.value}:"
+    budget = MAX_CANDIDATE_LOCATOR_SUMMARY_CHARS - len(prefix) - 1
+    if budget <= 120:
+        return ""
+    body = _bounded_complete_lines(excerpt, budget)
+    return f"{prefix}\n{body}" if body else ""
+
+
+def _bounded_complete_lines(value: str, budget: int) -> str:
+    lines = [line.rstrip() for line in (value or "").splitlines() if line.strip()]
+    if not lines:
+        return ""
+    joined = "\n".join(lines)
+    if len(joined) <= budget:
+        return joined
+    head: list[str] = []
+    tail: list[str] = []
+    used = 0
+    marker = "[omitted middle lines]"
+    half_budget = max(0, (budget - len(marker) - 2) // 2)
+    for line in lines:
+        if len(line) > half_budget:
+            continue
+        if used + len(line) + (1 if head else 0) > half_budget:
+            break
+        head.append(line)
+        used += len(line) + (1 if head else 0)
+    used = 0
+    for line in reversed(lines):
+        if len(line) > half_budget:
+            continue
+        if used + len(line) + (1 if tail else 0) > half_budget:
+            break
+        tail.append(line)
+        used += len(line) + (1 if tail else 0)
+    rendered = [*head, marker, *reversed(tail)]
+    return "\n".join(rendered)
 
 
 def _dedupe_items(items: Iterable[ClaimEvidenceItem]) -> list[ClaimEvidenceItem]:
@@ -525,6 +638,8 @@ def _dedupe_items(items: Iterable[ClaimEvidenceItem]) -> list[ClaimEvidenceItem]
             prior.summary,
             count=prior.count + item.count,
             identity_path=prior.identity_path,
+            claim_id=prior.claim_id,
+            claim_ids=tuple(dict.fromkeys((*prior.claim_ids, *item.claim_ids))),
         )
     return list(deduped.values())
 

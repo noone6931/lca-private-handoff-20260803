@@ -17,6 +17,7 @@ from local_agent.explore_handoff import ClaimEvidenceItem
 from local_agent.explore_handoff import ExploreHandoff
 from local_agent.read_only_reviewer import ReviewerResult
 from local_agent.read_only_reviewer import ReviewerFinding
+from local_agent.read_only_reviewer import candidate_claim_projection_issues
 from local_agent.read_only_reviewer import candidate_claim_units
 from local_agent.read_only_reviewer import rewrite_complies_with_review
 from local_agent.read_only_reviewer import parse_reviewer_payload
@@ -1315,6 +1316,160 @@ class _DocumentConsistencyRewriteContextClient:
         return type("Response", (), {"message": {"content": "policy.md says blank; prototype.html shows value. The prototype is a final state."}})()
 
 
+class _ClaimScopedRequirementEvidenceClient:
+    calls: list[dict] = []
+
+    def __init__(self, config: AgentConfig):
+        self._primary_calls = 0
+
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
+        reviewer = any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages)
+        if reviewer:
+            payload = next(
+                json.loads(message["content"])
+                for message in messages
+                if message.get("role") == "user" and "LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content"))
+            )
+            claims = {claim["claim_id"]: claim["text"] for claim in payload["candidate_claims"]}
+            matrix = payload["handoff"]["claim_matrix"]
+            locator = next(
+                (
+                    item
+                    for item in matrix
+                    if item.get("classification") == "requirement_locator"
+                    and any(claim_id in claims for claim_id in item.get("claim_ids", ()))
+                    and any("policy.md:191-212" not in claims[claim_id] for claim_id in item.get("claim_ids", ()) if claim_id in claims)
+                ),
+                None,
+            )
+            summary = locator.get("summary", "") if locator else ""
+            if locator and "191:" in summary and "212:" in summary and "settlement period" in summary and "grand total" in summary:
+                return _review_tool_calls_response(
+                    [
+                        _final_call(
+                            "claim-scoped-pass",
+                            {
+                                "verdict": "pass",
+                                "confidence": 0.96,
+                                "reason": "range evidence is visible for the reviewed claim",
+                                "document_consistency": {
+                                    "stance": "reported_unresolved",
+                                    "conflict_evidence_ids": [],
+                                    "supporting_evidence_ids": [],
+                                },
+                            },
+                        )
+                    ]
+                )
+            claim_id = next(iter(claims), "c001")
+            return _review_tool_calls_response(
+                [
+                    _finding_call(
+                        "missing-range",
+                        claim_id,
+                        "",
+                        issue="range evidence missing from handoff",
+                        action="remove unsupported requirement facts",
+                        include_claim=False,
+                    ),
+                    _final_call(
+                        "claim-scoped-revise",
+                        {
+                            "verdict": "revise",
+                            "confidence": 0.6,
+                            "reason": "range evidence missing",
+                            "document_consistency": {
+                                "stance": "reported_unresolved",
+                                "conflict_evidence_ids": [],
+                                "supporting_evidence_ids": [],
+                            },
+                        },
+                    ),
+                ]
+            )
+        self._primary_calls += 1
+        if self._primary_calls == 1:
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {"id": "read-policy", "type": "function", "function": {"name": "read_file", "arguments": '{"path":"policy.md"}'}},
+                            {"id": "read-prototype", "type": "function", "function": {"name": "read_file", "arguments": '{"path":"prototype.html"}'}},
+                        ],
+                    }
+                },
+            )()
+        return type(
+            "Response",
+            (),
+            {
+                "message": {
+                    "content": (
+                        "### 2. Word summary (policy.md:191-212；prototype.html)\n"
+                        "\n"
+                        "| category | requirement fact |\n"
+                        "| --- | --- |\n"
+                        "| period | settlement period is monthly |\n"
+                        "| mappings | company/count/amount/footer mappings come from the policy |\n"
+                        "| totals | subtotal and grand total follow those lines |\n"
+                        "prototype.html only supplies layout."
+                    )
+                }
+            },
+        )()
+
+
+class _OverlongClaimClient:
+    calls: list[dict] = []
+
+    def __init__(self, config: AgentConfig):
+        self._primary_calls = 0
+
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
+        if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages):
+            return _review_tool_calls_response(
+                [
+                    _final_call(
+                        "overflow-pass",
+                        {
+                            "verdict": "pass",
+                            "confidence": 0.99,
+                            "reason": "would pass if the overflow claim were silently absent",
+                        },
+                    )
+                ]
+            )
+        self._primary_calls += 1
+        if self._primary_calls == 1:
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {"id": "read-src", "type": "function", "function": {"name": "read_file", "arguments": '{"path":"src/Candidate.java"}'}},
+                        ],
+                    }
+                },
+            )()
+        long_claim = "UNSUPPORTED_LONG_OWNER_CLAIM " + ("x" * 620)
+        return type(
+            "Response",
+            (),
+            {
+                "message": {
+                    "content": f"源码事实：src/Candidate.java 已读取。\n{long_claim}"
+                }
+            },
+        )()
+
+
 def _config(workspace: Path, *, provider: str = "openai-compatible") -> AgentConfig:
     return AgentConfig(
         provider=provider,
@@ -1577,6 +1732,29 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         ]
         self.assertEqual(len(review_calls), 2)
 
+    def test_claim_scoped_range_evidence_reaches_runtime_reviewer(self) -> None:
+        _ClaimScopedRequirementEvidenceClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            lines = [f"{index}: filler line {index}" for index in range(1, 301)]
+            lines[190] = "191: settlement period is monthly"
+            lines[194] = "195: company mapping comes from requirement source"
+            lines[197] = "198: count and amount mapping comes from requirement source"
+            lines[207] = "208: subtotal is the sum of detail amounts"
+            lines[208] = "209: footer fields follow the listed mappings"
+            lines[211] = "212: grand total equals subtotal plus adjustments"
+            (workspace / "policy.md").write_text("\n".join(lines), encoding="utf-8")
+            (workspace / "prototype.html").write_text("<table><tr><td>layout only</td></tr></table>\n", encoding="utf-8")
+            with patch("local_agent.agent.OpenAICompatibleClient", _ClaimScopedRequirementEvidenceClient):
+                runtime = AgentRuntime(_config(workspace), show_tool_logs=False)
+                answer = runtime.run("只根据 policy.md 和 prototype.html 分析资料一致性，不要检查代码。")
+
+        self.assertIn("settlement period is monthly", answer)
+        summary = runtime._last_run_summary["read_only_reviewer"]
+        self.assertEqual(summary["verdicts"], {"pass": 1})
+        self.assertEqual(summary["errors"], {})
+        self.assertEqual(runtime._last_run_summary["termination_reason"], "final")
+
     def test_handoff_is_bounded_and_conservative_about_source_reads(self) -> None:
         contract = generate_requirement_contract("只读分析服务 owner 和影响范围，不要修改。")
         handoff = build_explore_handoff(
@@ -1597,6 +1775,243 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertEqual(schema["function"]["name"], REVIEWER_OUTPUT_TOOL_NAME)
         self.assertEqual(schema["function"]["parameters"]["additionalProperties"], False)
         self.assertNotIn("class PayServiceImpl", messages[0]["content"])
+
+    def test_handoff_reuses_source_evidence_generator_for_locators_and_source_items(self) -> None:
+        contract = generate_requirement_contract("只根据 policy.md 分析资料一致性，不要检查代码。")
+        source_iter = (
+            item
+            for item in (
+                SourceEvidence(
+                    "policy.md",
+                    "\n".join(f"{index}: rule {index}" for index in range(1, 220)),
+                    root="/workspace",
+                ),
+            )
+        )
+        handoff = build_explore_handoff(
+            request="只根据 policy.md 分析资料一致性，不要检查代码。",
+            contract=contract,
+            requirement_evidence=(),
+            source_evidence=source_iter,
+            records=(),
+            tool_results=(),
+            candidate="- policy.md:191 states rule 191.",
+            claim_units=candidate_claim_units("- policy.md:191 states rule 191."),
+        )
+        classifications = {item.classification for item in handoff.items}
+
+        self.assertIn("requirement_locator", classifications)
+        self.assertIn("observed_candidate", classifications)
+
+    def test_claim_scoped_locator_items_inherit_heading_range_and_serialize_claim_id(self) -> None:
+        contract = generate_requirement_contract(
+            "只根据 Markdown 和 HTML 分析资料一致性，不要检查代码。"
+        )
+        lines = [f"{index}: filler line {index}" for index in range(1, 301)]
+        lines[190] = "191: settlement period is monthly"
+        lines[194] = "195: company mapping is explicit"
+        lines[197] = "198: amount mapping is explicit"
+        lines[207] = "208: subtotal is explicit"
+        lines[208] = "209: footer mapping is explicit"
+        lines[211] = "212: grand total is explicit"
+        candidate = (
+            "### 2. Word requirements (policy.md:191-212；example.png)\n"
+            "\n"
+            "| item | fact |\n"
+            "| --- | --- |\n"
+            "| period | settlement period is monthly |\n"
+            "| total | subtotal and grand total are explicit |\n"
+            "\n"
+            "### 3. Other section\n"
+            "| item | fact |\n"
+            "| --- | --- |\n"
+            "| other | this row must not inherit the policy range |\n"
+        )
+        units = candidate_claim_units(candidate)
+        handoff = build_explore_handoff(
+            request="只根据 Markdown 和 HTML 分析资料一致性，不要检查代码。",
+            contract=contract,
+            requirement_evidence=(),
+            source_evidence=(),
+            records=(),
+            tool_results=(
+                ToolResultSummary(
+                    "read_file",
+                    "\n".join(lines),
+                    path="policy.md",
+                    metadata={"evidence_root": "/workspace", "resolved_path": "/workspace/policy.md"},
+                ),
+            ),
+            candidate=candidate,
+            claim_units=units,
+        )
+        locator_items = [item for item in handoff.items if item.classification == "requirement_locator"]
+
+        self.assertTrue(locator_items)
+        self.assertTrue(all(item.claim_ids for item in locator_items))
+        range_items = [item for item in locator_items if "line 191-212" in item.summary]
+        self.assertEqual(len(range_items), 1)
+        self.assertGreaterEqual(len(range_items[0].claim_ids), 2)
+        self.assertTrue(any("195:" in item.summary and "198:" in item.summary for item in locator_items))
+        self.assertTrue(any("208:" in item.summary and "209:" in item.summary for item in locator_items))
+        self.assertTrue(any("212:" in item.summary for item in locator_items))
+        self.assertFalse(any("other | this row" in item.summary for item in locator_items))
+        inherited_claim_texts = {
+            unit.claim_id: unit.text
+            for unit in units
+            if unit.locator_context and "policy.md:191-212" in unit.locator_context
+        }
+        self.assertTrue(any("settlement period" in text for text in inherited_claim_texts.values()))
+        self.assertTrue(any("subtotal and grand total" in text for text in inherited_claim_texts.values()))
+        self.assertFalse(any("must not inherit" in text for text in inherited_claim_texts.values()))
+        self.assertFalse(any(item.summary.endswith("...") for item in locator_items))
+        serialized = handoff.to_dict()["claim_matrix"]
+        serialized_locators = [item for item in serialized if item["classification"] == "requirement_locator"]
+        self.assertTrue(any(item.get("claim_ids") for item in serialized_locators))
+        self.assertFalse(any("claim_id" in item and item.get("claim_ids") for item in serialized_locators))
+
+    def test_claim_units_do_not_split_filenames_decimals_or_table_headers(self) -> None:
+        candidate = (
+            "prototype.html only supplies layout. Version 2.1 remains draft.\n\n"
+            "| category | requirement fact |\n"
+            "| --- | --- |\n"
+            "| period | settlement period is monthly |\n"
+        )
+        texts = [unit.text for unit in candidate_claim_units(candidate)]
+
+        self.assertIn("prototype.html only supplies layout.", texts)
+        self.assertIn("Version 2.1 remains draft.", texts)
+        self.assertNotIn("prototype.", texts)
+        self.assertNotIn("html only supplies layout.", texts)
+        self.assertNotIn("| category | requirement fact |", texts)
+        self.assertIn("| period | settlement period is monthly |", texts)
+
+    def test_overlong_factual_units_are_projection_issues_not_silent_drops(self) -> None:
+        long_sentence = "Unsupported owner fact " + ("x" * 620)
+        long_cell = "| Owner | " + ("y" * 620) + " |"
+
+        prose_issues = candidate_claim_projection_issues(f"Normal scoped fact.\n{long_sentence}")
+        table_issues = candidate_claim_projection_issues(f"| owner | fact |\n| --- | --- |\n{long_cell}")
+
+        self.assertTrue(any(issue.code == "candidate_claim_projection_overflow" for issue in prose_issues))
+        self.assertTrue(any(issue.code == "candidate_claim_projection_overflow" for issue in table_issues))
+        self.assertIn("Normal scoped fact.", [unit.text for unit in candidate_claim_units(f"Normal scoped fact.\n{long_sentence}")])
+        self.assertFalse(any("Unsupported owner fact" in unit.text for unit in candidate_claim_units(f"Normal scoped fact.\n{long_sentence}")))
+
+    def test_runtime_does_not_release_candidate_with_silent_overlong_claim(self) -> None:
+        _OverlongClaimClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            (workspace / "src").mkdir()
+            (workspace / "src" / "Candidate.java").write_text("class Candidate {}\n", encoding="utf-8")
+            with patch("local_agent.agent.OpenAICompatibleClient", _OverlongClaimClient):
+                runtime = AgentRuntime(_config(workspace), show_tool_logs=False)
+                answer = runtime.run("只读分析当前服务 owner、调用链和影响范围，不要修改文件。")
+
+        self.assertNotIn("UNSUPPORTED_LONG_OWNER_CLAIM", answer)
+        self.assertEqual(runtime._last_run_summary["termination_reason"], "read_only_reviewer_unverified")
+        self.assertEqual(runtime._last_run_summary["read_only_reviewer"]["errors"], {"invalid_output": 1})
+        review_calls = [
+            call
+            for call in _OverlongClaimClient.calls
+            if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in call["messages"])
+        ]
+        self.assertEqual(review_calls, [])
+
+    def test_claim_scoped_locator_selection_exceeds_six_and_ignores_unread_citations(self) -> None:
+        contract = generate_requirement_contract(
+            "只根据 Markdown 和 HTML 分析资料一致性，不要检查代码。"
+        )
+        content = "\n".join(f"{index}: rule {index}" for index in range(1, 420))
+        candidate = "\n".join(
+            f"- policy.md:{120 + index} states rule {120 + index}."
+            for index in range(1, 76)
+        ) + "\n- missing.md:10 states an unsupported rule."
+        units = candidate_claim_units(candidate)
+        handoff = build_explore_handoff(
+            request="只根据 Markdown 和 HTML 分析资料一致性，不要检查代码。",
+            contract=contract,
+            requirement_evidence=(RequirementEvidence("policy.md", content, root="/workspace"),),
+            source_evidence=(),
+            records=(),
+            tool_results=(),
+            candidate=candidate,
+            claim_units=units,
+        )
+        locator_items = [item for item in handoff.items if item.classification == "requirement_locator"]
+        covered_claims = {claim_id for item in locator_items for claim_id in item.claim_ids}
+        missing_claim = next(unit.claim_id for unit in units if "missing.md" in unit.text)
+        omitted = set(handoff.transport_omitted_claim_ids)
+
+        self.assertGreater(len(locator_items), 6)
+        self.assertLessEqual(len(locator_items), 16)
+        self.assertGreater(len(units), 70)
+        self.assertGreaterEqual(len(covered_claims), 16)
+        self.assertTrue(omitted)
+        self.assertTrue(omitted.isdisjoint(covered_claims))
+        self.assertNotIn(missing_claim, omitted)
+        self.assertFalse(any("missing.md" in item.summary for item in locator_items))
+
+    def test_shared_range_locator_binds_many_claims_without_repeating_summary(self) -> None:
+        contract = generate_requirement_contract(
+            "只根据 Markdown 分析资料一致性，不要检查代码。"
+        )
+        content = "\n".join(f"{index}: rule {index}" for index in range(1, 260))
+        candidate = "### Rules (policy.md:191-212)\n\n" + "\n".join(
+            f"| row {index} | cites shared range fact {index} |"
+            for index in range(1, 24)
+        )
+        units = candidate_claim_units(candidate)
+        handoff = build_explore_handoff(
+            request="只根据 Markdown 分析资料一致性，不要检查代码。",
+            contract=contract,
+            requirement_evidence=(RequirementEvidence("policy.md", content, root="/workspace"),),
+            source_evidence=(),
+            records=(),
+            tool_results=(),
+            candidate=candidate,
+            claim_units=units,
+        )
+        locator_items = [item for item in handoff.items if item.classification == "requirement_locator"]
+        range_items = [item for item in locator_items if "line 191-212" in item.summary]
+
+        self.assertEqual(len(range_items), 1)
+        self.assertGreater(len(range_items[0].claim_ids), 16)
+        self.assertLessEqual(len(range_items[0].summary), 2200)
+        serialized = handoff.to_dict()["claim_matrix"]
+        serialized_range = next(item for item in serialized if item.get("classification") == "requirement_locator")
+        self.assertIn("claim_ids", serialized_range)
+        self.assertNotIn("claim_id", serialized_range)
+
+    def test_claim_scoped_locator_selection_is_artifact_fair_under_cap(self) -> None:
+        contract = generate_requirement_contract(
+            "只根据 Markdown 分析资料一致性，不要检查代码。"
+        )
+        content_a = "\n".join(f"{index}: alpha rule {index}" for index in range(1, 80))
+        content_b = "\n".join(f"{index}: beta rule {index}" for index in range(1, 20))
+        candidate = "\n".join(
+            [f"- alpha.md:{index} states alpha rule {index}." for index in range(1, 25)]
+            + ["- beta.md:9 states beta rule 9."]
+        )
+        units = candidate_claim_units(candidate)
+        handoff = build_explore_handoff(
+            request="只根据 Markdown 分析资料一致性，不要检查代码。",
+            contract=contract,
+            requirement_evidence=(
+                RequirementEvidence("alpha.md", content_a, root="/workspace"),
+                RequirementEvidence("beta.md", content_b, root="/workspace"),
+            ),
+            source_evidence=(),
+            records=(),
+            tool_results=(),
+            candidate=candidate,
+            claim_units=units,
+        )
+        locator_items = [item for item in handoff.items if item.classification == "requirement_locator"]
+
+        self.assertLessEqual(len(locator_items), 16)
+        self.assertTrue(any(item.path == "alpha.md" for item in locator_items))
+        self.assertTrue(any(item.path == "beta.md" and "9: beta rule 9" in item.summary for item in locator_items))
 
     def test_handoff_preserves_requirement_and_multi_root_evidence_with_late_binding(self) -> None:
         contract = generate_requirement_contract("只读分析 SettlementOwner 的 owner 和 impact。")
@@ -2336,9 +2751,9 @@ class ReadOnlyReviewerTests(unittest.TestCase):
     def test_claim_ids_address_markdown_units_without_reviewer_text_matching(self) -> None:
         candidate = "| Scope | Owner |\n| --- | --- |\n| Frontend | **platformPayment** |\n\n**Conclusion:** platformPayment is the verified owner."
         units = candidate_claim_units(candidate)
-        self.assertEqual([unit.claim_id for unit in units], ["c001", "c002", "c003"])
+        self.assertEqual([unit.claim_id for unit in units], ["c001", "c002"])
         result = parse_reviewer_result(
-            '{"verdict":"revise","confidence":0.9,"findings":[{"claim_id":"c002","claim":"| Frontend | **platformPayment** |","finding_scope":"candidate_defect","issue":"no direct binding","action":"mark as analogous candidate"}],"reason":"unlocated owner"}',
+            '{"verdict":"revise","confidence":0.9,"findings":[{"claim_id":"c001","claim":"| Frontend | **platformPayment** |","finding_scope":"candidate_defect","issue":"no direct binding","action":"mark as analogous candidate"}],"reason":"unlocated owner"}',
             claim_units=units,
         )
         rewritten = "| Scope | Owner |\n| --- | --- |\n| Frontend | analogous candidate |\n\n**Conclusion:** the true owner remains unlocated."
@@ -2360,11 +2775,12 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertEqual(len(units), 80)
         self.assertEqual(ids[0], "c001")
         self.assertTrue(any(45 <= int(claim_id[1:]) <= 60 for claim_id in ids))
+        self.assertNotIn("c100", ids)
+        self.assertIn("c101", ids)
         self.assertIn("c102", ids)
-        self.assertIn("c103", ids)
-        tail_unit = next(unit for unit in units if unit.claim_id == "c102")
+        tail_unit = next(unit for unit in units if unit.claim_id == "c101")
         result = parse_reviewer_result(
-            '{"verdict":"revise","confidence":0.9,"findings":[{"claim_id":"c102","claim":"| Frontend | **platformPayment** is verified owner |","finding_scope":"candidate_defect","issue":"no binding","action":"mark unlocated"},{"claim_id":"c103","claim":"Final conclusion: platformPayment is the true owner.","finding_scope":"candidate_defect","issue":"no binding","action":"mark unlocated"}],"reason":"x"}',
+            '{"verdict":"revise","confidence":0.9,"findings":[{"claim_id":"c101","claim":"| Frontend | **platformPayment** is verified owner |","finding_scope":"candidate_defect","issue":"no binding","action":"mark unlocated"},{"claim_id":"c102","claim":"Final conclusion: platformPayment is the true owner.","finding_scope":"candidate_defect","issue":"no binding","action":"mark unlocated"}],"reason":"x"}',
             claim_units=units,
         )
         self.assertIn("platformPayment", tail_unit.text)

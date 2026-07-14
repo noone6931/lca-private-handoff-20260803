@@ -116,13 +116,14 @@ class DocumentConsistencyTests(unittest.TestCase):
             ),
             "document_conflict_evidence_insufficient",
         )
-        self.assertIsNone(
+        self.assertEqual(
             validate_document_consistency_assessment(
                 one_sided,
                 handoff,
                 candidate="This answer lists visual observations without making a reconciliation claim.",
                 verdict="unverified",
-            )
+            ),
+            "document_conflict_evidence_insufficient",
         )
         two_sided = DocumentConsistencyAssessment("reported_unresolved", ("e001", "e002"), ())
         self.assertIsNone(
@@ -298,7 +299,7 @@ class DocumentConsistencyTests(unittest.TestCase):
         )
 
         locators = [item for item in handoff.items if item.classification == "requirement_locator"]
-        self.assertLessEqual(len(locators), 6)
+        self.assertLessEqual(len(locators), 16)
         self.assertTrue(any(item.path == "requirements.md" and "1: MD line 1" in item.summary for item in locators))
         self.assertTrue(any(item.path == "prototype.html" and "239: HTML target requirement" in item.summary for item in locators))
         self.assertFalse(any(item.path == "missing.html" for item in locators))

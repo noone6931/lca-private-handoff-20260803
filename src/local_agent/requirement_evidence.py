@@ -129,7 +129,7 @@ def parse_document_locators(content: str, path: str) -> tuple[DocumentLocator, .
         prefix = rf"`?{re.escape(ref)}`?\s*"
         patterns.extend(
             (
-                (ref, "line", prefix + r"(?::#L|#L|:)\s*(\d+)"),
+                (ref, "line", prefix + r"(?::#L|#L|:)\s*(\d+(?:\s*[-–]\s*\d+)?)"),
                 (ref, "page", prefix + r"(?:P|page|页)\s*(\d+)"),
                 (ref, "section", prefix + r"第\s*([\d.]+)\s*节"),
                 (ref, "section", prefix + r"(?:#|§|章节|章|节|section|heading)\s*([^\n`，,。;；:：]+)"),
@@ -163,10 +163,23 @@ def document_locator_excerpt(content: str, locator: DocumentLocator, *, context_
     if not content:
         return None
     if locator.kind == "line":
-        try:
-            line_no = int(locator.value)
-        except ValueError:
+        line_range = _parse_line_range(locator.value)
+        if line_range is None:
             return None
+        if line_range[0] != line_range[1]:
+            tagged_range = _tagged_line_range_excerpt(content, line_range[0], line_range[1])
+            if tagged_range:
+                return tagged_range
+            lines = content.splitlines()
+            if not 1 <= line_range[0] <= line_range[1] <= len(lines):
+                return None
+            rendered = [
+                f"{locator.path}:{number}: {lines[number - 1].strip()}"
+                for number in range(line_range[0], line_range[1] + 1)
+                if lines[number - 1].strip()
+            ]
+            return "\n".join(rendered) if rendered else None
+        line_no = line_range[0]
         tagged = _tagged_line_excerpt(content, line_no, context_lines=context_lines)
         if tagged:
             return tagged
@@ -203,6 +216,17 @@ def document_locator_excerpt(content: str, locator: DocumentLocator, *, context_
     return None
 
 
+def _parse_line_range(value: str) -> tuple[int, int] | None:
+    match = re.fullmatch(r"\s*(\d+)(?:\s*[-–]\s*(\d+))?\s*", value or "")
+    if match is None:
+        return None
+    start = int(match.group(1))
+    end = int(match.group(2) or start)
+    if start < 1 or end < start or end - start > 40:
+        return None
+    return start, end
+
+
 def _locator_search_pattern(locator: DocumentLocator) -> re.Pattern[str]:
     value = re.escape(locator.value.strip())
     if locator.kind == "page":
@@ -224,6 +248,21 @@ def _tagged_line_excerpt(content: str, line_no: int, *, context_lines: int) -> s
         f"{number}: {text}"
         for number, text in indexed
         if start <= number <= end and text
+    ]
+    return "\n".join(rendered) if rendered else None
+
+
+def _tagged_line_range_excerpt(content: str, start_line: int, end_line: int) -> str | None:
+    indexed = _tagged_rows(content)
+    if not indexed:
+        return None
+    present = {number for number, _ in indexed}
+    if start_line not in present or end_line not in present:
+        return None
+    rendered = [
+        f"{number}: {text}"
+        for number, text in indexed
+        if start_line <= number <= end_line and text
     ]
     return "\n".join(rendered) if rendered else None
 

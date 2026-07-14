@@ -40,8 +40,7 @@
         {
           "name": "report_read_only_finding",
           "arguments": {
-            "claim_id": "c005",
-            "claim": "这些资料没有矛盾，因为审核状态是后续流程。",
+            "claim_id": "c001",
             "finding_scope": "candidate_defect",
             "issue": "the candidate invents a reconciliation for conflicting artifact observations",
             "action": "state the conflict as unresolved"
@@ -73,8 +72,7 @@
         {
           "name": "report_read_only_finding",
           "arguments": {
-            "claim_id": "c005",
-            "claim": "这些资料没有矛盾，因为审核状态是后续流程。",
+            "claim_id": "c001",
             "finding_scope": "candidate_defect",
             "issue": "invented reconciliation remains",
             "action": "do not release the candidate"

@@ -36,8 +36,7 @@
         {
           "name": "report_read_only_finding",
           "arguments": {
-            "claim_id": "c003",
-            "claim": "推断：PayServiceImpl 是真实 owner，DDL 和 API 也由它负责。",
+            "claim_id": "c001",
             "finding_scope": "candidate_defect",
             "issue": "no direct behavior binding",
             "action": "keep the owner unlocated"
