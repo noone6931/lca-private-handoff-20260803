@@ -25,6 +25,7 @@ from local_agent.read_only_reviewer import parse_reviewer_result
 from local_agent.read_only_reviewer import ReviewerValidationError
 from local_agent.read_only_reviewer import reviewer_repair_messages
 from local_agent.read_only_reviewer import reviewer_messages
+from local_agent.read_only_reviewer import reviewer_transport_rewrite_message
 from local_agent.read_only_reviewer import reviewer_rewrite_message
 from local_agent.read_only_reviewer import reviewer_finding_tool_schema
 from local_agent.read_only_reviewer import reviewer_output_tool_schema
@@ -3595,6 +3596,14 @@ class ReadOnlyReviewerTests(unittest.TestCase):
                 for item in handoff.items
             )
         )
+
+        rewrite_message = reviewer_transport_rewrite_message(
+            handoff=handoff,
+            omitted_claim_ids=(source_claim_id,),
+        )
+        self.assertIn(source_path, rewrite_message)
+        self.assertIn("copy one verbatim", rewrite_message)
+        self.assertIn("do not shorten it to a class name or basename", rewrite_message)
 
     def test_path_bullet_binds_following_line_bullets_to_repository_source(self) -> None:
         contract = generate_requirement_contract("读取源码并输出证据化技术设计。")

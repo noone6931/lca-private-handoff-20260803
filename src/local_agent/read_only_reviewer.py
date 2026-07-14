@@ -438,6 +438,22 @@ def reviewer_transport_rewrite_message(
     """
 
     omitted_count = len(tuple(dict.fromkeys(omitted_claim_ids)))
+    source_paths = tuple(
+        dict.fromkeys(
+            str(item.identity_path or item.path)
+            for item in handoff.items
+            if item.classification in {"observed_candidate", "direct_binding", "source_locator"}
+            and str(item.identity_path or item.path).strip()
+            and str(item.identity_path or item.path) != "(none)"
+        )
+    )
+    source_path_context = (
+        "\n- Exact already-observed source paths allowed for current-source citations (copy one verbatim; do not "
+        "shorten it to a class name or basename):\n"
+        + "\n".join(f"  - `{path}`" for path in source_paths)
+        if source_paths
+        else ""
+    )
     return (
         "[Read-only evidence review: bounded transport recovery]\n"
         "The previous answer was not fully transportable to the isolated evidence reviewer: "
@@ -447,6 +463,7 @@ def reviewer_transport_rewrite_message(
         "- Keep only the user's high-value requested conclusions; merge repeated table rows and duplicate facts.\n"
         "- Every current repository/source fact must cite an already-read source with a precise path-bound line or narrow line range. "
         "Remove or explicitly downgrade a source claim when the existing evidence cannot support such a locator.\n"
+        f"{source_path_context}\n"
         "- Use a small number of precise, already-observed locators per conclusion; prefer narrow shared ranges over one citation per row.\n"
         "- Do not add new facts, paths, artifacts, owners, lifecycle explanations, source priority, or inferred workflow state.\n"
         "- Preserve direct observations exactly at their evidence boundary. Visual observations show what is visible; they do not prove author intent, lifecycle, precedence, or role.\n"
