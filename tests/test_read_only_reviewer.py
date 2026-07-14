@@ -19,7 +19,10 @@ from local_agent.read_only_reviewer import parse_reviewer_result
 from local_agent.read_only_reviewer import ReviewerValidationError
 from local_agent.read_only_reviewer import reviewer_repair_messages
 from local_agent.read_only_reviewer import reviewer_messages
+from local_agent.read_only_reviewer import reviewer_finding_tool_schema
 from local_agent.read_only_reviewer import reviewer_output_tool_schema
+from local_agent.read_only_reviewer import reviewer_output_tool_schemas
+from local_agent.read_only_reviewer import REVIEWER_FINDING_TOOL_NAME
 from local_agent.read_only_reviewer import REVIEWER_OUTPUT_TOOL_NAME
 from local_agent.read_only_reviewer import should_review_read_only_candidate
 from local_agent.steering.final_answer import SourceEvidence
@@ -31,6 +34,36 @@ from local_agent.tool_observation import ToolResultSummary
 
 
 def _review_submit(payload: dict) -> object:
+    findings = payload.get("findings") if isinstance(payload.get("findings"), list) else []
+    final_payload = {key: value for key, value in payload.items() if key != "findings"}
+    tool_calls = [
+        {
+            "id": f"review-finding-{index}",
+            "type": "function",
+            "function": {"name": REVIEWER_FINDING_TOOL_NAME, "arguments": json.dumps(finding)},
+        }
+        for index, finding in enumerate(findings, start=1)
+    ]
+    tool_calls.append(
+        {
+            "id": "review-submit",
+            "type": "function",
+            "function": {"name": REVIEWER_OUTPUT_TOOL_NAME, "arguments": json.dumps(final_payload)},
+        }
+    )
+    return type(
+        "Response",
+        (),
+        {
+            "message": {
+                "content": None,
+                "tool_calls": tool_calls,
+            }
+        },
+    )()
+
+
+def _raw_review_output_tool(arguments: str, *, name: str = REVIEWER_OUTPUT_TOOL_NAME, call_id: str = "review-submit") -> object:
     return type(
         "Response",
         (),
@@ -39,9 +72,9 @@ def _review_submit(payload: dict) -> object:
                 "content": None,
                 "tool_calls": [
                     {
-                        "id": "review-submit",
+                        "id": call_id,
                         "type": "function",
-                        "function": {"name": REVIEWER_OUTPUT_TOOL_NAME, "arguments": json.dumps(payload)},
+                        "function": {"name": name, "arguments": arguments},
                     }
                 ],
             }
@@ -190,11 +223,11 @@ class _ReviewerRepairClient:
             self._review_calls += 1
             claim = _first_candidate_claim(messages)
             if self._review_calls == 1:
-                return type("Response", (), {"message": {"content": json.dumps({
+                return _raw_review_output_tool(json.dumps({
                     "verdict": "pass", "confidence": 0.9,
                     "findings": [{"claim_id": "c001", "claim": claim, "finding_scope": "candidate_defect", "issue": "unsupported", "action": "downgrade"}],
                     "reason": "contradictory shape",
-                })}})()
+                }))
             if self._review_calls == 2:
                 return _review_submit({
                     "verdict": "revise", "confidence": 0.9,
@@ -217,7 +250,7 @@ class _ReviewerRepairExhaustedClient:
     def chat(self, messages, tools, *, timeout=None):
         type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
         if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages):
-            return type("Response", (), {"message": {"content": '{"verdict":"revise","confidence":0.9,"findings":"wrong","reason":"x"}'}})()
+            return _raw_review_output_tool('{"verdict":"revise","confidence":0.9,"findings":"wrong","reason":"x"}')
         return type("Response", (), {"message": {"content": "PayServiceImpl is the verified owner."}})()
 
 
@@ -271,7 +304,7 @@ class _ReviewerPassClient:
     def chat(self, messages, tools, *, timeout=None):
         type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
         if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages):
-            return type("Response", (), {"message": {"content": '{"verdict":"pass","confidence":0.92,"findings":[],"reason":"explicit binding is present"}'}})()
+            return _review_submit({"verdict": "pass", "confidence": 0.92, "findings": [], "reason": "explicit binding is present"})
         self.primary_calls += 1
         if self.primary_calls == 1:
             return type("Response", (), {"message": {"content": None, "tool_calls": [{"id": "read", "type": "function", "function": {"name": "read_file", "arguments": '{"path":"src/SettlementOwner.java"}'}}]}})()
@@ -288,7 +321,7 @@ class _ReviewerProtocolClient(_InvalidReviewerClient):
 class _ReviewerMultipleOutputClient(_InvalidReviewerClient):
     def chat(self, messages, tools, *, timeout=None):
         if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages):
-            payload = json.dumps({"verdict": "pass", "confidence": 0.9, "findings": [], "reason": "x"})
+            payload = json.dumps({"verdict": "pass", "confidence": 0.9, "reason": "x"})
             return type(
                 "Response",
                 (),
@@ -336,11 +369,11 @@ class _ReviewerTimeoutClient(_InvalidReviewerClient):
 class _ParaphraseReviewerClient(_InvalidReviewerClient):
     def chat(self, messages, tools, *, timeout=None):
         if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages):
-            return type(
-                "Response",
-                (),
-                {"message": {"content": '{"verdict":"revise","confidence":0.9,"findings":[{"claim_id":"c999","claim":"PayServiceImpl is the verified owner","finding_scope":"candidate_defect","issue":"unsupported","action":"qualify"}],"reason":"missing binding"}'}},
-            )()
+            return _raw_review_output_tool(
+                '{"claim_id":"c999","claim":"PayServiceImpl is the verified owner","finding_scope":"candidate_defect","issue":"unsupported","action":"qualify"}',
+                name=REVIEWER_FINDING_TOOL_NAME,
+                call_id="bad-finding",
+            )
         return type("Response", (), {"message": {"content": "已证实真实 owner 是 PayServiceImpl。"}})()
 
 
@@ -367,7 +400,7 @@ class _ReviewerRepairTimeoutClient(_InvalidReviewerClient):
         if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages):
             self._review_calls += 1
             if self._review_calls == 1:
-                return type("Response", (), {"message": {"content": "not-json"}})()
+                return _raw_review_output_tool('{"verdict":"revise","confidence":0.9,"findings":"wrong","reason":"x"}')
             raise LlmTimeoutError("repair timeout")
         return type("Response", (), {"message": {"content": "PayServiceImpl is the verified owner."}})()
 
@@ -384,7 +417,7 @@ class _ReviewerRepairProtocolClient(_InvalidReviewerClient):
         if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages):
             self._review_calls += 1
             if self._review_calls == 1:
-                return type("Response", (), {"message": {"content": "not-json"}})()
+                return _raw_review_output_tool('{"verdict":"revise","confidence":0.9,"findings":"wrong","reason":"x"}')
             return type(
                 "Response",
                 (),
@@ -405,7 +438,7 @@ class _ReviewerRepairXmlClient(_InvalidReviewerClient):
         if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages):
             self._review_calls += 1
             if self._review_calls == 1:
-                return type("Response", (), {"message": {"content": "not-json"}})()
+                return _raw_review_output_tool('{"verdict":"revise","confidence":0.9,"findings":"wrong","reason":"x"}')
             return type("Response", (), {"message": {"content": "<tool_call><function=read_file><parameter=path>secret</parameter></function></tool_call>"}})()
         return type("Response", (), {"message": {"content": "PayServiceImpl is the verified owner."}})()
 
@@ -832,7 +865,10 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         schema = reviewer_output_tool_schema(units)
         parameters = schema["function"]["parameters"]
         self.assertFalse(parameters["additionalProperties"])
-        self.assertEqual(parameters["properties"]["findings"]["maxItems"], 8)
+        self.assertNotIn("findings", parameters["properties"])
+        finding_schema = reviewer_finding_tool_schema(units)
+        self.assertEqual(finding_schema["function"]["name"], REVIEWER_FINDING_TOOL_NAME)
+        self.assertEqual(finding_schema["function"]["parameters"]["additionalProperties"], False)
 
         invalid_payloads = (
             {
@@ -860,21 +896,23 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         )
         messages = reviewer_messages(handoff, candidate_claim_units("candidate"))
         prompt = messages[0]["content"]
-        self.assertIn("shorter than 9000", prompt)
+        self.assertIn("under 9000", prompt)
         self.assertIn("at most 8", prompt)
-        self.assertIn("`pass` verdict requires exactly 0", prompt)
+        self.assertIn("`pass` verdict requires 0", prompt)
         self.assertIn("finding_scope to `candidate_defect`", prompt)
         self.assertIn("copy that exact candidate_claims text", prompt)
         self.assertIn("action must change the candidate answer", prompt)
         self.assertIn("must not ask to modify the requirements, images, prototypes", prompt)
-        schema = reviewer_output_tool_schema(candidate_claim_units("candidate"))
-        action_description = schema["function"]["parameters"]["properties"]["findings"]["items"]["properties"]["action"]["description"]
+        self.assertIn("report_read_only_finding once per finding", prompt)
+        self.assertIn("submit_read_only_review with verdict, confidence, and reason only", prompt)
+        schema = reviewer_finding_tool_schema(candidate_claim_units("candidate"))
+        action_description = schema["function"]["parameters"]["properties"]["action"]["description"]
         self.assertIn("candidate-answer change", action_description)
         self.assertIn("Do not ask to modify source documents", action_description)
         repair = reviewer_repair_messages(handoff, candidate_claim_units("candidate"), {"error_code": "findings_too_many"})
         self.assertIn("at most 8", repair[0]["content"])
         self.assertIn("no more than 8 highest-risk findings", repair[-1]["content"])
-        self.assertIn("original output tool", repair[-1]["content"])
+        self.assertIn("original output tools", repair[-1]["content"])
 
     def test_document_consistency_contract_passes_an_explicit_unresolved_conflict(self) -> None:
         contract = generate_requirement_contract(
@@ -895,7 +933,7 @@ class ReadOnlyReviewerTests(unittest.TestCase):
                 "可由资料维护方确认以图或文档为准。"
             ),
         )[0]["content"]
-        self.assertIn("submit `pass` with no findings", prompt)
+        self.assertIn("submit `pass` with no reported findings", prompt)
         self.assertIn("source materials disagreeing by itself is not a candidate defect", prompt)
         self.assertIn("unsupported reconciliation", prompt)
         self.assertIn("supporting_evidence_ids to []", prompt)
@@ -1243,9 +1281,17 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertIn("仍未定位", answer)
         review_calls = [call for call in _ReviewerFlowClient.calls if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(m.get("content")) for m in call["messages"])]
         self.assertEqual(len(review_calls), 2)
-        self.assertTrue(all([tool["function"]["name"] for tool in call["tools"]] == [REVIEWER_OUTPUT_TOOL_NAME] for call in review_calls))
+        self.assertTrue(
+            all(
+                [tool["function"]["name"] for tool in call["tools"]]
+                == [REVIEWER_FINDING_TOOL_NAME, REVIEWER_OUTPUT_TOOL_NAME]
+                for call in review_calls
+            )
+        )
         self.assertEqual(runtime._last_run_summary["read_only_reviewer"]["rewrites"], 1)
-        self.assertEqual(runtime._last_run_summary["read_only_reviewer"]["typed_submits"], 2)
+        self.assertEqual(runtime._last_run_summary["read_only_reviewer"]["typed_submits"], 3)
+        self.assertEqual(runtime._last_run_summary["read_only_reviewer"]["finding_submits"], 1)
+        self.assertEqual(runtime._last_run_summary["read_only_reviewer"]["final_submits"], 2)
         self.assertNotIn("LCA_READ_ONLY_EVIDENCE_REVIEW", "\n".join(str(m) for m in runtime._messages))
 
     def test_invented_design_is_rewritten_as_proposal(self) -> None:
@@ -1268,7 +1314,7 @@ class ReadOnlyReviewerTests(unittest.TestCase):
                 answer = runtime.run("只读分析当前服务 owner 和影响范围，不要修改。")
         self.assertIn("未完成/未验证", answer)
         self.assertEqual(runtime._last_run_summary["termination_reason"], "read_only_reviewer_unverified")
-        self.assertEqual(runtime._last_run_summary["read_only_reviewer"]["errors"], {"invalid_output": 1})
+        self.assertEqual(runtime._last_run_summary["read_only_reviewer"]["errors"], {"protocol_error": 1})
 
     def test_schema_repair_turns_pass_with_findings_into_one_valid_revise(self) -> None:
         _ReviewerRepairClient.calls = []
@@ -1288,7 +1334,13 @@ class ReadOnlyReviewerTests(unittest.TestCase):
             if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in call["messages"])
         ]
         self.assertEqual(len(review_calls), 3)
-        self.assertTrue(all([tool["function"]["name"] for tool in call["tools"]] == [REVIEWER_OUTPUT_TOOL_NAME] for call in review_calls))
+        self.assertTrue(
+            all(
+                [tool["function"]["name"] for tool in call["tools"]]
+                == [REVIEWER_FINDING_TOOL_NAME, REVIEWER_OUTPUT_TOOL_NAME]
+                for call in review_calls
+            )
+        )
         self.assertIn("LCA_READ_ONLY_EVIDENCE_REVIEW_SCHEMA_REPAIR", str(review_calls[1]["messages"][-1]["content"]))
 
     def test_schema_repair_exhaustion_stays_unverified_without_raw_payload(self) -> None:
@@ -1465,7 +1517,9 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         summary = runtime._last_run_summary["read_only_reviewer"]
         self.assertEqual(summary["triggers"], 1)
         self.assertEqual(summary["rewrites"], 1)
-        self.assertEqual(summary["typed_submits"], 2)
+        self.assertEqual(summary["typed_submits"], 4)
+        self.assertEqual(summary["finding_submits"], 2)
+        self.assertEqual(summary["final_submits"], 2)
         self.assertEqual(summary["errors"], {"second_review_nonpass": 1})
         review_calls = [
             call

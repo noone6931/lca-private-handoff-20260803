@@ -96,7 +96,23 @@ class LlmClientTests(unittest.TestCase):
 
         def fake_urlopen(request, timeout):
             captured_payload.update(json.loads(request.data.decode("utf-8")))
-            body = json.dumps({"choices": [{"message": {"content": "A visible example."}}]}).encode("utf-8")
+            body = json.dumps(
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": json.dumps(
+                                    {
+                                        "observations": ["A visible example."],
+                                        "uncertainties": [],
+                                        "inferences": [],
+                                    }
+                                )
+                            }
+                        }
+                    ]
+                }
+            ).encode("utf-8")
             return _FakeResponse(body)
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -116,15 +132,17 @@ class LlmClientTests(unittest.TestCase):
                     question="Describe this image.",
                 )
 
-        self.assertEqual(observation, "A visible example.")
+        self.assertIn('"observations": ["A visible example."]', observation)
         self.assertEqual(captured_payload["model"], "qwen-vl-max")
         self.assertNotIn("tools", captured_payload)
         self.assertEqual(captured_payload["messages"][0]["role"], "system")
-        self.assertIn("Separate direct observations from inferences", captured_payload["messages"][0]["content"])
+        self.assertIn("Return only a compact JSON object", captured_payload["messages"][0]["content"])
+        self.assertIn("not permission to infer business rules", captured_payload["messages"][0]["content"])
         self.assertNotIn("Describe this image.", captured_payload["messages"][0]["content"])
         self.assertEqual(captured_payload["messages"][1]["role"], "user")
         content = captured_payload["messages"][1]["content"]
-        self.assertEqual(content[0]["text"], "Describe this image.")
+        self.assertIn("Focus question: Describe this image.", content[0]["text"])
+        self.assertIn("Return only the JSON object", content[0]["text"])
         self.assertEqual(content[1]["image_url"]["url"], "data:image/png;base64,cGl4ZWxz")
 
     def test_inspect_image_requires_a_vision_capability(self) -> None:

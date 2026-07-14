@@ -7,26 +7,90 @@
     "src/Owner.java": "class CandidateOwner { void handle() {} }\n"
   },
   "scripted_responses": [
-    {"tool_calls": [{"name": "search_code", "arguments": {"path": "src", "pattern": "CandidateOwner"}}]},
-    {"tool_calls": [{"name": "search_code", "arguments": {"path": "src", "pattern": "detour"}}]},
-    {"tool_calls": [{"name": "read_file", "arguments": {"path": "src/Owner.java"}}]},
-    {"content": "源码事实：src/Owner.java 已直接读取。待确认：真实 owner 仍需要调用链或路由绑定证据，不把同名类当作已证实 owner。"},
-    {"tool_calls": [{"name": "submit_read_only_review", "arguments": {"verdict": "pass", "confidence": 0.95, "findings": [], "reason": "detour was suppressed and the direct read evidence boundary is honest"}}]}
+    {
+      "tool_calls": [
+        {
+          "name": "search_code",
+          "arguments": {
+            "path": "src",
+            "pattern": "CandidateOwner"
+          }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "search_code",
+          "arguments": {
+            "path": "src",
+            "pattern": "detour"
+          }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "src/Owner.java"
+          }
+        }
+      ]
+    },
+    {
+      "content": "源码事实：src/Owner.java 已直接读取。待确认：真实 owner 仍需要调用链或路由绑定证据，不把同名类当作已证实 owner。"
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "submit_read_only_review",
+          "arguments": {
+            "verdict": "pass",
+            "confidence": 0.95,
+            "reason": "detour was suppressed and the direct read evidence boundary is honest"
+          }
+        }
+      ]
+    }
   ],
   "acceptance": {
-    "required_tools": ["search_code", "read_file"],
-    "forbidden_tools": ["apply_patch", "write_file", "shell", "run_tests", "glob_files"],
+    "required_tools": [
+      "search_code",
+      "read_file"
+    ],
+    "forbidden_tools": [
+      "apply_patch",
+      "write_file",
+      "shell",
+      "run_tests",
+      "glob_files"
+    ],
     "changed_files": [],
-    "answer_all_of": ["src/Owner.java", "待确认", "调用链"],
-    "answer_forbidden_regex": ["(?:是|为)已证实 owner", "detour"],
+    "answer_all_of": [
+      "src/Owner.java",
+      "待确认",
+      "调用链"
+    ],
+    "answer_forbidden_regex": [
+      "(?:是|为)已证实 owner",
+      "detour"
+    ],
     "termination_reason": "final",
     "run_summary": {
       "tool_calls": 2,
       "tool_errors": 0,
       "suppressed_tool_executions": 1
     },
-    "tool_choice_exact": {"forces": 1, "exhausted": 0},
-    "read_only_reviewer": {"triggers": 1, "typed_submits": 1},
+    "tool_choice_exact": {
+      "forces": 1,
+      "exhausted": 0
+    },
+    "read_only_reviewer": {
+      "triggers": 1,
+      "typed_submits": 1
+    },
     "max_tool_errors": 0
   },
   "residual_risk": "The fixture proves bounded exact-tool escalation after a schema detour; root-fair multi-root batching is covered by unit tests, not this single-root benchmark."

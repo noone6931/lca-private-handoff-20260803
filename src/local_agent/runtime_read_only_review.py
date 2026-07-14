@@ -13,13 +13,15 @@ from .provider_protocol import classify_provider_content_artifact
 from .read_only_reviewer import candidate_claim_units
 from .read_only_reviewer import MAX_INITIAL_REVIEWER_PROVIDER_CALLS
 from .read_only_reviewer import MAX_REWRITE_REVIEWER_PROVIDER_CALLS
+from .read_only_reviewer import REVIEWER_FINDING_TOOL_NAME
 from .read_only_reviewer import REVIEWER_OUTPUT_TOOL_NAME
+from .read_only_reviewer import ReviewerFinding
 from .read_only_reviewer import ReviewerPhaseOutcome
 from .read_only_reviewer import ReviewerValidationError
-from .read_only_reviewer import parse_reviewer_payload
-from .read_only_reviewer import parse_reviewer_result
+from .read_only_reviewer import parse_reviewer_final_payload
+from .read_only_reviewer import parse_reviewer_finding_payload
 from .read_only_reviewer import reviewer_messages
-from .read_only_reviewer import reviewer_output_tool_schema
+from .read_only_reviewer import reviewer_output_tool_schemas
 from .read_only_reviewer import reviewer_repair_messages
 from .read_only_reviewer import reviewer_rewrite_message
 from .read_only_reviewer import should_review_read_only_candidate
@@ -114,7 +116,7 @@ class ReadOnlyReviewPhase:
         )
         messages = reviewer_messages(handoff, claim_units)
         document_consistency = contract.evidence_domain == "requirement_documents" and contract.read_only_review_profile == "document_consistency"
-        output_schema = reviewer_output_tool_schema(
+        output_schemas = reviewer_output_tool_schemas(
             claim_units,
             document_consistency=document_consistency,
             evidence_ids=handoff.evidence_ids,
@@ -123,11 +125,12 @@ class ReadOnlyReviewPhase:
         saw_protocol_failure = False
         repaired_this_round = False
         required_candidate_claim_ids: tuple[str, ...] = ()
+        collected_findings: tuple[ReviewerFinding, ...] = ()
         for attempt in range(1, max_attempts + 1):
             state.provider_attempts = attempt
             runtime._run.collector.record_read_only_review_attempt()
             try:
-                response = call_chat_with_timeout(runtime._client, messages, [output_schema], timeout=timeout)
+                response = call_chat_with_timeout(runtime._client, messages, output_schemas, timeout=timeout)
             except LlmError as exc:
                 return self._unverified(
                     "timeout" if isinstance(exc, LlmTimeoutError) else "provider_error",
@@ -137,7 +140,7 @@ class ReadOnlyReviewPhase:
             if not isinstance(message, dict):
                 return self._unverified("protocol_error", "missing_message")
             try:
-                result, typed_submit = self._parse_reviewer_response(
+                result, submit_events = self._parse_reviewer_response(
                     response,
                     message,
                     claim_units,
@@ -145,6 +148,7 @@ class ReadOnlyReviewPhase:
                     handoff=handoff,
                     candidate=candidate,
                     required_candidate_claim_ids=required_candidate_claim_ids,
+                    collected_findings=collected_findings,
                 )
             except ReviewerValidationError as exc:
                 if exc.pending_candidate_claim_ids:
@@ -182,9 +186,37 @@ class ReadOnlyReviewPhase:
                 messages = reviewer_repair_messages(handoff, claim_units, diagnostic)
                 timeout = self._review_timeout()
                 continue
-            if typed_submit:
-                state.typed_submits += 1
-                runtime._run.collector.record_read_only_review_typed_submit()
+            for event in submit_events:
+                if event["kind"] == "finding":
+                    state.typed_submits += 1
+                    runtime._run.collector.record_read_only_review_finding_submit()
+                    runtime._session.append(
+                        "read_only_reviewer",
+                        {
+                            "event": "finding_submit",
+                            "attempt": attempt,
+                            "claim_id": event["finding"].claim_id,
+                        },
+                    )
+                elif event["kind"] == "final":
+                    state.typed_submits += 1
+                    runtime._run.collector.record_read_only_review_final_submit()
+                    runtime._session.append(
+                        "read_only_reviewer",
+                        {"event": "final_submit", "attempt": attempt},
+                    )
+            if result is None:
+                collected_findings = (
+                    *collected_findings,
+                    *(event["finding"] for event in submit_events if event["kind"] == "finding"),
+                )
+                messages.append(self._assistant_tool_message(message))
+                messages.extend(self._reviewer_tool_result_messages(message, submit_events))
+                if attempt >= max_attempts:
+                    state.repair_exhausted = True
+                    runtime._run.collector.record_read_only_review_repair_exhausted()
+                    return self._unverified("invalid_output", "missing_final_submit")
+                continue
             break
         if result is None:
             return self._unverified("invalid_output", "schema_repair_exhausted")
@@ -238,48 +270,112 @@ class ReadOnlyReviewPhase:
         handoff: Any,
         candidate: str,
         required_candidate_claim_ids: tuple[str, ...] = (),
-    ) -> tuple[Any, bool]:
+        collected_findings: tuple[ReviewerFinding, ...] = (),
+    ) -> tuple[Any | None, list[dict[str, Any]]]:
         tool_calls = message.get("tool_calls")
         if isinstance(tool_calls, list) and tool_calls:
-            if len(tool_calls) != 1:
-                raise ReviewerValidationError("output_tool_multiple_calls", {"tool_call_count": len(tool_calls)})
-            call = tool_calls[0]
-            function = call.get("function") if isinstance(call, dict) else None
-            name = function.get("name") if isinstance(function, dict) else None
-            if name != REVIEWER_OUTPUT_TOOL_NAME:
+            events: list[dict[str, Any]] = []
+            local_findings: list[ReviewerFinding] = []
+            seen_claim_ids = {finding.claim_id for finding in collected_findings}
+            result = None
+            for call in tool_calls:
+                function = call.get("function") if isinstance(call, dict) else None
+                name = function.get("name") if isinstance(function, dict) else None
+                arguments = function.get("arguments") if isinstance(function, dict) else None
+                if not isinstance(arguments, str):
+                    raise ReviewerValidationError("output_tool_arguments_invalid")
+                try:
+                    payload = json.loads(arguments)
+                except json.JSONDecodeError:
+                    raise ReviewerValidationError("output_tool_arguments_invalid") from None
+                if name == REVIEWER_FINDING_TOOL_NAME:
+                    finding = self._parse_incremental_finding(payload, claim_units, local_findings)
+                    if finding.claim_id in seen_claim_ids:
+                        raise ReviewerValidationError(
+                            "claim_id_duplicate",
+                            {"duplicate_claim_id_count": 1},
+                            pending_candidate_claim_ids=tuple(f.claim_id for f in (*collected_findings, *local_findings)),
+                        )
+                    seen_claim_ids.add(finding.claim_id)
+                    local_findings.append(finding)
+                    events.append({"kind": "finding", "tool_call_id": self._tool_call_id(call), "finding": finding})
+                    continue
+                if name == REVIEWER_OUTPUT_TOOL_NAME:
+                    if result is not None:
+                        raise ReviewerValidationError("output_tool_multiple_final_calls", {"tool_call_count": len(tool_calls)})
+                    result = parse_reviewer_final_payload(
+                        payload,
+                        findings=(*collected_findings, *local_findings),
+                        claim_units=claim_units,
+                        document_consistency=document_consistency,
+                        evidence_ids=handoff.evidence_ids,
+                        required_candidate_claim_ids=required_candidate_claim_ids,
+                    )
+                    self._validate_document_consistency(result, handoff, candidate)
+                    events.append({"kind": "final", "tool_call_id": self._tool_call_id(call)})
+                    continue
                 raise ReviewerValidationError("output_tool_name_invalid")
-            arguments = function.get("arguments") if isinstance(function, dict) else None
-            if not isinstance(arguments, str):
-                raise ReviewerValidationError("output_tool_arguments_invalid")
-            try:
-                payload = json.loads(arguments)
-            except json.JSONDecodeError:
-                raise ReviewerValidationError("output_tool_arguments_invalid") from None
-            result = parse_reviewer_payload(
-                payload,
-                claim_units=claim_units,
-                document_consistency=document_consistency,
-                evidence_ids=handoff.evidence_ids,
-                required_candidate_claim_ids=required_candidate_claim_ids,
-            )
-            self._validate_document_consistency(result, handoff, candidate)
-            return result, True
+            if result is None:
+                return None, events
+            return result, events
         artifact = getattr(response, "protocol_artifact", None)
         if artifact is None:
             artifact = classify_provider_content_artifact(self._runtime._config.provider, message.get("content"))
         if artifact is not None:
             raise ReviewerValidationError("provider_markup_artifact", {"artifact_kind": artifact.kind})
-        # Compatibility path for providers that cannot emit a structured output
-        # call. It remains strict and is deliberately not the preferred schema.
-        result = parse_reviewer_result(
-            message.get("content"),
-            claim_units=claim_units,
-            document_consistency=document_consistency,
-            evidence_ids=handoff.evidence_ids,
-            required_candidate_claim_ids=required_candidate_claim_ids,
-        )
-        self._validate_document_consistency(result, handoff, candidate)
-        return result, False
+        raise ReviewerValidationError("output_tool_missing")
+
+    def _parse_incremental_finding(
+        self,
+        payload: Any,
+        claim_units: tuple[Any, ...],
+        local_findings: list[ReviewerFinding],
+    ) -> ReviewerFinding:
+        try:
+            finding = parse_reviewer_finding_payload(payload, claim_units=claim_units)
+        except ReviewerValidationError as exc:
+            if local_findings:
+                pending = tuple(finding.claim_id for finding in local_findings)
+                raise ReviewerValidationError(
+                    exc.code,
+                    exc.diagnostics,
+                    pending_candidate_claim_ids=tuple(dict.fromkeys((*pending, *exc.pending_candidate_claim_ids))),
+                ) from None
+            raise
+        return finding
+
+    def _assistant_tool_message(self, message: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "role": "assistant",
+            "content": message.get("content"),
+            "tool_calls": message.get("tool_calls") or [],
+        }
+
+    def _reviewer_tool_result_messages(
+        self,
+        message: dict[str, Any],
+        events: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        event_by_id = {str(event["tool_call_id"]): event for event in events}
+        results: list[dict[str, Any]] = []
+        for call in message.get("tool_calls") or []:
+            call_id = self._tool_call_id(call)
+            event = event_by_id.get(call_id)
+            if event is None:
+                continue
+            content = (
+                "finding recorded; continue reporting findings or call submit_read_only_review"
+                if event["kind"] == "finding"
+                else "review submitted"
+            )
+            results.append({"role": "tool", "tool_call_id": call_id, "content": content})
+        return results
+
+    @staticmethod
+    def _tool_call_id(call: Any) -> str:
+        if isinstance(call, dict) and call.get("id"):
+            return str(call["id"])
+        return "review-output"
 
     def _validate_document_consistency(self, result: Any, handoff: Any, candidate: str) -> None:
         if result.document_consistency is None:

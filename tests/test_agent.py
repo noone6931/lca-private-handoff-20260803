@@ -60,6 +60,28 @@ def _tool_call_message(call_id: str) -> dict[str, object]:
     }
 
 
+def _review_pass_response(reason: str = "scoped evidence is honest") -> object:
+    return type(
+        "Response",
+        (),
+        {
+            "message": {
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "review-submit",
+                        "type": "function",
+                        "function": {
+                            "name": "submit_read_only_review",
+                            "arguments": json.dumps({"verdict": "pass", "confidence": 0.9, "reason": reason}),
+                        },
+                    }
+                ],
+            }
+        },
+    )()
+
+
 def _tool_result_message(call_id: str, content: str) -> dict[str, object]:
     return {
         "role": "tool",
@@ -209,7 +231,7 @@ class _OwnerExploreBatchClient:
     def chat(self, messages, tools, *, timeout=None):
         type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
         if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages):
-            return type("Response", (), {"message": {"content": '{"verdict":"pass","confidence":0.9,"findings":[],"reason":"scoped evidence is honest"}'}})()
+            return _review_pass_response("scoped evidence is honest")
         self._primary_calls += 1
         if self._primary_calls == 1:
             tool_calls = [
@@ -238,27 +260,7 @@ class _OwnerExploreDirectReadClient:
     def chat(self, messages, tools, *, timeout=None):
         type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
         if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages):
-            return type(
-                "Response",
-                (),
-                {
-                    "message": {
-                        "content": None,
-                        "tool_calls": [
-                            {
-                                "id": "review-submit",
-                                "type": "function",
-                                "function": {
-                                    "name": "submit_read_only_review",
-                                    "arguments": json.dumps(
-                                        {"verdict": "pass", "confidence": 0.9, "findings": [], "reason": "scoped evidence"}
-                                    ),
-                                },
-                            }
-                        ],
-                    }
-                },
-            )()
+            return _review_pass_response("scoped evidence")
         self._primary_calls += 1
         if self._primary_calls == 1:
             calls = [
@@ -308,27 +310,7 @@ class _OwnerExploreRootFairBatchClient:
     def chat(self, messages, tools, *, timeout=None):
         type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
         if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages):
-            return type(
-                "Response",
-                (),
-                {
-                    "message": {
-                        "content": None,
-                        "tool_calls": [
-                            {
-                                "id": "review-submit",
-                                "type": "function",
-                                "function": {
-                                    "name": "submit_read_only_review",
-                                    "arguments": json.dumps(
-                                        {"verdict": "pass", "confidence": 0.9, "findings": [], "reason": "bounded evidence"}
-                                    ),
-                                },
-                            }
-                        ],
-                    }
-                },
-            )()
+            return _review_pass_response("bounded evidence")
         self._primary_calls += 1
         additional = self.config.allowed_dirs[0]
         if self._primary_calls == 1:
@@ -412,27 +394,7 @@ class _ExactToolChoicePairingClient:
     def chat(self, messages, tools, *, timeout=None, tool_choice=None):
         type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout, "tool_choice": tool_choice})
         if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages):
-            return type(
-                "Response",
-                (),
-                {
-                    "message": {
-                        "content": None,
-                        "tool_calls": [
-                            {
-                                "id": "review-submit",
-                                "type": "function",
-                                "function": {
-                                    "name": "submit_read_only_review",
-                                    "arguments": json.dumps(
-                                        {"verdict": "pass", "confidence": 0.9, "findings": [], "reason": "bounded evidence"}
-                                    ),
-                                },
-                            }
-                        ],
-                    }
-                },
-            )()
+            return _review_pass_response("bounded evidence")
         self._primary_calls += 1
         if self._primary_calls == 1:
             return type(
@@ -507,27 +469,7 @@ class _ExactToolChoiceNoToolClient:
     def chat(self, messages, tools, *, timeout=None, tool_choice=None):
         type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout, "tool_choice": tool_choice})
         if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages):
-            return type(
-                "Response",
-                (),
-                {
-                    "message": {
-                        "content": None,
-                        "tool_calls": [
-                            {
-                                "id": "review-submit",
-                                "type": "function",
-                                "function": {
-                                    "name": "submit_read_only_review",
-                                    "arguments": json.dumps(
-                                        {"verdict": "pass", "confidence": 0.9, "findings": [], "reason": "bounded evidence"}
-                                    ),
-                                },
-                            }
-                        ],
-                    }
-                },
-            )()
+            return _review_pass_response("bounded evidence")
         self._primary_calls += 1
         if self._primary_calls == 1:
             return type(

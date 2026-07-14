@@ -9,25 +9,130 @@
     "example.png": "not-a-real-image"
   },
   "scripted_responses": [
-    {"tool_calls": [
-      {"name": "read_file", "arguments": {"path": "requirements.md"}},
-      {"name": "read_file", "arguments": {"path": "prototype.html"}},
-      {"name": "inspect_image", "arguments": {"path": "example.png", "question": "Describe visible fields."}}
-    ]},
-    {"content": "需求事实：requirements.md:2 要求状态留空；prototype.html:1 出现审核状态。待确认：图片当前不可用。这些资料没有矛盾，因为审核状态是后续流程。"},
-    {"tool_calls": [{"name": "submit_read_only_review", "arguments": {"verdict": "revise", "confidence": 0.9, "findings": [{"claim_id": "c005", "claim": "这些资料没有矛盾，因为审核状态是后续流程。", "finding_scope": "candidate_defect", "issue": "the candidate invents a reconciliation for conflicting artifact observations", "action": "state the conflict as unresolved"}], "reason": "document observations do not establish a reconciliation", "document_consistency": {"stance": "asserted_reconciled", "conflict_evidence_ids": ["e001", "e002"], "supporting_evidence_ids": []}}}]},
-    {"content": "需求事实：requirements.md:2 要求状态留空；prototype.html:1 出现审核状态。待确认：图片当前不可用。这些资料没有矛盾，因为审核状态是后续流程。"},
-    {"tool_calls": [{"name": "submit_read_only_review", "arguments": {"verdict": "revise", "confidence": 0.9, "findings": [{"claim_id": "c005", "claim": "这些资料没有矛盾，因为审核状态是后续流程。", "finding_scope": "candidate_defect", "issue": "invented reconciliation remains", "action": "do not release the candidate"}], "reason": "conflict remains unresolved", "document_consistency": {"stance": "asserted_reconciled", "conflict_evidence_ids": ["e001", "e002"], "supporting_evidence_ids": []}}}]}
+    {
+      "tool_calls": [
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "requirements.md"
+          }
+        },
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "prototype.html"
+          }
+        },
+        {
+          "name": "inspect_image",
+          "arguments": {
+            "path": "example.png",
+            "question": "Describe visible fields."
+          }
+        }
+      ]
+    },
+    {
+      "content": "需求事实：requirements.md:2 要求状态留空；prototype.html:1 出现审核状态。待确认：图片当前不可用。这些资料没有矛盾，因为审核状态是后续流程。"
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "report_read_only_finding",
+          "arguments": {
+            "claim_id": "c005",
+            "claim": "这些资料没有矛盾，因为审核状态是后续流程。",
+            "finding_scope": "candidate_defect",
+            "issue": "the candidate invents a reconciliation for conflicting artifact observations",
+            "action": "state the conflict as unresolved"
+          }
+        },
+        {
+          "name": "submit_read_only_review",
+          "arguments": {
+            "verdict": "revise",
+            "confidence": 0.9,
+            "reason": "document observations do not establish a reconciliation",
+            "document_consistency": {
+              "stance": "asserted_reconciled",
+              "conflict_evidence_ids": [
+                "e001",
+                "e002"
+              ],
+              "supporting_evidence_ids": []
+            }
+          }
+        }
+      ]
+    },
+    {
+      "content": "需求事实：requirements.md:2 要求状态留空；prototype.html:1 出现审核状态。待确认：图片当前不可用。这些资料没有矛盾，因为审核状态是后续流程。"
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "report_read_only_finding",
+          "arguments": {
+            "claim_id": "c005",
+            "claim": "这些资料没有矛盾，因为审核状态是后续流程。",
+            "finding_scope": "candidate_defect",
+            "issue": "invented reconciliation remains",
+            "action": "do not release the candidate"
+          }
+        },
+        {
+          "name": "submit_read_only_review",
+          "arguments": {
+            "verdict": "revise",
+            "confidence": 0.9,
+            "reason": "conflict remains unresolved",
+            "document_consistency": {
+              "stance": "asserted_reconciled",
+              "conflict_evidence_ids": [
+                "e001",
+                "e002"
+              ],
+              "supporting_evidence_ids": []
+            }
+          }
+        }
+      ]
+    }
   ],
   "acceptance": {
-    "required_tools": ["read_file", "inspect_image"],
-    "forbidden_tools": ["apply_patch", "write_file", "shell", "run_tests", "search_code"],
+    "required_tools": [
+      "read_file",
+      "inspect_image"
+    ],
+    "forbidden_tools": [
+      "apply_patch",
+      "write_file",
+      "shell",
+      "run_tests",
+      "search_code"
+    ],
     "changed_files": [],
-    "answer_all_of": ["安全部分交付", "requirements.md", "prototype.html", "未完成/未验证"],
-    "answer_forbidden_regex": ["后续流程", "没有矛盾"],
+    "answer_all_of": [
+      "安全部分交付",
+      "requirements.md",
+      "prototype.html",
+      "未完成/未验证"
+    ],
+    "answer_forbidden_regex": [
+      "后续流程",
+      "没有矛盾"
+    ],
     "termination_reason": "read_only_reviewer_unverified",
-    "read_only_reviewer": {"triggers": 1, "rewrites": 1, "typed_submits": 2},
-    "safe_partial_report": {"emitted": 1},
+    "read_only_reviewer": {
+      "triggers": 1,
+      "rewrites": 1,
+      "typed_submits": 4,
+      "finding_submits": 2,
+      "final_submits": 2
+    },
+    "safe_partial_report": {
+      "emitted": 1
+    },
     "max_tool_errors": 1
   },
   "residual_risk": "The image observation is explicitly unavailable in this deterministic fixture; the Runtime must not invent a reconciliation for the remaining document conflict."

@@ -20,6 +20,7 @@ MAX_REVIEWER_RESPONSE_CHARS = 9000
 MAX_INITIAL_REVIEWER_PROVIDER_CALLS = 3
 MAX_REWRITE_REVIEWER_PROVIDER_CALLS = 2
 REVIEWER_OUTPUT_TOOL_NAME = "submit_read_only_review"
+REVIEWER_FINDING_TOOL_NAME = "report_read_only_finding"
 MAX_CLAIM_UNITS = 80
 MAX_CLAIM_UNIT_CHARS = 500
 MAX_CLAIM_TOTAL_CHARS = 40000
@@ -210,7 +211,7 @@ def reviewer_messages(handoff: ExploreHandoff, claim_units: tuple[CandidateClaim
     """Return an isolated reviewer transcript with no primary conversation history."""
 
     system = """You are the read-only evidence reviewer for a coding agent.
-Use the only available output tool exactly once to submit the review. You have no workspace tools and must never assume unseen repository facts.
+Use the output-only review tools; you have no workspace tools and must never assume unseen repository facts. For each candidate defect, call report_read_only_finding once. After all findings are reported, call submit_read_only_review exactly once.
 
 Review contract:
 - A direct owner is justified only by evidence that explicitly binds the requested behavior to a path, symbol, or call chain.
@@ -219,9 +220,9 @@ Review contract:
 - Requirement facts, repository facts, proposals, and open questions must remain distinct.
 - A proposal must not be worded as an existing table, class, endpoint, service, approval flow, numbering prefix, or integration unless the handoff explicitly supports it.
 - When the handoff has no explicit direct binding, do not say a main owner/module judgment is correct or mostly correct. Treat same-domain code as observed or analogous and leave the owner unlocated.
-- For a document-consistency review, do not resolve conflicting document or image observations with an invented workflow, scope, actor, or precedence rule. Preserve the conflict as unresolved unless the handoff explicitly reconciles it. A candidate that accurately cites both observations, explicitly keeps the conflict unresolved, and presents only labeled options or questions for later confirmation is compliant: submit `pass` with no findings. A finding must identify a candidate error such as an unsupported reconciliation, a missing cited observation, or a claim that exceeds the handoff; the source materials disagreeing by itself is not a candidate defect. If the only issue is that a source owner must decide how to update source materials, submit `pass` with no findings.
+- For a document-consistency review, do not resolve conflicting document or image observations with an invented workflow, scope, actor, or precedence rule. Preserve the conflict as unresolved unless the handoff explicitly reconciles it. A candidate that accurately cites both observations, explicitly keeps the conflict unresolved, and presents only labeled options or questions for later confirmation is compliant: submit `pass` with no reported findings. A finding must identify a candidate error such as an unsupported reconciliation, a missing cited observation, or a claim that exceeds the handoff; the source materials disagreeing by itself is not a candidate defect. If the only issue is that a source owner must decide how to update source materials, submit `pass` with no reported findings.
 
-The output tool arguments use verdict, confidence, findings, and reason. The complete submission must be shorter than 9000 characters. `findings` must contain at most 8 items. A `pass` verdict requires exactly 0 findings; `revise` and `unverified` require 1 to 8 findings. Every finding must have one unique, known claim_id plus non-empty issue and action. For every finding, choose exactly one claim_id from candidate_claims, set finding_scope to `candidate_defect`, and copy that exact candidate_claims text into `claim`. The action must change the candidate answer; it must not ask to modify the requirements, images, prototypes, or source artifacts, and must not merely ask a source owner to decide. Never invent or repeat a claim_id. Do not submit `source_material_gap` findings; those are not candidate defects. Report only the highest-risk blocking findings when there are more than 8.
+The incremental output contract is bounded and shallow. Report at most 8 findings total by calling report_read_only_finding once per finding; then call submit_read_only_review with verdict, confidence, and reason only. A `pass` verdict requires 0 reported findings; `revise` and `unverified` require 1 to 8 reported findings. Every finding must have one unique, known claim_id plus non-empty issue and action. For every finding, choose exactly one claim_id from candidate_claims, set finding_scope to `candidate_defect`, and copy that exact candidate_claims text into `claim`. The action must change the candidate answer; it must not ask to modify the requirements, images, prototypes, or source artifacts, and must not merely ask a source owner to decide. Never invent or repeat a claim_id. Do not submit `source_material_gap` findings; those are not candidate defects. Report only the highest-risk blocking findings when there are more than 8. Keep the complete output under 9000 characters.
 Choose revise when the candidate can be corrected using the handoff. Choose unverified when the candidate cannot safely make the requested factual conclusion."""
     if _is_document_consistency_review(handoff):
         system += (
@@ -254,40 +255,18 @@ def reviewer_output_tool_schema(
     document_consistency: bool = False,
     evidence_ids: tuple[str, ...] = (),
 ) -> dict[str, Any]:
-    """Return the isolated reviewer yield schema, never a workspace tool."""
+    """Return the isolated final-review yield schema, never a workspace tool."""
 
-    known_ids = [unit.claim_id for unit in claim_units]
-    finding = {
-        "type": "object",
-        "additionalProperties": False,
-        "properties": {
-            "claim_id": {"type": "string", "enum": known_ids},
-            "claim": {"type": "string", "minLength": 1, "description": "Exact text copied from the selected candidate_claims item."},
-            "finding_scope": {
-                "type": "string",
-                "enum": ["candidate_defect", "source_material_gap"],
-                "description": "Findings must be candidate_defect. source_material_gap is invalid and should be removed during repair.",
-            },
-            "issue": {"type": "string", "minLength": 1, "maxLength": 1000},
-            "action": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 1000,
-                "description": (
-                    "Required candidate-answer change. Do not ask to modify source documents, images, prototypes, "
-                    "or requirements, and do not merely ask a source owner to decide."
-                ),
-            },
-        },
-        "required": ["claim_id", "claim", "finding_scope", "issue", "action"],
-    }
     properties: dict[str, Any] = {
         "verdict": {"type": "string", "enum": ["pass", "revise", "unverified"]},
         "confidence": {"type": "number", "minimum": 0, "maximum": 1},
-        "findings": {"type": "array", "maxItems": MAX_REVIEWER_FINDINGS, "items": finding},
-        "reason": {"type": "string", "maxLength": 1600},
+        "reason": {
+            "type": "string",
+            "maxLength": 1600,
+            "description": "Brief verdict summary. Do not repeat findings here; use report_read_only_finding for each finding.",
+        },
     }
-    required = ["verdict", "confidence", "findings", "reason"]
+    required = ["verdict", "confidence", "reason"]
     if document_consistency:
         evidence_id = {"type": "string", "enum": list(evidence_ids)}
         properties["document_consistency"] = {
@@ -332,6 +311,71 @@ def reviewer_output_tool_schema(
     }
 
 
+def reviewer_finding_tool_schema(claim_units: tuple[CandidateClaimUnit, ...]) -> dict[str, Any]:
+    """Return the isolated incremental finding-yield schema."""
+
+    known_ids = [unit.claim_id for unit in claim_units]
+    return {
+        "type": "function",
+        "function": {
+            "name": REVIEWER_FINDING_TOOL_NAME,
+            "description": (
+                "Report exactly one candidate-answer defect. Use this once per finding before "
+                "submit_read_only_review. This output-only tool cannot access the workspace."
+            ),
+            "parameters": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "claim_id": {"type": "string", "enum": known_ids},
+                    "claim": {
+                        "type": "string",
+                        "minLength": 1,
+                        "description": "Exact text copied from the selected candidate_claims item.",
+                    },
+                    "finding_scope": {
+                        "type": "string",
+                        "enum": ["candidate_defect", "source_material_gap"],
+                        "description": (
+                            "Must be candidate_defect. source_material_gap is invalid because source-material "
+                            "gaps are not candidate-answer defects."
+                        ),
+                    },
+                    "issue": {"type": "string", "minLength": 1, "maxLength": 1000},
+                    "action": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 1000,
+                        "description": (
+                            "Required candidate-answer change. Do not ask to modify source documents, images, prototypes, "
+                            "or requirements, and do not merely ask a source owner to decide."
+                        ),
+                    },
+                },
+                "required": ["claim_id", "claim", "finding_scope", "issue", "action"],
+            },
+        },
+    }
+
+
+def reviewer_output_tool_schemas(
+    claim_units: tuple[CandidateClaimUnit, ...],
+    *,
+    document_consistency: bool = False,
+    evidence_ids: tuple[str, ...] = (),
+) -> list[dict[str, Any]]:
+    """Return OMP-style incremental output tools for the isolated reviewer."""
+
+    return [
+        reviewer_finding_tool_schema(claim_units),
+        reviewer_output_tool_schema(
+            claim_units,
+            document_consistency=document_consistency,
+            evidence_ids=evidence_ids,
+        ),
+    ]
+
+
 def reviewer_repair_messages(
     handoff: ExploreHandoff,
     claim_units: tuple[CandidateClaimUnit, ...],
@@ -348,7 +392,7 @@ def reviewer_repair_messages(
                     "kind": "LCA_READ_ONLY_EVIDENCE_REVIEW_SCHEMA_REPAIR",
                     "validation": _sanitize_diagnostics(diagnostics),
                     "instruction": (
-                        "Use only the original output tool and submit complete arguments that exactly follow its schema. "
+                        "Use only the original output tools and submit complete arguments that exactly follow their schemas. "
                         "Use only candidate claim IDs supplied in the original payload. "
                         + _repair_shape_instruction(diagnostics)
                     ),
@@ -379,6 +423,51 @@ def parse_reviewer_result(
         raise ReviewerValidationError("malformed_json") from None
     return parse_reviewer_payload(
         raw,
+        claim_units=claim_units,
+        document_consistency=document_consistency,
+        evidence_ids=evidence_ids,
+        required_candidate_claim_ids=required_candidate_claim_ids,
+    )
+
+
+def parse_reviewer_finding_payload(
+    raw: object,
+    *,
+    claim_units: tuple[CandidateClaimUnit, ...],
+) -> ReviewerFinding:
+    """Validate one incremental finding payload."""
+
+    result = parse_reviewer_payload(
+        {
+            "verdict": "revise",
+            "confidence": 1.0,
+            "findings": [raw],
+            "reason": "incremental finding",
+        },
+        claim_units=claim_units,
+    )
+    return result.findings[0]
+
+
+def parse_reviewer_final_payload(
+    raw: object,
+    *,
+    findings: tuple[ReviewerFinding, ...],
+    claim_units: tuple[CandidateClaimUnit, ...],
+    document_consistency: bool = False,
+    evidence_ids: tuple[str, ...] = (),
+    required_candidate_claim_ids: tuple[str, ...] = (),
+) -> ReviewerResult:
+    """Validate final verdict payload after incremental findings have been collected."""
+
+    if not isinstance(raw, Mapping):
+        raise ReviewerValidationError("top_level_not_object", {"top_level_type": type(raw).__name__})
+    assembled = dict(raw)
+    if "findings" in assembled:
+        raise ReviewerValidationError("top_level_keys_invalid", _shape_diagnostics(assembled))
+    assembled["findings"] = [finding.to_dict() for finding in findings]
+    return parse_reviewer_payload(
+        assembled,
         claim_units=claim_units,
         document_consistency=document_consistency,
         evidence_ids=evidence_ids,
@@ -621,15 +710,19 @@ def _repair_shape_instruction(diagnostics: Mapping[str, Any]) -> str:
     """Describe the failed schema rule without repeating provider content."""
 
     code = str(diagnostics.get("error_code") or "")
-    common = "Keep the JSON response under 9000 characters and use unique known claim IDs."
+    common = (
+        "Use report_read_only_finding once per candidate defect, then call submit_read_only_review with "
+        "verdict, confidence, and reason only. Keep the complete output under 9000 characters and use "
+        "unique known claim IDs."
+    )
     if code == "findings_too_many":
-        return "Return no more than 8 highest-risk findings. " + common
+        return "Report no more than 8 highest-risk findings. " + common
     if code == "response_too_large":
         return "Make reason, issue, and action concise; do not exceed 9000 characters. " + common
     if code == "pass_with_findings":
-        return "A pass verdict must have an empty findings list; otherwise choose revise or unverified with 1 to 8 findings. " + common
+        return "A pass verdict must have no reported findings; otherwise choose revise or unverified with 1 to 8 findings. " + common
     if code == "nonpassing_without_findings":
-        return "A revise or unverified verdict needs 1 to 8 findings. " + common
+        return "A revise or unverified verdict needs 1 to 8 report_read_only_finding calls. " + common
     if code in {"finding_claim_invalid", "finding_claim_mismatch"}:
         return (
             "Every finding must copy the exact candidate_claims text for its selected claim_id into claim. "
@@ -640,7 +733,7 @@ def _repair_shape_instruction(diagnostics: Mapping[str, Any]) -> str:
         return (
             "Do not submit source_material_gap findings. Findings must be candidate_defect items whose action changes "
             "the candidate answer. If only source materials need an owner decision and the candidate already reports that "
-            "gap accurately, submit pass with an empty findings list; otherwise keep only candidate_defect findings. "
+            "gap accurately, submit pass with no reported findings; otherwise keep only candidate_defect findings. "
             + common
         )
     if code == "candidate_defect_findings_missing":
@@ -677,7 +770,7 @@ def _repair_shape_instruction(diagnostics: Mapping[str, Any]) -> str:
             "and the ids cite independent non-visual read_file lifecycle or precedence support. "
             + common
         )
-    return "Use a JSON findings list with at most 8 items and the verdict/finding cardinality from the original schema. " + common
+    return "Use the shallow finding tool and final submit tool with the required verdict/finding cardinality. " + common
 
 
 def _clip(value: str, limit: int = 420) -> str:

@@ -13,9 +13,12 @@ from .provider_protocol import classify_provider_content_artifact
 
 
 VISION_OBSERVATION_SYSTEM_PROMPT = """You are an evidence-first visual observation assistant.
-Report only directly visible text, layout, marks, and clearly readable fields. Separate direct observations from inferences.
-Do not infer author intent, business role, workflow stage, lifecycle, precedence, legitimacy, or OCR corrections from appearance alone.
-When text or a mark is unclear, say it is unclear rather than guessing. Structure the response as: Answer, Key evidence, Caveats."""
+The user question is only a focus area; it is not permission to infer business rules, lifecycle, precedence, legal effect, author intent, or workflow stage.
+Return only a compact JSON object with exactly these keys:
+- "observations": array of directly visible text, layout, marks, fields, and clearly readable values.
+- "uncertainties": array of unclear, unreadable, occluded, or low-confidence visible details.
+- "inferences": array of any model inference requested by the question; leave empty when not directly supported.
+Do not put inferred content in observations. Do not fabricate unreadable or occluded details. Do not correct OCR text unless the visual evidence clearly shows the correction."""
 
 
 class LlmError(RuntimeError):
@@ -64,7 +67,14 @@ class OpenAICompatibleClient:
                 {
                     "role": "user",
                     "content": [
-                        {"type": "text", "text": question},
+                        {
+                            "type": "text",
+                            "text": (
+                                f"Focus question: {question}\n"
+                                "Return only the JSON object required by the system instructions. "
+                                "Keep direct observations separate from uncertainties and inferences."
+                            ),
+                        },
                         {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{image_base64}"}},
                     ],
                 }

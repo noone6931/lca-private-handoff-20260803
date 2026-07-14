@@ -8,21 +8,87 @@
     "src/PayServiceImpl.java": "class PayServiceImpl { void pay() {} }\n"
   },
   "scripted_responses": [
-    {"tool_calls": [{"name": "read_file", "arguments": {"path": "src/PayServiceImpl.java"}}]},
-    {"content": "已验证事实：已读取 src/PayServiceImpl.java。推断：PayServiceImpl 是真实 owner，DDL 和 API 也由它负责。"},
-    {"tool_calls": [{"name": "submit_read_only_review", "arguments": {"verdict": "unverified", "confidence": 0.98, "findings": [{"claim_id": "c003", "claim": "推断：PayServiceImpl 是真实 owner，DDL 和 API 也由它负责。", "finding_scope": "candidate_defect", "issue": "nearby payment code has no explicit requested behavior binding", "action": "describe it only as an analogous or reusable candidate"}], "reason": "actual owner remains unlocated"}}]},
-    {"content": "已验证事实：src/PayServiceImpl.java 中存在 PayServiceImpl。推断/未验证：它仅是可复用候选；真实 owner、DDL、模板和 API 仍未定位，需要直接调用链或符号绑定证据。"},
-    {"tool_calls": [{"name": "submit_read_only_review", "arguments": {"verdict": "pass", "confidence": 0.98, "findings": [], "reason": "rewrite preserves the evidence boundary"}}]}
+    {
+      "tool_calls": [
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "src/PayServiceImpl.java"
+          }
+        }
+      ]
+    },
+    {
+      "content": "已验证事实：已读取 src/PayServiceImpl.java。推断：PayServiceImpl 是真实 owner，DDL 和 API 也由它负责。"
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "report_read_only_finding",
+          "arguments": {
+            "claim_id": "c003",
+            "claim": "推断：PayServiceImpl 是真实 owner，DDL 和 API 也由它负责。",
+            "finding_scope": "candidate_defect",
+            "issue": "nearby payment code has no explicit requested behavior binding",
+            "action": "describe it only as an analogous or reusable candidate"
+          }
+        },
+        {
+          "name": "submit_read_only_review",
+          "arguments": {
+            "verdict": "unverified",
+            "confidence": 0.98,
+            "reason": "actual owner remains unlocated"
+          }
+        }
+      ]
+    },
+    {
+      "content": "已验证事实：src/PayServiceImpl.java 中存在 PayServiceImpl。推断/未验证：它仅是可复用候选；真实 owner、DDL、模板和 API 仍未定位，需要直接调用链或符号绑定证据。"
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "submit_read_only_review",
+          "arguments": {
+            "verdict": "pass",
+            "confidence": 0.98,
+            "reason": "rewrite preserves the evidence boundary"
+          }
+        }
+      ]
+    }
   ],
   "acceptance": {
-    "required_tools": ["read_file"],
-    "forbidden_tools": ["apply_patch", "write_file", "shell", "run_tests"],
+    "required_tools": [
+      "read_file"
+    ],
+    "forbidden_tools": [
+      "apply_patch",
+      "write_file",
+      "shell",
+      "run_tests"
+    ],
     "changed_files": [],
-    "answer_all_of": ["可复用候选", "仍未定位"],
-    "answer_forbidden_regex": ["已证实真实 owner 是 PayServiceImpl"],
+    "answer_all_of": [
+      "可复用候选",
+      "仍未定位"
+    ],
+    "answer_forbidden_regex": [
+      "已证实真实 owner 是 PayServiceImpl"
+    ],
     "termination_reason": "final",
-    "run_summary": {"tool_calls": 1, "tool_errors": 0},
-    "read_only_reviewer": {"triggers": 1, "rewrites": 1, "typed_submits": 2},
+    "run_summary": {
+      "tool_calls": 1,
+      "tool_errors": 0
+    },
+    "read_only_reviewer": {
+      "triggers": 1,
+      "rewrites": 1,
+      "typed_submits": 3,
+      "finding_submits": 1,
+      "final_submits": 2
+    },
     "max_tool_errors": 0
   },
   "residual_risk": "The fixture proves the isolated review/rewrite lifecycle. It does not identify a real service owner without direct source binding."

@@ -426,7 +426,13 @@ class ToolTests(unittest.TestCase):
 
             def inspect(path: Path, mime: str, data: bytes, question: str) -> str:
                 seen.append((str(path), mime, data, question))
-                return "The image contains a settlement example."
+                return json.dumps(
+                    {
+                        "observations": ["The image contains a settlement example."],
+                        "uncertainties": ["small footer text is unclear"],
+                        "inferences": ["it may represent a business rule"],
+                    }
+                )
 
             context = ToolContext(workspace=workspace, approval_mode="yolo", vision_inspector=inspect)
             metadata = read_file({"path": "example.png"}, context)
@@ -437,12 +443,32 @@ class ToolTests(unittest.TestCase):
         self.assertIn("inspect_image", metadata.content)
         self.assertFalse(observation.is_error)
         self.assertIn("settlement example", observation.content)
+        self.assertNotIn("business rule", observation.content)
         self.assertIn("model-generated visual observation", observation.content)
+        self.assertIn("inferences=1", observation.content)
         self.assertNotIn("visible-image-bytes", observation.content)
         self.assertEqual(observation.metadata["observation_origin"], "vision_model")
         self.assertEqual(observation.metadata["observation_reliability"], "visible_content_only")
+        self.assertEqual(observation.metadata["vision_contract"], "structured_direct_observations")
+        self.assertEqual(observation.metadata["vision_uncertainty_items"], 1)
+        self.assertEqual(observation.metadata["vision_inference_items"], 1)
+        self.assertTrue(observation.metadata["vision_inferences_separated"])
         self.assertEqual(seen[0][1], "image/png")
         self.assertEqual(seen[0][2], raw)
+
+    def test_image_inspection_rejects_unstructured_vision_output_as_non_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            (workspace / "example.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+            result = inspect_image(
+                {"path": "example.png", "question": "Infer the business rule."},
+                ToolContext(workspace=workspace, approval_mode="yolo", vision_inspector=lambda *_args: "It is a business rule."),
+            )
+
+        self.assertTrue(result.is_error)
+        self.assertTrue(result.metadata["image_inspection_unavailable"])
+        self.assertEqual(result.metadata["reason"], "invalid_vision_contract")
+        self.assertNotIn("business rule", result.content)
 
     def test_image_inspection_rejects_escape_oversize_and_unavailable_vision(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

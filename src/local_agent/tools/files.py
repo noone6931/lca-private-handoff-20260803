@@ -253,20 +253,74 @@ def inspect_image(args: dict[str, Any], context: ToolContext) -> ToolResult:
         )
     except Exception as exc:  # noqa: BLE001 - provider failures remain tool observations.
         return ToolResult(f"inspect_image unavailable: {type(exc).__name__}: {exc}", is_error=True)
+    parsed_observation = _parse_vision_observation_contract(observation)
+    if parsed_observation is None:
+        return ToolResult(
+            "inspect_image unavailable: vision model did not return the required structured direct-observation JSON.",
+            is_error=True,
+            metadata={"image_inspection_unavailable": True, "reason": "invalid_vision_contract", "mime_type": mime_type},
+        )
+    direct_observations, uncertainty_count, inference_count = parsed_observation
     rel = display_workspace_path(context.workspace, path, context.allowed_dirs)
     digest = hashlib.sha256(raw).hexdigest()
+    rendered = [f"[model-generated visual observation: {rel}#{digest[:16]}]", "Direct visual observations:"]
+    rendered.extend(f"- {item}" for item in direct_observations)
+    if uncertainty_count or inference_count:
+        rendered.append(
+            f"[vision caveats/inferences separated from evidence: uncertainties={uncertainty_count}, inferences={inference_count}]"
+        )
     return ToolResult(
-        f"[model-generated visual observation: {rel}#{digest[:16]}]\n{observation}",
+        "\n".join(rendered),
         metadata={
             "image_observation": True,
             "observation_origin": "vision_model",
             "observation_reliability": "visible_content_only",
+            "vision_contract": "structured_direct_observations",
+            "vision_uncertainty_items": uncertainty_count,
+            "vision_inference_items": inference_count,
+            "vision_inferences_separated": bool(uncertainty_count or inference_count),
             "mime_type": mime_type,
             "size_bytes": size,
             "path": rel,
             "sha256": digest,
         },
     )
+
+
+def _parse_vision_observation_contract(value: str) -> tuple[tuple[str, ...], int, int] | None:
+    """Extract direct observations from the strict vision JSON contract."""
+
+    try:
+        payload = json.loads(_strip_json_fence(value))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict) or set(payload) - {"observations", "uncertainties", "inferences"}:
+        return None
+    observations = _string_list(payload.get("observations"))
+    uncertainties = _string_list(payload.get("uncertainties"))
+    inferences = _string_list(payload.get("inferences"))
+    if not observations:
+        return None
+    return observations, len(uncertainties), len(inferences)
+
+
+def _strip_json_fence(value: str) -> str:
+    text = (value or "").strip()
+    if text.startswith("```"):
+        text = text.removeprefix("```json").removeprefix("```").strip()
+        if text.endswith("```"):
+            text = text[:-3].strip()
+    return text
+
+
+def _string_list(value: Any) -> tuple[str, ...]:
+    if isinstance(value, str):
+        items = (value,)
+    elif isinstance(value, list):
+        items = tuple(item for item in value if isinstance(item, str))
+    else:
+        return ()
+    return tuple(" ".join(item.split()) for item in items if item.strip())
 
 
 def detect_image_mime(raw: bytes) -> str | None:
