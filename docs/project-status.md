@@ -30,7 +30,7 @@
 
 ## 当前进度
 
-当前项目已完成 P8 前端协议与交互基础 MVP、P9 真实需求使用准备的阶段性验证和 P10/P11 Intelligence Runtime 骨架，正在收束 P12 只读证据与 reviewer 生命周期。T-158~T-180 将 document/reviewer 的 claim binding、incremental yield、transport、rewrite、safe-partial 和 exact tool-choice 生命周期继续拆回各自 Owner；T-181~T-187 修复了文档改写闭环、读文档后 repository intent 保持、finding replay 幂等、未解决差异语序识别和 reviewer 改写后的有界 transport recovery。T-188 直接参考 OMP `grep.ts` / `read.ts` 的列宽与每文件结果限制，在工具 Owner 内限制 `search_code`/`read_file` 的超长单行输出，避免 minified CSS 将 20KB/232KB 注入上下文。T-189 修复 Markdown-to-Excel 生成器的 code-span pipe、表内空行和列数校验，保证项目状态 Excel 仍是事实源的可靠投影。当前完整门禁为 830 个单测、35/35 deterministic benchmark 和 7/7 architecture checks；`agent.py` 为 1,866 行/71 个方法，`steering/final_answer.py` 为 59 行。默认 stable 仍是已验证的 T-149 release `20260712T053754Z-39cf362f4f3f-2c9b80db01e9`；T-188 release `20260714T170102Z-c248d3598dc2-6f417eb9e525` 只是 immutable runtime candidate。T-190 fresh-state live gate 为 S1 PASS、S2/S3 FAIL，整体 1/3。T-191 二次 fresh-state 复现进一步把问题收敛到现有 Owner：S2 在首轮无可信候选搜索后没有开放备用 discovery，最终安全终止；S3 的通用“证据化技术设计”被 contract 归为 `read_only_review_profile=none`，导致错误 provenance 未经 reviewer 即 natural final。小牙独立任务以 `systemError` 结束且没有执行输出，不能充当回归证据；P12 stable 仍未发布。
+当前项目已完成 P8 前端协议与交互基础 MVP、P9 真实需求使用准备的阶段性验证和 P10/P11 Intelligence Runtime 骨架，正在收束 P12 只读证据与 reviewer 生命周期。T-158~T-180 将 document/reviewer 的 claim binding、incremental yield、transport、rewrite、safe-partial 和 exact tool-choice 生命周期继续拆回各自 Owner；T-181~T-187 修复了文档改写闭环、读文档后 repository intent 保持、finding replay 幂等、未解决差异语序识别和 reviewer 改写后的有界 transport recovery。T-188 直接参考 OMP `grep.ts` / `read.ts` 的列宽与每文件结果限制，在工具 Owner 内限制 `search_code`/`read_file` 的超长单行输出，避免 minified CSS 将 20KB/232KB 注入上下文。T-189 修复 Markdown-to-Excel 生成器的 code-span pipe、表内空行和列数校验，保证项目状态 Excel 仍是事实源的可靠投影。T-191 已完成首次无命中后的 root-scoped fallback 和通用技术设计 contract/reviewer 投影，完整门禁为 832 个单测、37/37 deterministic benchmark 和 7/7 architecture checks；`agent.py` 仍为 1,866 行/71 个方法，`steering/final_answer.py` 为 59 行。immutable candidate `20260714T175058Z-d91cda0b2d24-ae8b6f1a1970` 的 fresh-state S2/S3 均触发 reviewer 并安全拦截无证据结论，但真实百炼仍在临时 `glob_files` 阶段反复生成错误参数，分别产生 14/23 次工具错误，两场都以 `read_only_reviewer_unverified` 结束，live gate 0/2。默认 stable 因此仍是 T-149 release `20260712T053754Z-39cf362f4f3f-2c9b80db01e9`。小牙和大猛的委派任务均以 `systemError` 结束且没有执行输出，不能充当独立回归证据。
 
 已具备的核心能力：
 
@@ -152,7 +152,7 @@
 | P9 | 真实需求使用准备 | 已完成阶段性 MVP | 已完成项目边界分析、真实需求模板、企业项目只读源码验证、Java LSP 韧性、拓展服务费结算链路压测和服务范围复核；后续继续按真实需求推进设计/实现切片。 |
 | P10 | Intelligence Runtime 骨架 | 已完成 | 按 OMP 架构原则补单 Agent 内部的目标契约、工具选择队列、完成审计、两阶段计划和 reviewer；phase 通过显式 Protocol ports 协作，领域策略不回流 Runtime。 |
 | P11 | Runtime Ownership / Release Discipline | 已完成 MVP 版 | T-148 将 `agent.py` 从 3,638 行/113 methods 收为薄编排 facade；T-149 发布并保留当前 stable。T-181~T-188 后 facade 仍为 1,866 行/71 methods，连续变更没有回涨到架构阈值。 |
-| P12 | Read-only Convergence Closure | 离线闭环增强中；live 未达发布线 | 临时工具、document evidence、isolated reviewer、safe partial、document reconciliation 和 transport/rewrite 生命周期已有明确 Owner；830 tests、35 benchmark、7 architecture checks 全绿。真实 provider S1~S3 尚未连续自然通过，独立 immutable candidate 回归缺失，因此 T-188 只保留 candidate。 |
+| P12 | Read-only Convergence Closure | 离线闭环增强中；live 未达发布线 | 临时工具、document evidence、isolated reviewer、safe partial、document reconciliation 和 transport/rewrite 生命周期已有明确 Owner；832 tests、37 benchmark、7 architecture checks 全绿。T-191 candidate 的 S2/S3 都能失败关闭，但临时 discovery 参数错误和 reviewer rewrite 不收敛仍阻断日用发布。 |
 
 ## 已完成功能
 
@@ -216,7 +216,7 @@
 | no-edit evidence gate | 已完成 | CompletionAudit 不再接受只有“blocked/unexecuted”的文字自述；必须有 search/LSP 未命中、路径缺失、relevance/approval 拒绝等工具证据，才允许实现任务在无 diff 时收尾。 |
 | ToolRegistry 参数归一 | 已完成 MVP 版 | `src/local_agent/tools/argument_normalization.py` 在 schema 校验前仅映射已观测 scalar alias；冲突值直接拒绝，随后仍执行原 schema、approval、path/hash 和 anchored patch 校验。 |
 | 跨 root owner / impact evidence matrix | 已完成 MVP 版 | “设计/架构”以及“owner 定位/影响范围/调用链”的多 root 只读任务共用 requirement + 每 root source-read + 六次补证据预算；避免任务名称不是“设计”就无限探索。 |
-| 测试基线 | 已完成 | 本地正常环境下 830 个测试通过；离线 benchmark 35/35；architecture checks 7/7。 |
+| 测试基线 | 已完成 | 本地正常环境下 832 个测试通过；离线 benchmark 37/37；architecture checks 7/7。 |
 
 ## 下一步 Todo
 
@@ -374,7 +374,8 @@
 | T-188 | OMP-aligned Search / Read Output Bounds | 已完成；immutable candidate live gate 1/3，未发布 | P12 | S2 命中 minified CSS 时，`search_code` 返回约 20KB，随后单行 `read_file` 注入约 232KB，挤占上下文并破坏收敛。 | 参考 OMP `grep.ts` 的 512 列和 per-file 20、`read.ts`/settings 的 768 列：`search_code` 返回 result/per-file/line truncation metadata，`read_file` 截断展示但保持完整文件 hash。原 CSS 样本降为约 566/947 字符。827 tests、35/35 benchmark、7/7 architecture checks；candidate `20260714T170102Z-c248d3598dc2-6f417eb9e525`，stable 未变。 |
 | T-189 | Project Status Workbook Integrity | 已完成 | P2/P12 | 项目状态 Excel 生成器会把反引号代码中的 `|` 拆成额外列，表内空行拆出同名 worksheet，格式错误只能到 Excel 打开时才暴露。 | `scripts/sync_project_excel.py` 现在识别 code-span/escaped pipe、保留同一表内空行，并对列数不一致 fail-fast；新增 3 个回归测试。生成后用 artifact-tool 检查 9 个唯一 sheet、0 公式错误并渲染全 sheet 视觉复核。Excel 仍由 Markdown 生成，不手工编辑。 |
 | T-190 | T-188 Immutable Candidate S1~S3 Live Gate | 已完成；1/3，通过发布门禁失败 | P12 | 离线门禁不能替代真实百炼在需求、跨仓 Owner 和设计场景中的协议/语义表现。 | S1 session `20260714T171643755189Z` / run `e0b0640f5a7e4e3e89b05f74aea85871`：136.4s、7 LLM、4 tools、0 error、1 compaction，reviewer revise 后 rewrite acceptance，图片/冲突证据正确，natural final。S2 `20260714T172056281842Z` / `9f50c1fa140244728ccd21374dd62ea9`：13.6s、8 tools、3 deny errors、2 schema violations，未覆盖前后端 direct read，`provider_protocol_violation`。S3 `20260714T172316303013Z` / `ae3b0fec02124c489b04dd1456981f27`：76.8s、仅 1 次需求 read，`provider_protocol_violation`。后两者未释放不可靠结论，但安全不等于日用可用。 |
-| T-191 | Read-only Explore / Review Lifecycle Closure | 已诊断；实现中，未发布 | P12 | T-190 的协议错误不是稳定单根因。二次 fresh-state S2 在两个 code root 各一次搜索后没有可信 direct-read candidate；active tools 仍只允许 `read_file/search_code`，模型请求的 `list_files` 被拒绝且不计 executed attempt，而 fallback discovery 要求第二次精确尝试，形成工具投影死区。S3 已读需求、后端和前端，却因通用“证据化技术设计/设计建议”不命中 typed design profile，`read_only_reviewer.triggers=0`，错误文件 provenance 和过宽 absence 结论直接释放。 | S2 session `20260714T173451298487Z` / run `abb9180f21cc48dfb9f3547f1d2985d0`：54.6s、14 LLM、6 tools、2 restriction errors、0 protocol violation，最终 `claim_evidence_transport_incomplete`；CSS 输出保持约 618 字符。S3 session `20260714T173605949526Z` / run `c241032681644924953a560b4f663553`：106.6s、14 LLM、12 tools、1 error、6 compactions、0 protocol violation，natural final 但 reviewer 未触发。T-191 只允许在 `task_contract.py`、`read_only_explore.py`、`tool_choice_queue.py` 和 reviewer 既有 Owner 中修复；对齐 OMP explore 的空搜索 alternate strategy、ToolChoiceQueue lifecycle 和 typed reviewer/yield，禁止 provider/业务关键词补丁或 `agent.py` domain guard。 |
+| T-191 | Read-only Explore / Review Lifecycle Closure | 实现和离线门禁完成；immutable live gate 0/2，未发布 | P12 | 首次无可信候选搜索后允许每 root 一次 fallback discovery；通用“技术设计/架构设计/方案设计/设计建议”等进入 typed `design` profile 和 isolated reviewer。实现只落在 `task_contract.py`、`read_only_explore.py` 与既有测试/benchmark，`agent.py` 未增加 domain guard。 | 提交 `d91cda0`；832 tests、37/37 benchmark、7/7 architecture checks。candidate `20260714T175058Z-d91cda0b2d24-ae8b6f1a1970`。S2 session `20260714T175109181263Z` / run `4289159e916a4fe189cd21df5167bd6d`：88.9s、17 LLM、26 tools、14 errors、6 schema violations，reviewer 3 次 revise 后安全未验证。S3 session `20260714T175407032048Z` / run `cd208bc3231c4283ac2e80a4af16d60d`：234.5s、43 LLM、32 tools、23 errors、5 schema/1 protocol violation，同样安全未验证。两场都证明 reviewer fail-closed，但临时 glob 参数和 rewrite 生命周期仍不具备日用质量。 |
+| T-192 | Argument-Constrained Discovery / Reviewer Rewrite Closure | 待实现 | P12 | T-191 live 的临时 directive 只约束工具名，没有给 provider 可执行的 root-scoped 参数契约；模型反复传 `path/pattern`、缺 `paths` 或错误 root，随后 reviewer 两轮改写仍混淆未定位、未实现和无 Owner。 | 先对照 OMP ToolChoiceQueue 的 queued/in-flight/resolve/reject 与 task yield 生命周期；在 directive/queue Owner 中携带有界参数提示或等价 typed intent，在 reviewer Owner 中保证 rewrite 只处理当前 finding 集。禁止 Runtime 自动执行业务搜索、provider 文本特判和 `agent.py` guard；先补通用 deterministic fixture，再跑同一 immutable S2/S3。 |
 
 ## 风险清单
 
@@ -522,10 +523,10 @@
 | 项目 | 结论 | 依据 |
 |---|---|---|
 | 主链路 | 通过 | 百炼真实小改复测已跑通 todo、dry_run、apply_patch、session allow、rollback、run_tests、git_diff。 |
-| 测试 | 通过 | P5 收口时 90 个 unittest、compileall、xlsx 检查、diff check 均通过；当前代码已跑通 830 个 unittest、35/35 benchmark 和 7/7 architecture checks。 |
+| 测试 | 通过 | P5 收口时 90 个 unittest、compileall、xlsx 检查、diff check 均通过；当前代码已跑通 832 个 unittest、37/37 benchmark 和 7/7 architecture checks。 |
 | 日用入口 | 通过 | README 已补只读分析和小改任务命令模板。 |
 | 开放风险 | 可接受 | shell 仍非沙箱、prompt injection 仍需靠审批和封闭 VM；provider/model 专用 tokenizer、输出 reserve、managed skills、完整 reviewer 和完整 OMP ToolChoiceQueue 继续后置评估。 |
-| 下一阶段 | P12 release gate | T-150~T-188 已完成只读 evidence/reviewer 的离线闭环增强。下一步只做 immutable candidate 的独立 S1~S3 黑盒回归；自然 final、证据分层、输出有界和 reviewer 不自创方案同时通过后才替换 T-149 stable。 |
+| 下一阶段 | P12 T-192 + release gate | T-191 已关闭 fallback 死区和通用设计 reviewer 投影，但 live 仍暴露 glob 参数与 rewrite 收敛问题。下一步只在 directive/queue 和 reviewer Owner 内完成 T-192，再对 immutable candidate 跑 S1~S3；自然 final、证据分层、输出有界和 reviewer 不自创方案同时通过后才替换 T-149 stable。 |
 
 ## 推荐工作流
 
