@@ -327,6 +327,7 @@ class ToolChoiceQueueTests(unittest.TestCase):
 
         self.assertEqual(decision.allowed_tool_names, frozenset({"read_file"}))
         self.assertEqual(decision.scoped_read_paths, ())
+        self.assertEqual(decision.required_tool_arguments_json, "")
         self.assertIn(str(source), decision.tool_call_hints[0])
 
     def test_exact_source_filename_glob_becomes_a_bounded_read_candidate(self) -> None:

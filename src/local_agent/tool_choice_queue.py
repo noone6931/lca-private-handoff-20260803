@@ -680,6 +680,8 @@ def evaluate_tool_choice_state(
                 if explore_decision.exact_read_candidates
                 else _read_file_arguments_json(explore_decision.read_candidates[0])
                 if closure_candidate_read
+                else ""
+                if inventory_candidate_read
                 else _precise_glob_arguments_json(explore_decision.discovery_patterns)
                 if explore_decision.discovery_patterns
                 else _inventory_glob_arguments_json(explore_decision.discovery_roots)
