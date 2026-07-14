@@ -2597,6 +2597,108 @@ class _TransportReviewerRewriteDocumentClient(_TransportRecoveryDocumentClient):
         return type("Response", (), {"message": {"content": "\n".join(claim_lines)}})()
 
 
+class _PostReviewTransportRecoveryDocumentClient(_TransportRecoveryDocumentClient):
+    calls: list[dict] = []
+
+    def __init__(self, config: AgentConfig):
+        super().__init__(config)
+        self._review_calls = 0
+
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
+        if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages):
+            self._review_calls += 1
+            payload = next(
+                json.loads(message["content"])
+                for message in messages
+                if message.get("role") == "user" and "LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content"))
+            )
+            conflict_ids = self._conflict_ids(payload)
+            return _review_tool_calls_response(
+                [
+                    _finding_call(
+                        "scope-finding",
+                        "c001",
+                        str(payload["candidate_claims"][0]["text"]),
+                        issue="the alignment claim is too broad",
+                        action="limit it to the observed field area",
+                    ),
+                    _final_call(
+                        "doc-revise",
+                        {
+                            "verdict": "revise",
+                            "confidence": 0.96,
+                            "reason": "scope the alignment claim",
+                            "document_consistency": {
+                                "stance": "reported_unresolved",
+                                "conflict_evidence_ids": list(conflict_ids),
+                                "supporting_evidence_ids": [],
+                            },
+                        },
+                    ),
+                ]
+            )
+        self._primary_calls += 1
+        if self._primary_calls == 1:
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {"id": "read-policy", "type": "function", "function": {"name": "read_file", "arguments": '{"path":"policy.md"}'}},
+                            {"id": "read-prototype", "type": "function", "function": {"name": "read_file", "arguments": '{"path":"prototype.html"}'}},
+                            {"id": "inspect-example", "type": "function", "function": {"name": "inspect_image", "arguments": '{"path":"example.png","question":"Describe visible reviewer and signature fields."}'}},
+                        ],
+                    }
+                },
+            )()
+        if tools:
+            raise AssertionError("document synthesis and rewrites must use tools=[]")
+        latest_user = next(
+            (str(message.get("content") or "") for message in reversed(messages) if message.get("role") == "user"),
+            "",
+        )
+        if "bounded transport recovery" in latest_user:
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": (
+                            "- Scoped observation: policy.md and prototype.html both include the reviewer/signature field area.\n"
+                            "- policy.md:1 requires blank fields; example.png visibly shows filled fields.\n"
+                            "- The artifact role and priority are not established, so the discrepancy remains unresolved."
+                        )
+                    }
+                },
+            )()
+        if latest_user.startswith("[Read-only evidence review]"):
+            claim_lines = [f"- policy.md:{index * 10} states requirement rule {index * 10}." for index in range(1, 75)]
+            claim_lines.extend(
+                [
+                    "- Scoped observation: policy.md and prototype.html both include the reviewer/signature field area.",
+                    "- policy.md:1 requires blank fields; example.png visibly shows filled fields.",
+                    "- The artifact role and priority are not established, so the discrepancy remains unresolved.",
+                ]
+            )
+            return type("Response", (), {"message": {"content": "\n".join(claim_lines)}})()
+        return type(
+            "Response",
+            (),
+            {
+                "message": {
+                    "content": (
+                        "- policy.md and prototype.html fully align.\n"
+                        "- policy.md:1 requires blank fields; example.png visibly shows filled fields.\n"
+                        "- The artifact role and priority are not established, so the discrepancy remains unresolved."
+                    )
+                }
+            },
+        )()
+
+
 class _PostRewriteProjectionOverflowClient(_OverlongClaimClient):
     calls: list[dict] = []
 
@@ -3707,6 +3809,48 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertGreaterEqual(len(primary_calls), 3)
         self.assertTrue(all(call["tools"] == [] for call in primary_calls[1:]))
 
+    def test_post_review_transport_omission_gets_one_bounded_compact_rewrite(self) -> None:
+        _PostReviewTransportRecoveryDocumentClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            (workspace / "policy.md").write_text(
+                "Reviewer and signature are blank in this phase.\n"
+                + "\n".join(f"{index}: requirement rule {index}" for index in range(2, 900)),
+                encoding="utf-8",
+            )
+            (workspace / "prototype.html").write_text(
+                "Reviewer and signature use the corresponding field area.\n",
+                encoding="utf-8",
+            )
+            (workspace / "example.png").write_bytes(
+                b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
+                b"\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc```\x00\x00\x00\x04\x00\x01"
+                b"\xf6\x178U\x00\x00\x00\x00IEND\xaeB`\x82"
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _PostReviewTransportRecoveryDocumentClient):
+                runtime = AgentRuntime(_config(workspace, vision_model="vision"), show_tool_logs=False)
+                answer = runtime.run(
+                    "只读分析 policy.md、prototype.html 和示例图片，说明本期范围、关键规则，以及资料之间是否有冲突。"
+                    "每项结论给出证据；证据不足不要推测。"
+                )
+
+        self.assertEqual(runtime._last_run_summary["termination_reason"], "final")
+        self.assertIn("Scoped observation", answer)
+        self.assertIn("discrepancy remains unresolved", answer)
+        summary = runtime._last_run_summary["read_only_reviewer"]
+        self.assertEqual(summary["triggers"], 1)
+        self.assertEqual(summary["rewrites"], 1)
+        self.assertEqual(summary["rewrite_acceptances"], 1)
+        self.assertEqual(summary["claim_transport_rewrites"], 1)
+        self.assertEqual(summary["claim_transport_rewrite_acceptances"], 1)
+        self.assertEqual(summary["claim_transport_rewrite_exhausted"], 0)
+        transport_rewrite_calls = [
+            call
+            for call in _PostReviewTransportRecoveryDocumentClient.calls
+            if any("bounded transport recovery" in str(message.get("content")) for message in call["messages"])
+        ]
+        self.assertEqual(len(transport_rewrite_calls), 1)
+
     def test_post_rewrite_projection_overflow_fails_closed_without_second_reviewer(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp).resolve()
@@ -3741,7 +3885,7 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertFalse(runtime._run.read_only_review.rewrite_accepted)
         self.assertTrue(runtime._run.read_only_review.rewrite_requested)
 
-    def test_post_rewrite_transport_omission_fails_closed_without_second_reviewer(self) -> None:
+    def test_post_rewrite_transport_omission_fails_closed_after_transport_rewrite_used(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp).resolve()
             runtime = AgentRuntime(_config(workspace), show_tool_logs=False)
@@ -3769,6 +3913,7 @@ class ReadOnlyReviewerTests(unittest.TestCase):
             state = runtime._run.read_only_review
             state.attempted = True
             state.rewrite_requested = True
+            state.transport_rewrite_accepted = True
             state.claim_units = candidate_claim_units("PayServiceImpl is the verified owner.")
             state.findings = (
                 ReviewerFinding("c001", "unsupported", "mark owner unlocated", "PayServiceImpl is the verified owner.", "candidate_defect"),

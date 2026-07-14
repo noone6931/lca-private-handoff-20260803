@@ -97,22 +97,7 @@ class ReadOnlyReviewPhase:
         skip_reason = runtime._run.finalization_rewrite_skip_reason()
         if skip_reason is not None:
             return self._unverified("deadline_or_finalization_budget", skip_reason, handoff=handoff)
-        if state.transport_rewrite_requested and not state.transport_rewrite_accepted:
-            state.transport_rewrite_requested = False
-            state.transport_rewrite_accepted = True
-            runtime._run.collector.record_read_only_review_claim_transport_rewrite_acceptance()
-            runtime._session.append(
-                "read_only_reviewer",
-                {
-                    "event": "claim_transport_rewrite_accepted",
-                    "claim_units": len(claim_units),
-                    "items": len(handoff.items),
-                },
-            )
-            runtime._events.emit(
-                "ContextUpdated",
-                {"kind": "read_only_reviewer_claim_transport_rewrite_accepted", "items": len(handoff.items)},
-            )
+        self._accept_transport_rewrite(handoff, claim_units)
         state.attempted = True
         state.review_round += 1
         state.claim_units = claim_units
@@ -241,6 +226,27 @@ class ReadOnlyReviewPhase:
             handoff=handoff,
         )
 
+    def _accept_transport_rewrite(self, handoff: Any, claim_units: tuple[Any, ...]) -> None:
+        runtime = self._runtime
+        state = runtime._run.read_only_review
+        if not state.transport_rewrite_requested or state.transport_rewrite_accepted:
+            return
+        state.transport_rewrite_requested = False
+        state.transport_rewrite_accepted = True
+        runtime._run.collector.record_read_only_review_claim_transport_rewrite_acceptance()
+        runtime._session.append(
+            "read_only_reviewer",
+            {
+                "event": "claim_transport_rewrite_accepted",
+                "claim_units": len(claim_units),
+                "items": len(handoff.items),
+            },
+        )
+        runtime._events.emit(
+            "ContextUpdated",
+            {"kind": "read_only_reviewer_claim_transport_rewrite_accepted", "items": len(handoff.items)},
+        )
+
     def _verify_rewrite_candidate(self, candidate: str) -> ReviewerPhaseOutcome:
         runtime = self._runtime
         state = runtime._run.read_only_review
@@ -253,11 +259,8 @@ class ReadOnlyReviewPhase:
         handoff = self._handoff(candidate, claim_units=claim_units)
         omitted_claim_ids = set(getattr(handoff, "transport_omitted_claim_ids", ()) or ())
         if omitted_claim_ids:
-            return self._unverified(
-                "claim_evidence_transport_incomplete",
-                f"omitted_claims={len(omitted_claim_ids)}",
-                handoff=handoff,
-            )
+            return self._request_transport_rewrite_or_unverified(handoff, omitted_claim_ids)
+        self._accept_transport_rewrite(handoff, claim_units)
         artifact = classify_provider_content_artifact(runtime._config.provider, candidate)
         if artifact is not None:
             return self._unverified("protocol_error", f"provider_markup_artifact:{artifact.kind}", handoff=handoff)
