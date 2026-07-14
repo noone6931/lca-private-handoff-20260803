@@ -1,0 +1,117 @@
+{
+  "id": "reviewer-finding-idempotent-replay",
+  "title": "A reviewer can replay an identical accepted finding while repairing a malformed final verdict",
+  "prompt": "只读分析当前服务 owner 和影响范围，不要修改文件。",
+  "budget_seconds": 90,
+  "workspace_files": {
+    "src/Evidence.java": "class Evidence {}\n"
+  },
+  "scripted_responses": [
+    {
+      "tool_calls": [
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "src/Evidence.java"
+          }
+        }
+      ]
+    },
+    {
+      "content": "PayServiceImpl is the verified owner."
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "report_read_only_finding",
+          "arguments": {
+            "claim_id": "c001",
+            "finding_scope": "candidate_defect",
+            "issue": "the candidate has no direct owner binding",
+            "action": "mark the real owner unlocated and keep PayServiceImpl analogous only"
+          }
+        },
+        {
+          "name": "submit_read_only_review",
+          "arguments_raw": "{"
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "report_read_only_finding",
+          "arguments": {
+            "claim_id": "c001",
+            "finding_scope": "candidate_defect",
+            "issue": "the candidate has no direct owner binding",
+            "action": "mark the real owner unlocated and keep PayServiceImpl analogous only"
+          }
+        },
+        {
+          "name": "submit_read_only_review",
+          "arguments": {
+            "verdict": "revise",
+            "confidence": 0.96,
+            "reason": "the accepted finding remains blocking"
+          }
+        }
+      ]
+    },
+    {
+      "content": "Verified evidence: src/Evidence.java exists. PayServiceImpl is only an analogous candidate; the real owner remains unlocated."
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "submit_read_only_review",
+          "arguments": {
+            "verdict": "pass",
+            "confidence": 0.97,
+            "reason": "the rewrite preserves the evidence boundary"
+          }
+        }
+      ]
+    }
+  ],
+  "acceptance": {
+    "required_tools": [
+      "read_file"
+    ],
+    "forbidden_tools": [
+      "apply_patch",
+      "write_file",
+      "shell",
+      "run_tests",
+      "search_code"
+    ],
+    "changed_files": [],
+    "answer_all_of": [
+      "analogous candidate",
+      "real owner remains unlocated"
+    ],
+    "answer_forbidden_regex": [
+      "verified owner"
+    ],
+    "termination_reason": "final",
+    "run_summary": {
+      "tool_calls": 1,
+      "tool_errors": 0
+    },
+    "read_only_reviewer": {
+      "triggers": 2,
+      "finding_submits": 1,
+      "rejected_finding_submits": 0,
+      "rejected_final_submits": 1,
+      "final_submits": 2,
+      "rewrites": 1,
+      "rewrite_acceptances": 1,
+      "output_lifecycle_exhausted": 0
+    },
+    "safe_partial_report": {
+      "emitted": 0
+    },
+    "max_tool_errors": 0
+  },
+  "residual_risk": "The fixture proves exact finding replay is idempotent while changed payloads remain conflicts; provider argument generation can still fail repeatedly and terminate unverified."
+}

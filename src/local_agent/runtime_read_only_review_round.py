@@ -181,6 +181,15 @@ def run_review_round(
                         "claim_id": event.finding.claim_id if event.finding is not None else "",
                     },
                 )
+            elif event.kind == "finding_replayed":
+                port.session.append(
+                    "read_only_reviewer",
+                    {
+                        "event": f"{event_prefix}finding_replayed",
+                        "attempt": provider_turn,
+                        "claim_id": event.finding.claim_id if event.finding is not None else "",
+                    },
+                )
             elif event.kind == "final":
                 state.typed_submits += 1
                 port.collector.record_read_only_review_final_submit()

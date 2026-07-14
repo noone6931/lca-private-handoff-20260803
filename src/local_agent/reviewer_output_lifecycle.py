@@ -18,7 +18,14 @@ from .read_only_reviewer import parse_reviewer_final_payload
 from .read_only_reviewer import parse_reviewer_finding_payload
 
 
-OutputEventKind = Literal["finding", "final", "finding_rejected", "final_rejected", "protocol_rejected"]
+OutputEventKind = Literal[
+    "finding",
+    "finding_replayed",
+    "final",
+    "finding_rejected",
+    "final_rejected",
+    "protocol_rejected",
+]
 
 
 @dataclass(frozen=True)
@@ -32,7 +39,7 @@ class ReviewerOutputEvent:
 
     @property
     def is_accepted(self) -> bool:
-        return self.kind in {"finding", "final"}
+        return self.kind in {"finding", "finding_replayed", "final"}
 
     @property
     def is_rejected(self) -> bool:
@@ -126,7 +133,7 @@ def parse_reviewer_output_turn(
 
     events: list[ReviewerOutputEvent] = []
     local_findings: list[ReviewerFinding] = []
-    seen_claim_ids = {finding.claim_id for finding in collected_findings}
+    finding_by_claim_id = {finding.claim_id: finding for finding in collected_findings}
     seen_tool_call_ids: set[str] = set()
     result: ReviewerResult | None = None
     final_order_invalid = False
@@ -179,10 +186,22 @@ def parse_reviewer_output_turn(
             except ReviewerValidationError as exc:
                 events.append(_event("finding_rejected", call_id, exc.code, index, exc.diagnostics))
                 continue
-            if finding.claim_id in seen_claim_ids:
-                events.append(_event("finding_rejected", call_id, "claim_id_duplicate", index, {"duplicate_claim_id_count": 1}))
+            prior_finding = finding_by_claim_id.get(finding.claim_id)
+            if prior_finding is not None:
+                if finding == prior_finding:
+                    events.append(ReviewerOutputEvent("finding_replayed", call_id, index, finding=prior_finding))
+                else:
+                    events.append(
+                        _event(
+                            "finding_rejected",
+                            call_id,
+                            "claim_id_conflict",
+                            index,
+                            {"conflicting_claim_id_count": 1},
+                        )
+                    )
                 continue
-            seen_claim_ids.add(finding.claim_id)
+            finding_by_claim_id[finding.claim_id] = finding
             local_findings.append(finding)
             events.append(ReviewerOutputEvent("finding", call_id, index, finding=finding))
             continue
@@ -257,6 +276,8 @@ def reviewer_assistant_tool_message(message: dict[str, Any], events: tuple[Revie
 def reviewer_tool_result_content(event: ReviewerOutputEvent) -> str:
     if event.kind == "finding":
         return "finding recorded; continue reporting findings or call submit_read_only_review"
+    if event.kind == "finding_replayed":
+        return "finding already recorded; replay accepted; continue reporting new findings or call submit_read_only_review"
     if event.kind == "final":
         return "review submitted"
     if event.kind == "finding_rejected":
