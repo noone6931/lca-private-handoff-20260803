@@ -307,7 +307,23 @@ _READ_ONLY_OWNER_IMPACT_MARKERS = (
     "owner", "ownership", "impact", "调用链", "归属", "影响范围", "调用方", "call chain",
 )
 _READ_ONLY_DESIGN_REVIEW_MARKERS = (
-    "data model", "state transition", "endpoint", "implementation design", "设计草案", "数据模型", "状态流转", "实施设计", "改造方案",
+    "data model",
+    "state transition",
+    "endpoint",
+    "implementation design",
+    "technical design",
+    "architecture design",
+    "design proposal",
+    "设计草案",
+    "数据模型",
+    "状态流转",
+    "实施设计",
+    "技术设计",
+    "架构设计",
+    "方案设计",
+    "技术方案",
+    "设计建议",
+    "改造方案",
 )
 
 def generate_requirement_contract(user_prompt: str) -> RequirementContract:

@@ -1,0 +1,132 @@
+{
+  "id": "generic-technical-design-review",
+  "title": "Generic technical-design language activates isolated review and corrects provenance overclaims",
+  "prompt": "请先读取 requirements.md、{{root:backend}}/src/Processor.java 和 {{root:frontend}}/src/Panel.ts，再做证据化技术设计。输出分开需求事实、源码当前事实、设计建议和尚待确认项；不得把建议说成当前实现。",
+  "budget_seconds": 90,
+  "workspace_files": {
+    "requirements.md": "# Requirement\nCoordinate a backend processor with a frontend panel.\n"
+  },
+  "additional_roots": {
+    "backend": {
+      "src/Processor.java": "class Processor { void process() {} }\n"
+    },
+    "frontend": {
+      "src/Panel.ts": "export const Panel = { action: 'process' };\n"
+    }
+  },
+  "scripted_responses": [
+    {
+      "tool_calls": [
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "requirements.md"
+          }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "{{root:backend}}/src/Processor.java"
+          }
+        },
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "{{root:frontend}}/src/Panel.ts"
+          }
+        }
+      ]
+    },
+    {
+      "content": "- 源码当前事实：frontend/src/Panel.ts 定义了后端 Processor，并且已经证明仓库中不存在其他 owner。\n- 设计建议：新增 Coordinator 表和 /api/coordinator 接口，这些已经是当前实现。"
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "report_read_only_finding",
+          "arguments": {
+            "claim_id": "c001",
+            "finding_scope": "candidate_defect",
+            "issue": "The candidate assigns backend provenance to the frontend file and turns bounded reads into repository-wide absence evidence.",
+            "action": "Use the observed backend and frontend paths exactly and keep broader owner absence unverified."
+          }
+        },
+        {
+          "name": "submit_read_only_review",
+          "arguments": {
+            "verdict": "revise",
+            "confidence": 0.98,
+            "reason": "The source-fact section contains wrong provenance and an unsupported repository-wide absence claim."
+          }
+        }
+      ]
+    },
+    {
+      "content": "需求事实：requirements.md 要求后端 processor 与前端 panel 协作。\n源码当前事实：backend/src/Processor.java 定义 Processor；frontend/src/Panel.ts 导出 Panel；本轮有限读取不能证明仓库中不存在其他 owner。\n设计建议：可将 Coordinator contract 和 /api/coordinator 作为候选方案，不是当前实现。\n尚待确认项：真实 owner、完整调用链以及既有接口是否可复用仍未定位。"
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "submit_read_only_review",
+          "arguments": {
+            "verdict": "pass",
+            "confidence": 0.97,
+            "reason": "The rewrite preserves exact provenance, bounds absence claims, and labels all new design names as proposals."
+          }
+        }
+      ]
+    }
+  ],
+  "acceptance": {
+    "required_tools": [
+      "read_file"
+    ],
+    "forbidden_tools": [
+      "search_code",
+      "glob_files",
+      "list_files",
+      "apply_patch",
+      "write_file",
+      "shell",
+      "run_tests"
+    ],
+    "changed_files": [],
+    "answer_all_of": [
+      "backend/src/Processor.java",
+      "frontend/src/Panel.ts",
+      "候选方案",
+      "不是当前实现",
+      "仍未定位"
+    ],
+    "answer_forbidden_regex": [
+      "Panel.ts 定义了后端 Processor",
+      "已经证明仓库中不存在其他 owner",
+      "这些已经是当前实现"
+    ],
+    "termination_reason": "final",
+    "run_summary": {
+      "tool_calls": 3,
+      "tool_errors": 0,
+      "provider_schema_violations": 0,
+      "provider_protocol_violations": 0
+    },
+    "read_only_reviewer": {
+      "triggers": 2,
+      "rewrites": 1,
+      "rewrite_acceptances": 1,
+      "rewrite_verification_rounds": 1,
+      "typed_submits": 3,
+      "finding_submits": 1,
+      "final_submits": 2
+    },
+    "safe_partial_report": {
+      "emitted": 0
+    },
+    "max_tool_errors": 0
+  },
+  "residual_risk": "This deterministic fixture proves generic technical-design intent reaches the reviewer; live provider wording and large-repository evidence quality still require fresh-state gates."
+}

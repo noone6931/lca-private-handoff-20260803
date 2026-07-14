@@ -1,0 +1,149 @@
+{
+  "id": "readonly-first-miss-fallback",
+  "title": "Read-only owner exploration performs one scoped fallback after each root's first empty search",
+  "prompt": "只读定位两个代码根的 owner、调用链和影响范围；空搜索后换一种有界策略，不要修改文件。",
+  "budget_seconds": 90,
+  "workspace_files": {
+    "src/Primary.java": "class PrimaryOwner { void coordinate() {} }\n"
+  },
+  "additional_roots": {
+    "secondary": {
+      "src/Secondary.ts": "export const secondaryOwner = 'route';\n"
+    }
+  },
+  "scripted_responses": [
+    {
+      "tool_calls": [
+        {
+          "name": "search_code",
+          "arguments": {
+            "path": "src",
+            "pattern": "MissingOwnerToken"
+          }
+        },
+        {
+          "name": "search_code",
+          "arguments": {
+            "path": "{{root:secondary}}/src",
+            "pattern": "MissingOwnerToken"
+          }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "glob_files",
+          "arguments": {
+            "paths": [
+              "{{root:secondary}}/**/src/**/*.*"
+            ],
+            "limit": 200
+          }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "glob_files",
+          "arguments": {
+            "paths": [
+              "src/**/*.*"
+            ],
+            "limit": 200
+          }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "search_code",
+          "arguments": {
+            "path": "src",
+            "pattern": "PrimaryOwner"
+          }
+        },
+        {
+          "name": "search_code",
+          "arguments": {
+            "path": "{{root:secondary}}/src",
+            "pattern": "secondaryOwner"
+          }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "src/Primary.java"
+          }
+        },
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "{{root:secondary}}/src/Secondary.ts"
+          }
+        }
+      ]
+    },
+    {
+      "content": "已读证据：src/Primary.java 和 secondary/src/Secondary.ts 均在各自代码根中直接读取。Owner 结论仅限这两个候选；完整调用链仍未定位。"
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "submit_read_only_review",
+          "arguments": {
+            "verdict": "pass",
+            "confidence": 0.96,
+            "reason": "Both roots have direct source reads after one bounded alternate discovery, and the answer keeps the full owner chain unlocated."
+          }
+        }
+      ]
+    }
+  ],
+  "acceptance": {
+    "required_tools": [
+      "search_code",
+      "glob_files",
+      "read_file"
+    ],
+    "forbidden_tools": [
+      "list_files",
+      "apply_patch",
+      "write_file",
+      "shell",
+      "run_tests"
+    ],
+    "changed_files": [],
+    "answer_all_of": [
+      "Primary.java",
+      "Secondary.ts",
+      "仍未定位"
+    ],
+    "answer_forbidden_regex": [
+      "已证实.*完整.*owner",
+      "repository.*不存在"
+    ],
+    "termination_reason": "final",
+    "run_summary": {
+      "tool_calls": 8,
+      "tool_errors": 0,
+      "provider_schema_violations": 0,
+      "provider_protocol_violations": 0
+    },
+    "read_only_reviewer": {
+      "triggers": 1,
+      "typed_submits": 1
+    },
+    "safe_partial_report": {
+      "emitted": 0
+    },
+    "max_tool_errors": 0
+  },
+  "residual_risk": "The deterministic fixture locks one alternate discovery per root after the first empty search; live model search-term quality still varies."
+}

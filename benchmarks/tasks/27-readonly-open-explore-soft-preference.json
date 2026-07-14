@@ -48,6 +48,19 @@
     {
       "tool_calls": [
         {
+          "name": "glob_files",
+          "arguments": {
+            "paths": [
+              "{{root:frontend}}/**/src/**/*.*"
+            ],
+            "limit": 200
+          }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
           "name": "search_code",
           "arguments": {
             "path": "{{root:frontend}}/src",
@@ -85,6 +98,7 @@
   "acceptance": {
     "required_tools": [
       "search_code",
+      "glob_files",
       "read_file"
     ],
     "forbidden_tools": [
@@ -107,7 +121,7 @@
     ],
     "termination_reason": "final",
     "run_summary": {
-      "tool_calls": 5,
+      "tool_calls": 6,
       "tool_errors": 0,
       "suppressed_tool_executions": 0
     },

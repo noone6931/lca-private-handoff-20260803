@@ -241,17 +241,8 @@ class ToolChoiceQueueTests(unittest.TestCase):
                 workspace_roots=(str(root),),
                 read_only_review_profile="owner_impact",
             )
-            fallback = evaluate_tool_choice_state(
-                task_kind="read-only",
-                prompt="只读分析 owner 和设计影响。",
-                tool_results=(no_match, no_match, no_match),
-                workspace_roots=(str(root),),
-                read_only_review_profile="owner_impact",
-            )
-            self.assertEqual(alternate.allowed_tool_names, frozenset({"read_file", "search_code"}))
-            self.assertEqual(alternate.required_glob_roots, ())
-            self.assertEqual(fallback.allowed_tool_names, frozenset({"glob_files"}))
-            self.assertEqual(fallback.required_glob_roots, (str(root),))
+            self.assertEqual(alternate.allowed_tool_names, frozenset({"glob_files"}))
+            self.assertEqual(alternate.required_glob_roots, (str(root),))
 
             glob_no_match = ToolResultSummary(
                 "glob_files",
@@ -263,12 +254,20 @@ class ToolChoiceQueueTests(unittest.TestCase):
                     "negative_evidence_type": "path_no_match",
                 },
             )
+            after_fallback = evaluate_read_only_explore(
+                profile="owner_impact",
+                tool_results=(no_match, glob_no_match),
+                code_roots=(str(root),),
+            )
             final = evaluate_read_only_explore(
                 profile="owner_impact",
-                tool_results=(no_match, no_match, no_match, glob_no_match),
+                tool_results=(no_match, glob_no_match, no_match, no_match),
                 code_roots=(str(root),),
             )
 
+        self.assertEqual(after_fallback.observation_calls, 2)
+        self.assertEqual(after_fallback.action, "precise")
+        self.assertEqual(after_fallback.discovery_roots, ())
         self.assertEqual(final.observation_calls, final.hard_budget)
         self.assertEqual(final.action, "finalize")
         self.assertEqual(final.discovery_roots, ())
@@ -329,7 +328,7 @@ class ToolChoiceQueueTests(unittest.TestCase):
             first_fallback = evaluate_tool_choice_state(
                 task_kind="read-only",
                 prompt="只读分析 owner 和设计影响。",
-                tool_results=(first_no_match, second_no_match, first_no_match, second_no_match),
+                tool_results=(first_no_match, second_no_match),
                 workspace_roots=(str(first), str(second)),
                 read_only_review_profile="owner_impact",
             )
@@ -346,7 +345,7 @@ class ToolChoiceQueueTests(unittest.TestCase):
             second_fallback = evaluate_tool_choice_state(
                 task_kind="read-only",
                 prompt="只读分析 owner 和设计影响。",
-                tool_results=(first_no_match, second_no_match, first_no_match, second_no_match, first_glob_no_match),
+                tool_results=(first_no_match, second_no_match, first_glob_no_match),
                 workspace_roots=(str(first), str(second)),
                 read_only_review_profile="owner_impact",
             )

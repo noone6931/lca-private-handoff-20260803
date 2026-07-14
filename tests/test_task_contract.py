@@ -253,6 +253,30 @@ class RequirementContractTests(unittest.TestCase):
             "none",
         )
 
+    def test_generic_technical_design_language_activates_typed_design_review(self) -> None:
+        prompt = (
+            "请依次读取需求、后端和前端资料，做证据化技术设计。"
+            "输出必须分开源码当前事实、设计建议和尚待确认项；不得把建议说成当前实现。"
+        )
+
+        contract = generate_requirement_contract(prompt)
+
+        self.assertEqual(contract.task_kind, "read-only")
+        self.assertEqual(contract.evidence_domain, "repository_code")
+        self.assertEqual(contract.read_only_review_profile, "design")
+
+    def test_design_review_language_does_not_override_non_repository_boundaries(self) -> None:
+        document_only = generate_requirement_contract(
+            "只根据需求文档 Markdown 做技术设计说明，不要检查代码。"
+        )
+        implementation = generate_requirement_contract(
+            "请实现这个技术方案，修改源码并补充测试。"
+        )
+
+        self.assertEqual(document_only.read_only_review_profile, "none")
+        self.assertEqual(implementation.task_kind, "code-implementation")
+        self.assertEqual(implementation.read_only_review_profile, "none")
+
     def test_primary_git_metadata_contract_has_a_dedicated_evidence_owner(self) -> None:
         for prompt in (
             "当前 primary workspace 是不是 Git 仓库？",

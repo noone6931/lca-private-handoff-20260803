@@ -59,21 +59,9 @@
           "name": "glob_files",
           "arguments": {
             "paths": [
-              "{{root:backend}}",
-              "{{root:frontend}}"
+              "{{root:backend}}/**/src/**/*.*"
             ],
             "limit": 200
-          }
-        }
-      ]
-    },
-    {
-      "tool_calls": [
-        {
-          "name": "search_code",
-          "arguments": {
-            "path": "{{root:backend}}",
-            "pattern": "NoSuchOwnerToken"
           }
         }
       ]
@@ -84,9 +72,9 @@
           "name": "glob_files",
           "arguments": {
             "paths": [
-              "{{root:backend}}/**/*payment*"
+              "{{root:frontend}}/**/routes/**/*.*"
             ],
-            "limit": 100
+            "limit": 200
           }
         }
       ]
@@ -166,9 +154,9 @@
     ],
     "termination_reason": "final",
     "run_summary": {
-      "tool_calls": 11,
-      "tool_errors": 1,
-      "provider_schema_violations": 1,
+      "tool_calls": 10,
+      "tool_errors": 0,
+      "provider_schema_violations": 0,
       "suppressed_tool_executions": 0
     },
     "read_only_reviewer": {
@@ -178,7 +166,7 @@
     "safe_partial_report": {
       "emitted": 0
     },
-    "max_tool_errors": 1
+    "max_tool_errors": 0
   },
   "residual_risk": "This deterministic fixture proves bounded inventory provenance and semantic candidate promotion without live provider noise; real repositories may still need additional semantic search turns."
 }

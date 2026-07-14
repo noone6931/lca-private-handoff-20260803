@@ -65,35 +65,6 @@
     {
       "tool_calls": [
         {
-          "name": "search_code",
-          "arguments": {
-            "path": "{{root:service-b}}/src",
-            "pattern": "NoSuchOwnerToken"
-          }
-        }
-      ]
-    },
-    {
-      "tool_calls": [
-        {
-          "name": "search_code",
-          "arguments": {
-            "path": "{{root:service-b}}/src",
-            "pattern": "detour"
-          }
-        },
-        {
-          "name": "search_code",
-          "arguments": {
-            "path": "{{root:service-b}}/src",
-            "pattern": "second detour"
-          }
-        }
-      ]
-    },
-    {
-      "tool_calls": [
-        {
             "name": "glob_files",
             "arguments": {
               "paths": [
@@ -162,13 +133,13 @@
     ],
     "termination_reason": "final",
     "run_summary": {
-      "tool_calls": 10,
+      "tool_calls": 9,
       "tool_errors": 3,
-      "provider_schema_violations": 5,
-      "suppressed_tool_executions": 2
+      "provider_schema_violations": 3,
+      "suppressed_tool_executions": 0
     },
     "tool_choice_exact": {
-      "forces": 1,
+      "forces": 0,
       "exhausted": 0
     },
     "read_only_reviewer": {

@@ -4259,14 +4259,20 @@ class AgentRuntimeTests(unittest.TestCase):
             if not any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in call["messages"])
         ]
         self.assertTrue(
-            all(schema in ({"read_file", "search_code"}, set()) for schema in primary_schema_calls)
+            all(schema in ({"read_file", "search_code"}, {"glob_files"}, set()) for schema in primary_schema_calls)
         )
         glob_schema_rejections = [
             item
             for item in runtime._run.tool_choice_results
             if item.name == "glob_files" and item.is_error and item.metadata.get("provider_schema_violation")
         ]
-        self.assertEqual(len(glob_schema_rejections), 3)
+        inventory_denials = [
+            item
+            for item in runtime._run.tool_choice_results
+            if item.name == "glob_files" and item.is_error and "bounded manifest/source patterns" in item.content
+        ]
+        self.assertEqual(glob_schema_rejections, [])
+        self.assertEqual(len(inventory_denials), 1)
 
     def test_exact_tool_choice_skipped_detour_keeps_transcript_pairing(self) -> None:
         _ExactToolChoicePairingClient.calls = []
