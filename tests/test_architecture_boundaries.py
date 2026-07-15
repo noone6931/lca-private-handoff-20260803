@@ -4,10 +4,48 @@ from pathlib import Path
 import ast
 import importlib
 import re
+import tempfile
 import unittest
 
 
 ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_PRODUCTION_MODULE_LINE_LIMIT = 900
+T201_COMPLEXITY_CEILINGS = {
+    "src/local_agent/tool_choice_queue.py": 185,
+    "src/local_agent/read_only_reviewer.py": 42,
+    "src/local_agent/tool_choice_decision.py": 333,
+    "src/local_agent/tool_choice_read_only.py": 779,
+    "src/local_agent/tool_choice_implementation.py": 310,
+    "src/local_agent/tool_choice_task_classification.py": 69,
+    "src/local_agent/read_only_reviewer_types.py": 235,
+    "src/local_agent/read_only_reviewer_claims.py": 495,
+    "src/local_agent/read_only_reviewer_contract.py": 512,
+    "src/local_agent/read_only_reviewer_validation.py": 419,
+    "src/local_agent/steering/final_answer.py": 59,
+}
+LEGACY_COMPLEXITY_DEBT_CEILINGS = {
+    "src/local_agent/agent.py": 1876,
+    "src/local_agent/tools/lsp.py": 1166,
+    "src/local_agent/completion_audit.py": 1093,
+    "src/local_agent/explore_handoff.py": 991,
+    "src/local_agent/benchmark.py": 989,
+    "src/local_agent/steering/evidence.py": 985,
+    "src/local_agent/read_only_explore.py": 981,
+    "src/local_agent/document_consistency.py": 939,
+    "src/local_agent/task_contract.py": 935,
+}
+
+
+def _production_complexity_failures(root: Path) -> list[tuple[str, int, int]]:
+    ceilings = {**LEGACY_COMPLEXITY_DEBT_CEILINGS, **T201_COMPLEXITY_CEILINGS}
+    failures: list[tuple[str, int, int]] = []
+    for path in sorted((root / "src/local_agent").rglob("*.py")):
+        relative_path = path.relative_to(root).as_posix()
+        line_count = len(path.read_text(encoding="utf-8").splitlines())
+        limit = ceilings.get(relative_path, DEFAULT_PRODUCTION_MODULE_LINE_LIMIT)
+        if line_count > limit:
+            failures.append((relative_path, line_count, limit))
+    return failures
 
 
 class ArchitectureBoundaryTests(unittest.TestCase):
@@ -22,7 +60,10 @@ class ArchitectureBoundaryTests(unittest.TestCase):
 
     def test_final_answer_facade_stays_thin(self) -> None:
         facade = ROOT / "src/local_agent/steering/final_answer.py"
-        self.assertLessEqual(len(facade.read_text(encoding="utf-8").splitlines()), 600)
+        self.assertLessEqual(
+            len(facade.read_text(encoding="utf-8").splitlines()),
+            T201_COMPLEXITY_CEILINGS["src/local_agent/steering/final_answer.py"],
+        )
 
     def test_runtime_does_not_reintroduce_migrated_domain_helpers(self) -> None:
         content = (ROOT / "src/local_agent/agent.py").read_text(encoding="utf-8")
@@ -71,31 +112,18 @@ class ArchitectureBoundaryTests(unittest.TestCase):
         self.assertNotIn("def _tool_choice_steering_signature", gateway)
 
     def test_split_facades_and_debt_files_obey_complexity_ratchets(self) -> None:
-        limits = {
-            "src/local_agent/tool_choice_queue.py": 800,
-            "src/local_agent/read_only_reviewer.py": 600,
-            "src/local_agent/tool_choice_decision.py": 900,
-            "src/local_agent/tool_choice_read_only.py": 900,
-            "src/local_agent/tool_choice_implementation.py": 900,
-            "src/local_agent/tool_choice_task_classification.py": 900,
-            "src/local_agent/read_only_reviewer_types.py": 900,
-            "src/local_agent/read_only_reviewer_claims.py": 900,
-            "src/local_agent/read_only_reviewer_contract.py": 900,
-            "src/local_agent/read_only_reviewer_validation.py": 900,
-            "src/local_agent/agent.py": 1876,
-            "src/local_agent/tools/lsp.py": 1166,
-            "src/local_agent/completion_audit.py": 1093,
-            "src/local_agent/explore_handoff.py": 991,
-            "src/local_agent/benchmark.py": 989,
-            "src/local_agent/steering/evidence.py": 985,
-            "src/local_agent/read_only_explore.py": 981,
-            "src/local_agent/document_consistency.py": 939,
-            "src/local_agent/task_contract.py": 935,
-        }
-        for relative_path, limit in limits.items():
-            with self.subTest(path=relative_path):
-                lines = (ROOT / relative_path).read_text(encoding="utf-8").splitlines()
-                self.assertLessEqual(len(lines), limit)
+        self.assertEqual(_production_complexity_failures(ROOT), [])
+
+    def test_unregistered_production_module_cannot_bypass_global_line_limit(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            module = root / "src/local_agent/unregistered_large_owner.py"
+            module.parent.mkdir(parents=True)
+            module.write_text("value = 1\n" * 901, encoding="utf-8")
+            self.assertEqual(
+                _production_complexity_failures(root),
+                [("src/local_agent/unregistered_large_owner.py", 901, DEFAULT_PRODUCTION_MODULE_LINE_LIMIT)],
+            )
 
     def test_split_facades_preserve_public_api_and_phase_order(self) -> None:
         queue = importlib.import_module("local_agent.tool_choice_queue")
