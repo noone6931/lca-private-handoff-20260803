@@ -248,12 +248,14 @@ zqylpayment：
 
 ### 8.2 构建前置条件
 
-两个后端仓都依赖私有 `com.yljr:parent:0.0.5-SNAPSHOT` 和内部依赖。本机已有 `~/.m2/settings.xml`，但当前 `~/.m2/repository/com/yljr` 不存在，因此真正 S5 运行前必须先在隔离副本做 Maven preflight，并满足以下任一项：
+两个后端仓都依赖私有 `com.yljr:parent:0.0.5-SNAPSHOT` 和内部依赖。T-206 已把私有 Maven 制品与缺失的 iText 5.5.3 制品放入独立 artifact bundle；真正 S5 运行仍必须先在隔离副本做 Maven preflight，并满足以下任一项：
 
 1. 现有 Maven `settings.xml` 能访问公司 Nexus 并解析私有 parent；或
 2. 已完整缓存私有依赖的 Maven repository。
 
 preflight 不输出 `settings.xml` 中的凭据。若现有配置无法连接，则由用户提供可用配置或离线缓存；否则 LCA 即使生成 patch，也不能满足“实际测试通过”的 S5 验收，必须诚实 BLOCKED。
+
+目标生产工具链是 Oracle JDK `1.8.0_121`。宿主机默认 JDK 不代表项目构建边界：本地隔离门禁使用显式 `JAVA_HOME` 指向兼容 Java 8 发行版，且不得为适配宿主 JDK 修改业务 POM；交付前再在生产同款 Oracle 8u121 环境复核。T-206 本地 Java 8 工具链为 Amazon Corretto `1.8.0_472`，宿主默认 JDK 25 保持不变。
 
 ### 8.3 LCA 黑盒验收
 

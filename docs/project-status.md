@@ -34,7 +34,9 @@
 
 T-204 已完成 S5 readiness closure，结论为 typed `BLOCKED`，未选择实施切片、未进入阶段 B。新增 `zqylfinancebasemasterfccb090b` 与 `zqylcrclfinancemaster7b875cd3c` 后已证实：直接保理底层值为 `FACTOR_TYPE=4`，`104` 是云信融资 10 与直接保理 4 的组合码；放款完成是 `T_FINANCE_PROJECT.APPLY_STATUS=60`；云信 `XF0003` 显示为“拓展服务费”，计划费用经 `findDetailList` 映射到旧名 `expectApplySponsorTaxFee`，而 `YJ0001` 保荐商佣金是独立费用项。放款完成链路会向 payment 推送实际费用和部分主体/日期，但 payment 现有结构化字段与 JSON 参数仍不能形成完整待制单数据源，`BusinessPayer.finalAmount` 还是多费用合计而非 `XF0003` 单项。五个候选均缺至少一项 Owner、完整 data contract、write target、test entry 或 rollback boundary，因此未修改业务原目录。下一步不再扩展 LCA gate，而是补齐目标业务契约后重新进入 S5。项目状态暂只维护 Markdown，不同步 Excel。
 
-T-205 已完成最小业务架构契约，见 `docs/extension-service-fee-s5-contract.md`。首个公平写路径固定为 `S5-1：放款后拓展服务费候选快照 + 待制单后端列表`：finance-base 在既有状态消息中增加通用单项费用与缺失订单字段，zqylpayment 以 `XF0003.chargeRealValue` 幂等写入本地候选快照并提供分页查询；预计值和 payer 多费用汇总均禁止回退使用。mpspay、制单事务、Word、回退和导出后置。该契约关闭 Owner、data contract、write target 与 rollback 设计缺口；实际测试仍依赖公司私有 `com.yljr:parent:0.0.5-SNAPSHOT`。本机已有 `~/.m2/settings.xml`，但没有 `com/yljr` 私有缓存，下一步先在隔离副本 preflight 现有 Nexus 配置，失败时再补可用配置或完整离线 repository。
+T-205 已完成最小业务架构契约，见 `docs/extension-service-fee-s5-contract.md`。首个公平写路径固定为 `S5-1：放款后拓展服务费候选快照 + 待制单后端列表`：finance-base 在既有状态消息中增加通用单项费用与缺失订单字段，zqylpayment 以 `XF0003.chargeRealValue` 幂等写入本地候选快照并提供分页查询；预计值和 payer 多费用汇总均禁止回退使用。mpspay、制单事务、Word、回退和导出后置。该契约关闭 Owner、data contract、write target 与 rollback 设计缺口；实际测试依赖公司私有 `com.yljr:parent:0.0.5-SNAPSHOT`，对应离线制品已在 T-206 补齐并进入隔离 Maven preflight。
+
+T-206 正在用 immutable T-203 stable 执行 S5-1。隔离 workspace、baseline Git、私有 Maven repository 和缺失的 iText 5.5.3 制品均已准备，业务原目录内容与 mtime 复验保持不变。生产目标工具链由用户确认为 Oracle JDK `1.8.0_121`；宿主 JDK 25 读取旧 `aspectjweaver` 的失败不再作为项目阻塞，本地已侧装 Amazon Corretto `1.8.0_472` 并验证可读取同一 JAR，当前以显式 Java 8 `JAVA_HOME` 继续两服务基线。业务 POM 不为宿主环境改写，最终交付保留生产同款 Oracle 8u121 VM 复核。
 
 已具备的核心能力：
 
@@ -392,6 +394,7 @@ T-205 已完成最小业务架构契约，见 `docs/extension-service-fee-s5-con
 | T-203 | Typed Blocked Delivery | 已完成并发布 stable | P12/S4 | 现有 safe partial 能阻止 rejected draft 泄漏，但只是泛化 evidence dump；在无法安全选择实施切片时，用户拿不到完整的阻塞结论和下一步所需信息。 | commit `7ccc7ad` 只由 typed contract/handoff/findings/reason 生成完整 BLOCKED 交付，不接收 rejected candidate、不新增 gate/reviewer/rewrite/attempt。950/61/13、三次 S4 hard 3/3、usability 3/3；stable `20260715T074350Z-7ccc7ad323dc-7bf1bbf4c507`。 |
 | T-204 | S5 Readiness Closure + Conditional Isolated Delivery | 已完成只读调查；typed BLOCKED，未进入阶段 B | P12/S5 | 首轮只有 zqylpayment/mpspay，无法证明目标数据契约、Owner 与测试入口；补充 finance-base/crcl-finance 后关闭了费用、状态和类型事实缺口，但五候选仍无一五维全闭合。 | 已确认 `XF0003` 拓展服务费、`YJ0001` 独立保荐商佣金、`FACTOR_TYPE=4`、`APPLY_STATUS=60` 及实际费用推送链；仍缺目标列表完整契约、目标写入模型、可执行测试入口和回滚边界。未创建隔离副本、未运行 stable 写路径、未修改五个只读根。下一步由业务设计补齐最小契约后再开 S5。 |
 | T-205 | S5-1 Minimal Business Contract | 架构契约已完成；准备 Maven preflight 与 stable 执行 | P12/S5 | T-204 的 BLOCKED 来自业务契约缺失，不应通过修改 Harness 或猜字段推进。需要选择能真实验证跨仓 write/test/diff/reviewer 的最小闭合切片。 | `docs/extension-service-fee-s5-contract.md` 决定由 finance-base 扩展通用 fee event，zqylpayment 持有候选快照与待制单列表；实际 `XF0003` 为唯一金额口径，无历史回灌。首切片不含前端/Word/回退/导出。现有 `~/.m2/settings.xml` 需在隔离副本验证能否解析私有 parent，成功后由 T-203 stable 执行。 |
+| T-206 | Immutable Stable S5-1 Write-path | 执行中：Java 8 基线预检 | P12/S5 | 必须在冻结 Harness、原业务仓只读和隔离 Maven/JDK 环境下证明 stable LCA 能完成真实跨仓闭环。 | 隔离 workspace 与 baseline 已建立，私有 Maven/iText 制品已闭合。生产目标为 Oracle JDK 1.8.0_121，本地用 Corretto 1.8.0_472 侧装门禁；宿主默认 JDK 25 不参与且不修改业务 POM。两服务基线通过后进入 stable patch/test/diff/reviewer/delivery。 |
 
 ## 风险清单
 
