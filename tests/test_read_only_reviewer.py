@@ -3465,7 +3465,7 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertIn("Accepted findings remain recorded", str(one_side_result[0].get("content")))
         self.assertEqual(
             summary["output_lifecycle_corrections"],
-            {"arguments": 0, "document_consistency": 2, "protocol": 0},
+            {"arguments": 0, "document_consistency": 2, "implementation_readiness": 0, "protocol": 0},
         )
 
     def test_document_consistency_reviewer_separates_argument_and_semantic_corrections(self) -> None:
@@ -3490,7 +3490,7 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertEqual(summary["output_lifecycle_exhausted_categories"], {})
         self.assertEqual(
             summary["output_lifecycle_corrections"],
-            {"arguments": 2, "document_consistency": 1, "protocol": 0},
+            {"arguments": 2, "document_consistency": 1, "implementation_readiness": 0, "protocol": 0},
         )
         final_findings = runtime._run.read_only_review.findings
         self.assertEqual([finding.claim_id for finding in final_findings], [f"c{index:03d}" for index in range(1, 9)])

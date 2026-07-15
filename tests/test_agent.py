@@ -3951,8 +3951,10 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertEqual(len(_DocumentOnlyRequirementClient.calls), 2)
         self.assertEqual(
             _tool_names_from_schema_call(_DocumentOnlyRequirementClient.calls[0]["tools"]),
-            {"inspect_image", "list_files", "read_file"},
+            {"read_file"},
         )
+        read_schema = _DocumentOnlyRequirementClient.calls[0]["tools"][0]["function"]["parameters"]
+        self.assertEqual(read_schema["properties"]["path"]["enum"], ["requirements.md"])
         self.assertEqual(_DocumentOnlyRequirementClient.calls[1]["tools"], [])
         self.assertEqual(runtime._last_run_summary["tool_counts"], {"read_file": 1})
         self.assertNotIn("read_only_evidence", runtime._last_run_summary["steering_counts"])

@@ -5,7 +5,9 @@ import time
 from typing import Any, Mapping
 
 
-READ_ONLY_REVIEWER_LIFECYCLE_CATEGORIES = frozenset({"arguments", "document_consistency", "protocol"})
+READ_ONLY_REVIEWER_LIFECYCLE_CATEGORIES = frozenset(
+    {"arguments", "document_consistency", "implementation_readiness", "protocol"}
+)
 
 
 @dataclass
@@ -80,6 +82,7 @@ class RunStats:
     read_only_reviewer_output_lifecycle_exhausted: int = 0
     read_only_reviewer_argument_lifecycle_corrections: int = 0
     read_only_reviewer_document_lifecycle_corrections: int = 0
+    read_only_reviewer_implementation_readiness_lifecycle_corrections: int = 0
     read_only_reviewer_protocol_lifecycle_corrections: int = 0
     read_only_reviewer_lifecycle_exhausted_categories: dict[str, int] = field(default_factory=dict)
     read_only_reviewer_verdicts: dict[str, int] = field(default_factory=dict)
@@ -403,6 +406,8 @@ class RunCollector:
             self._stats.read_only_reviewer_argument_lifecycle_corrections += 1
         elif category == "document_consistency":
             self._stats.read_only_reviewer_document_lifecycle_corrections += 1
+        elif category == "implementation_readiness":
+            self._stats.read_only_reviewer_implementation_readiness_lifecycle_corrections += 1
         else:
             self._stats.read_only_reviewer_protocol_lifecycle_corrections += 1
 
@@ -541,6 +546,7 @@ class RunCollector:
                 "output_lifecycle_corrections": {
                     "arguments": stats.read_only_reviewer_argument_lifecycle_corrections,
                     "document_consistency": stats.read_only_reviewer_document_lifecycle_corrections,
+                    "implementation_readiness": stats.read_only_reviewer_implementation_readiness_lifecycle_corrections,
                     "protocol": stats.read_only_reviewer_protocol_lifecycle_corrections,
                 },
                 "output_lifecycle_exhausted_categories": dict(

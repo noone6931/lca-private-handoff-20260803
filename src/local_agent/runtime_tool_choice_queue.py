@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import Any, Protocol
 
 from .tool_choice_queue import tool_choice_signature_count
+from .tool_choice_queue import tool_choice_steering_identity
 from .tool_choice_queue import tool_choice_steering_message
 from .tool_choice_queue import tool_choice_steering_signature
 
@@ -55,6 +56,11 @@ class RuntimeToolChoiceQueuePhase:
         runtime._run.update_tool_choice_read_scope(decision.scoped_read_paths, decision.scoped_read_budget)
         runtime._run.tool_choice_required_glob_roots = set(decision.required_glob_roots) or None
         directive_outcome = runtime._tool_choice_directive_phase.begin_decision(decision)
+        if directive_outcome.requeue_required:
+            # The directive owner emitted a typed root-local unlocated outcome.
+            # Re-evaluate once so the next queue decision targets a sibling root
+            # or final readiness review rather than retaining the stale scope.
+            return self.apply_if_needed(deadline)
         if directive_outcome.kind == "exhausted":
             runtime._run.tool_choice_stop_reason = directive_outcome.terminal_reason
             return directive_outcome.terminal_message
@@ -85,10 +91,14 @@ class RuntimeToolChoiceQueuePhase:
             return stop
         if not decision.steering_required:
             return None
-        signature = tool_choice_steering_signature(decision, len(runtime._run.tool_choice_results))
+        signature = tool_choice_steering_identity(decision)
         if signature in runtime._run.tool_choice_steering_signatures:
             return None
-        if tool_choice_signature_count(runtime._run.tool_choice_steering_signatures, decision.rule_id) >= (
+        if tool_choice_signature_count(
+            runtime._run.tool_choice_steering_signatures,
+            decision.rule_id,
+            decision.requirement_identity,
+        ) >= (
             MAX_TOOL_CHOICE_QUEUE_STEERS_PER_SIGNATURE
         ):
             return None

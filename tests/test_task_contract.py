@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
 
 from local_agent.task_contract import generate_requirement_contract
 from local_agent.task_contract import render_contract_context
@@ -33,6 +34,23 @@ class RequirementContractTests(unittest.TestCase):
         self.assertTrue(any("smallest practical change" in item for item in contract.acceptance_items))
         self.assertTrue(any("modified files" in item for item in contract.evidence_requirements))
         self.assertTrue(any("test command" in item for item in contract.verification_requirements))
+
+    def test_write_task_document_names_do_not_create_read_only_material_contract(self) -> None:
+        contract = generate_requirement_contract(
+            "请创建 index.html 并实现展示功能，随后检查 screenshot.png 是否正确显示。"
+        )
+
+        self.assertEqual(contract.task_kind, "code-implementation")
+        self.assertEqual(contract.document_artifacts, ())
+
+    def test_read_only_design_investigation_keeps_explicit_material_contract(self) -> None:
+        contract = generate_requirement_contract(
+            "阅读需求文档、原型 HTML 和示例图片，检查源码后选择可实施切片；不写代码。"
+        )
+
+        self.assertEqual(contract.task_kind, "read-only")
+        self.assertEqual(contract.evidence_domain, "repository_code")
+        self.assertEqual(tuple(item.kind for item in contract.document_artifacts), ("markdown", "html", "image"))
 
     def test_source_qualified_chinese_fix_is_still_an_implementation_contract(self) -> None:
         contract = generate_requirement_contract("仅根据当前源码修复 README 文档里的一个小问题")
@@ -266,8 +284,26 @@ class RequirementContractTests(unittest.TestCase):
 
         self.assertEqual(
             [(item.kind, item.reference, item.exact) for item in contract.document_artifacts],
-            [("markdown", "spec-a.md", True), ("html", "spec-b.html", True), ("image", "image-c.png", True)],
+            [("markdown", "spec-a.md", True), ("html", "./prototypes/spec-b.html", True), ("image", "image-c.png", True)],
         )
+
+    def test_absolute_artifact_reference_remains_an_executable_material_target(self) -> None:
+        exact = Path("/tmp/allowed-requirements/requirements.md")
+        contract = generate_requirement_contract(
+            f"只根据 `{exact}` 读取需求后完成只读分析；不要修改文件。"
+        )
+
+        self.assertEqual(
+            [(item.kind, item.reference, item.exact) for item in contract.document_artifacts],
+            [("markdown", str(exact), True)],
+        )
+
+    def test_remote_artifact_url_is_not_a_local_material_target(self) -> None:
+        contract = generate_requirement_contract(
+            "只读分析 `https://example.invalid/spec.html` 的链接说明；不要修改文件。"
+        )
+
+        self.assertFalse(any(item.exact for item in contract.document_artifacts))
 
     def test_read_only_reviewer_profile_is_typed_by_contract_owner(self) -> None:
         self.assertEqual(

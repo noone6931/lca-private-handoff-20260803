@@ -251,6 +251,10 @@ S4 shadow gate 暴露的问题不是单个 provider 文案，而是 read-only ex
 
 LCA 的必要增强不是 OMP 原生类：ImplementationReadinessAssessment、claim-scoped locator binding、unsupported identifier finding lifecycle、以及 WorkspaceEvidenceRootProjection 都是本地多根只读交付的安全层。OMP 源码没有这些同名 taxonomy；文档和代码只能说 LCA 借鉴 queue / explore / yield lifecycle 原则，并在本地 reviewer owner 中增加机器可校验的 readiness binding。
 
+### T-199 material / candidate-read closure
+
+OMP 的 queue 负责 directive 的 served / resolve / reject，`agent-loop` 保持 tool-result pairing 与有界 detour 续行，Explore 在空搜索或失败后切换策略，task `yield` 提供有界结构化交接。LCA 据此增加只读材料的 exact target 消费、candidate-read 耗尽后的 root-local unlocated 事实，以及 `ImplementationReadiness` 的 collector 分类；这些是本地 evidence/readiness 增强，不能表述为 OMP 的同名类或原生 taxonomy。
+
 ## OMP 主循环
 
 源码依据：`/Users/chengming/mycode/opensource/oh-my-pi/packages/agent/src/agent-loop.ts`

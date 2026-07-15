@@ -51,9 +51,9 @@ class RuntimeReadOnlyExplorePhase:
         decision = evaluate_read_only_explore(
             profile=contract.read_only_review_profile,
             tool_results=runtime._run.tool_choice_results,
-            code_roots=runtime._run.design_evidence_coverage.roots or tuple(
-                str(root) for root in runtime._workspace_context.all_roots
-            ),
+            code_roots=runtime._run.design_evidence_coverage.roots,
+            requested_source_artifacts=contract.source_artifacts,
+            strict_relevance=contract.implementation_readiness_required,
         )
         if not decision.is_applicable:
             return None
@@ -72,19 +72,95 @@ class RuntimeReadOnlyExplorePhase:
             return None
         if decision.action != "finalize":
             return None
-        runtime._run.read_only_explore_finalized = True
-        self._record_missing_root_observations(decision)
+        self._finalize(decision, event="hard_budget_reached")
+        return decision
+
+    def mark_candidate_read_unlocated(self, paths: tuple[str, ...], *, reason: str) -> bool:
+        """Close one exhausted readiness read requirement as root-local unlocated.
+
+        This is deliberately narrower than generic exact-tool exhaustion.  The
+        primary model still had to attempt the typed candidate through the
+        bounded directive; only a read-only readiness investigation may turn
+        its exhausted candidate into an honest coverage boundary.
+        """
+
+        runtime = self._runtime
+        contract = runtime._run.requirement_contract
+        if (
+            contract is None
+            or not contract.implementation_readiness_required
+            or contract.read_only_review_profile not in {"owner_impact", "design"}
+        ):
+            return False
+        roots = tuple(runtime._run.design_evidence_coverage.roots)
+        if not roots:
+            return False
+        selected_roots = tuple(
+            dict.fromkeys(
+                root
+                for path in paths
+                for root in roots
+                if path == root or path.startswith(root.rstrip("/") + "/")
+            )
+        )
+        if len(selected_roots) != 1:
+            return False
+        root = selected_roots[0]
+        if any(
+            result.name == "read_only_explore"
+            and result.metadata.get("candidate_read_exhausted")
+            and result.metadata.get("evidence_root") == root
+            for result in runtime._run.tool_choice_results
+        ):
+            self._finalize_if_complete(event="candidate_read_exhausted_finalized")
+            return True
+        runtime._run.tool_choice_results.append(
+            ToolResultSummary(
+                "read_only_explore",
+                (
+                    "The bounded candidate read requirement exhausted after provider detours or invalid arguments; "
+                    "the target remains unlocated in this root."
+                ),
+                useless=True,
+                path=root,
+                metadata={
+                    "read_only_explore_incomplete": True,
+                    "read_only_explore_unlocated": True,
+                    "candidate_read_exhausted": True,
+                    "evidence_root": root,
+                    "evidence_root_label": root,
+                    "evidence_scope": "root_local",
+                    "reason": reason,
+                    "scoped_read_paths": list(paths),
+                },
+            )
+        )
         runtime._session.append(
             "read_only_explore",
             {
-                "event": "hard_budget_reached",
-                "observations": decision.observation_calls,
-                "successful_observations": decision.successful_observations,
-                "hard_budget": decision.hard_budget,
-                "missing_roots": list(decision.missing_roots),
+                "event": "candidate_read_exhausted_unlocated",
+                "root": root,
+                "reason": reason,
+                "scoped_read_paths": list(paths),
             },
         )
-        return decision
+        self._finalize_if_complete(event="candidate_read_exhausted_finalized")
+        return True
+
+    def _finalize_if_complete(self, *, event: str) -> None:
+        runtime = self._runtime
+        contract = runtime._run.requirement_contract
+        if contract is None:
+            return
+        decision = evaluate_read_only_explore(
+            profile=contract.read_only_review_profile,
+            tool_results=runtime._run.tool_choice_results,
+            code_roots=runtime._run.design_evidence_coverage.roots,
+            requested_source_artifacts=contract.source_artifacts,
+            strict_relevance=contract.implementation_readiness_required,
+        )
+        if decision.is_applicable and decision.action == "finalize":
+            self._finalize(decision, event=event)
 
     def record_suppressed_calls(self, count: int, decision: ReadOnlyExploreDecision) -> None:
         if count <= 0:
@@ -181,6 +257,23 @@ class RuntimeReadOnlyExplorePhase:
                     },
                 )
             )
+
+    def _finalize(self, decision: ReadOnlyExploreDecision, *, event: str) -> None:
+        """Record the terminal explore handoff once a bounded outcome exists per root."""
+
+        runtime = self._runtime
+        runtime._run.read_only_explore_finalized = True
+        self._record_missing_root_observations(decision)
+        runtime._session.append(
+            "read_only_explore",
+            {
+                "event": event,
+                "observations": decision.observation_calls,
+                "successful_observations": decision.successful_observations,
+                "hard_budget": decision.hard_budget,
+                "missing_roots": list(decision.missing_roots),
+            },
+        )
 
     @staticmethod
     def _candidate_roots(paths: tuple[str, ...], roots: tuple[str, ...]) -> set[str]:

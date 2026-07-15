@@ -19,16 +19,20 @@ class ToolChoiceDirectiveAction:
     tool_name: str = ""
     reason: str = ""
     attempt: int = 0
+    read_only_unlocated_on_exhaustion: bool = False
+    scoped_read_paths: tuple[str, ...] = ()
 
 
 @dataclass
 class _ActiveRequirement:
-    signature: tuple[str, str, tuple[str, ...], tuple[str, ...], str]
+    signature: tuple[str, str, str, tuple[str, ...], tuple[str, ...], str]
     tool_name: str
     result_cursor: int
     required_arguments_json: str = ""
     forced_attempts: int = 0
     force_next: bool = False
+    read_only_unlocated_on_exhaustion: bool = False
+    scoped_read_paths: tuple[str, ...] = ()
 
 
 class ToolChoiceDirectiveOwner:
@@ -63,6 +67,8 @@ class ToolChoiceDirectiveOwner:
                 tool_name,
                 len(results),
                 required_arguments_json=decision.required_tool_arguments_json,
+                read_only_unlocated_on_exhaustion=decision.read_only_unlocated_on_exhaustion,
+                scoped_read_paths=tuple(decision.scoped_read_paths),
             )
             return ToolChoiceDirectiveAction("none")
         active = self._active
@@ -80,6 +86,8 @@ class ToolChoiceDirectiveOwner:
                 active.tool_name,
                 "required_tool_error_limit",
                 active.forced_attempts + 1,
+                active.read_only_unlocated_on_exhaustion,
+                active.scoped_read_paths,
             )
         active.forced_attempts += 1
         active.force_next = True
@@ -112,7 +120,14 @@ class ToolChoiceDirectiveOwner:
             return ToolChoiceDirectiveAction("none")
         if active.forced_attempts >= MAX_EXACT_TOOL_CHOICE_ESCALATIONS:
             self._active = None
-            return ToolChoiceDirectiveAction("exhausted", active.tool_name, "exact_tool_choice_limit", active.forced_attempts)
+            return ToolChoiceDirectiveAction(
+                "exhausted",
+                active.tool_name,
+                "exact_tool_choice_limit",
+                active.forced_attempts,
+                active.read_only_unlocated_on_exhaustion,
+                active.scoped_read_paths,
+            )
         active.forced_attempts += 1
         active.force_next = True
         return ToolChoiceDirectiveAction("force", active.tool_name, "noncompliant_turn", active.forced_attempts)
@@ -140,9 +155,10 @@ def _called_only_required_tool(tool_calls: list[dict[str, Any]], tool_name: str)
     return True
 
 
-def _signature(decision: ToolChoiceDecision, tool_name: str) -> tuple[str, str, tuple[str, ...], tuple[str, ...], str]:
+def _signature(decision: ToolChoiceDecision, tool_name: str) -> tuple[str, str, str, tuple[str, ...], tuple[str, ...], str]:
     return (
         decision.rule_id or decision.reason,
+        decision.requirement_identity,
         tool_name,
         tuple(sorted(decision.missing_requirements)),
         tuple(sorted(decision.scoped_read_paths)),

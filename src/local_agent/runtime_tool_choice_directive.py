@@ -23,11 +23,13 @@ class ToolChoiceTurnOutcome:
     skipped_message: str = ""
     skipped_metadata: Mapping[str, Any] | None = None
     suppressed_count: int = 0
+    requeue_required: bool = False
 
 
 class ToolChoiceDirectiveRuntimePort(Protocol):
     _run: Any
     _session: Any
+    _read_only_explore_phase: Any
 
 
 class RuntimeToolChoiceDirectivePhase:
@@ -76,6 +78,25 @@ class RuntimeToolChoiceDirectivePhase:
                 suppressed_count=suppressed_count,
             )
         self._runtime._run.collector.record_tool_choice_exact_exhausted()
+        if action.read_only_unlocated_on_exhaustion and self._runtime._read_only_explore_phase.mark_candidate_read_unlocated(
+            action.scoped_read_paths,
+            reason=action.reason,
+        ):
+            return ToolChoiceTurnOutcome(
+                "force",
+                append_skipped_results=bool(raw_tool_calls),
+                skipped_message=(
+                    "Skipped because the bounded candidate read requirement was exhausted; "
+                    "this root is now recorded as unlocated for the read-only readiness review."
+                ),
+                skipped_metadata={
+                    **metadata,
+                    "read_only_explore_unlocated": True,
+                    "candidate_read_exhausted": True,
+                },
+                suppressed_count=suppressed_count,
+                requeue_required=True,
+            )
         return ToolChoiceTurnOutcome(
             "exhausted",
             terminal_message=(

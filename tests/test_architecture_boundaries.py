@@ -46,6 +46,13 @@ class ArchitectureBoundaryTests(unittest.TestCase):
         ):
             self.assertIn(call, content)
 
+    def test_runtime_only_dispatches_generic_tool_choice_outcomes(self) -> None:
+        content = (ROOT / "src/local_agent/agent.py").read_text(encoding="utf-8")
+        directive = (ROOT / "src/local_agent/runtime_tool_choice_directive.py").read_text(encoding="utf-8")
+        self.assertIn("requeue_required", directive)
+        self.assertNotIn("implementation_readiness_required", content)
+        self.assertNotIn("read_only_unlocated", content)
+
     def test_runtime_uses_explicit_phase_components_not_a_provider_mixin(self) -> None:
         provider_context = (ROOT / "src/local_agent/provider_context.py").read_text(encoding="utf-8")
         self.assertIn("class ProviderContextPhase:", provider_context)

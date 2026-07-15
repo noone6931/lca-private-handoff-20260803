@@ -89,6 +89,16 @@ class RunCollectorTests(unittest.TestCase):
         self.assertEqual(summary["llm_requests"], 0)
         self.assertEqual(summary["local_context_summaries"], 0)
 
+    def test_records_implementation_readiness_lifecycle_correction(self) -> None:
+        collector = RunCollector()
+        collector.start("run-1", "readiness", 1.0, guard_start={}, steer_start={})
+
+        collector.record_read_only_review_output_lifecycle_correction("implementation_readiness")
+        summary = collector.finish("final", guard_values={}, steering_values={})
+
+        corrections = summary["read_only_reviewer"]["output_lifecycle_corrections"]
+        self.assertEqual(corrections["implementation_readiness"], 1)
+
     def test_tracks_consecutive_zero_gain_compactions(self) -> None:
         collector = RunCollector()
         collector.start("run-1", "compact", 1.0, guard_start={}, steer_start={})

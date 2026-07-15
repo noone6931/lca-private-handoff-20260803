@@ -47,6 +47,7 @@ _READ_ONLY_MARKERS = (
     "禁止修改",
     "不修改",
     "不改代码",
+    "不写代码",
     "不用改",
     "无需修改",
     "不得写入",
@@ -65,6 +66,7 @@ _EXPLICIT_READ_ONLY_DIRECTIVES = (
     "禁止修改",
     "不修改",
     "不改代码",
+    "不写代码",
     "不用改",
     "无需修改",
     "不得写入",
@@ -353,7 +355,16 @@ def generate_requirement_contract(user_prompt: str) -> RequirementContract:
     inspection_repository_facts_requested = inspection_forbidden_repository_fact_request(prompt)
     metadata_subject = workspace_metadata_subject(prompt) if task_kind == "read-only" else None
     evidence_domain = _evidence_domain(prompt, inspection_forbidden, metadata_subject)
-    document_artifacts = extract_document_artifact_requirements(user_prompt) if evidence_domain == "requirement_documents" else ()
+    # Mixed read-only design work can require both repository evidence and
+    # explicitly named/local requirement materials.  Keep the latter typed in
+    # the contract instead of treating one main Markdown read as completion.
+    # An implementation request may name files it intends to create or inspect
+    # after an edit, so it must not inherit this pre-read lifecycle.
+    document_artifacts = (
+        extract_document_artifact_requirements(user_prompt)
+        if task_kind == "read-only"
+        else ()
+    )
     source_artifacts = extract_source_artifact_references(user_prompt) if evidence_domain == "repository_code" else ()
     readiness_required = has_implementation_readiness_intent(prompt)
     review_profile = _read_only_review_profile(
@@ -495,6 +506,7 @@ def generate_requirement_contract(user_prompt: str) -> RequirementContract:
             task_kind=task_kind,
             evidence_domain="repository_code",
             read_only_review_profile=review_profile,
+            document_artifacts=document_artifacts,
             source_artifacts=source_artifacts,
             implementation_readiness_required=readiness_required,
         )
@@ -538,6 +550,8 @@ def generate_requirement_contract(user_prompt: str) -> RequirementContract:
         task_kind=task_kind,
         evidence_domain="repository_code",
         read_only_review_profile=review_profile,
+        document_artifacts=document_artifacts,
+        source_artifacts=source_artifacts,
         implementation_readiness_required=readiness_required,
     )
 

@@ -157,7 +157,8 @@ def evaluate_read_only_explore(
         requested_source_artifacts=requested_artifacts,
         strict_relevance=strict_relevance,
     )
-    missing = tuple(root for root in roots if root not in covered)
+    unlocated = _bounded_unlocated_roots(results, roots)
+    missing = tuple(root for root in roots if root not in covered and root not in unlocated)
     root_attempts = _root_attempts(results, roots)
     preferred_roots = _least_observed_roots(missing, root_attempts)
     candidate_target_roots = _inventory_read_target_roots(candidate_paths, missing, root_attempts)
@@ -166,7 +167,12 @@ def evaluate_read_only_explore(
         candidate_target_roots,
         per_root_limit=MAX_SEMANTIC_READ_CHOICES_PER_DIRECTIVE,
     )
-    exact_read_candidates = _read_candidates_for_missing_roots(precise_source_inventory, missing)
+    exact_target_roots = _inventory_read_target_roots(precise_source_inventory, missing, root_attempts)
+    exact_read_candidates = _read_candidates_for_missing_roots(
+        precise_source_inventory,
+        exact_target_roots,
+        per_root_limit=MAX_SEMANTIC_READ_CHOICES_PER_DIRECTIVE,
+    )
     inventory_target_roots = _inventory_read_target_roots(source_inventory, missing, root_attempts)
     inventory_read_candidates = _read_candidates_for_missing_roots(
         source_inventory,
@@ -406,6 +412,21 @@ def _read_candidates_for_missing_roots(
             per_root[root] += 1
             candidates.append(rendered)
     return tuple(candidates)
+
+
+def _bounded_unlocated_roots(
+    results: Iterable[ToolResultSummary],
+    roots: tuple[str, ...],
+) -> set[str]:
+    """Return roots explicitly closed as bounded-unlocated by directive recovery."""
+
+    return {
+        root
+        for result in results
+        if result.name == "read_only_explore"
+        and result.metadata.get("read_only_explore_unlocated")
+        for root in _result_roots(result, roots)
+    }
 
 
 def _semantic_candidate_paths_by_root(

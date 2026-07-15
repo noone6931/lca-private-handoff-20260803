@@ -9,6 +9,7 @@ from typing import Any
 from .design_evidence import missing_design_evidence_roots
 from .document_artifacts import DocumentArtifactRequirement
 from .document_artifacts import document_artifact_coverage
+from .document_artifacts import document_material_targets
 from .inventory_contract import inventory_glob_arguments_for_roots, inventory_glob_call_hint
 from .negative_evidence import allowed_tools_for_negative_claims, parse_negative_evidence_claims, unsupported_negative_existence_claims
 from .read_only_explore import BOUNDED_EXPLORE_TOOLS
@@ -291,6 +292,9 @@ class ToolChoiceDecision:
     allowed_tool_names: frozenset[str]
     reason: str
     rule_id: str | None = None
+    # Keep the rule category stable for telemetry.  A scoped workflow may
+    # still advance to a different concrete requirement within that category.
+    requirement_identity: str = ""
     missing_requirements: tuple[str, ...] = ()
     preferred_tool_names: tuple[str, ...] = ()
     tool_call_hints: tuple[str, ...] = ()
@@ -298,6 +302,7 @@ class ToolChoiceDecision:
     required_tool_arguments_json: str = ""
     scoped_read_paths: tuple[str, ...] = ()
     scoped_read_budget: int | None = None
+    read_only_unlocated_on_exhaustion: bool = False
     stop_message: str | None = None
     force_final_answer_without_tools: bool = False
 
@@ -323,9 +328,24 @@ def tool_choice_steering_signature(decision: ToolChoiceDecision, result_count: i
     return json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
 
 
-def tool_choice_signature_count(signatures: set[str], rule_id: str | None) -> int:
+def tool_choice_steering_identity(decision: ToolChoiceDecision) -> str:
+    """Return the stable lifecycle identity for a non-final queue reminder."""
+
+    payload = {
+        "rule_id": decision.rule_id,
+        "requirement_identity": decision.requirement_identity,
+    }
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
+
+
+def tool_choice_signature_count(
+    signatures: set[str],
+    rule_id: str | None,
+    requirement_identity: str = "",
+) -> int:
     prefix = f'"rule_id": "{rule_id}"' if rule_id else '"rule_id": null'
-    return sum(1 for signature in signatures if prefix in signature)
+    identity = f'"requirement_identity": {json.dumps(requirement_identity, ensure_ascii=False)}'
+    return sum(1 for signature in signatures if prefix in signature and identity in signature)
 
 
 def tool_choice_steering_message(decision: ToolChoiceDecision, current_user_request: str | None) -> str:
@@ -492,9 +512,56 @@ def evaluate_tool_choice_state(
     read_only = _is_read_only_task(task_kind, prompt)
     allowed_tools = all_tools - READ_ONLY_FORBIDDEN_TOOL_NAMES if read_only else all_tools
 
+    artifacts = tuple(document_artifacts)
+    if read_only and artifacts:
+        material_targets = document_material_targets(artifacts, results)
+        coverage = document_artifact_coverage(material_targets, results)
+        missing = tuple(item.requirement for item in coverage if item.status == "missing")
+        if missing:
+            exact_targets = tuple(item for item in missing if item.exact)
+            unresolved_modalities = tuple(item for item in missing if not item.exact)
+            if not exact_targets and unresolved_modalities:
+                return ToolChoiceDecision(
+                    steering_required=True,
+                    allowed_tool_names=_allowed_subset({"list_files", *_material_tools(missing)}, allowed_tools),
+                    reason=(
+                        "requirement_material_discovery missing: list the authorized material directory once to bind "
+                        "the requested modalities to exact local paths before consuming them."
+                    ),
+                    rule_id="requirement_material_discovery",
+                    requirement_identity="material_discovery:" + ",".join(
+                        f"{item.kind}:{item.reference}" for item in unresolved_modalities
+                    ),
+                    missing_requirements=tuple(f"document_artifact:{item.label}" for item in unresolved_modalities),
+                    preferred_tool_names=("list_files",),
+                    tool_call_hints=(
+                        "Use list_files on the authorized requirement-material directory once; then read or inspect "
+                        "only the exact targets it binds.",
+                    ),
+                )
+            active_missing = exact_targets[:1]
+            required_tools = _material_tools(active_missing)
+            return ToolChoiceDecision(
+                steering_required=True,
+                allowed_tool_names=_allowed_subset(required_tools, allowed_tools),
+                reason=(
+                    "requirement_material_read missing: complete only the explicit or locally linked document "
+                    "materials before repository exploration; do not promote unrelated sibling files."
+                ),
+                rule_id="requirement_material_read",
+                requirement_identity=f"material:{active_missing[0].kind}:{active_missing[0].reference}",
+                missing_requirements=tuple(f"document_artifact:{item.label}" for item in active_missing),
+                preferred_tool_names=tuple(dict.fromkeys("inspect_image" if item.kind == "image" else "read_file" for item in active_missing)),
+                tool_call_hints=_document_read_tool_hints(active_missing),
+                required_tool_arguments_json=_material_required_arguments_json(active_missing),
+                scoped_read_paths=tuple(item.reference for item in active_missing),
+                scoped_read_budget=1,
+            )
+
     if evidence_domain == "requirement_documents":
         artifacts = tuple(document_artifacts)
-        coverage = document_artifact_coverage(artifacts, results)
+        material_targets = document_material_targets(artifacts, results)
+        coverage = document_artifact_coverage(material_targets, results)
         missing = tuple(item.requirement for item in coverage if item.status == "missing")
         unavailable = tuple(item for item in coverage if item.status == "unavailable")
         has_document_read = _has_requirement_doc_read(prompt, results)
@@ -677,6 +744,19 @@ def evaluate_tool_choice_state(
                 if explore_decision.observation_calls >= explore_decision.soft_budget and not open_after_broad_inventory
                 else "read_only_profile_explore"
             ),
+            requirement_identity=(
+                "candidate_read:" + "|".join(bounded_read_paths)
+                if bounded_read_paths
+                else "inventory_read:" + "|".join(explore_decision.inventory_read_candidates)
+                if inventory_candidate_read
+                else "exact_glob:" + "|".join(explore_decision.discovery_patterns)
+                if explore_decision.discovery_patterns
+                else "broad_inventory:" + "|".join(broad_inventory_target_roots)
+                if open_after_broad_inventory
+                else "fallback_glob:" + "|".join(explore_decision.discovery_roots)
+                if explore_decision.discovery_roots
+                else "explore:" + "|".join(explore_decision.preferred_roots)
+            ),
             missing_requirements=tuple(f"code_read:{root}" for root in missing),
             preferred_tool_names=(
                 ("read_file",)
@@ -732,17 +812,13 @@ def evaluate_tool_choice_state(
                 else explore_decision.discovery_roots
             ),
             required_tool_arguments_json=(
-                (
-                    _read_file_arguments_json(explore_decision.exact_read_candidates[0])
-                    if len(explore_decision.exact_read_candidates) == 1
-                    else ""
-                )
+                _read_file_arguments_json(explore_decision.exact_read_candidates[0])
                 if explore_decision.exact_read_candidates
                 else _read_file_arguments_json(explore_decision.read_candidates[0])
                 if closure_candidate_read
-                else ""
+                else _read_file_arguments_json(explore_decision.read_candidates[0])
                 if explore_decision.read_candidates
-                else ""
+                else _read_file_arguments_json(explore_decision.inventory_read_candidates[0])
                 if inventory_candidate_read
                 else _precise_glob_arguments_json(explore_decision.discovery_patterns)
                 if explore_decision.discovery_patterns
@@ -752,6 +828,10 @@ def evaluate_tool_choice_state(
             ),
             scoped_read_paths=explore_decision.inventory_read_candidates if inventory_candidate_read else bounded_read_paths,
             scoped_read_budget=1 if inventory_candidate_read or bounded_read_paths else None,
+            read_only_unlocated_on_exhaustion=(
+                implementation_readiness_required
+                and (bool(bounded_read_paths) or inventory_candidate_read)
+            ),
         )
 
     evidence_preferred = _preferred_evidence_tools(results)
@@ -1050,17 +1130,44 @@ def _allowed_subset(candidates: Iterable[str], allowed_tools: frozenset[str]) ->
 
 
 def _document_read_tool_hints(missing: Iterable[DocumentArtifactRequirement] = ()) -> tuple[str, ...]:
-    labels = tuple(item.label for item in missing)
+    missing_items = tuple(missing)
+    labels = tuple(item.label for item in missing_items)
     coverage_hint = (
         "Complete every requested artifact before finalizing: " + ", ".join(labels) + "."
         if labels
         else "Complete each explicitly requested document artifact before finalizing."
     )
+    exact_hints = tuple(
+        (
+            f'Use inspect_image with {{"path":{json.dumps(item.reference, ensure_ascii=False)},"question":"<focused question>"}}.'
+            if item.kind == "image"
+            else f'Use read_file with {{"path":{json.dumps(item.reference, ensure_ascii=False)}}}.'
+        )
+        for item in missing_items
+        if item.exact
+    )
     return (
         coverage_hint,
+        *exact_hints,
         'Use read_file with {"path":"<authorized document path>"}.',
         'For a listed image, use inspect_image with {"path":"<authorized image path>","question":"<focused question>"}; do not pass a directory or image bytes.',
     )
+
+
+def _material_tools(missing: Iterable[DocumentArtifactRequirement]) -> frozenset[str]:
+    return frozenset("inspect_image" if item.kind == "image" else "read_file" for item in missing)
+
+
+def _material_required_arguments_json(missing: Iterable[DocumentArtifactRequirement]) -> str:
+    """Project one exact target only when the active material step is singular."""
+
+    targets = tuple(missing)
+    if len(targets) != 1 or not targets[0].exact:
+        return ""
+    target = targets[0]
+    if target.kind == "image":
+        return json.dumps({"path": target.reference}, ensure_ascii=False, sort_keys=True)
+    return _read_file_arguments_json(target.reference)
 
 
 def _tool_name_set(tool_names: Iterable[str] | None, results: tuple[ToolResultSummary, ...]) -> set[str]:

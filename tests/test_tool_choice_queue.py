@@ -381,7 +381,7 @@ class ToolChoiceQueueTests(unittest.TestCase):
         self.assertEqual(json.loads(decision.required_tool_arguments_json), {"path": str(source)})
         self.assertIn(str(source), decision.tool_call_hints[0])
 
-    def test_cross_root_exact_candidates_keep_each_missing_root_readable(self) -> None:
+    def test_cross_root_exact_candidates_target_one_root_then_advance(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             backend = Path(tmp, "backend").resolve()
             frontend = Path(tmp, "frontend").resolve()
@@ -411,21 +411,29 @@ class ToolChoiceQueueTests(unittest.TestCase):
                     "negative_evidence_type": "path_match",
                 },
             )
-            decision = evaluate_tool_choice_state(
+            first = evaluate_tool_choice_state(
                 task_kind="read-only",
                 prompt="只读分析 owner 和设计影响。",
                 tool_results=(backend_glob, frontend_glob),
                 workspace_roots=(str(backend), str(frontend)),
                 read_only_review_profile="design",
             )
+            backend_read = ToolResultSummary("read_file", "class PrepareOrderApplication {}", path=str(backend_source))
+            second = evaluate_tool_choice_state(
+                task_kind="read-only",
+                prompt="只读分析 owner 和设计影响。",
+                tool_results=(backend_glob, frontend_glob, backend_read),
+                workspace_roots=(str(backend), str(frontend)),
+                read_only_review_profile="design",
+            )
 
-        self.assertEqual(decision.allowed_tool_names, frozenset({"read_file"}))
-        self.assertEqual(
-            decision.scoped_read_paths,
-            (str(backend_source), str(frontend_source)),
-        )
-        self.assertEqual(decision.scoped_read_budget, 1)
-        self.assertEqual(decision.required_tool_arguments_json, "")
+        self.assertEqual(first.allowed_tool_names, frozenset({"read_file"}))
+        self.assertEqual(first.scoped_read_paths, (str(backend_source),))
+        self.assertEqual(first.scoped_read_budget, 1)
+        self.assertEqual(json.loads(first.required_tool_arguments_json), {"path": str(backend_source)})
+        self.assertEqual(second.allowed_tool_names, frozenset({"read_file"}))
+        self.assertEqual(second.scoped_read_paths, (str(frontend_source),))
+        self.assertEqual(json.loads(second.required_tool_arguments_json), {"path": str(frontend_source)})
 
     def test_completed_source_only_glob_requires_one_model_selected_source_read(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -810,6 +818,60 @@ class ToolChoiceQueueTests(unittest.TestCase):
 
         self.assertEqual(action.kind, "force")
         self.assertEqual(action.attempt, 1)
+
+    def test_material_and_candidate_requirement_identity_scopes_detours_and_resets(self) -> None:
+        owner = ToolChoiceDirectiveOwner()
+
+        def decision(identity: str) -> ToolChoiceDecision:
+            return ToolChoiceDecision(
+                steering_required=True,
+                allowed_tool_names=frozenset({"read_file"}),
+                reason="read one exact bounded target",
+                rule_id="bounded_read",
+                requirement_identity=identity,
+                missing_requirements=("bounded_read",),
+                preferred_tool_names=("read_file",),
+                scoped_read_paths=("/repo/source/Target.java",),
+                scoped_read_budget=1,
+            )
+
+        material = decision("material:markdown:/repo/requirements.md")
+        self.assertEqual(owner.begin_decision(material, []).kind, "none")
+        self.assertEqual(
+            owner.observe_turn([{"function": {"name": "glob_files", "arguments": "{}"}}]).attempt,
+            1,
+        )
+        # A detour on the same exact target retains its bounded lifecycle.
+        self.assertEqual(owner.begin_decision(material, []).kind, "none")
+        self.assertEqual(
+            owner.observe_turn([{"function": {"name": "list_files", "arguments": "{}"}}]).attempt,
+            2,
+        )
+
+        next_material = decision("material:html:/repo/prototype.html")
+        self.assertEqual(owner.begin_decision(next_material, []).kind, "none")
+        self.assertEqual(
+            owner.observe_turn([{"function": {"name": "glob_files", "arguments": "{}"}}]).attempt,
+            1,
+        )
+
+        candidate = decision("candidate:/repo/source/Target.java")
+        self.assertEqual(owner.begin_decision(candidate, []).kind, "none")
+        self.assertEqual(
+            owner.observe_turn([{"function": {"name": "search_code", "arguments": "{}"}}]).attempt,
+            1,
+        )
+        self.assertEqual(owner.begin_decision(candidate, []).kind, "none")
+        self.assertEqual(
+            owner.observe_turn([{"function": {"name": "glob_files", "arguments": "{}"}}]).attempt,
+            2,
+        )
+        next_candidate = decision("candidate:/repo/source/Other.java")
+        self.assertEqual(owner.begin_decision(next_candidate, []).kind, "none")
+        self.assertEqual(
+            owner.observe_turn([{"function": {"name": "search_code", "arguments": "{}"}}]).attempt,
+            1,
+        )
 
     def test_model_selected_source_read_completes_root_coverage(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1746,8 +1808,8 @@ class ToolChoiceQueueTests(unittest.TestCase):
 
         self.assertTrue(partial.steering_required)
         self.assertEqual(partial.missing_requirements, ("document_artifact:html",))
-        self.assertEqual(partial.preferred_tool_names, ("read_file",))
-        self.assertIn("html", partial.tool_call_hints[0])
+        self.assertEqual(partial.preferred_tool_names, ("list_files",))
+        self.assertIn("html", partial.missing_requirements[0])
 
         complete = evaluate_tool_choice_state(
             task_kind="read-only",
@@ -1767,6 +1829,152 @@ class ToolChoiceQueueTests(unittest.TestCase):
         message = tool_choice_steering_message(complete, "只根据 Markdown、HTML 和图片分析需求；不要检查代码。")
         self.assertIn("explicitly requested document/image artifacts", message)
         self.assertNotIn("budget is exhausted", message)
+
+    def test_material_targets_use_raw_relative_observations_with_canonical_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            specification = root / "requirements.md"
+            prototype = root / "subdir" / "prototype.html"
+            sibling = root / "other" / "prototype.html"
+            image = root / "example.png"
+            prototype.parent.mkdir()
+            sibling.parent.mkdir()
+            specification.write_text("See [prototype](subdir/prototype.html) and example.png.\n", encoding="utf-8")
+            prototype.write_text("<main>prototype</main>\n", encoding="utf-8")
+            sibling.write_text("<main>unrelated</main>\n", encoding="utf-8")
+            image.write_bytes(b"fixture")
+            artifacts = (
+                DocumentArtifactRequirement("markdown", "markdown"),
+                DocumentArtifactRequirement("html", "html"),
+                DocumentArtifactRequirement("image", "image"),
+            )
+            initial = evaluate_tool_choice_state(
+                task_kind="read-only",
+                prompt="阅读需求说明、HTML 原型和示例图片后做只读设计分析。",
+                tool_results=(),
+                workspace_roots=(str(root),),
+                evidence_domain="repository_code",
+                read_only_review_profile="design",
+                document_artifacts=artifacts,
+            )
+            listing = ToolResultSummary(
+                "list_files",
+                "\n".join(("requirements.md", "subdir/prototype.html", "other/prototype.html", "example.png")),
+                metadata={
+                    # list_files keeps display paths relative to the primary
+                    # evidence root even when the requested directory is nested.
+                    "listed_root": str(root / "subdir"),
+                    "evidence_root": str(root),
+                    "files": ["requirements.md", "subdir/prototype.html", "other/prototype.html", "example.png"],
+                },
+            )
+            markdown = ToolResultSummary(
+                "read_file",
+                specification.read_text(encoding="utf-8"),
+                path="requirements.md",
+                metadata={"resolved_path": str(specification), "evidence_root": str(root)},
+            )
+            prototype_read = ToolResultSummary(
+                "read_file",
+                prototype.read_text(encoding="utf-8"),
+                path="subdir/prototype.html",
+                metadata={"resolved_path": str(prototype), "evidence_root": str(root)},
+            )
+            first_target = evaluate_tool_choice_state(
+                task_kind="read-only",
+                prompt="阅读需求说明、HTML 原型和示例图片后做只读设计分析。",
+                tool_results=(listing,),
+                workspace_roots=(str(root),),
+                evidence_domain="repository_code",
+                read_only_review_profile="design",
+                document_artifacts=artifacts,
+            )
+            second_target = evaluate_tool_choice_state(
+                task_kind="read-only",
+                prompt="阅读需求说明、HTML 原型和示例图片后做只读设计分析。",
+                tool_results=(listing, markdown),
+                workspace_roots=(str(root),),
+                evidence_domain="repository_code",
+                read_only_review_profile="design",
+                document_artifacts=artifacts,
+            )
+            third_target = evaluate_tool_choice_state(
+                task_kind="read-only",
+                prompt="阅读需求说明、HTML 原型和示例图片后做只读设计分析。",
+                tool_results=(listing, markdown, prototype_read),
+                workspace_roots=(str(root),),
+                evidence_domain="repository_code",
+                read_only_review_profile="design",
+                document_artifacts=artifacts,
+            )
+
+        self.assertEqual(initial.rule_id, "requirement_material_discovery")
+        self.assertIn("list_files", initial.allowed_tool_names)
+        self.assertEqual(initial.preferred_tool_names, ("list_files",))
+        self.assertEqual(first_target.rule_id, "requirement_material_read")
+        self.assertEqual(first_target.allowed_tool_names, frozenset({"read_file"}))
+        self.assertEqual(json.loads(first_target.required_tool_arguments_json), {"path": str(specification)})
+        self.assertEqual(second_target.allowed_tool_names, frozenset({"read_file"}))
+        self.assertEqual(json.loads(second_target.required_tool_arguments_json), {"path": str(prototype)})
+        self.assertNotIn(str(sibling), second_target.tool_call_hints[0])
+        self.assertEqual(third_target.allowed_tool_names, frozenset({"inspect_image"}))
+        self.assertEqual(json.loads(third_target.required_tool_arguments_json), {"path": str(image)})
+
+    def test_material_gate_does_not_preempt_code_implementation(self) -> None:
+        decision = evaluate_tool_choice_state(
+            task_kind="code-implementation",
+            prompt="创建 index.html，并在实现后检查 screenshot.png。",
+            tool_results=(),
+            document_artifacts=(
+                DocumentArtifactRequirement("html", "index.html", exact=True),
+                DocumentArtifactRequirement("image", "screenshot.png", exact=True),
+            ),
+        )
+
+        self.assertNotIn("requirement_material", decision.rule_id or "")
+        self.assertNotEqual(decision.allowed_tool_names, frozenset({"read_file", "inspect_image"}))
+
+    def test_unavailable_material_is_recorded_then_mixed_read_only_explore_resumes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            code_root = root / "code"
+            source = code_root / "src" / "Owner.java"
+            source.parent.mkdir(parents=True)
+            source.write_text("class Owner {}\n", encoding="utf-8")
+            artifacts = (
+                DocumentArtifactRequirement("markdown", "requirements.md", exact=True),
+                DocumentArtifactRequirement("html", "prototype.html", exact=True),
+                DocumentArtifactRequirement("image", "example.png", exact=True),
+            )
+            decision = evaluate_tool_choice_state(
+                task_kind="read-only",
+                prompt="只读完成技术设计，阅读需求文档、HTML 和示例图片后检查源码。",
+                tool_results=(
+                    ToolResultSummary("read_file", "requirement", path=str(root / "requirements.md")),
+                    ToolResultSummary("read_file", "prototype", path=str(root / "prototype.html")),
+                    ToolResultSummary(
+                        "inspect_image",
+                        "vision unavailable",
+                        path=str(root / "example.png"),
+                        is_error=True,
+                        metadata={"image_inspection_unavailable": True},
+                    ),
+                    ToolResultSummary(
+                        "search_code",
+                        f"{source}:1: class Owner",
+                        metadata={"evidence_root": str(code_root), "evidence_paths": [str(source)]},
+                    ),
+                ),
+                workspace_roots=(str(root), str(code_root)),
+                design_evidence_roots=(str(code_root),),
+                evidence_domain="repository_code",
+                read_only_review_profile="design",
+                document_artifacts=artifacts,
+            )
+
+        self.assertEqual(decision.rule_id, "read_only_profile_explore_candidate_read")
+        self.assertEqual(decision.allowed_tool_names, frozenset({"read_file"}))
+        self.assertEqual(json.loads(decision.required_tool_arguments_json), {"path": str(source)})
 
     def test_document_artifact_completion_requires_successful_observation(self) -> None:
         artifacts = (

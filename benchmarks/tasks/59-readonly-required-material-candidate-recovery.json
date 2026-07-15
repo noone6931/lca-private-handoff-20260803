@@ -1,0 +1,69 @@
+{
+  "id": "readonly-required-material-candidate-recovery",
+  "title": "Read-only readiness consumes explicit local materials and degrades an exhausted scoped candidate to root-local unlocated",
+  "prompt": "只读完成证据化技术设计：先阅读需求文档、HTML 原型和示例图片，再检查已授权的 backend/frontend 源码。若 owner、数据契约、写入目标、测试入口或回滚边界任一未闭合则 blocked；不写代码，不得猜测具体接口、表、字段、状态或 owner。",
+  "budget_seconds": 90,
+  "workspace_files": {
+    "requirements.md": "# Requirement\nSee [prototype](prototype.html) and example.png. Choose a slice only after all core dependencies are evidence-closed.\n",
+    "prototype.html": "<main>Prototype evidence only.</main>\n",
+    "example.png": "GIF89a\n"
+  },
+  "additional_roots": {
+    "backend": {
+      "src/AnalogOwner.java": "class AnalogOwner { void adjacentFlow() {} }\n"
+    },
+    "frontend": {
+      "src/RouteShell.ts": "export const RouteShell = { area: 'navigation' };\n"
+    }
+  },
+  "scripted_responses": [
+    {"tool_calls": [{"name": "list_files", "arguments": {"path": "."}}]},
+    {"tool_calls": [{"name": "read_file", "arguments": {"path": "requirements.md"}}]},
+    {"tool_calls": [{"name": "read_file", "arguments": {"path": "prototype.html"}}]},
+    {"tool_calls": [{"name": "inspect_image", "arguments": {"path": "example.png", "question": "Describe only visible reference details."}}]},
+    {"tool_calls": [{"name": "search_code", "arguments": {"path": "{{root:backend}}/src", "pattern": "AnalogOwner"}}]},
+    {"tool_calls": [{"name": "read_file", "arguments": {"path": "{{root:backend}}/src/AnalogOwner.java"}}]},
+    {"tool_calls": [{"name": "search_code", "arguments": {"path": "{{root:frontend}}/src", "pattern": "RouteShell"}}]},
+    {"tool_calls": [{"name": "glob_files", "arguments": {"paths": ["{{root:frontend}}/**/RouteShell.ts"]}}]},
+    {"tool_calls": [{"name": "read_file", "arguments": {"_invalid_arguments": "<tool_call><function=list_files></function></tool_call>"}}]},
+    {"tool_calls": [{"name": "read_file", "arguments": {"_invalid_arguments": "<tool_call><function=glob_files></function></tool_call>"}}]},
+    {
+      "content": "## Requirement facts\n- requirements.md:1 links prototype.html and example.png and requires evidence-closed core dependencies before selection.\n- prototype.html was read. example.png inspection is unavailable, so it is not visual evidence for this decision.\n\n## Source facts\n- backend/src/AnalogOwner.java:1 defines AnalogOwner for an adjacent flow only.\n\n## Blocking dependencies\n- The frontend root remains unlocated after its bounded candidate read exhausted; owner, data/source contract, write target, test entry, and rollback boundary remain unlocated.\n\n## Design proposal\n- Implementation readiness: blocked. No implementation slice is selected."
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "submit_read_only_review",
+          "arguments": {
+            "verdict": "pass",
+            "confidence": 0.96,
+            "reason": "The candidate distinguishes requirements, bounded source evidence, and the root-local unlocated boundary without inventing an implementation target.",
+            "implementation_readiness": {
+              "status": "blocked",
+              "dimensions": {
+                "owner": {"status": "unlocated", "claim_ids": ["c004"]},
+                "data_contract_or_source": {"status": "unlocated", "claim_ids": ["c004"]},
+                "write_target": {"status": "unlocated", "claim_ids": ["c004"]},
+                "test_entry": {"status": "unlocated", "claim_ids": ["c004"]},
+                "rollback_boundary": {"status": "unlocated", "claim_ids": ["c004"]}
+              },
+              "unsupported_identifier_claim_ids": [],
+              "reason": "The frontend candidate read exhausted without a successful direct source read."
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "acceptance": {
+    "required_tools": ["list_files", "read_file", "inspect_image", "search_code"],
+    "forbidden_tools": ["apply_patch", "write_file", "shell", "run_tests"],
+    "changed_files": [],
+    "answer_all_of": ["requirements.md", "prototype.html", "example.png inspection is unavailable", "AnalogOwner.java", "blocked", "No implementation slice is selected"],
+    "answer_forbidden_regex": ["/api/", "candidate_table", "candidate_status", "Selected slice"],
+    "termination_reason": "final",
+    "read_only_reviewer": {"triggers": 1, "typed_submits": 1},
+    "safe_partial_report": {"emitted": 0}
+  },
+  "residual_risk": "This fixture proves bounded material completion and root-local candidate-read degradation; live provider malformed envelopes and repository ranking remain independently gated."
+}
