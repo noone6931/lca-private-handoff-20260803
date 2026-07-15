@@ -6,6 +6,7 @@ import tempfile
 import unittest
 
 from local_agent.design_evidence import DesignEvidenceCoverageSteerer
+from local_agent.read_only_explore import evaluate_read_only_explore
 from local_agent.run_collector import RunCollector
 from local_agent.runtime_read_only_explore import RuntimeReadOnlyExplorePhase
 from local_agent.runtime_tool_choice_directive import RuntimeToolChoiceDirectivePhase
@@ -117,3 +118,25 @@ class RuntimeReadOnlyExploreTests(unittest.TestCase):
 
         self.assertFalse(runtime._run.read_only_explore_finalized)
         self.assertEqual(outcome.terminal_reason, "tool_choice_exact_exhausted")
+
+    def test_discovery_batch_suppresses_stale_parallel_calls_until_queue_reprojects(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            runtime, phase = self._runtime(root, readiness=True)
+            runtime._run.tool_choice_results = []
+            decision = evaluate_read_only_explore(
+                profile="design",
+                tool_results=runtime._run.tool_choice_results,
+                code_roots=(str(root),),
+                strict_relevance=True,
+            )
+            calls = [
+                {"id": "glob-1", "function": {"name": "glob_files", "arguments": '{"paths":["**/*"]}'}},
+                {"id": "search-1", "function": {"name": "search_code", "arguments": '{"query":"owner"}'}},
+            ]
+
+        self.assertEqual(decision.action, "precise")
+        self.assertEqual(decision.read_candidates, ())
+        plan = phase.plan_remaining_batch(decision, calls)
+        self.assertEqual(plan.suppress_calls, tuple(calls))
+        self.assertFalse(plan.continue_batch)

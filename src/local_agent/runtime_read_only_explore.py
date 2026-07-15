@@ -195,8 +195,13 @@ class RuntimeReadOnlyExplorePhase:
 
         if decision.action == "finalize":
             return ExploreBatchPlan(tuple(remaining_calls), continue_batch=False)
-        if decision.action != "precise" or not decision.read_candidates or not remaining_calls:
+        if decision.action != "precise" or not remaining_calls:
             return ExploreBatchPlan()
+        if not decision.read_candidates:
+            # Discovery evidence changes the root-local directive for the next
+            # turn.  Do not execute a provider's stale parallel glob/search
+            # detours before Queue can project that new requirement.
+            return ExploreBatchPlan(tuple(remaining_calls), continue_batch=False)
         candidate_roots = self._candidate_roots(decision.read_candidates, decision.missing_roots)
         suppress: list[dict[str, Any]] = []
         kept_roots: set[str] = set()
