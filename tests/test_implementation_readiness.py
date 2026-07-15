@@ -5,8 +5,10 @@ import unittest
 from local_agent.implementation_readiness import ImplementationReadinessAssessment
 from local_agent.implementation_readiness import ImplementationReadinessDimension
 from local_agent.implementation_readiness import IMPLEMENTATION_READINESS_DIMENSIONS
+from local_agent.implementation_readiness import IMPLEMENTATION_READINESS_REJECTION_CODES
 from local_agent.implementation_readiness import has_implementation_readiness_intent
 from local_agent.implementation_readiness import implementation_readiness_binding_map
+from local_agent.implementation_readiness import implementation_readiness_rejection_hint
 from local_agent.implementation_readiness import parse_implementation_readiness_assessment
 from local_agent.implementation_readiness import validate_implementation_readiness_assessment
 from local_agent.implementation_readiness import ImplementationReadinessValidationError
@@ -92,6 +94,30 @@ def _mixed_dimensions_payload(
 
 
 class ImplementationReadinessTests(unittest.TestCase):
+    def test_rejection_hints_are_exact_static_and_redacted(self) -> None:
+        keys_hint = implementation_readiness_rejection_hint("implementation_readiness_keys_invalid")
+        binding_hint = implementation_readiness_rejection_hint("implementation_readiness_evidence_claim_unbound")
+        unsupported_hint = implementation_readiness_rejection_hint(
+            "implementation_readiness_unsupported_identifier_without_finding"
+        )
+
+        self.assertIn(
+            'Allowed implementation_readiness keys JSON: ["status","dimensions","unsupported_identifier_claim_ids","reason"]',
+            keys_hint,
+        )
+        self.assertIn(
+            'Allowed dimensions keys JSON: ["owner","data_contract_or_source","write_target","test_entry","rollback_boundary"]',
+            keys_hint,
+        )
+        self.assertIn('Allowed keys for every dimension JSON: ["status","claim_ids"]', keys_hint)
+        self.assertIn("claim-scoped source_locator or requirement_locator", binding_hint)
+        self.assertIn("must already have a recorded finding", unsupported_hint)
+        self.assertNotIn("secret candidate", keys_hint + binding_hint + unsupported_hint)
+        self.assertEqual(implementation_readiness_rejection_hint("top_level_keys_invalid"), "")
+        for code in IMPLEMENTATION_READINESS_REJECTION_CODES:
+            with self.subTest(code=code):
+                self.assertTrue(implementation_readiness_rejection_hint(code).strip())
+
     def test_generic_readiness_intent_is_detected(self) -> None:
         self.assertTrue(has_implementation_readiness_intent("选择可实施切片；依赖不闭合则 blocked。"))
         self.assertTrue(has_implementation_readiness_intent("Before implementation, decide whether the slice is ready to implement."))

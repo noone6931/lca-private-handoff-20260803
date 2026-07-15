@@ -276,6 +276,61 @@ def is_implementation_readiness_rejection_code(code: str) -> bool:
     return code in IMPLEMENTATION_READINESS_REJECTION_CODES
 
 
+def implementation_readiness_rejection_hint(code: str) -> str:
+    """Return a static schema/binding repair hint for a typed rejection."""
+
+    if code not in IMPLEMENTATION_READINESS_REJECTION_CODES:
+        return ""
+    shape = (
+        ' Allowed implementation_readiness keys JSON: ["status","dimensions",'
+        '"unsupported_identifier_claim_ids","reason"]. Allowed dimensions keys JSON: '
+        '["owner","data_contract_or_source","write_target","test_entry","rollback_boundary"]. '
+        'Allowed keys for every dimension JSON: ["status","claim_ids"]. Do not add wrapper, evidence, or finding keys.'
+    )
+    if code in {
+        "implementation_readiness_missing",
+        "implementation_readiness_keys_invalid",
+        "implementation_readiness_dimensions_keys_invalid",
+    }:
+        return shape
+    if code in {
+        "implementation_readiness_status_invalid",
+        "implementation_readiness_dimension_status_invalid",
+        "implementation_readiness_ready_without_evidence",
+        "implementation_readiness_ready_with_unlocated",
+        "implementation_readiness_ready_with_unsupported_identifiers",
+        "implementation_readiness_conditional_with_core_unlocated",
+        "implementation_readiness_blocked_without_binding",
+        "implementation_readiness_pass_with_unsupported_identifiers",
+    }:
+        return (
+            shape
+            + " Use readiness status ready, conditional, or blocked; use dimension status closed or unlocated. "
+            "ready and conditional require all five dimensions closed; blocked requires at least one unlocated dimension."
+        )
+    if code in {
+        "implementation_readiness_dimension_evidence_missing",
+        "implementation_readiness_dimension_unlocated_missing",
+        "implementation_readiness_claim_id_unknown",
+        "implementation_readiness_claim_id_duplicate",
+        "implementation_readiness_evidence_claim_unbound",
+        "implementation_readiness_unlocated_claim_unbound",
+    }:
+        return (
+            shape
+            + " claim_ids must be unique known candidate claim IDs. A closed dimension needs a claim-scoped "
+            "source_locator or requirement_locator; an unlocated dimension needs a pending/unlocated claim binding."
+        )
+    if code == "implementation_readiness_unsupported_identifier_without_finding":
+        return (
+            shape
+            + " unsupported_identifier_claim_ids must be unique known claim IDs and each must already have a recorded finding."
+        )
+    if code == "implementation_readiness_reason_invalid":
+        return shape + " reason must be a string no longer than 800 characters."
+    return shape
+
+
 def implementation_readiness_binding_map(
     claim_units: Iterable[Any],
     handoff: Any | None,

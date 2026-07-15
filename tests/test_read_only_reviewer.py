@@ -34,6 +34,8 @@ from local_agent.read_only_reviewer import reviewer_output_tool_schemas
 from local_agent.read_only_reviewer import REVIEWER_FINDING_TOOL_NAME
 from local_agent.read_only_reviewer import REVIEWER_OUTPUT_TOOL_NAME
 from local_agent.read_only_reviewer import should_review_read_only_candidate
+from local_agent.reviewer_output_lifecycle import ReviewerOutputEvent
+from local_agent.reviewer_output_lifecycle import reviewer_tool_result_content
 from local_agent.steering.final_answer import SourceEvidence
 from local_agent.steering.final_answer import SteeringDecision
 from local_agent.task_contract import generate_requirement_contract
@@ -628,6 +630,195 @@ class _ReviewerEightFindingsClient:
             content = "\n".join(f"- Unsupported owner claim {index}" for index in range(1, 9))
             return type("Response", (), {"message": {"content": content}})()
         return type("Response", (), {"message": {"content": "All owner claims are now scoped as unlocated."}})()
+
+
+class _ReadinessFinalRejectedRepairClient:
+    calls: list[dict] = []
+
+    def __init__(self, config: AgentConfig):
+        self._primary_calls = 0
+        self._review_calls = 0
+
+    @staticmethod
+    def _readiness_payload(*, dimensions: dict | None = None, extra: bool = False) -> dict:
+        payload = {
+            "status": "blocked",
+            "dimensions": dimensions
+            or {
+                key: {"status": "unlocated", "claim_ids": ["c010"]}
+                for key in (
+                    "owner",
+                    "data_contract_or_source",
+                    "write_target",
+                    "test_entry",
+                    "rollback_boundary",
+                )
+            },
+            "unsupported_identifier_claim_ids": [f"c{index:03d}" for index in range(2, 10)],
+            "reason": "Core implementation dependencies remain unlocated.",
+        }
+        if extra:
+            payload["evidence_claim_ids"] = ["c001"]
+        return payload
+
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).calls.append({"messages": messages, "tools": tools, "timeout": timeout})
+        if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in messages):
+            self._review_calls += 1
+            if self._review_calls == 1:
+                calls = [
+                    _finding_call(
+                        f"finding-{index}",
+                        f"c{index:03d}",
+                        _candidate_claim(messages, f"c{index:03d}"),
+                        issue="The concrete proposal identifier has no requirement or source provenance.",
+                        action="Remove the concrete identifier and keep implementation readiness blocked.",
+                    )
+                    for index in range(2, 10)
+                ]
+                calls.append(
+                    _final_call(
+                        "bad-readiness-keys",
+                        {
+                            "verdict": "revise",
+                            "confidence": 0.95,
+                            "reason": "unsupported identifiers",
+                            "implementation_readiness": self._readiness_payload(extra=True),
+                        },
+                    )
+                )
+                return _review_tool_calls_response(calls)
+            tool_results = [str(message.get("content")) for message in messages if message.get("role") == "tool"]
+            if self._review_calls == 2:
+                assert any(
+                    'Allowed implementation_readiness keys JSON: ["status","dimensions",'
+                    '"unsupported_identifier_claim_ids","reason"]' in result
+                    for result in tool_results
+                )
+                return _review_tool_calls_response(
+                    [
+                        _final_call(
+                            "bad-readiness-dimensions",
+                            {
+                                "verdict": "revise",
+                                "confidence": 0.95,
+                                "reason": "missing dimensions",
+                                "implementation_readiness": self._readiness_payload(
+                                    dimensions={"owner": {"status": "unlocated", "claim_ids": ["c010"]}}
+                                ),
+                            },
+                        )
+                    ]
+                )
+            if self._review_calls == 3:
+                assert any(
+                    'Allowed dimensions keys JSON: ["owner","data_contract_or_source","write_target",'
+                    '"test_entry","rollback_boundary"]' in result
+                    for result in tool_results
+                )
+                return _review_tool_calls_response(
+                    [
+                        _final_call(
+                            "bad-top-level",
+                            {
+                                "verdict": "revise",
+                                "confidence": 0.95,
+                                "findings": [],
+                                "reason": "findings repeated",
+                                "implementation_readiness": self._readiness_payload(),
+                            },
+                        )
+                    ]
+                )
+            assert self._review_calls == 4
+            assert any(
+                'Allowed final top-level keys JSON: ["verdict","confidence","reason","implementation_readiness"]'
+                in result
+                for result in tool_results
+            )
+            assert not any("ConcreteEndpoint" in result for result in tool_results)
+            return _review_tool_calls_response(
+                [
+                    _final_call(
+                        "valid-final",
+                        {
+                            "verdict": "revise",
+                            "confidence": 0.98,
+                            "reason": "The accepted findings require a blocked rewrite.",
+                            "implementation_readiness": self._readiness_payload(),
+                        },
+                    )
+                ]
+            )
+        self._primary_calls += 1
+        if self._primary_calls == 1:
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "find-evidence",
+                                "type": "function",
+                                "function": {
+                                    "name": "search_code",
+                                    "arguments": '{"path":"src","pattern":"Evidence"}',
+                                },
+                            }
+                        ],
+                    }
+                },
+            )()
+        if self._primary_calls == 2:
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "read-evidence",
+                                "type": "function",
+                                "function": {"name": "read_file", "arguments": '{"path":"src/Evidence.java"}'},
+                            }
+                        ],
+                    }
+                },
+            )()
+        if self._primary_calls == 3:
+            proposals = "\n".join(
+                f"- ConcreteEndpoint{index} is selected for implementation now."
+                for index in range(1, 9)
+            )
+            return type(
+                "Response",
+                (),
+                {
+                    "message": {
+                        "content": (
+                            "## Source facts\n- src/Evidence.java:1 contains only an adjacent example.\n\n"
+                            f"## Design proposal\n{proposals}\n\n"
+                            "## Blocking dependencies\n- Owner, data contract, write target, test entry, and rollback boundary remain unlocated."
+                        )
+                    }
+                },
+            )()
+        return type(
+            "Response",
+            (),
+            {
+                "message": {
+                    "content": (
+                        "## Source facts\n- src/Evidence.java:1 contains only an adjacent example.\n\n"
+                        "## Blocking dependencies\n- Owner, data contract, write target, test entry, and rollback boundary remain unlocated.\n\n"
+                        "Implementation readiness: blocked. No implementation slice selected."
+                    )
+                }
+            },
+        )()
 
 
 class _ReviewerNinthFindingClient(_ReviewerEightFindingsClient):
@@ -5064,6 +5255,58 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         )
         self.assertIn("do not include findings in the final submit", readiness_repair[-1]["content"])
 
+    def test_final_rejected_tool_result_uses_profile_typed_contract_without_echo(self) -> None:
+        readiness_event = ReviewerOutputEvent(
+            "final_rejected",
+            "readiness-final",
+            code="implementation_readiness_keys_invalid",
+            diagnostics={"candidate_text": "secret candidate payload"},
+        )
+        readiness_result = reviewer_tool_result_content(
+            readiness_event,
+            implementation_readiness=True,
+        )
+        top_level_result = reviewer_tool_result_content(
+            ReviewerOutputEvent(
+                "final_rejected",
+                "top-final",
+                code="top_level_keys_invalid",
+                diagnostics={"top_level_keys": ["findings", "secret candidate payload"]},
+            ),
+            implementation_readiness=True,
+        )
+        document_result = reviewer_tool_result_content(
+            ReviewerOutputEvent(
+                "final_rejected",
+                "document-final",
+                code="document_consistency_keys_invalid",
+            ),
+            document_consistency=True,
+        )
+        document_top_level = reviewer_tool_result_content(
+            ReviewerOutputEvent("final_rejected", "document-top", code="top_level_keys_invalid"),
+            document_consistency=True,
+        )
+
+        self.assertIn(
+            'Allowed implementation_readiness keys JSON: ["status","dimensions","unsupported_identifier_claim_ids","reason"]',
+            readiness_result,
+        )
+        self.assertIn(
+            'Allowed final top-level keys JSON: ["verdict","confidence","reason","implementation_readiness"]',
+            top_level_result,
+        )
+        self.assertIn("rejected call included the forbidden findings key", top_level_result)
+        self.assertIn("recorded findings are retained", top_level_result)
+        self.assertNotIn("secret candidate payload", readiness_result)
+        self.assertNotIn("secret candidate payload", top_level_result)
+        self.assertIn("document_consistency", document_result)
+        self.assertNotIn("implementation_readiness", document_result)
+        self.assertIn(
+            'Allowed final top-level keys JSON: ["verdict","confidence","reason","document_consistency"]',
+            document_top_level,
+        )
+
     def test_reviewer_schema_and_parser_require_typed_readiness_when_enabled(self) -> None:
         candidate = "## Source facts\n- src/Owner.java:1 closes owner.\n\n## Blocking dependencies\n- Rollback remains unlocated."
         units = candidate_claim_units(candidate)
@@ -6411,6 +6654,50 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertEqual(summary["finding_submits"], 8)
         self.assertEqual(summary["findings"], 8)
         self.assertEqual(summary["repair_exhausted"], 0)
+
+    def test_readiness_final_rejections_receive_typed_tool_results_and_preserve_findings(self) -> None:
+        _ReadinessFinalRejectedRepairClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            (workspace / "src").mkdir()
+            (workspace / "src/Evidence.java").write_text("class Evidence {}\n", encoding="utf-8")
+            with patch("local_agent.agent.OpenAICompatibleClient", _ReadinessFinalRejectedRepairClient):
+                runtime = AgentRuntime(_config(workspace), show_tool_logs=False)
+                answer = runtime.run(
+                    "只读完成证据化技术设计并选择可实施切片；若 owner、数据契约、写入目标、测试入口或回滚边界任一未闭合则 blocked。"
+                )
+
+        summary = runtime._last_run_summary["read_only_reviewer"]
+        self.assertIn("No implementation slice selected", answer)
+        self.assertNotIn("ConcreteEndpoint", answer)
+        self.assertEqual(runtime._last_run_summary["termination_reason"], "final")
+        self.assertEqual(summary["finding_submits"], 8)
+        self.assertEqual(summary["findings"], 8)
+        self.assertEqual(summary["rejected_final_submits"], 3)
+        self.assertEqual(summary["final_submits"], 1)
+        self.assertEqual(summary["output_lifecycle_exhausted"], 0)
+        self.assertEqual(summary["rewrite_acceptances"], 1)
+        self.assertEqual(summary["output_lifecycle_corrections"], {
+            "arguments": 0,
+            "document_consistency": 0,
+            "implementation_readiness": 2,
+            "protocol": 1,
+        })
+        self.assertEqual(runtime._run.read_only_review.implementation_readiness.status, "blocked")
+        self.assertEqual(
+            [finding.claim_id for finding in runtime._run.read_only_review.findings],
+            [f"c{index:03d}" for index in range(2, 10)],
+        )
+        review_calls = [
+            call
+            for call in _ReadinessFinalRejectedRepairClient.calls
+            if any("LCA_READ_ONLY_EVIDENCE_REVIEW" in str(message.get("content")) for message in call["messages"])
+        ]
+        self.assertEqual(len(review_calls), 4)
+        self.assertEqual(
+            [tool["function"]["name"] for tool in review_calls[-1]["tools"]],
+            [REVIEWER_OUTPUT_TOOL_NAME],
+        )
 
     def test_ninth_incremental_finding_is_tool_local_capacity_rejection(self) -> None:
         _ReviewerNinthFindingClient.calls = []

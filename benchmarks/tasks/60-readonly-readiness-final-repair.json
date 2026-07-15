@@ -1,0 +1,187 @@
+{
+  "id": "readonly-readiness-final-repair",
+  "title": "Readiness reviewer repairs rejected final payloads without losing accepted findings",
+  "prompt": "只读完成证据化技术设计并选择可实施切片；若 owner、数据契约、写入目标、测试入口或回滚边界任一未闭合则 blocked。不得猜测具体接口、表、字段、状态或 owner。",
+  "budget_seconds": 90,
+  "workspace_files": {
+    "src/Evidence.java": "class Evidence { void adjacentExample() {} }\n"
+  },
+  "scripted_responses": [
+    {
+      "tool_calls": [
+        {
+          "name": "search_code",
+          "arguments": {"path": "src", "pattern": "Evidence"}
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "read_file",
+          "arguments": {"path": "src/Evidence.java"}
+        }
+      ]
+    },
+    {
+      "content": "## Source facts\n- src/Evidence.java:1 contains only an adjacent example.\n\n## Design proposal\n- ConcreteEndpoint1 is selected for implementation now.\n- ConcreteEndpoint2 is selected for implementation now.\n- ConcreteEndpoint3 is selected for implementation now.\n- ConcreteEndpoint4 is selected for implementation now.\n- ConcreteEndpoint5 is selected for implementation now.\n- ConcreteEndpoint6 is selected for implementation now.\n- ConcreteEndpoint7 is selected for implementation now.\n- ConcreteEndpoint8 is selected for implementation now.\n\n## Blocking dependencies\n- Owner, data contract, write target, test entry, and rollback boundary remain unlocated."
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "report_read_only_finding",
+          "arguments": {"claim_id": "c002", "finding_scope": "candidate_defect", "issue": "The concrete proposal identifier has no provenance.", "action": "Remove it and keep readiness blocked."}
+        },
+        {
+          "name": "report_read_only_finding",
+          "arguments": {"claim_id": "c003", "finding_scope": "candidate_defect", "issue": "The concrete proposal identifier has no provenance.", "action": "Remove it and keep readiness blocked."}
+        },
+        {
+          "name": "report_read_only_finding",
+          "arguments": {"claim_id": "c004", "finding_scope": "candidate_defect", "issue": "The concrete proposal identifier has no provenance.", "action": "Remove it and keep readiness blocked."}
+        },
+        {
+          "name": "report_read_only_finding",
+          "arguments": {"claim_id": "c005", "finding_scope": "candidate_defect", "issue": "The concrete proposal identifier has no provenance.", "action": "Remove it and keep readiness blocked."}
+        },
+        {
+          "name": "report_read_only_finding",
+          "arguments": {"claim_id": "c006", "finding_scope": "candidate_defect", "issue": "The concrete proposal identifier has no provenance.", "action": "Remove it and keep readiness blocked."}
+        },
+        {
+          "name": "report_read_only_finding",
+          "arguments": {"claim_id": "c007", "finding_scope": "candidate_defect", "issue": "The concrete proposal identifier has no provenance.", "action": "Remove it and keep readiness blocked."}
+        },
+        {
+          "name": "report_read_only_finding",
+          "arguments": {"claim_id": "c008", "finding_scope": "candidate_defect", "issue": "The concrete proposal identifier has no provenance.", "action": "Remove it and keep readiness blocked."}
+        },
+        {
+          "name": "report_read_only_finding",
+          "arguments": {"claim_id": "c009", "finding_scope": "candidate_defect", "issue": "The concrete proposal identifier has no provenance.", "action": "Remove it and keep readiness blocked."}
+        },
+        {
+          "name": "submit_read_only_review",
+          "arguments": {
+            "verdict": "revise",
+            "confidence": 0.95,
+            "reason": "unsupported identifiers",
+            "implementation_readiness": {
+              "status": "blocked",
+              "dimensions": {
+                "owner": {"status": "unlocated", "claim_ids": ["c010"]},
+                "data_contract_or_source": {"status": "unlocated", "claim_ids": ["c010"]},
+                "write_target": {"status": "unlocated", "claim_ids": ["c010"]},
+                "test_entry": {"status": "unlocated", "claim_ids": ["c010"]},
+                "rollback_boundary": {"status": "unlocated", "claim_ids": ["c010"]}
+              },
+              "unsupported_identifier_claim_ids": ["c002", "c003", "c004", "c005", "c006", "c007", "c008", "c009"],
+              "reason": "Core dependencies remain unlocated.",
+              "evidence_claim_ids": ["c001"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "submit_read_only_review",
+          "arguments": {
+            "verdict": "revise",
+            "confidence": 0.95,
+            "reason": "dimensions incomplete",
+            "implementation_readiness": {
+              "status": "blocked",
+              "dimensions": {
+                "owner": {"status": "unlocated", "claim_ids": ["c010"]}
+              },
+              "unsupported_identifier_claim_ids": ["c002", "c003", "c004", "c005", "c006", "c007", "c008", "c009"],
+              "reason": "Core dependencies remain unlocated."
+            }
+          }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "submit_read_only_review",
+          "arguments": {
+            "verdict": "revise",
+            "confidence": 0.95,
+            "findings": [],
+            "reason": "findings repeated",
+            "implementation_readiness": {
+              "status": "blocked",
+              "dimensions": {
+                "owner": {"status": "unlocated", "claim_ids": ["c010"]},
+                "data_contract_or_source": {"status": "unlocated", "claim_ids": ["c010"]},
+                "write_target": {"status": "unlocated", "claim_ids": ["c010"]},
+                "test_entry": {"status": "unlocated", "claim_ids": ["c010"]},
+                "rollback_boundary": {"status": "unlocated", "claim_ids": ["c010"]}
+              },
+              "unsupported_identifier_claim_ids": ["c002", "c003", "c004", "c005", "c006", "c007", "c008", "c009"],
+              "reason": "Core dependencies remain unlocated."
+            }
+          }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "submit_read_only_review",
+          "arguments": {
+            "verdict": "revise",
+            "confidence": 0.98,
+            "reason": "Accepted findings require a blocked rewrite.",
+            "implementation_readiness": {
+              "status": "blocked",
+              "dimensions": {
+                "owner": {"status": "unlocated", "claim_ids": ["c010"]},
+                "data_contract_or_source": {"status": "unlocated", "claim_ids": ["c010"]},
+                "write_target": {"status": "unlocated", "claim_ids": ["c010"]},
+                "test_entry": {"status": "unlocated", "claim_ids": ["c010"]},
+                "rollback_boundary": {"status": "unlocated", "claim_ids": ["c010"]}
+              },
+              "unsupported_identifier_claim_ids": ["c002", "c003", "c004", "c005", "c006", "c007", "c008", "c009"],
+              "reason": "Core dependencies remain unlocated."
+            }
+          }
+        }
+      ]
+    },
+    {
+      "content": "## Source facts\n- src/Evidence.java:1 contains only an adjacent example.\n\n## Blocking dependencies\n- Owner, data contract, write target, test entry, and rollback boundary remain unlocated.\n\nImplementation readiness: blocked. No implementation slice selected."
+    }
+  ],
+  "acceptance": {
+    "required_tools": ["search_code", "read_file"],
+    "forbidden_tools": ["list_files", "apply_patch", "write_file", "shell", "run_tests"],
+    "changed_files": [],
+    "answer_all_of": ["src/Evidence.java", "blocked", "No implementation slice selected"],
+    "answer_forbidden_regex": ["ConcreteEndpoint", "/api/", "selected for implementation now"],
+    "termination_reason": "final",
+    "run_summary": {
+      "tool_calls": 2,
+      "tool_errors": 0,
+      "provider_schema_violations": 0,
+      "provider_protocol_violations": 0
+    },
+    "read_only_reviewer": {
+      "triggers": 1,
+      "finding_submits": 8,
+      "findings": 8,
+      "rejected_final_submits": 3,
+      "final_submits": 1,
+      "rewrites": 1,
+      "rewrite_acceptances": 1,
+      "rewrite_closure_acceptances": 1,
+      "output_lifecycle_exhausted": 0
+    },
+    "safe_partial_report": {"emitted": 0},
+    "max_tool_errors": 0
+  },
+  "residual_risk": "This fixture proves typed reviewer final-rejection recovery while preserving eight accepted findings; live model adherence remains separately gated."
+}

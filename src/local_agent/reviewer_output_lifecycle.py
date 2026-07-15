@@ -8,6 +8,7 @@ from typing import Any, Literal
 
 from .provider_protocol import classify_provider_content_artifact
 from .document_consistency import document_consistency_rejection_hint
+from .implementation_readiness import implementation_readiness_rejection_hint
 from .read_only_reviewer import MAX_REVIEWER_FINDINGS
 from .read_only_reviewer import REVIEWER_FINDING_TOOL_NAME
 from .read_only_reviewer import REVIEWER_OUTPUT_TOOL_NAME
@@ -265,7 +266,13 @@ def parse_reviewer_output_turn(
     return ReviewerOutputTurn(result=result, events=tuple(events))
 
 
-def reviewer_tool_result_messages(message: dict[str, Any], events: tuple[ReviewerOutputEvent, ...]) -> list[dict[str, Any]]:
+def reviewer_tool_result_messages(
+    message: dict[str, Any],
+    events: tuple[ReviewerOutputEvent, ...],
+    *,
+    document_consistency: bool = False,
+    implementation_readiness: bool = False,
+) -> list[dict[str, Any]]:
     event_by_id = {event.tool_call_id: event for event in events}
     results: list[dict[str, Any]] = []
     for call in message.get("tool_calls") or []:
@@ -273,7 +280,17 @@ def reviewer_tool_result_messages(message: dict[str, Any], events: tuple[Reviewe
         event = event_by_id.get(call_id)
         if event is None:
             continue
-        results.append({"role": "tool", "tool_call_id": call_id, "content": reviewer_tool_result_content(event)})
+        results.append(
+            {
+                "role": "tool",
+                "tool_call_id": call_id,
+                "content": reviewer_tool_result_content(
+                    event,
+                    document_consistency=document_consistency,
+                    implementation_readiness=implementation_readiness,
+                ),
+            }
+        )
     return results
 
 
@@ -305,7 +322,12 @@ def reviewer_assistant_tool_message(message: dict[str, Any], events: tuple[Revie
     }
 
 
-def reviewer_tool_result_content(event: ReviewerOutputEvent) -> str:
+def reviewer_tool_result_content(
+    event: ReviewerOutputEvent,
+    *,
+    document_consistency: bool = False,
+    implementation_readiness: bool = False,
+) -> str:
     if event.kind == "finding":
         return "finding recorded; continue reporting findings or call submit_read_only_review"
     if event.kind == "finding_replayed":
@@ -331,7 +353,26 @@ def reviewer_tool_result_content(event: ReviewerOutputEvent) -> str:
                 f"{','.join(invalidated)} were invalidated; resubmit corrected findings for those claim_ids, "
                 "then submit the final verdict"
             )
-        hint = document_consistency_rejection_hint(event.code)
+        hints: list[str] = []
+        if event.code == "top_level_keys_invalid":
+            fields = ["verdict", "confidence", "reason"]
+            if document_consistency:
+                fields.append("document_consistency")
+            if implementation_readiness:
+                fields.append("implementation_readiness")
+            hints.append(" Allowed final top-level keys JSON: " + json.dumps(fields, separators=(",", ":")) + ".")
+            received_keys = (event.diagnostics or {}).get("top_level_keys")
+            if isinstance(received_keys, list) and "findings" in received_keys:
+                hints.append(" The rejected call included the forbidden findings key; remove it.")
+            hints.append(
+                " Do not include findings, claim_id, finding_scope, issue, action, or any wrapper object; "
+                "recorded findings are retained."
+            )
+        if document_consistency:
+            hints.append(document_consistency_rejection_hint(event.code))
+        if implementation_readiness:
+            hints.append(implementation_readiness_rejection_hint(event.code))
+        hint = "".join(value for value in hints if value)
         return f"final review rejected: {event.code}; submit a corrected final verdict.{hint}"
     return f"output call rejected: {event.code}; use only the reviewer output tools"
 

@@ -334,7 +334,14 @@ def run_review_round(
             if len(collected_findings) >= MAX_REVIEWER_FINDINGS:
                 finding_capacity_reached = True
             messages.append(reviewer_assistant_tool_message(message, turn.events))
-            messages.extend(reviewer_tool_result_messages(message, turn.events))
+            messages.extend(
+                reviewer_tool_result_messages(
+                    message,
+                    turn.events,
+                    document_consistency=document_consistency,
+                    implementation_readiness=implementation_readiness,
+                )
+            )
             if capacity_directives >= MAX_REVIEWER_CAPACITY_DIRECTIVES:
                 state.output_lifecycle_exhausted = True
                 port.collector.record_read_only_review_output_lifecycle_exhausted()

@@ -255,6 +255,10 @@ LCA 的必要增强不是 OMP 原生类：ImplementationReadinessAssessment、cl
 
 OMP 的 queue 负责 directive 的 served / resolve / reject，`agent-loop` 保持 tool-result pairing 与有界 detour 续行，Explore 在空搜索或失败后切换策略，task `yield` 提供有界结构化交接。LCA 据此增加只读材料的 exact target 消费、candidate-read 耗尽后的 root-local unlocated 事实，以及 `ImplementationReadiness` 的 collector 分类；这些是本地 evidence/readiness 增强，不能表述为 OMP 的同名类或原生 taxonomy。
 
+### T-200 reviewer final-rejection closure
+
+OMP `agent-loop.ts` 在 assistant tool call 后保留成对 tool result，再继续下一 provider turn；`tool-choice-queue.ts` 由 directive owner 决定 resolve / reject / requeue。LCA 的 reviewer 同样用 rejected tool result 续行，但额外返回静态、profile-aware 的 document/readiness schema hint。`ImplementationReadiness` 五维 schema 和 rejection taxonomy 是 LCA 本地 reviewer 安全增强，不是 OMP 原生类或输出契约。
+
 ## OMP 主循环
 
 源码依据：`/Users/chengming/mycode/opensource/oh-my-pi/packages/agent/src/agent-loop.ts`
