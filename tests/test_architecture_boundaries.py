@@ -58,3 +58,26 @@ class ArchitectureBoundaryTests(unittest.TestCase):
         self.assertIn("def tool_choice_steering_signature", queue)
         self.assertNotIn("def _tool_choice_steering_message", gateway)
         self.assertNotIn("def _tool_choice_steering_signature", gateway)
+
+    def test_runtime_strategy_owners_do_not_reintroduce_business_keyword_guards(self) -> None:
+        strategy_files = (
+            ROOT / "src/local_agent/task_contract.py",
+            ROOT / "src/local_agent/tool_choice_queue.py",
+            ROOT / "src/local_agent/read_only_explore.py",
+            ROOT / "src/local_agent/read_only_reviewer.py",
+            ROOT / "src/local_agent/runtime_read_only_review.py",
+            ROOT / "src/local_agent/reviewer_output_lifecycle.py",
+            ROOT / "src/local_agent/steering/evidence.py",
+            ROOT / "src/local_agent/implementation_readiness.py",
+        )
+        forbidden = re.compile(
+            r"(拓展服务费|结算单|服务费|分账|退款|计费|(?<![A-Za-z])settlement(?![A-Za-z])|"
+            r"(?<![A-Za-z])billing(?![A-Za-z])|(?<![A-Za-z])fee(?![A-Za-z]))",
+            flags=re.IGNORECASE,
+        )
+        hits: list[str] = []
+        for path in strategy_files:
+            content = path.read_text(encoding="utf-8")
+            for match in forbidden.finditer(content):
+                hits.append(f"{path.relative_to(ROOT)}:{content.count(chr(10), 0, match.start()) + 1}:{match.group(0)}")
+        self.assertEqual(hits, [])

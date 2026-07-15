@@ -1694,10 +1694,25 @@ class ToolChoiceQueueTests(unittest.TestCase):
                 ),
                 code_roots=(str(root),),
             )
+            readiness_manual_read = evaluate_read_only_explore(
+                profile="owner_impact",
+                tool_results=(
+                    ToolResultSummary(
+                        "read_file",
+                        "MANUAL_OWNER = True\n",
+                        path=str(manual),
+                        metadata={"resolved_path": str(manual)},
+                    ),
+                ),
+                code_roots=(str(root),),
+                strict_relevance=True,
+            )
 
         self.assertEqual(inventory_read.missing_roots, (str(root),))
-        self.assertEqual(manual_read.action, "finalize")
         self.assertEqual(manual_read.missing_roots, ())
+        self.assertEqual(manual_read.action, "finalize")
+        self.assertEqual(readiness_manual_read.missing_roots, (str(root),))
+        self.assertNotEqual(readiness_manual_read.action, "finalize")
     def test_document_only_contract_never_reopens_code_discovery_tools(self) -> None:
         decision = evaluate_tool_choice_state(
             task_kind="read-only",

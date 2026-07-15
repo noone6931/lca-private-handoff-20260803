@@ -6,6 +6,7 @@ from typing import Literal
 
 from .document_artifacts import DocumentArtifactRequirement
 from .document_artifacts import extract_document_artifact_requirements
+from .implementation_readiness import has_implementation_readiness_intent
 
 TaskKind = Literal["read-only", "code-implementation", "unclear"]
 EvidenceDomain = Literal["repository_code", "requirement_documents", "workspace_metadata", "semantic"]
@@ -30,6 +31,7 @@ class RequirementContract:
     read_only_review_profile: ReadOnlyReviewProfile = "none"
     document_artifacts: tuple[DocumentArtifactRequirement, ...] = ()
     source_artifacts: tuple[str, ...] = ()
+    implementation_readiness_required: bool = False
 
 
 def requires_no_edit_final_hygiene(contract: RequirementContract | None) -> bool:
@@ -228,16 +230,8 @@ _DESIGN_MARKERS = (
     "方案",
     "规则",
     "流程",
-    "结算",
-    "服务费",
-    "分账",
-    "退款",
-    "计费",
     "requirement",
     "design",
-    "settlement",
-    "billing",
-    "fee",
 )
 
 _META_SEMANTIC_MARKERS = (
@@ -361,6 +355,7 @@ def generate_requirement_contract(user_prompt: str) -> RequirementContract:
     evidence_domain = _evidence_domain(prompt, inspection_forbidden, metadata_subject)
     document_artifacts = extract_document_artifact_requirements(user_prompt) if evidence_domain == "requirement_documents" else ()
     source_artifacts = extract_source_artifact_references(user_prompt) if evidence_domain == "repository_code" else ()
+    readiness_required = has_implementation_readiness_intent(prompt)
     review_profile = _read_only_review_profile(
         prompt, task_kind, evidence_domain, inspection_forbidden, metadata_subject, document_artifacts
     )
@@ -463,14 +458,35 @@ def generate_requirement_contract(user_prompt: str) -> RequirementContract:
                 "Answer the user's question directly using repository-grounded evidence.",
                 "Separate verified facts from reasonable inference.",
                 "Call out any searched-for evidence that was not found.",
+                *(
+                    [
+                        "Classify implementation readiness as ready, conditional, or blocked without selecting a slice when core dependencies remain unlocated."
+                    ]
+                    if readiness_required
+                    else []
+                ),
             ],
             evidence_requirements=[
                 source_fact_requirement,
                 "Mention when a conclusion depends on inference rather than inspected code.",
+                *(
+                    [
+                        "Ready implementation status requires evidence-bound owner, data contract/source, write target, test entry, and rollback boundary; otherwise bind missing dependencies to unlocated claims."
+                    ]
+                    if readiness_required
+                    else []
+                ),
             ],
             verification_requirements=[
                 "Use read/search style inspection before answering code-specific claims.",
                 "Confirm no file edits are needed for the requested answer.",
+                *(
+                    [
+                        "Do not label a candidate ready/selected when the answer itself lists unresolved owner, contract, write target, test, or rollback prerequisites."
+                    ]
+                    if readiness_required
+                    else []
+                ),
             ],
             risk_notes=[
                 "A plausible answer without code evidence can be misleading.",
@@ -480,6 +496,7 @@ def generate_requirement_contract(user_prompt: str) -> RequirementContract:
             evidence_domain="repository_code",
             read_only_review_profile=review_profile,
             source_artifacts=source_artifacts,
+            implementation_readiness_required=readiness_required,
         )
 
     if task_kind == "code-implementation":
@@ -521,6 +538,7 @@ def generate_requirement_contract(user_prompt: str) -> RequirementContract:
         task_kind=task_kind,
         evidence_domain="repository_code",
         read_only_review_profile=review_profile,
+        implementation_readiness_required=readiness_required,
     )
 
 
@@ -541,8 +559,11 @@ def classify_task_kind(user_prompt: str) -> TaskKind:
     has_code_evidence = _contains_any(lower, _CODE_EVIDENCE_MARKERS)
     has_design_marker = _contains_any(lower, _DESIGN_MARKERS)
     has_implementation_intent = _has_implementation_intent(lower)
+    has_readiness_intent = has_implementation_readiness_intent(lower)
 
     if _looks_like_status_question(lower):
+        return "read-only"
+    if has_read_only_marker and has_readiness_intent:
         return "read-only"
     if has_implementation_intent and not has_explicit_read_only_directive:
         return "code-implementation"
@@ -572,6 +593,8 @@ def render_contract_context(contract: RequirementContract) -> str:
         lines.append("Requested document artifacts: " + ", ".join(item.label for item in contract.document_artifacts))
     if contract.source_artifacts:
         lines.append("Requested source artifacts: " + ", ".join(contract.source_artifacts))
+    if contract.implementation_readiness_required:
+        lines.append("Implementation readiness: required (ready / conditional / blocked).")
     if contract.inspection_forbidden:
         lines.append("Inspection policy: repository inspection is forbidden for this task.")
     if contract.workspace_metadata_subject:
@@ -665,6 +688,8 @@ def _read_only_review_profile(
         return "none"
     lower = prompt.lower()
     if _contains_any(lower, _READ_ONLY_DESIGN_REVIEW_MARKERS):
+        return "design"
+    if has_implementation_readiness_intent(prompt):
         return "design"
     if _contains_any(lower, _READ_ONLY_OWNER_IMPACT_MARKERS):
         return "owner_impact"
@@ -828,8 +853,8 @@ def _unclear_evidence_requirements(prompt: str) -> list[str]:
 def _unclear_verification_requirements(prompt: str) -> list[str]:
     if _looks_like_requirement_design(prompt):
         return [
-            "Check proposed rules against normal, refund/reversal, and boundary scenarios.",
-            "Confirm formulas, rounding, timing, and ownership before implementation.",
+            "Check proposed rules against normal, exceptional, and boundary scenarios.",
+            "Confirm formulas, data ownership, timing, and dependency closure before implementation.",
         ]
     return ["Verify that the next action is clarification rather than implementation."]
 
@@ -837,8 +862,8 @@ def _unclear_verification_requirements(prompt: str) -> list[str]:
 def _unclear_risk_notes(prompt: str) -> list[str]:
     if _looks_like_requirement_design(prompt):
         return [
-            "Settlement requirements often hide rounding, refund, reversal, audit, and timing rules.",
-            "Ambiguous fee payer, fee base, or split timing can cause incorrect implementation.",
+            "Requirement drafts often hide boundary cases, audit constraints, and timing rules.",
+            "Ambiguous data ownership, source-of-truth, or dependency timing can cause incorrect implementation.",
         ]
     if _is_short_prompt(prompt):
         return ["The prompt is too short to infer objective, scope, and acceptance criteria safely."]

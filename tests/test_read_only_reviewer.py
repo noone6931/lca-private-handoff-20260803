@@ -3072,6 +3072,16 @@ class ReadOnlyReviewerTests(unittest.TestCase):
             "requirement_fact", "source_fact", "proposal", "pending"
         ])
 
+    def test_candidate_claim_roles_treat_blocking_headings_as_pending(self) -> None:
+        units = candidate_claim_units(
+            "## 阻塞项\n- Owner 必须确认。\n"
+            "## 未验证项\n- 回滚边界未验证。\n"
+            "## 未定位\n- 测试入口未定位。\n"
+            "## Blocking dependencies\n- Write target is unlocated.\n"
+        )
+
+        self.assertEqual([unit.claim_role for unit in units], ["pending", "pending", "pending", "pending"])
+
     def test_evidence_reviewer_rejects_findings_owned_by_proposal_or_pending_roles(self) -> None:
         units = candidate_claim_units(
             "## 设计建议\n- 建议新增 settlement API。\n"
@@ -5042,6 +5052,93 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertIn("no more than 8 highest-risk findings", repair[-1]["content"])
         self.assertIn("original output tools", repair[-1]["content"])
         self.assertIn("Runtime binds the exact claim by claim_id", repair[-1]["content"])
+
+    def test_reviewer_schema_and_parser_require_typed_readiness_when_enabled(self) -> None:
+        candidate = "## Source facts\n- src/Owner.java:1 closes owner.\n\n## Blocking dependencies\n- Rollback remains unlocated."
+        units = candidate_claim_units(candidate)
+        contract = generate_requirement_contract("只读做证据化技术设计，选择可实施切片；依赖不闭合则 blocked。")
+        handoff = ExploreHandoff(
+            request="review readiness",
+            contract=contract,
+            items=(
+                ClaimEvidenceItem(
+                    "source_locator",
+                    "read_file",
+                    "src/Owner.java",
+                    "/repo",
+                    "root_local",
+                    "observed",
+                    "owner evidence",
+                    claim_ids=("c001",),
+                ),
+            ),
+        )
+        schema = reviewer_output_tool_schema(units, implementation_readiness=True)
+        params = schema["function"]["parameters"]
+
+        self.assertIn("implementation_readiness", params["required"])
+        self.assertEqual(
+            params["properties"]["implementation_readiness"]["properties"]["dimensions"]["properties"]["owner"]["properties"][
+                "claim_ids"
+            ]["items"]["enum"],
+            ["c001", "c002"],
+        )
+        result = parse_reviewer_payload(
+            {
+                "verdict": "pass",
+                "confidence": 0.95,
+                "findings": [],
+                "reason": "blocked honestly",
+                "implementation_readiness": {
+                    "status": "blocked",
+                    "dimensions": {
+                        "owner": {"status": "closed", "claim_ids": ["c001"]},
+                        "data_contract_or_source": {"status": "unlocated", "claim_ids": ["c002"]},
+                        "write_target": {"status": "unlocated", "claim_ids": ["c002"]},
+                        "test_entry": {"status": "unlocated", "claim_ids": ["c002"]},
+                        "rollback_boundary": {"status": "unlocated", "claim_ids": ["c002"]},
+                    },
+                    "unsupported_identifier_claim_ids": [],
+                    "reason": "rollback missing",
+                },
+            },
+            claim_units=units,
+            implementation_readiness=True,
+            handoff=handoff,
+        )
+
+        self.assertEqual(result.implementation_readiness.status, "blocked")
+        with self.assertRaisesRegex(ReviewerValidationError, "top_level_keys_invalid"):
+            parse_reviewer_payload(
+                {"verdict": "pass", "confidence": 0.95, "findings": [], "reason": "missing"},
+                claim_units=units,
+                implementation_readiness=True,
+                handoff=handoff,
+            )
+        with self.assertRaisesRegex(ReviewerValidationError, "implementation_readiness_ready_with_unlocated"):
+            parse_reviewer_payload(
+                {
+                    "verdict": "pass",
+                    "confidence": 0.95,
+                    "findings": [],
+                    "reason": "bad ready",
+                    "implementation_readiness": {
+                        "status": "ready",
+                        "dimensions": {
+                            "owner": {"status": "closed", "claim_ids": ["c001"]},
+                            "data_contract_or_source": {"status": "unlocated", "claim_ids": ["c002"]},
+                            "write_target": {"status": "unlocated", "claim_ids": ["c002"]},
+                            "test_entry": {"status": "unlocated", "claim_ids": ["c002"]},
+                            "rollback_boundary": {"status": "unlocated", "claim_ids": ["c002"]},
+                        },
+                        "unsupported_identifier_claim_ids": [],
+                        "reason": "conflicting",
+                    },
+                },
+                claim_units=units,
+                implementation_readiness=True,
+                handoff=handoff,
+            )
 
     def test_document_consistency_contract_passes_an_explicit_unresolved_conflict(self) -> None:
         contract = generate_requirement_contract(

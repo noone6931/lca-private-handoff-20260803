@@ -79,8 +79,29 @@ class RequirementContractTests(unittest.TestCase):
         self.assertIn("Requirements/design clarification", contract.scope)
         self.assertTrue(any("business goal" in item for item in contract.acceptance_items))
         self.assertTrue(any("assumptions" in item for item in contract.evidence_requirements))
-        self.assertTrue(any("rounding" in item for item in contract.verification_requirements))
-        self.assertTrue(any("Settlement requirements" in item for item in contract.risk_notes))
+        self.assertTrue(any("boundary scenarios" in item for item in contract.verification_requirements))
+        self.assertTrue(any("Requirement drafts" in item for item in contract.risk_notes))
+
+    def test_implementation_readiness_contract_is_typed_and_rendered(self) -> None:
+        contract = generate_requirement_contract(
+            "只读做证据化技术设计，选择可实施切片；如果 owner 和依赖不闭合则 blocked。"
+        )
+
+        self.assertEqual(contract.task_kind, "read-only")
+        self.assertEqual(contract.read_only_review_profile, "design")
+        self.assertTrue(contract.implementation_readiness_required)
+        self.assertTrue(any("ready, conditional, or blocked" in item for item in contract.acceptance_items))
+        self.assertTrue(any("owner, data contract/source" in item for item in contract.evidence_requirements))
+        self.assertIn("Implementation readiness: required", render_contract_context(contract))
+
+    def test_read_only_readiness_intent_overrides_implementation_verbs(self) -> None:
+        contract = generate_requirement_contract(
+            "请只读完成证据化技术设计并选择可实施切片；若 owner、数据契约、写入目标、测试入口或回滚边界任一未闭合则 blocked。"
+        )
+
+        self.assertEqual(contract.task_kind, "read-only")
+        self.assertEqual(contract.read_only_review_profile, "design")
+        self.assertTrue(contract.implementation_readiness_required)
 
     def test_global_forbid_edit_keeps_cross_root_design_read_only(self) -> None:
         contract = generate_requirement_contract(

@@ -240,6 +240,17 @@ LCA 在 T-192~T-196 的裁剪与增强：
 - T-196 增加 WorkspaceEvidenceRootProjection：`authorized_roots` 仍是权限边界，`code_evidence_roots` 是 owner/design profile 的代码证据根，`cross_root_coverage_roots` 是 reviewer/explore 需要覆盖的矩阵。该投影是 LCA 多授权根模型下的本地增强；OMP 只有 session cwd / project context 和 queue directive 消费明确范围，不能虚构 OMP 有同名投影类。
 - inspection-forbidden 时 projection 为空；Runtime 只调用 facade 装配 typed roots，Queue / Explore 消费投影，不在 `agent.py` 增加 domain guard。
 
+## T-198 S4 Read-only Explore / Readiness 对照结论
+
+S4 shadow gate 暴露的问题不是单个 provider 文案，而是 read-only explore 与实现准入之间缺少 typed handoff。LCA 的修复继续只采纳 OMP 可证实的 owner 边界：
+
+- `packages/coding-agent/src/prompts/agents/explore.md` 要求空搜索后换 pattern、path 或 strategy；对应到 LCA，`read_only_explore` 不能因一个弱相关 source read 饿死 sibling root，implementation-readiness 场景下每个 code root 必须有相关 source candidate read 或 typed root-local unlocated observation。
+- `packages/coding-agent/src/session/tool-choice-queue.ts` 负责 directive 的 served / resolve / reject / requeue；对应到 LCA，ToolChoiceQueue 只消费 typed explore/readiness projection，不在 agent loop 中根据最终文案补 guard。
+- `packages/agent/src/agent-loop.ts` 的 soft requirement 保持工具结果 pairing 与 bounded continuation；对应到 LCA，detour / schema noise 仍由 directive lifecycle 有界收束，不能把被拒工具当证据。
+- `packages/coding-agent/src/task/executor.ts` 与 `packages/coding-agent/src/tools/yield.ts` 使用 bounded structured output；对应到 LCA，`implementation_readiness` 是 reviewer 输出的 typed dimensions（owner、data/source contract、write target、test entry、rollback boundary），每维绑定 claim-scoped source/requirement locator 或 pending/unlocated claim。
+
+LCA 的必要增强不是 OMP 原生类：ImplementationReadinessAssessment、claim-scoped locator binding、unsupported identifier finding lifecycle、以及 WorkspaceEvidenceRootProjection 都是本地多根只读交付的安全层。OMP 源码没有这些同名 taxonomy；文档和代码只能说 LCA 借鉴 queue / explore / yield lifecycle 原则，并在本地 reviewer owner 中增加机器可校验的 readiness binding。
+
 ## OMP 主循环
 
 源码依据：`/Users/chengming/mycode/opensource/oh-my-pi/packages/agent/src/agent-loop.ts`

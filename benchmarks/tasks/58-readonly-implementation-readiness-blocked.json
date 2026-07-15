@@ -1,0 +1,190 @@
+{
+  "id": "readonly-implementation-readiness-blocked",
+  "title": "Read-only implementation readiness blocks unclosed core dependencies and unsupported identifiers",
+  "prompt": "请只读完成证据化技术设计并选择可实施切片；若 owner、数据契约、写入目标、测试入口或回滚边界任一未闭合则 blocked。先读取 requirements.md，并检查 backend/frontend 代码证据。不得把建议说成当前实现。",
+  "budget_seconds": 90,
+  "workspace_files": {
+    "requirements.md": "# Requirement\nChoose an implementation slice only after the owner, data contract, write target, test entry, and rollback boundary are evidence-closed.\n"
+  },
+  "additional_roots": {
+    "backend": {
+      "src/AnalogOwner.java": "class AnalogOwner { void adjacentFlow() {} }\n"
+    },
+    "frontend": {
+      "src/RouteShell.ts": "export const RouteShell = { area: 'navigation' };\n"
+    }
+  },
+  "scripted_responses": [
+    {
+      "tool_calls": [
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "requirements.md"
+          }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "search_code",
+          "arguments": {
+            "path": "{{root:backend}}/src",
+            "pattern": "AnalogOwner"
+          }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "{{root:backend}}/src/AnalogOwner.java"
+          }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "search_code",
+          "arguments": {
+            "path": "{{root:frontend}}/src",
+            "pattern": "RouteShell"
+          }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "{{root:frontend}}/src/RouteShell.ts"
+          }
+        }
+      ]
+    },
+    {
+      "content": "## Source facts\n- `backend/src/AnalogOwner.java:1` defines AnalogOwner for an adjacent flow.\n- `frontend/src/RouteShell.ts:1` defines RouteShell for navigation only.\n\n## Blocking dependencies\n- Verified owner, data contract, write target, test entry, and rollback boundary remain unlocated.\n\n## Implementation readiness\n- Selected slice: implement `/api/example/ready-slice`, table `candidate_table`, field `candidate_status`, and status codes `10/20/30` now."
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "report_read_only_finding",
+          "arguments": {
+            "claim_id": "c004",
+            "finding_scope": "candidate_defect",
+            "issue": "The candidate lists unresolved core implementation dependencies but still selects a concrete slice with unsupported API, table, field, and status identifiers.",
+            "action": "Mark implementation readiness as blocked, remove the unsupported concrete identifiers, and keep the next step as locating evidence for the core dependencies."
+          }
+        },
+        {
+          "name": "submit_read_only_review",
+          "arguments": {
+            "verdict": "revise",
+            "confidence": 0.98,
+            "reason": "Readiness is blocked because core dependencies remain unlocated and the selected identifiers lack evidence.",
+            "implementation_readiness": {
+              "status": "blocked",
+              "dimensions": {
+                "owner": {
+                  "status": "unlocated",
+                  "claim_ids": [
+                    "c003"
+                  ]
+                },
+                "data_contract_or_source": {
+                  "status": "unlocated",
+                  "claim_ids": [
+                    "c003"
+                  ]
+                },
+                "write_target": {
+                  "status": "unlocated",
+                  "claim_ids": [
+                    "c003"
+                  ]
+                },
+                "test_entry": {
+                  "status": "unlocated",
+                  "claim_ids": [
+                    "c003"
+                  ]
+                },
+                "rollback_boundary": {
+                  "status": "unlocated",
+                  "claim_ids": [
+                    "c003"
+                  ]
+                }
+              },
+              "unsupported_identifier_claim_ids": [
+                "c004"
+              ],
+              "reason": "Core dependencies remain unlocated and concrete identifiers are unsupported."
+            }
+          }
+        }
+      ]
+    },
+    {
+      "content": "需求事实：requirements.md 要求 owner、数据契约、写入目标、测试入口和回滚边界均证据闭合后才可选择实施切片。\n源码当前事实：backend/src/AnalogOwner.java 只显示相邻流程 AnalogOwner；frontend/src/RouteShell.ts 只显示导航框架 RouteShell。\n阻塞项：Verified owner、data/source contract、write target、test entry、rollback boundary 仍未定位。\nImplementation readiness: blocked. No implementation slice is selected; concrete API/table/field/status names must wait until those dependencies have source or requirement provenance."
+    }
+  ],
+  "acceptance": {
+    "required_tools": [
+      "read_file",
+      "search_code"
+    ],
+    "forbidden_tools": [
+      "list_files",
+      "apply_patch",
+      "write_file",
+      "shell",
+      "run_tests"
+    ],
+    "changed_files": [],
+    "answer_all_of": [
+      "requirements.md",
+      "backend/src/AnalogOwner.java",
+      "frontend/src/RouteShell.ts",
+      "blocked",
+      "仍未定位",
+      "No implementation slice is selected"
+    ],
+    "answer_forbidden_regex": [
+      "/api/example/ready-slice",
+      "candidate_table",
+      "candidate_status",
+      "10/20/30",
+      "Selected slice: implement",
+      "ready\\b"
+    ],
+    "termination_reason": "final",
+    "run_summary": {
+      "tool_calls": 5,
+      "tool_errors": 0,
+      "provider_schema_violations": 0,
+      "provider_protocol_violations": 0
+    },
+    "read_only_reviewer": {
+      "triggers": 1,
+      "rewrites": 1,
+      "rewrite_acceptances": 1,
+      "rewrite_closure_checks": 1,
+      "rewrite_closure_acceptances": 1,
+      "rewrite_verification_rounds": 0,
+      "typed_submits": 2,
+      "finding_submits": 1,
+      "final_submits": 1
+    },
+    "safe_partial_report": {
+      "emitted": 0
+    },
+    "max_tool_errors": 0
+  },
+  "residual_risk": "This fixture locks typed implementation-readiness binding and blocked release semantics. It does not prove full live repository owner discovery quality."
+}

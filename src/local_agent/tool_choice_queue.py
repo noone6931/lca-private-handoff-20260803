@@ -440,6 +440,7 @@ class RequiredToolGate:
         workspace_roots: Iterable[str] | None = None,
         evidence_domain: str | None = None,
         read_only_review_profile: str | None = None,
+        implementation_readiness_required: bool = False,
         document_artifacts: Iterable[DocumentArtifactRequirement] = (),
         source_artifacts: Iterable[str] = (),
     ) -> ToolChoiceDecision:
@@ -453,6 +454,7 @@ class RequiredToolGate:
             workspace_roots=workspace_roots,
             evidence_domain=evidence_domain,
             read_only_review_profile=read_only_review_profile,
+            implementation_readiness_required=implementation_readiness_required,
             document_artifacts=document_artifacts,
             source_artifacts=source_artifacts,
         )
@@ -473,6 +475,7 @@ def evaluate_tool_choice_state(
     workspace_roots: Iterable[str] | None = None,
     evidence_domain: str | None = None,
     read_only_review_profile: str | None = None,
+    implementation_readiness_required: bool = False,
     document_artifacts: Iterable[DocumentArtifactRequirement] = (),
     source_artifacts: Iterable[str] = (),
 ) -> ToolChoiceDecision:
@@ -576,6 +579,7 @@ def evaluate_tool_choice_state(
             else workspace_roots or ()
         ),
         requested_source_artifacts=source_artifacts,
+        strict_relevance=implementation_readiness_required,
     )
     if explore_decision.is_applicable:
         missing = explore_decision.missing_roots

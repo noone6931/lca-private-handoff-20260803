@@ -112,6 +112,7 @@ class ExploreHandoff:
                 "scope": self.contract.scope,
                 "acceptance": self.contract.acceptance_items[:4],
                 "evidence_requirements": self.contract.evidence_requirements[:4],
+                "implementation_readiness_required": self.contract.implementation_readiness_required,
             },
             "claim_matrix": [item.to_dict() for item in self.items],
             "review_categories": [

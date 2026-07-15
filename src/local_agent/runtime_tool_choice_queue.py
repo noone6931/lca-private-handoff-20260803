@@ -47,6 +47,7 @@ class RuntimeToolChoiceQueuePhase:
             workspace_roots=tuple(str(root) for root in runtime._workspace_context.all_roots),
             evidence_domain=contract.evidence_domain,
             read_only_review_profile=contract.read_only_review_profile,
+            implementation_readiness_required=contract.implementation_readiness_required,
             document_artifacts=contract.document_artifacts,
             source_artifacts=contract.source_artifacts,
         )

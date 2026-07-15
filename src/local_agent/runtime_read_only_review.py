@@ -131,6 +131,11 @@ class ReadOnlyReviewPhase:
         )
         messages = reviewer_messages(handoff, claim_units)
         document_consistency = contract.evidence_domain == "requirement_documents" and contract.read_only_review_profile == "document_consistency"
+        implementation_readiness = bool(
+            contract.implementation_readiness_required
+            and contract.evidence_domain == "repository_code"
+            and contract.read_only_review_profile in {"owner_impact", "design"}
+        )
         round_outcome = run_review_round(
             self._round_port(),
             messages=messages,
@@ -138,6 +143,7 @@ class ReadOnlyReviewPhase:
             claim_units=claim_units,
             handoff=handoff,
             document_consistency=document_consistency,
+            implementation_readiness=implementation_readiness,
             timeout=timeout,
             max_provider_turns=max_provider_turns,
             validate_document_consistency=self._validate_document_consistency,
@@ -157,6 +163,7 @@ class ReadOnlyReviewPhase:
         state.reason = result.reason
         state.findings = result.findings
         state.document_consistency = result.document_consistency
+        state.implementation_readiness = result.implementation_readiness
         state.review_handoff = handoff
         state.document_consistency_handoff_signature = (
             self._handoff_signature(handoff) if result.document_consistency is not None else ()
@@ -422,6 +429,7 @@ class ReadOnlyReviewPhase:
             findings=state.findings,
             reason=state.reason or "rewrite_correction",
             document_consistency=state.document_consistency,
+            implementation_readiness=state.implementation_readiness,
         )
         base = reviewer_rewrite_message(
             result,

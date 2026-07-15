@@ -106,6 +106,7 @@ def evaluate_read_only_explore(
     tool_results: Iterable[ToolResultSummary],
     code_roots: Iterable[str],
     requested_source_artifacts: Iterable[str] = (),
+    strict_relevance: bool = False,
 ) -> ReadOnlyExploreDecision:
     """Return a policy from typed profile and observations, never request text."""
 
@@ -154,6 +155,7 @@ def evaluate_read_only_explore(
         inventory_paths,
         non_source_semantic_paths,
         requested_source_artifacts=requested_artifacts,
+        strict_relevance=strict_relevance,
     )
     missing = tuple(root for root in roots if root not in covered)
     root_attempts = _root_attempts(results, roots)
@@ -313,6 +315,7 @@ def _covered_roots(
     non_source_semantic_paths: dict[str, tuple[str, ...]],
     *,
     requested_source_artifacts: tuple[str, ...] = (),
+    strict_relevance: bool = False,
 ) -> set[str]:
     covered: set[str] = set()
     for result in results:
@@ -334,8 +337,9 @@ def _covered_roots(
                 if _is_source_evidence_path(path):
                     covered.add(root)
                 continue
-            if path == root or path.startswith(root + "/"):
-                covered.add(root)
+            if not strict_relevance and (path == root or path.startswith(root + "/")):
+                if _is_source_evidence_path(path):
+                    covered.add(root)
     return covered
 
 

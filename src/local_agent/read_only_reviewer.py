@@ -15,6 +15,11 @@ from .document_consistency import document_consistency_schema
 from .document_consistency import parse_document_consistency_assessment
 from .document_consistency import validate_document_consistency_finding_issue
 from .explore_handoff import ExploreHandoff
+from .implementation_readiness import ImplementationReadinessAssessment
+from .implementation_readiness import ImplementationReadinessValidationError
+from .implementation_readiness import implementation_readiness_schema
+from .implementation_readiness import parse_implementation_readiness_assessment
+from .implementation_readiness import validate_implementation_readiness_assessment
 from .task_contract import RequirementContract
 
 
@@ -85,6 +90,7 @@ class ReviewerResult:
     findings: tuple[ReviewerFinding, ...] = ()
     reason: str = ""
     document_consistency: DocumentConsistencyAssessment | None = None
+    implementation_readiness: ImplementationReadinessAssessment | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -93,6 +99,9 @@ class ReviewerResult:
             "findings": [finding.to_dict() for finding in self.findings],
             "reason": self.reason,
             "document_consistency": self.document_consistency.to_dict() if self.document_consistency else None,
+            "implementation_readiness": (
+                self.implementation_readiness.to_dict() if self.implementation_readiness else None
+            ),
         }
 
 
@@ -129,6 +138,7 @@ class ReadOnlyReviewState:
     claim_units: tuple[CandidateClaimUnit, ...] = ()
     document_consistency: DocumentConsistencyAssessment | None = None
     document_consistency_handoff_signature: tuple[tuple[str, ...], ...] = ()
+    implementation_readiness: ImplementationReadinessAssessment | None = None
     review_handoff: ExploreHandoff | None = None
     provider_attempts: int = 0
     schema_failures: int = 0
@@ -166,6 +176,7 @@ class ReadOnlyReviewState:
         self.claim_units = ()
         self.document_consistency = None
         self.document_consistency_handoff_signature = ()
+        self.implementation_readiness = None
         self.review_handoff = None
         self.provider_attempts = 0
         self.schema_failures = 0
@@ -203,6 +214,9 @@ class ReadOnlyReviewState:
             "reviewed_claim_count": len({item.claim_id for item in self.findings}),
             "rewrite_closure_claim_ids": [item.claim_id for item in self.rewrite_closure_findings],
             "document_consistency_stance": self.document_consistency.stance if self.document_consistency else None,
+            "implementation_readiness_status": (
+                self.implementation_readiness.status if self.implementation_readiness else None
+            ),
             "rewrite_accepted": self.rewrite_accepted,
             "provider_attempts": self.provider_attempts,
             "provider_turns": self.provider_attempts,
@@ -292,7 +306,23 @@ def prune_exact_transport_residual_claim_lines(
 
 def _candidate_claim_role(section_context: str) -> CandidateClaimRole:
     context = section_context.casefold()
-    if any(marker in context for marker in ("尚待确认", "待确认", "开放问题", "open question", "pending confirmation")):
+    if any(
+        marker in context
+        for marker in (
+            "尚待确认",
+            "待确认",
+            "必须确认",
+            "开放问题",
+            "阻塞项",
+            "未验证项",
+            "未定位",
+            "open question",
+            "pending confirmation",
+            "blocking dependenc",
+            "unlocated",
+            "unverified",
+        )
+    ):
         return "pending"
     if any(marker in context for marker in ("设计建议", "实施建议", "方案建议", "design proposal", "recommendation")):
         return "proposal"
@@ -436,7 +466,7 @@ Use the output-only review tools; you have no workspace tools and must never ass
 Review contract:
 - The user's exact request is mandatory context. Enforce explicit prohibitions, acceptance constraints, and requested evidence boundaries from that request; do not let the candidate invent a source priority, lifecycle, or exception that the request forbids.
 - A direct owner is justified only by evidence that explicitly binds the requested behavior to a path, symbol, or call chain.
-- Similar names, same-domain payment/order/fee capabilities, and general reusable code are analogous candidates, never verified owners.
+- Similar names, same-domain capabilities, and general reusable code are analogous candidates, never verified owners.
 - Missing or incomplete searches mean unlocated within their stated scope, not absent everywhere.
 - Requirement facts, repository facts, proposals, and open questions must remain distinct.
 - Each candidate_claim has a typed claim_role derived from its Markdown section. This evidence reviewer owns repository factual grounding, not proposal quality: never report findings for claim_role `proposal` or `pending`. For owner/design profiles, `requirement_fact` is also outside this reviewer because the requirement-evidence pipeline already owns it; do not demand current-source implementation evidence for a requirement fact. A document-consistency profile may review requirement facts against document evidence. Imperative wording, a proposed identifier, an unanswered prerequisite, or an optional missing detail does not change that ownership.
@@ -473,6 +503,27 @@ Choose revise when the candidate can be corrected using the handoff. Choose unve
             "and only when those ids cite independent non-visual read_file observations that explicitly state lifecycle "
             "or precedence. A visual observation can show displayed values, but never establishes author intent, a typo, "
             "lifecycle, actor, or precedence."
+        )
+    if _is_implementation_readiness_review(handoff):
+        system += (
+            "\n\nImplementation-readiness output requirement:\n"
+            "- Submit implementation_readiness for every verdict. status must be ready, conditional, or blocked. "
+            "ready is valid only when the candidate's core implementation dependencies are evidence-closed: owner, "
+            "data/source contract, write target, test entry, and rollback boundary. blocked is required when any one "
+            "of those core dimensions remains unlocated or unsupported. conditional is allowed only when the core "
+            "dimensions are evidence-closed and the remaining choices are non-blocking implementation options.\n"
+            "- In implementation_readiness.dimensions, provide exactly these five keys: owner, data_contract_or_source, "
+            "write_target, test_entry, rollback_boundary. For each dimension, set status=closed only when claim_ids cite "
+            "visible requirement/source locator evidence for that dimension. Set status=unlocated when the dimension "
+            "remains a blocker and bind claim_ids to pending/unlocated candidate claims. Bind "
+            "unsupported_identifier_claim_ids to candidate claims containing concrete API/table/class/field/status/owner "
+            "identifiers without requirement/source provenance or a clearly generic placeholder label.\n"
+            "- The candidate may propose conceptual implementation options, but a concrete identifier is not safe merely "
+            "because the section is labeled proposal. If it is not in the handoff and is not an obvious placeholder, "
+            "report a finding and list the claim_id in unsupported_identifier_claim_ids.\n"
+            "- If the candidate itself lists unresolved owner, contract, write target, test entry, or rollback prerequisites, "
+            "do not accept a ready/selected implementation slice. Use blocked and report a finding when the candidate "
+            "presents the slice as selected."
         )
     payload = {
         "kind": "LCA_READ_ONLY_EVIDENCE_REVIEW",
@@ -569,6 +620,7 @@ def reviewer_output_tool_schema(
     claim_units: tuple[CandidateClaimUnit, ...],
     *,
     document_consistency: bool = False,
+    implementation_readiness: bool = False,
     evidence_ids: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     """Return the isolated final-review yield schema, never a workspace tool."""
@@ -586,6 +638,9 @@ def reviewer_output_tool_schema(
     if document_consistency:
         properties["document_consistency"] = document_consistency_schema(evidence_ids)
         required.append("document_consistency")
+    if implementation_readiness:
+        properties["implementation_readiness"] = implementation_readiness_schema(unit.claim_id for unit in claim_units)
+        required.append("implementation_readiness")
     return {
         "type": "function",
         "function": {
@@ -647,6 +702,7 @@ def reviewer_output_tool_schemas(
     claim_units: tuple[CandidateClaimUnit, ...],
     *,
     document_consistency: bool = False,
+    implementation_readiness: bool = False,
     evidence_ids: tuple[str, ...] = (),
     include_finding_tool: bool = True,
 ) -> list[dict[str, Any]]:
@@ -659,6 +715,7 @@ def reviewer_output_tool_schemas(
         reviewer_output_tool_schema(
             claim_units,
             document_consistency=document_consistency,
+            implementation_readiness=implementation_readiness,
             evidence_ids=evidence_ids,
         )
     )
@@ -728,6 +785,7 @@ def parse_reviewer_result(
     *,
     claim_units: tuple[CandidateClaimUnit, ...],
     document_consistency: bool = False,
+    implementation_readiness: bool = False,
     evidence_ids: tuple[str, ...] = (),
     required_candidate_claim_ids: tuple[str, ...] = (),
 ) -> ReviewerResult:
@@ -743,6 +801,7 @@ def parse_reviewer_result(
         raw,
         claim_units=claim_units,
         document_consistency=document_consistency,
+        implementation_readiness=implementation_readiness,
         evidence_ids=evidence_ids,
         required_candidate_claim_ids=required_candidate_claim_ids,
     )
@@ -775,6 +834,7 @@ def parse_reviewer_final_payload(
     findings: tuple[ReviewerFinding, ...],
     claim_units: tuple[CandidateClaimUnit, ...],
     document_consistency: bool = False,
+    implementation_readiness: bool = False,
     evidence_ids: tuple[str, ...] = (),
     required_candidate_claim_ids: tuple[str, ...] = (),
     handoff: ExploreHandoff | None = None,
@@ -792,6 +852,7 @@ def parse_reviewer_final_payload(
         assembled,
         claim_units=claim_units,
         document_consistency=document_consistency,
+        implementation_readiness=implementation_readiness,
         evidence_ids=evidence_ids,
         required_candidate_claim_ids=required_candidate_claim_ids,
         handoff=handoff,
@@ -804,6 +865,7 @@ def parse_reviewer_payload(
     *,
     claim_units: tuple[CandidateClaimUnit, ...],
     document_consistency: bool = False,
+    implementation_readiness: bool = False,
     evidence_ids: tuple[str, ...] = (),
     required_candidate_claim_ids: tuple[str, ...] = (),
     handoff: ExploreHandoff | None = None,
@@ -822,6 +884,8 @@ def parse_reviewer_payload(
     allowed_keys = {"verdict", "confidence", "findings", "reason"}
     if document_consistency:
         allowed_keys.add("document_consistency")
+    if implementation_readiness:
+        allowed_keys.add("implementation_readiness")
     if set(raw) != allowed_keys:
         raise ReviewerValidationError("top_level_keys_invalid", diagnostics)
     verdict = raw.get("verdict")
@@ -962,12 +1026,31 @@ def parse_reviewer_payload(
                 },
                 pending_candidate_claim_ids=finding_issue.claim_ids,
             )
+    readiness_assessment = None
+    if implementation_readiness:
+        try:
+            readiness_assessment = parse_implementation_readiness_assessment(
+                raw.get("implementation_readiness"),
+                claim_ids=known_claim_ids,
+            )
+        except ImplementationReadinessValidationError as exc:
+            raise ReviewerValidationError(exc.code, {**diagnostics, **exc.diagnostics}) from None
+        readiness_code = validate_implementation_readiness_assessment(
+            readiness_assessment,
+            verdict=verdict,
+            claim_units=claim_units,
+            handoff=handoff,
+            finding_claim_ids=tuple(finding.claim_id for finding in findings),
+        )
+        if readiness_code is not None:
+            raise ReviewerValidationError(readiness_code, diagnostics)
     return ReviewerResult(
         verdict=verdict,
         confidence=float(confidence),
         findings=tuple(findings),
         reason=_clip(reason),
         document_consistency=assessment,
+        implementation_readiness=readiness_assessment,
     )
 
 
@@ -1000,6 +1083,28 @@ def reviewer_rewrite_message(
     elif profile == "design":
         lines.append(
             "Design proposals may be conceptual, but every concrete repository name must remain an observed fact or be explicitly marked unverified."
+        )
+    if result.implementation_readiness is not None:
+        readiness = result.implementation_readiness
+        dimension_summary = "; ".join(
+            f"{key}={readiness.dimension(key).status}:"
+            f"{','.join(readiness.dimension(key).claim_ids) or 'none'}"
+            for key in (
+                "owner",
+                "data_contract_or_source",
+                "write_target",
+                "test_entry",
+                "rollback_boundary",
+            )
+        )
+        lines.append(
+            "Implementation-readiness disposition: "
+            f"status={readiness.status}; dimensions=[{dimension_summary}]; "
+            f"unsupported_identifier_claim_ids={','.join(readiness.unsupported_identifier_claim_ids) or 'none'}."
+        )
+        lines.append(
+            "If readiness is blocked or conditional, do not present an implementation slice as selected/ready; keep it as "
+            "blocked, conditional, or a follow-up investigation direction."
         )
     elif profile == "document_consistency":
         lines.append(
@@ -1220,6 +1325,14 @@ def _normalize_markdown(value: str) -> str:
 
 def _is_document_consistency_review(handoff: ExploreHandoff) -> bool:
     return handoff.contract.evidence_domain == "requirement_documents" and handoff.contract.read_only_review_profile == "document_consistency"
+
+
+def _is_implementation_readiness_review(handoff: ExploreHandoff) -> bool:
+    return bool(
+        handoff.contract.implementation_readiness_required
+        and handoff.contract.evidence_domain == "repository_code"
+        and handoff.contract.read_only_review_profile in {"owner_impact", "design"}
+    )
 
 
 def _clip_unit(value: str) -> str:

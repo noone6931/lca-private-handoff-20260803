@@ -10,6 +10,7 @@ from typing import Any, Callable
 
 from .chat_runtime import call_chat_with_timeout
 from .document_consistency import is_document_consistency_rejection_code
+from .implementation_readiness import is_implementation_readiness_rejection_code
 from .llm import LlmError, LlmTimeoutError
 from .read_only_reviewer import MAX_REVIEWER_CAPACITY_DIRECTIVES
 from .read_only_reviewer import MAX_REVIEWER_FINDINGS
@@ -60,6 +61,7 @@ def run_review_round(
     claim_units: tuple[Any, ...],
     handoff: Any,
     document_consistency: bool,
+    implementation_readiness: bool,
     timeout: float | None,
     max_provider_turns: int,
     validate_document_consistency: Callable[[Any, Any, str], None],
@@ -85,6 +87,7 @@ def run_review_round(
         output_schemas = reviewer_output_tool_schemas(
             claim_units,
             document_consistency=document_consistency,
+            implementation_readiness=implementation_readiness,
             evidence_ids=handoff.evidence_ids,
             include_finding_tool=(
                 not finding_submission_closed
@@ -128,6 +131,7 @@ def run_review_round(
                 claim_units=claim_units,
                 provider=port.provider,
                 document_consistency=document_consistency,
+                implementation_readiness=implementation_readiness,
                 handoff=handoff,
                 candidate=candidate,
                 required_candidate_claim_ids=required_candidate_claim_ids,
@@ -414,6 +418,8 @@ def _blocking_rejection_category(event: Any) -> str:
         return "arguments"
     if is_document_consistency_rejection_code(code):
         return "document_consistency"
+    if is_implementation_readiness_rejection_code(code):
+        return "implementation_readiness"
     return "protocol"
 
 
