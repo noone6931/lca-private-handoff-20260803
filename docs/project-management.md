@@ -17,10 +17,10 @@ python3 scripts/sync_project_excel.py
 | 字段 | 当前值 | 说明 |
 |---|---|---|
 | 最终目标 | 个人本地编程助手 Agent | 本地优先、封闭 VM 可用、只访问指定 AI API，能读代码、搜代码、改代码、跑测试、生成 diff、沉淀项目记忆。 |
-| 当前阶段 | P12：只读收敛性与日用稳定 | P12 已完成 MVP 并发布 T-196 阶段性 stable。T-192~T-196 分别关闭 reviewer role/transport ownership、reviewer advisory closure、root-targeted explore directive、semantic source candidate commit、typed workspace evidence root projection。908/908 unittest、57/57 deterministic benchmark、7/7 architecture checks 通过；publish gate 再次通过 unittest/compileall/diff-check；`agent.py` 1,876 行/71 methods、`final_answer.py` 59 行。stable 为 `20260714T232335Z-1a9d3bf23544-d5388ba3386a`。 |
+| 当前阶段 | P12 stable MVP；架构收束完成，S4 仍未通过 | 唯一 stable 仍是 T-196 `20260714T232335Z-1a9d3bf23544-d5388ba3386a`，发布基线 908/57/7。T-198~T-200 是未发布 S4 readiness candidate 链，fresh runs 在 pre-review/transport 安全终止；小牙的 T-196 stable S4 基线也在 pre-review 三轮耗尽后 safe partial。T-201 commits `16c0cb5` + `3263f760` 完成 behavior-preserving owner split 与全 production complexity ratchet，独立门禁 945/60/13；candidate `20260715T061649Z-3263f76069e6-bd24b57bdafa` 未跑 live、未发布。`agent.py` 1,876 行/71 methods，Queue/Reviewer facade 185/42 行。 |
 | 推荐入口 | `./agent "阅读当前项目"` | 自动设置 `PYTHONPATH=src`，默认当前目录为 workspace。 |
 | Token 配置 | 环境变量 / `--env-file` / `.env` | 优先级为真实环境变量、显式 env-file、用户级 `${AGENT_CONFIG_DIR:-~/.config/local-coding-agent}/.env`、workspace `.env`；stable snapshot 不携带密钥。 |
-| 测试数 | 908 | 当前 T-196 stable 门禁为 908/908 unittest、57/57 deterministic benchmark、7/7 architecture checks；publish gate 再次通过 unittest、compileall 和 diff-check；Excel 由本 Markdown 生成。 |
+| 测试数 | stable 908；post-stable 945 | T-196 stable 为 908/57/7；T-200 candidate 为 941/60/9 且 live S4 失败；T-201 behavior-preserving candidate 为 945/60/13，独立复跑通过但未做 live、不改变 stable 身份。Excel 由本 Markdown 生成。 |
 | 默认 budget_seconds | 600 | 单次任务默认 10 分钟墙钟预算；`--budget-seconds 0` 可关闭。 |
 | 默认 max_steps | 0 | 表示不限步；仅在用户显式设置时作为防失控保险丝。 |
 | 预算执行 | 细粒度 | LLM 请求和 shell/run_tests timeout 会按剩余预算夹紧；deadline 到期会补齐未执行工具结果。 |
@@ -69,7 +69,7 @@ python3 scripts/sync_project_excel.py
 | P9 | 真实需求使用准备 | 项目边界分析、用户确认项目范围、源码验证、实现设计 | 已完成阶段性 MVP | 80% | 母需求 S1~S3 已形成固定验收矩阵；业务 Owner/DDL/模板/下载中心证据仍不完整，因此尚未进入真实实现切片。 |
 | P10 | Intelligence Runtime 骨架 | RequirementContract、CompletionAudit、MiniToolChoiceQueue、Planner/Explore、Reviewer | 已完成 | 100% | 目标契约、阶段队列、完成审计、计划/探索、patch reviewer、VerificationPlan/TestPlanner/DeliveryAudit 与 cross-root evidence matrix 已有明确 Owner。 |
 | P11 | Runtime Ownership / Release Discipline | 薄 agent-loop、职责 Owner、stable/dev/candidate 隔离 | 已完成 MVP 版 | 100% | T-148 将 Runtime 收为 facade，T-149 stable 保持可回滚；T-181~T-188 后 `agent.py` 仍为 1,866 行/71 methods。 |
-| P12 | Read-only Convergence Closure | document evidence、isolated reviewer、safe partial、provider terminal closure、targeted explore directive、workspace evidence root projection | 已完成 MVP 并发布阶段性 stable | 100% | T-196 stable 已通过 908/57/7 门禁与小红独立 S2/S3 live；这是可日用的只读收敛 MVP，不代表完整追平 OMP。下一条主线转入 S4/S5 首个真实小切片实现闭环。 |
+| P12 | Read-only Convergence Closure | document evidence、isolated reviewer、safe partial、provider terminal closure、targeted explore directive、workspace evidence root projection | stable MVP 已完成；架构收束完成，S4 未通过 | 100% stable MVP | T-196 stable 已通过 908/57/7 与独立 S2/S3 live；T-201 将 queue/reviewer 拆为单向 Owner 并建立全 production complexity ratchet。下一步按 Harness 治理先合并重复 gate，再回到 S4/S5，禁止继续为单样本增加补丁。 |
 
 ## 已完成功能
 
@@ -132,7 +132,7 @@ python3 scripts/sync_project_excel.py
 | Planner/Explore | 已完成 MVP 版 | `src/local_agent/planner.py`、`src/local_agent/tool_choice_queue.py`、`src/local_agent/agent.py` | 实现任务在 explore 阶段只开放 list/read/search/LSP/todo/ask/git 状态检查；读到本地证据后进入 ready_to_implement，写后进入 verify | 真实实现压测 |
 | 二阶段 Patch Reviewer | 已完成 MVP 版 | `src/local_agent/patch_reviewer.py`、`src/local_agent/steering/final_answer.py`、`src/local_agent/agent.py` | 成功 `git_diff` 后立即检查显式测试 diff、公开 API 调用方和已有 diff reviewer finding；若有风险，停止同批后续工具并只开放修复/验证/回滚，最终回答仍有兜底审查 | T-115 真实小改已复测；下一步 T-116 preview contract |
 | No-edit evidence gate | 已完成 MVP 版 | `src/local_agent/completion_audit.py` | 实现任务的 blocked/no-edit 必须由 search/LSP 未命中、路径缺失、runtime relevance/approval 拒绝等工具事实支撑；模型文本不足以放行 | 继续真实任务观察 |
-| 测试覆盖 | 已完成 | 当前 T-196 stable 为 908/908 unittest | unittest、compileall、xlsx、57/57 benchmark、7/7 architecture checks 和 diff check 通过；publish gate 再次通过 unittest/compileall/diff-check | S4/S5 小切片继续补测 |
+| 测试覆盖 | 已完成，分层记录 | T-196 stable 为 908/908；T-200 candidate 为 941/941；T-201 为 945/945 | stable 同步 57/7；T-200 为 60/9 且 live S4 失败；T-201 为 60/13、独立离线通过但未做 live | 确定性门禁与概率性用户成功率分账；S4 使用不少于三次 fresh-state 统计验收 |
 
 ## 下一步 Todo
 
@@ -308,6 +308,10 @@ python3 scripts/sync_project_excel.py
 | T-194 | P0/P1 | P12 | Root-targeted Read-only Explore Directives | 已完成并进入 stable 链路 | Agent | root-only broad inventory 被误升为强制 read shortlist，跨 root 混合候选会让 exact tool-choice 漂移。 | 只有 root-targeted precise source candidate 才进入 bounded `read_file` directive；broad inventory 后继续开放 bounded search/precise glob。rule_id 保持稳定，动态 identity 由 scoped paths/missing roots 承载，避免高基数 telemetry。 |
 | T-195 | P0/P1 | P12 | Semantic Source Candidate Commit | 已完成并进入 stable 链路 | Agent | CSS、manifest、config 等非源码命中曾被当作 semantic source candidate，触发 read candidate 阶段噪声。 | 只有通用真实 source path 才能进入 semantic candidate 和 code-root coverage；候选阶段 commit 为单一 target root 的有界 `read_file` soft requirement，detour 由 suppress/force 生命周期收束。 |
 | T-196 | P0 | P12 | Workspace Evidence Root Projection | 已完成并 stable 发布 | Agent | authorized roots 与 code evidence roots 混同会把需求目录当作代码根，真实 S2 曾因此 pre-review unverified。 | 新增 typed projection：authorized roots 仍控制可读范围，code evidence roots 只包含通用可识别代码仓库根，cross-root coverage roots 由 code roots 形成；inspection-forbidden 投影为空。stable `20260714T232335Z-1a9d3bf23544-d5388ba3386a`，908/57/7 门禁，小红 S2/S3 live 通过；小牙 delegated candidate 无执行输出，不作发布证据。 |
+| T-198 | P0/P1 | P12/S4 | Cross-root Explore + Implementation Readiness | candidate 完成；live FAIL，未发布 | Agent | 弱相关跨 root evidence 不足以选择实施切片；具体 identifier 需要 claim-scoped provenance。 | 提交 `9d67947` + `297781a`；五维 typed readiness 与 identifier finding lifecycle 落地。离线 922/58/8；candidate `20260715T015840Z-297781a65016-41bb2fc229ff` 的 run `c09b08be903d4a66aebe0c7360bfa51b` exact exhausted，未通过 S4。 |
+| T-199 | P0/P1 | P12/S4 | Required Materials + Scoped Candidate-read Recovery | candidate 完成；live FAIL，未发布 | Agent | 读主文档不能代替显式 HTML/image outcome；readiness candidate-read exhaustion 需要 root-local unlocated。 | 提交 `be49171` + `3bfdd90` + `d926f6c` + `6dccd0b`；材料路径/模态、canonical coverage、root-local degradation 与 readiness collector 已落 Owner。run `c6092ebba93d4f11856e20586e275090` 因 reviewer readiness/top-level schema correction 耗尽，未发布。 |
+| T-200 | P0/P1 | P12/S4 | Reviewer Output-lifecycle Typed Repair | candidate 完成；fresh live FAIL，未发布 | Agent | final_rejected tool result 需要 profile-aware typed shape hint，不能只给泛化“correct final”。 | 提交 `1eff647`；离线 941/60/9，candidate `20260715T031652Z-1eff647dc549-962d76fb1b95`。fresh runs `147faa55b8cd463fbb25fe02ccef5da3` / `3c611eca649844ee8d220d30154ae2dd` 分别在 pre-review audit / claim transport 安全终止。 |
+| T-201 | P0 | P11/P12 | Architecture Complexity Closure | 已完成并独立 review；未发布 | Agent | queue/reviewer 分别增长到 1,524/1,624 行；首版 architecture test 只检查显式名单，仍可通过新模块迁移复杂度。 | commit `16c0cb5` 拆为稳定 facade + 单向 Owner；review fix `3263f760` 增加全 production 默认 900 行扫描，并锁 split owner、薄 facade 与历史债务实际 ceiling。Queue/Reviewer facade 为 185/42 行，最大新 Owner 779 行；945/60/13、compile/diff/help 独立通过，candidate `20260715T061649Z-3263f76069e6-bd24b57bdafa`，未跑 live、不发布 stable。 |
 
 ## 风险与决策
 
@@ -365,6 +369,8 @@ python3 scripts/sync_project_excel.py
 | 风险 | R-074 | P1 | 临时 discovery / forced tool 参数漂移 | 已关闭 MVP，保留 provider 效率残余 | T-191~T-195 暴露临时 discovery、root inventory、semantic candidate 与 exact read 之间的参数漂移；模型可反复传缺 `paths`、错误 root、非源码候选或 forced outer/inner tool mismatch。 | OMP 由 ToolChoiceQueue/agent-loop 管 queued requirement、detour suppress 和 bounded force；LCA 在 T-192~T-195 将 root-targeted directive、semantic source candidate 和单工具 soft requirement 收回各自 Owner。provider 错参仍由 schema/protocol fail-closed，不由 Runtime 自动执行业务搜索。 |
 | 风险 | R-075 | P1 | 高风险只读 reviewer false claim 或 moving-goalpost 阻塞 | 已关闭 MVP，保留 provider 模型效率残余 | 早期 S2/S3 可把弱相关能力、建议或无证据 Owner 写成已证实；fresh second reviewer 又会发明新 finding，阻塞已经关闭原 finding 的 rewrite。 | OMP reviewer/advisor 不以无限 certification loop 作为终止条件；LCA T-192~T-193 保留首次 isolated semantic review，rewrite 后用 deterministic closure 关闭原 accepted findings。T-196 S2 为 reviewer revise + closure accepted，S3 reviewer pass。 |
 | 风险 | R-078 | P0 | authorized workspace roots 与 code evidence roots 混同 | 已关闭 MVP，继续观察多 root 投影效率 | T-195 live S2 中需求目录虽然被授权读取，却被误当作 owner/design 的 code evidence root，导致 read-only explore incomplete root 和 safe partial。 | OMP 工具围绕 session cwd/project context + queue directive 消费明确范围；LCA 多 root 是本地增强，不能虚构 OMP 有同名 projection。T-196 `WorkspaceEvidenceRootProjection` 将 authorized roots、code evidence roots、cross-root coverage roots 分开；Runtime 只调用 facade，Queue/Explore 消费 typed projection，inspection-forbidden 投影为空。 |
+| 风险 | R-079 | P1 | read-only pipeline 复杂度从 Runtime 迁移到 queue/reviewer 大 Owner | 已缓解并建立全局 ratchet | T-200 后 queue/reviewer 达 1,524/1,624 行；仅锁已知文件仍可新建大模块绕过。 | T-201 以稳定 facade + 单向 Owner 拆分；全 production 默认 900 行，split owner、薄 facade 和历史债务锁当前实际值，并保留 API/import/phase/business-guard checks。 |
+| 风险 | R-080 | P0/P1 | 概率性模型失败触发无限 Harness 补丁循环 | 已建立治理规则，持续执行 | 单个 live 失败被逐层转化为 pre-review、transport、schema repair 等机制，安全性提高但组合延迟和失败率阻断 S4。 | `harness-engineering-governance.md` 固定 hard/soft/eval 三层、复现门槛、两次修复停止规则、两工作日 timebox、复杂度预算、70/30 产品投入比例和统计式 live 验收。 |
 | 风险 | R-032 | 高 | 真实实现可能退化成低价值注释 patch | 已缓解并复跑 | T-073 复跑 session `20260709T021349259159Z` 中模型定位到相关 Java 文件，但因 `write_file` 被 deny，最终只给 DTO 字段补 JavaDoc；这不能算真实业务实现 | T-074 已补 implementation-quality reviewer：本轮代码 diff 若只有注释/文档改动，`git_diff` 会提示不能声称行为、校验、解析或测试覆盖变化；复跑 session `20260709T025706579604Z` 没有再做 comment-only patch。 |
 | 风险 | R-033 | 中 | no-edit 停止路径可能跳过收束工具 | 已关闭 MVP 版 | T-074 复跑中模型正确停止并说明目标实现属于 `zqyl-investment-plan`，但没有维护 todo，也没有调用 git_diff 证明无改动 | T-075 已参考 OMP current task / tool-choice steering 思路：no-edit stop 缺 todo/git 收束时会触发 runtime steering，并临时只开放 todo/git hygiene 工具。 |
 | 风险 | R-035 | 中 | Runtime 与前端输出耦合会阻碍后续终端体验 | 已关闭 MVP 版 | 工具日志、审批显示、最终输出如果继续散落在 Runtime/CLI print，后续 `prompt_toolkit + rich` 前端难以复用和 replay | T-076 已参考 OMP runtime/TUI 分层思路：Runtime 产出 typed events，CLI 只是第一消费者，session 写 `event_v1`。 |
@@ -436,14 +442,16 @@ python3 scripts/sync_project_excel.py
 | ADR | ADR-044 | 2026-07-12 | Session evidence freshness-first 与 compaction message role preservation | 已接受并落地 T-144 | 缓存只能延续当前仍可验证的工具事实；用户/工具混合摘要不能获得 system 权限。 | 对齐 OMP session tool-result continuity 与 `compaction/messages.ts`：只缓存新鲜正向 concrete-path evidence；摘要以 `role=user, attribution=runtime` 传递，最新 user 原文始终保留 user role。 |
 | ADR | ADR-045 | 2026-07-12 | Runtime 保持薄编排，阶段逻辑必须有职责 owner | 已接受并落地 T-148 | Claude review 的架构债结论已由本地源码核验：主 Runtime 不再承担 provider context、workspace/session roots、evidence/verification/session cache、memory consolidation 或最终 steering 实现。 | 对齐 OMP `agent-loop.ts` 的 turn lifecycle、`tool-choice-queue.ts` 的 directive lifecycle、`agent-session.ts` 的 queue owner；LCA 采用显式 composition phase 与 line/method budget，不声称 OMP 具有 LCA 的 VerificationPlan 或 negative-evidence parser。 |
 | ADR | ADR-046 | 2026-07-14 | 授权边界与证据角色分离 | 已接受并落地 T-196 | 多 root 场景中，目录被授权读取不代表它是 owner/design 的代码证据根；需求根必须继续可读，但不能进入 code-root coverage 矩阵。 | OMP 工具围绕 session cwd/project context + queue directive 消费明确范围；LCA 多 root evidence projection 是本地增强。Runtime 只调用 facade，Queue/Explore 消费 typed projection；authorized roots、code evidence roots、cross-root coverage roots 分离；inspection-forbidden 投影为空，不在 `agent.py` 增加 domain guard。 |
+| ADR | ADR-047 | 2026-07-15 | read-only queue/reviewer 采用稳定 facade、单向 Owner 与全 production complexity ratchet | 已接受并落地 T-201 | 保持原公开 import/API 与 phase 顺序；所有 production Python 默认不超过 900 行，split owner、薄 facade 和历史债务锁当前实际 ceiling。 | 参考 OMP queue/turn/reviewer/yield owner 分工；LCA 保留本地 evidence/readiness 增强，但不得回流 Runtime 或迁移到新大模块。 |
+| ADR | ADR-048 | 2026-07-15 | Harness 只硬编码安全/协议不变量，语义质量采用有界 steering、reviewer 与统计评测 | 已接受 | 普通语义问题至少两个独立复现或跨场景复现后才进入 Runtime 设计；连续两次修复仍转移 blocker 时停止局部补丁。 | 新机制必须有 OMP 对照、唯一 Owner、次数上限、失败终态和 merge/delete 条件；详见 `docs/harness-engineering-governance.md`。 |
 
 ## 阶段回顾
 
 | 项目 | 结论 | 依据 | 后续 |
 |---|---|---|---|
-| 阶段判断 | P12 已完成 MVP 并发布阶段性 stable | T-192~T-196 已关闭 reviewer role/transport、advisory closure、root-targeted directive、semantic candidate commit、workspace evidence root projection；908/57/7 门禁与小红 S2/S3 live 通过。 | 下一条主线转入 S4/S5 首个真实小切片实现闭环。 |
+| 阶段判断 | P12 stable MVP 已发布；T-201 架构收束完成，S4 仍 FAIL | T-196 的 908/57/7 与独立 S2/S3 live 保持发布依据；T-201 为 945/60/13 的 behavior-preserving candidate，不替代 live 事实。 | 先按治理规则合并重复 gate，再以统计式 S4 验收进入 S5；不得把 candidate 离线通过写成 stable/live 通过。 |
 | 与 OMP 的主要差距 | P12 MVP 可用，但不等于完整追平 OMP | OMP 的完整 task/explore/advisor/subagent、AST/LSP write、MCP/Browser、完整 TUI 仍未搬入；LCA 的 document reviewer 与 WorkspaceEvidenceRootProjection 是本地增强。 | Subagent/Advisor、AST/LSP write、MCP、Browser、完整 TUI 继续按收益后置。 |
-| 已关闭风险 | 只读证据与 reviewer 发布阻塞已关闭 MVP | T-192~T-196 live 显示参数漂移、reviewer false claim、超长输出/transport、workspace root 混同均不再释放不可靠结论。 | provider 模型效率残余继续观察；不以它替代安全边界。 |
+| 已关闭风险 | T-196 只读 stable 风险已关闭 MVP；S4 gate 成本仍开放 | T-192~T-196 live 不再释放不可靠 owner/资料结论。T-199/T-200 又证明 material、pre-review、transport、schema lifecycle 各有安全价值，但组合延迟和失败率仍阻断 S4。 | 依据 `read-only-gate-telemetry-audit.md` 优先评估 merge-candidate，不新增 transport/repair gate。 |
 | reviewer 决策 | 首次 isolated review + deterministic closure | T-193 后不再以 fresh second reviewer pass 作为终止条件；S2 reviewer revise 后 closure accepted，S3 reviewer pass。 | 真实 patch 质量仍由 implementation/delivery reviewer 链路处理；Advisor/Subagent 后置。 |
 | ToolChoiceQueue 决策 | 已做裁剪版 MiniToolChoiceQueue | 当前覆盖只读证据、需求文档前置读取、写后测试/diff hygiene；不做完整多队列/并发/子任务调度 | 后续若仍出现关键工具不用/乱用，再扩展 queue 规则；若出现 patch/总结质量不稳，补 reviewer。 |
 | 下一步 | 真实需求设计与小改压测 | T-121 已在服务费结算任务中验证需求、后端与前端最小 evidence coverage，并以 final 收束。 | 选择一个范围和验收边界明确的真实切片：先产出 evidence-backed 设计，再实施小改、运行测试和 diff reviewer；anchored patch 参数效率继续作为独立风险观察。 |
@@ -492,7 +500,7 @@ python3 scripts/sync_project_excel.py
 | 项目 | 结论 | 依据 |
 |---|---|---|
 | 主链路 | 通过 | 百炼真实小改复测已跑通 todo、dry_run、apply_patch、session allow、rollback、run_tests、git_diff。 |
-| 测试 | 通过 | P5 收口时 90 个 unittest、compileall、xlsx 检查、diff check 均通过；T-196 stable 已跑通 908/908 unittest、57/57 benchmark、7/7 architecture checks，publish gate 再次通过 unittest、compileall 和 diff-check。 |
+| 测试 | 分层通过 | P5 收口时 90 个 unittest；T-196 stable 为 908/57/7；T-200 candidate 为 941/60/9 但 live S4 未通过；T-201 behavior-preserving candidate 为 945/60/13，独立门禁通过但未发布。 |
 | 日用入口 | 通过 | README 已补只读分析和小改任务命令模板。 |
 | 开放风险 | 可接受 | shell 仍非沙箱、prompt injection 仍需靠审批和封闭 VM；provider/model 专用 tokenizer、输出 reserve、managed skills、完整 reviewer 和完整 OMP ToolChoiceQueue 继续后置评估。 |
 | 下一阶段 | S4/S5 首个真实小切片实现闭环 | 已验证默认工作流、auto summary、多语言 LSP/light fallback、multi-root、startup memory、learn、authored skills、runtime state dir、read-only reviewer、targeted explore、workspace evidence root projection 和 stable/dev 发布纪律；下一步进入一项边界明确的真实小切片，完成 read -> preview -> patch -> test -> diff -> reviewer -> delivery audit。随后推进 S6~S10 的失败恢复、连续性、权限、需求变更和交付审计。 |
