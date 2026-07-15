@@ -10,7 +10,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_PRODUCTION_MODULE_LINE_LIMIT = 900
-T201_COMPLEXITY_CEILINGS = {
+OWNER_COMPLEXITY_CEILINGS = {
     "src/local_agent/tool_choice_queue.py": 185,
     "src/local_agent/read_only_reviewer.py": 42,
     "src/local_agent/tool_choice_decision.py": 333,
@@ -19,12 +19,17 @@ T201_COMPLEXITY_CEILINGS = {
     "src/local_agent/tool_choice_task_classification.py": 69,
     "src/local_agent/read_only_reviewer_types.py": 235,
     "src/local_agent/read_only_reviewer_claims.py": 495,
-    "src/local_agent/read_only_reviewer_contract.py": 512,
+    "src/local_agent/read_only_reviewer_contract.py": 372,
     "src/local_agent/read_only_reviewer_validation.py": 419,
+    "src/local_agent/reviewer_correction_contract.py": 148,
+    "src/local_agent/reviewer_output_lifecycle.py": 418,
+    "src/local_agent/runtime_read_only_review.py": 639,
+    "src/local_agent/runtime_read_only_review_round.py": 450,
+    "src/local_agent/steering/pre_review.py": 83,
     "src/local_agent/steering/final_answer.py": 59,
 }
 LEGACY_COMPLEXITY_DEBT_CEILINGS = {
-    "src/local_agent/agent.py": 1876,
+    "src/local_agent/agent.py": 1873,
     "src/local_agent/tools/lsp.py": 1166,
     "src/local_agent/completion_audit.py": 1093,
     "src/local_agent/explore_handoff.py": 991,
@@ -37,7 +42,7 @@ LEGACY_COMPLEXITY_DEBT_CEILINGS = {
 
 
 def _production_complexity_failures(root: Path) -> list[tuple[str, int, int]]:
-    ceilings = {**LEGACY_COMPLEXITY_DEBT_CEILINGS, **T201_COMPLEXITY_CEILINGS}
+    ceilings = {**LEGACY_COMPLEXITY_DEBT_CEILINGS, **OWNER_COMPLEXITY_CEILINGS}
     failures: list[tuple[str, int, int]] = []
     for path in sorted((root / "src/local_agent").rglob("*.py")):
         relative_path = path.relative_to(root).as_posix()
@@ -62,7 +67,7 @@ class ArchitectureBoundaryTests(unittest.TestCase):
         facade = ROOT / "src/local_agent/steering/final_answer.py"
         self.assertLessEqual(
             len(facade.read_text(encoding="utf-8").splitlines()),
-            T201_COMPLEXITY_CEILINGS["src/local_agent/steering/final_answer.py"],
+            OWNER_COMPLEXITY_CEILINGS["src/local_agent/steering/final_answer.py"],
         )
 
     def test_runtime_does_not_reintroduce_migrated_domain_helpers(self) -> None:
