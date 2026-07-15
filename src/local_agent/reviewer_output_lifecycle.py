@@ -7,14 +7,13 @@ from copy import deepcopy
 from typing import Any, Literal
 
 from .provider_protocol import classify_provider_content_artifact
-from .document_consistency import document_consistency_rejection_hint
-from .implementation_readiness import implementation_readiness_rejection_hint
 from .read_only_reviewer import MAX_REVIEWER_FINDINGS
 from .read_only_reviewer import REVIEWER_FINDING_TOOL_NAME
 from .read_only_reviewer import REVIEWER_OUTPUT_TOOL_NAME
 from .read_only_reviewer import ReviewerFinding
 from .read_only_reviewer import ReviewerResult
 from .read_only_reviewer import ReviewerValidationError
+from .reviewer_correction_contract import reviewer_correction_instruction
 from .read_only_reviewer import parse_reviewer_final_payload
 from .read_only_reviewer import parse_reviewer_finding_payload
 
@@ -353,27 +352,13 @@ def reviewer_tool_result_content(
                 f"{','.join(invalidated)} were invalidated; resubmit corrected findings for those claim_ids, "
                 "then submit the final verdict"
             )
-        hints: list[str] = []
-        if event.code == "top_level_keys_invalid":
-            fields = ["verdict", "confidence", "reason"]
-            if document_consistency:
-                fields.append("document_consistency")
-            if implementation_readiness:
-                fields.append("implementation_readiness")
-            hints.append(" Allowed final top-level keys JSON: " + json.dumps(fields, separators=(",", ":")) + ".")
-            received_keys = (event.diagnostics or {}).get("top_level_keys")
-            if isinstance(received_keys, list) and "findings" in received_keys:
-                hints.append(" The rejected call included the forbidden findings key; remove it.")
-            hints.append(
-                " Do not include findings, claim_id, finding_scope, issue, action, or any wrapper object; "
-                "recorded findings are retained."
-            )
-        if document_consistency:
-            hints.append(document_consistency_rejection_hint(event.code))
-        if implementation_readiness:
-            hints.append(implementation_readiness_rejection_hint(event.code))
-        hint = "".join(value for value in hints if value)
-        return f"final review rejected: {event.code}; submit a corrected final verdict.{hint}"
+        hint = reviewer_correction_instruction(
+            event.code,
+            diagnostics=event.diagnostics,
+            document_consistency=document_consistency,
+            implementation_readiness=implementation_readiness,
+        )
+        return f"final review rejected: {event.code}; submit a corrected final verdict. {hint}"
     return f"output call rejected: {event.code}; use only the reviewer output tools"
 
 

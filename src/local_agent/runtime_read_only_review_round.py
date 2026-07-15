@@ -5,7 +5,7 @@ runtime phase decides when a round is needed and how to act on its result.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from .chat_runtime import call_chat_with_timeout
@@ -53,6 +53,38 @@ class ReviewRoundOutcome:
     repaired: bool = False
 
 
+@dataclass
+class ReviewerCorrectionBudget:
+    """Own all bounded correction counters for one isolated reviewer round."""
+
+    schema_repairs: int = 0
+    output_categories: dict[str, int] = field(default_factory=dict)
+    capacity_directives: int = 0
+
+    def request_schema_repair(self, code: str) -> int | None:
+        if code == "finding_limit_exceeded" or self.schema_repairs >= MAX_REVIEWER_SCHEMA_REPAIRS:
+            return None
+        self.schema_repairs += 1
+        return self.schema_repairs
+
+    def record_output_rejections(self, events: tuple[Any, ...]) -> str | None:
+        categories = tuple(dict.fromkeys(_blocking_rejection_category(event) for event in events))
+        for category in categories:
+            self.output_categories[category] = self.output_categories.get(category, 0) + 1
+        return next(
+            (
+                category
+                for category, count in sorted(self.output_categories.items())
+                if count > MAX_REVIEWER_OUTPUT_LIFECYCLE_ERRORS
+            ),
+            None,
+        )
+
+    def record_capacity_rejection(self) -> bool:
+        self.capacity_directives += 1
+        return self.capacity_directives >= MAX_REVIEWER_CAPACITY_DIRECTIVES
+
+
 def run_review_round(
     port: ReviewRoundPort,
     *,
@@ -75,9 +107,7 @@ def run_review_round(
     required_candidate_claim_ids: tuple[str, ...] = ()
     collected_findings: tuple[ReviewerFinding, ...] = ()
     provider_turn = 0
-    repairs_used = 0
-    blocking_lifecycle_corrections: dict[str, int] = {}
-    capacity_directives = 0
+    corrections = ReviewerCorrectionBudget()
     finding_capacity_reached = False
     finding_submission_closed = False
     while provider_turn < max_provider_turns:
@@ -155,7 +185,8 @@ def run_review_round(
             state.schema_failures += 1
             port.collector.record_read_only_review_schema_failure()
             diagnostic = exc.diagnostics
-            if exc.code == "finding_limit_exceeded" or repairs_used >= MAX_REVIEWER_SCHEMA_REPAIRS:
+            repair_number = corrections.request_schema_repair(exc.code)
+            if repair_number is None:
                 state.repair_exhausted = True
                 port.collector.record_read_only_review_repair_exhausted()
                 port.session.append(
@@ -169,7 +200,6 @@ def run_review_round(
                 return _failure("protocol_error" if saw_protocol_failure else "invalid_output", exc.code, handoff)
             if not has_time_for_repair():
                 return _failure("deadline_or_finalization_budget", "reviewer_repair_timeout", handoff)
-            repairs_used += 1
             state.repairs += 1
             repaired_this_round = True
             port.collector.record_read_only_review_repair()
@@ -178,7 +208,7 @@ def run_review_round(
                 {
                     "event": f"{event_prefix}schema_repair_requested",
                     "attempt": provider_turn,
-                    "repair": repairs_used,
+                    "repair": repair_number,
                     "diagnostic": diagnostic,
                     "accepted_claim_ids": list(accepted_claim_ids),
                     "required_resubmit_claim_ids": list(required_candidate_claim_ids),
@@ -299,12 +329,10 @@ def run_review_round(
                         "reason": "claim_id_conflict",
                     },
                 )
-            if turn.blocking_rejections:
-                for category in _blocking_rejection_categories(turn.blocking_rejections):
-                    blocking_lifecycle_corrections[category] = blocking_lifecycle_corrections.get(category, 0) + 1
-                    port.collector.record_read_only_review_output_lifecycle_correction(category)
-            if turn.capacity_rejections:
-                capacity_directives += 1
+            exhausted_category = corrections.record_output_rejections(turn.blocking_rejections)
+            for category in tuple(dict.fromkeys(_blocking_rejection_category(event) for event in turn.blocking_rejections)):
+                port.collector.record_read_only_review_output_lifecycle_correction(category)
+            capacity_exhausted = corrections.record_capacity_rejection() if turn.capacity_rejections else False
             invalidated_claim_ids = invalidated_document_finding_claim_ids(turn.events)
             collected_findings = (*collected_findings, *turn.accepted_findings)
             if invalidated_claim_ids:
@@ -342,7 +370,7 @@ def run_review_round(
                     implementation_readiness=implementation_readiness,
                 )
             )
-            if capacity_directives >= MAX_REVIEWER_CAPACITY_DIRECTIVES:
+            if capacity_exhausted:
                 state.output_lifecycle_exhausted = True
                 port.collector.record_read_only_review_output_lifecycle_exhausted()
                 port.session.append(
@@ -350,11 +378,10 @@ def run_review_round(
                     {
                         "event": f"{event_prefix}output_lifecycle_exhausted",
                         "attempts": provider_turn,
-                        "capacity_directives": capacity_directives,
+                        "capacity_directives": corrections.capacity_directives,
                     },
                 )
                 return _failure("invalid_output", "output_lifecycle_exhausted", handoff)
-            exhausted_category = _exhausted_lifecycle_category(blocking_lifecycle_corrections)
             if exhausted_category is not None:
                 state.output_lifecycle_exhausted = True
                 port.collector.record_read_only_review_output_lifecycle_exhausted()
@@ -365,7 +392,7 @@ def run_review_round(
                         "event": f"{event_prefix}output_lifecycle_exhausted",
                         "attempts": provider_turn,
                         "category": exhausted_category,
-                        "corrections": dict(sorted(blocking_lifecycle_corrections.items())),
+                        "corrections": dict(sorted(corrections.output_categories.items())),
                     },
                 )
                 return _failure(
@@ -412,15 +439,6 @@ def _record_provider_argument_normalizations(
         )
 
 
-def _blocking_rejection_categories(events: tuple[Any, ...]) -> tuple[str, ...]:
-    categories: list[str] = []
-    for event in events:
-        category = _blocking_rejection_category(event)
-        if category not in categories:
-            categories.append(category)
-    return tuple(categories)
-
-
 def _blocking_rejection_category(event: Any) -> str:
     code = getattr(event, "code", "") or ""
     if code.startswith("output_tool_arguments_"):
@@ -430,12 +448,3 @@ def _blocking_rejection_category(event: Any) -> str:
     if is_implementation_readiness_rejection_code(code):
         return "implementation_readiness"
     return "protocol"
-
-
-def _exhausted_lifecycle_category(corrections: dict[str, int]) -> str | None:
-    exhausted = [
-        category
-        for category, count in sorted(corrections.items())
-        if count > MAX_REVIEWER_OUTPUT_LIFECYCLE_ERRORS
-    ]
-    return exhausted[0] if exhausted else None

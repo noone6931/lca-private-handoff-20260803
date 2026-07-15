@@ -5,7 +5,7 @@ import unittest
 from local_agent.steering.final_answer import FinalAnswerContext
 from local_agent.steering.final_answer import FinalAnswerSteeringSeverity
 from local_agent.steering.final_answer import SteeringDecision
-from local_agent.steering.pre_review import PreReviewAuditCoordinator
+from local_agent.steering.pre_review import collect_pre_review_audit
 from local_agent.task_contract import RequirementContract
 from local_agent.tool_observation import ToolResultSummary
 
@@ -55,8 +55,7 @@ def _context(content: str, *, revision: int = 1) -> FinalAnswerContext:
 
 class PreReviewAuditTests(unittest.TestCase):
     def test_merges_hard_categories_into_one_no_tool_directive_after_explore(self) -> None:
-        coordinator = PreReviewAuditCoordinator()
-        outcome = coordinator.decide(
+        outcome = collect_pre_review_audit(
             _context("unsafe draft"),
             (
                 _DecisionSteerer("source_grounded_numeric"),
@@ -66,31 +65,27 @@ class PreReviewAuditTests(unittest.TestCase):
         )
 
         assert outcome is not None
-        self.assertEqual(outcome.kind, "pre_review_audit")
-        self.assertTrue(outcome.force_final_answer_without_tools)
         self.assertEqual(
-            outcome.counted_kinds,
+            outcome.categories,
             ("source_grounded_numeric", "negative_existence", "completion_audit"),
         )
-        self.assertIn("Do not call tools", outcome.message)
-        self.assertTrue(outcome.payload["bounded_explore"])
+        self.assertIn("Use only collected evidence", outcome.render())
+        self.assertIn("[negative_existence]", outcome.render())
 
-    def test_repeated_candidate_is_terminal_and_new_evidence_revision_reopens_once(self) -> None:
-        coordinator = PreReviewAuditCoordinator()
+    def test_collection_is_pure_and_does_not_own_retry_state(self) -> None:
         steerers = (_DecisionSteerer("source_grounded_numeric"), _DecisionSteerer("negative_existence"))
-        first = coordinator.decide(_context("draft"), steerers)
-        repeated = coordinator.decide(_context("draft"), steerers)
-        refreshed = coordinator.decide(_context("draft", revision=2), steerers)
+        first = collect_pre_review_audit(_context("draft"), steerers)
+        repeated = collect_pre_review_audit(_context("draft"), steerers)
+        refreshed = collect_pre_review_audit(_context("draft", revision=2), steerers)
 
         assert first is not None and repeated is not None and refreshed is not None
-        self.assertFalse(bool(first.terminal_message))
-        self.assertIn("未完成/未验证", repeated.terminal_message)
-        self.assertFalse(bool(refreshed.terminal_message))
-        self.assertEqual(coordinator.snapshot()["rounds"], 1)
+        self.assertEqual(first, repeated)
+        self.assertEqual(first.categories, refreshed.categories)
 
-    def test_single_hard_finding_keeps_legacy_owner(self) -> None:
-        coordinator = PreReviewAuditCoordinator()
-        self.assertIsNone(coordinator.decide(_context("draft"), (_DecisionSteerer("completion_audit"),)))
+    def test_single_hard_finding_keeps_its_precise_owner(self) -> None:
+        audit = collect_pre_review_audit(_context("draft"), (_DecisionSteerer("completion_audit"),))
+
+        self.assertIsNone(audit)
 
 
 if __name__ == "__main__":

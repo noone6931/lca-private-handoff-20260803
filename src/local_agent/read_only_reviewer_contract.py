@@ -4,10 +4,11 @@ from __future__ import annotations
 import json
 from typing import Any, Mapping
 
-from .document_consistency import document_consistency_rejection_hint
 from .document_consistency import document_consistency_schema
 from .explore_handoff import ExploreHandoff
 from .implementation_readiness import implementation_readiness_schema
+from .reviewer_correction_contract import reviewer_correction_instruction
+from .reviewer_correction_contract import sanitize_reviewer_diagnostics
 from .read_only_reviewer_claims import _clip
 from .read_only_reviewer_types import CandidateClaimUnit
 from .read_only_reviewer_types import MAX_REVIEWER_FINDINGS
@@ -324,7 +325,7 @@ def reviewer_repair_message(
         "content": json.dumps(
             {
                 "kind": "LCA_READ_ONLY_EVIDENCE_REVIEW_SCHEMA_REPAIR",
-                "validation": _sanitize_diagnostics(diagnostics),
+                "validation": sanitize_reviewer_diagnostics(diagnostics),
                 "accepted_candidate_defect_claim_ids": list(accepted),
                 "required_resubmit_candidate_defect_claim_ids": list(required_resubmit),
                 "instruction": (
@@ -335,8 +336,9 @@ def reviewer_repair_message(
                     "required_resubmit_candidate_defect_claim_ids were validated in a response that could not be safely "
                     "paired, so report those findings again before submitting the final verdict. "
                     "Do not include candidate claim text; Runtime binds the exact claim by claim_id. "
-                    + _repair_shape_instruction(
-                        diagnostics,
+                    + reviewer_correction_instruction(
+                        str(diagnostics.get("error_code") or ""),
+                        diagnostics=diagnostics,
                         document_consistency=document_consistency,
                         implementation_readiness=implementation_readiness,
                     )
@@ -357,148 +359,6 @@ def _shape_diagnostics(raw: Mapping[str, Any]) -> dict[str, Any]:
         "findings_count": len(findings) if isinstance(findings, list) else None,
     }
 
-
-def _sanitize_diagnostics(diagnostics: Mapping[str, Any]) -> dict[str, Any]:
-    allowed = {
-        "error_code",
-        "top_level_keys",
-        "verdict",
-        "findings_type",
-        "findings_count",
-        "unknown_claim_id_count",
-        "duplicate_claim_id_count",
-        "claim_mismatch_count",
-        "source_material_gap_count",
-        "candidate_defect_count",
-        "required_candidate_defect_count",
-        "missing_candidate_defect_count",
-        "response_chars",
-        "top_level_type",
-        "arguments_type",
-        "json_error_category",
-        "tool_name",
-        "call_index",
-        "tool_call_count",
-        "accepted_candidate_defect_count",
-        "rejected_candidate_defect_count",
-        "document_consistency_keys",
-        "expected_document_consistency_keys",
-        "out_of_scope_claim_role",
-    }
-    return {key: diagnostics[key] for key in allowed if key in diagnostics}
-
-
-def _repair_shape_instruction(
-    diagnostics: Mapping[str, Any],
-    *,
-    document_consistency: bool = False,
-    implementation_readiness: bool = False,
-) -> str:
-    """Describe the failed schema rule without repeating provider content."""
-
-    code = str(diagnostics.get("error_code") or "")
-    final_fields = ["verdict", "confidence", "reason"]
-    if document_consistency:
-        final_fields.append("document_consistency")
-    if implementation_readiness:
-        final_fields.append("implementation_readiness")
-    common = (
-        "Use report_read_only_finding once per candidate defect, then call submit_read_only_review with exactly "
-        + ", ".join(final_fields)
-        + "; do not include findings in the final submit because accepted findings are already recorded. "
-        "Keep the complete output under 9000 characters and use unique known claim IDs."
-    )
-    if code == "findings_too_many":
-        return "Report no more than 8 highest-risk findings. " + common
-    if code == "response_too_large":
-        return "Make reason, issue, and action concise; do not exceed 9000 characters. " + common
-    if code == "pass_with_findings":
-        return "A pass verdict must have no reported findings; otherwise choose revise or unverified with 1 to 8 findings. " + common
-    if code == "nonpassing_without_findings":
-        return "A revise or unverified verdict needs 1 to 8 report_read_only_finding calls. " + common
-    if code in {"finding_claim_invalid", "finding_claim_mismatch"}:
-        return (
-            "Do not include claim text in report_read_only_finding; Runtime binds the exact candidate_claims text "
-            "from the selected claim_id. If using legacy claim text, it must exactly match that claim_id. "
-            + common
-        )
-    if code in {"source_material_gap_finding", "finding_scope_invalid"}:
-        return (
-            "Do not submit source_material_gap findings. Findings must be candidate_defect items whose action changes "
-            "the candidate answer. If only source materials need an owner decision and the candidate already reports that "
-            "gap accurately, submit pass with no reported findings; otherwise keep only candidate_defect findings. "
-            + common
-        )
-    if code == "claim_role_out_of_scope":
-        return (
-            "Do not report evidence-review findings for candidate claims outside this reviewer role. Proposal and "
-            "pending claims are explicitly non-current. In owner/design reviews, requirement_fact is owned by the "
-            "requirement-evidence pipeline; it becomes reviewable here only for a document-consistency profile. Keep "
-            "only provable defects in source_fact or other in owner/design review; submit pass when none remain. "
-            + common
-        )
-    if code == "candidate_defect_findings_missing":
-        return (
-            "A previous repair attempt contained valid candidate_defect findings. Keep those candidate defects in this "
-            "submission by resubmitting the same claim_id with finding_scope=candidate_defect plus issue/action only. "
-            "Do not include claim text; Runtime binds the canonical candidate text by claim_id. Do not replace them "
-            "with pass unless the candidate_defect findings are no longer present in the repaired output request. "
-            + common
-        )
-    if code in {"output_tool_arguments_type_invalid", "output_tool_arguments_json_invalid"}:
-        return (
-            "Tool arguments must be a JSON string matching the selected output tool schema. Do not pass a native object, "
-            "plain text, or malformed JSON. "
-            + common
-        )
-    if code == "output_tool_final_not_last":
-        return (
-            "Call report_read_only_finding zero or more times first; submit_read_only_review must be the final output "
-            "call in the response. Do not emit findings after the final verdict. "
-            + common
-        )
-    if code in {"output_tool_call_id_missing", "output_tool_call_id_duplicate"}:
-        return (
-            "Every output tool call must have one unique non-empty tool_call id so the reviewer transcript can pair "
-            "assistant tool calls with tool results. "
-            + common
-        )
-    if code == "output_tool_multiple_final_calls":
-        return "Submit exactly one final verdict. " + common
-    if code == "finding_limit_exceeded":
-        return "Do not report more than 8 findings. Submit the final verdict after the accepted findings. " + common
-    if code == "document_consistency_evidence_roles_overlap":
-        return (
-            "For document_consistency, conflict_evidence_ids and supporting_evidence_ids must be disjoint. "
-            "For reported_unresolved, conditional_reconciliation, or asserted_reconciled, set supporting_evidence_ids to []. "
-            "Only explicitly_supported_reconciliation may use non-empty supporting_evidence_ids, and only for independent "
-            "non-visual read_file lifecycle or precedence support. "
-            + common
-        )
-    if code == "document_consistency_keys_invalid":
-        return document_consistency_rejection_hint(code) + " " + common
-    if code == "document_consistency_support_requires_explicit_stance":
-        return (
-            "For document_consistency, set supporting_evidence_ids to [] unless stance is explicitly_supported_reconciliation. "
-            "reported_unresolved, conditional_reconciliation, and asserted_reconciled must not include support ids. "
-            + common
-        )
-    if code == "document_conflict_evidence_insufficient":
-        return document_consistency_rejection_hint(code) + " Do not cite only one side of the conflict. " + common
-    if code in {"document_supporting_evidence_invalid", "document_supporting_evidence_unknown", "document_supporting_evidence_duplicate"}:
-        return (
-            "For document_consistency, keep supporting_evidence_ids empty unless the stance is explicitly_supported_reconciliation "
-            "and the ids cite independent non-visual read_file lifecycle or precedence support. "
-            + common
-        )
-    if code == "document_consistency_finding_reconciles_conflict":
-        return (
-            "For document_consistency with unresolved or conditional conflict stance, finding issue/action must change "
-            "the candidate answer without inventing artifact priority, lifecycle, historical/current role, or a resolved "
-            "conflict. Keep valid unrelated candidate_defect findings, but remove or rewrite the contradictory finding. "
-            + common
-        )
-    return "Use the shallow finding tool and final submit tool with the required verdict/finding cardinality. " + common
 
 def _is_document_consistency_review(handoff: ExploreHandoff) -> bool:
     return handoff.contract.evidence_domain == "requirement_documents" and handoff.contract.read_only_review_profile == "document_consistency"

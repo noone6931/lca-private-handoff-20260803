@@ -711,10 +711,6 @@ class AgentRuntime:
                 steering = self._decide_final_answer_steering(content, run_start_index)
                 if steering is not None:
                     if steering.terminal_message:
-                        if "pre_review_audit" in steering.payload:
-                            self._run.collector.record_pre_review_audit(
-                                categories=tuple(str(item) for item in steering.payload.get("categories", ())), exhausted=True
-                            )
                         return self._finish_run(
                             steering.terminal_message,
                             deadline,
@@ -1413,18 +1409,24 @@ class AgentRuntime:
         content: str,
         run_start_index: int,
     ) -> SteeringDecision | None:
-        if self._read_only_review_phase.owns_pending_candidate_validation():
-            return None
         context = self._final_answer_context(content, run_start_index)
+        pending_preparation = self._read_only_review_phase.owns_pending_candidate_validation()
+        preparation_audit = self._read_only_review_phase.refresh_preparation_audit(
+            context,
+            self._final_answer_steerers,
+        )
+        if preparation_audit is not None or pending_preparation:
+            return None
         claim_metrics = _negative_claim_metrics(content, context.tool_results)
         if any(claim_metrics.values()):
             self._run.record_negative_claim_metrics(claim_metrics)
             self._session.append("negative_evidence_claims", claim_metrics)
-        aggregate = self._run.pre_review_audit.decide(context, self._final_answer_steerers)
-        if aggregate is not None:
-            return aggregate
         for steerer in self._final_answer_steerers:
-            if steerer.kind in PRE_REVIEW_AUDIT_KINDS and should_aggregate_pre_review_audits(context):
+            if (
+                self._read_only_review_phase.owns_initial_pre_review_audits()
+                and steerer.kind in PRE_REVIEW_AUDIT_KINDS
+                and should_aggregate_pre_review_audits(context)
+            ):
                 continue
             decision = steerer.decide(context)
             if decision is not None:
@@ -1508,11 +1510,6 @@ class AgentRuntime:
             kind: self._increment_final_answer_steer_count(kind)
             for kind in counted_kinds
         }
-        if "pre_review_audit" in decision.payload:
-            self._run.collector.record_pre_review_audit(
-                categories=tuple(str(item) for item in decision.payload.get("categories", ())),
-                exhausted=bool(decision.payload["pre_review_audit"].get("exhausted")),
-            )
         self._messages.append({"role": "user", "content": decision.message})
         payload = {
             "kind": decision.kind,

@@ -24,7 +24,6 @@ from .session_evidence import SessionEvidenceReuse
 from .temporary_tool_directive import DirectiveTransition
 from .temporary_tool_directive import TemporaryToolDirectiveOwner
 from .read_only_reviewer import ReadOnlyReviewState
-from .steering.pre_review import PreReviewAuditCoordinator
 
 
 @dataclass
@@ -68,7 +67,6 @@ class RunContext:
     user_facts_context: str = ""
     negative_claim_metrics: dict[str, int] = field(default_factory=dict)
     read_only_review: ReadOnlyReviewState = field(default_factory=ReadOnlyReviewState)
-    pre_review_audit: PreReviewAuditCoordinator = field(default_factory=PreReviewAuditCoordinator)
     read_only_explore_finalized: bool = False
 
     # Compatibility views keep existing runtime tests and integrations stable while
@@ -185,7 +183,6 @@ class RunContext:
         self.user_facts_context = ""
         self.negative_claim_metrics.clear()
         self.read_only_review.reset()
-        self.pre_review_audit.reset()
         self.read_only_explore_finalized = False
 
     def checkpoint_active_messages(self, messages: list[dict[str, Any]], next_message_start: int) -> None:

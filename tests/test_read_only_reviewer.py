@@ -38,6 +38,7 @@ from local_agent.reviewer_output_lifecycle import ReviewerOutputEvent
 from local_agent.reviewer_output_lifecycle import reviewer_tool_result_content
 from local_agent.steering.final_answer import SourceEvidence
 from local_agent.steering.final_answer import SteeringDecision
+from local_agent.steering.pre_review import PreReviewAudit
 from local_agent.task_contract import generate_requirement_contract
 from local_agent.llm import LlmTimeoutError
 from local_agent.finalization import MAX_FINALIZATION_ATTEMPTS
@@ -4614,6 +4615,63 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertEqual(reviewer_summary["claim_transport_rewrite_exhausted"], 1)
         self.assertEqual(_TransportOmittedClaimClient.calls, [])
 
+    def test_candidate_preparation_combines_audits_and_transport_into_one_rewrite(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            runtime = AgentRuntime(_config(workspace), show_tool_logs=False)
+            prompt = "只读分析当前服务 owner、调用链和影响范围，不要修改文件。"
+            contract = generate_requirement_contract(prompt)
+            started = time.monotonic()
+            runtime._run.begin(
+                run_id="combined-preparation",
+                started_monotonic=started,
+                deadline_monotonic=started + 120,
+                run_start_index=0,
+                git_baseline={},
+                prompt=prompt,
+                requirement_contract=contract,
+                requirement_contract_context="",
+                design_evidence_roots=(),
+            )
+            runtime._run.collector.start(
+                "combined-preparation", prompt, started, guard_start={}, steer_start={}
+            )
+            runtime._run.tool_choice_results.append(
+                ToolResultSummary(
+                    "read_file",
+                    "\n".join(f"{index}: rule {index}" for index in range(1, 900)),
+                    path="policy.md",
+                    metadata={"resolved_path": str(workspace / "policy.md"), "evidence_root": str(workspace)},
+                )
+            )
+            runtime._read_only_review_phase.set_preparation_audit(
+                PreReviewAudit(
+                    categories=("negative_existence", "tool_usage_evidence"),
+                    details=(("negative_existence", "unsupported global absence"), ("tool_usage_evidence", "unread path")),
+                )
+            )
+            candidate = "\n".join(
+                [f"- policy.md:{index * 10} states rule {index * 10}." for index in range(1, 75)]
+                + ["- policy.md:210 states rule 210; PayServiceImpl is the verified owner."]
+            )
+
+            first = runtime._read_only_review_phase.review_candidate(candidate)
+            second = runtime._read_only_review_phase.review_candidate(candidate)
+
+        self.assertEqual(first.kind, "rewrite")
+        self.assertIn("[negative_existence]", first.rewrite_message)
+        self.assertIn("bounded transport recovery", first.rewrite_message)
+        self.assertEqual(second.kind, "unverified")
+        self.assertIn("安全部分交付", second.terminal_message)
+        self.assertEqual(runtime._run.finalization.aggregate_attempts, 1)
+        summary = runtime._run.collector.finish(
+            "read_only_reviewer_unverified", guard_values={}, steering_values={}
+        )
+        self.assertEqual(summary["pre_review_audit"]["rounds"], 1)
+        self.assertEqual(summary["pre_review_audit"]["exhausted"], 1)
+        self.assertEqual(summary["read_only_reviewer"]["claim_transport_rewrites"], 1)
+        self.assertEqual(summary["read_only_reviewer"]["claim_transport_rewrite_exhausted"], 1)
+
     def test_transport_omitted_claims_get_one_bounded_compact_rewrite_before_review(self) -> None:
         _TransportRecoveryDocumentClient.calls = []
         with tempfile.TemporaryDirectory() as tmp:
@@ -5252,6 +5310,11 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertIn(
             "exactly verdict, confidence, reason, implementation_readiness",
             readiness_repair[-1]["content"],
+        )
+        readiness_instruction = json.loads(readiness_repair[-1]["content"])["instruction"]
+        self.assertIn(
+            'Allowed final top-level keys JSON: ["verdict","confidence","reason","implementation_readiness"]',
+            readiness_instruction,
         )
         self.assertIn("do not include findings in the final submit", readiness_repair[-1]["content"])
 

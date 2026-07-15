@@ -431,6 +431,15 @@ class RunCollector:
                 self._stats.pre_review_audit_categories.get(category, 0) + 1
             )
 
+    def record_pre_review_audit_exhausted(self, categories: tuple[str, ...]) -> None:
+        """Mark the single preparation lifecycle exhausted without inventing another round."""
+
+        if self._stats is None:
+            return
+        self._stats.pre_review_audit_exhausted += 1
+        for category in categories:
+            self._stats.pre_review_audit_categories.setdefault(category, 0)
+
     def record_safe_partial_report(self, *, observations: int, missing: int, rejected_categories: tuple[str, ...]) -> None:
         if self._stats is None:
             return

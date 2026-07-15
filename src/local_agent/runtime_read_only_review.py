@@ -24,6 +24,8 @@ from .read_only_reviewer import should_review_read_only_candidate
 from .runtime_read_only_review_round import ReviewRoundPort
 from .runtime_read_only_review_round import run_review_round
 from .safe_partial_report import build_safe_partial_report
+from .steering.pre_review import PreReviewAudit
+from .steering.pre_review import collect_pre_review_audit
 
 
 MAX_REVIEWER_TIMEOUT_SECONDS = 45.0
@@ -49,15 +51,41 @@ class ReadOnlyReviewPhase:
 
     def __init__(self, runtime: ReadOnlyReviewRuntimePort) -> None:
         self._runtime = runtime
+        self._preparation_audit: PreReviewAudit | None = None
+        self._preparation_rewrite_requested = False
+        self._preparation_rewrite_accepted = False
 
     def begin_run(self) -> None:
         self._runtime._run.read_only_review.reset()
+        self._preparation_audit = None
+        self._preparation_rewrite_requested = False
+        self._preparation_rewrite_accepted = False
+
+    def set_preparation_audit(self, audit: PreReviewAudit | None) -> None:
+        """Refresh pure deterministic findings for the current candidate."""
+
+        self._preparation_audit = audit
+
+    def refresh_preparation_audit(self, context: Any, steerers: Any) -> PreReviewAudit | None:
+        """Collect only before semantic review; rewrites keep their existing deterministic closure."""
+
+        state = self._runtime._run.read_only_review
+        if state.attempted:
+            self._preparation_audit = None
+        else:
+            self._preparation_audit = collect_pre_review_audit(
+                context,
+                steerers,
+            )
+        return self._preparation_audit
 
     def owns_pending_candidate_validation(self) -> bool:
         """Whether the next no-tool candidate belongs to an active review directive."""
 
-        state = self._runtime._run.read_only_review
-        return state.transport_rewrite_requested
+        return self._preparation_rewrite_requested or self._runtime._run.read_only_review.transport_rewrite_requested
+
+    def owns_initial_pre_review_audits(self) -> bool:
+        return not self._runtime._run.read_only_review.attempted
 
     def review_candidate(self, candidate: str) -> ReviewerPhaseOutcome:
         runtime = self._runtime
@@ -97,15 +125,16 @@ class ReadOnlyReviewPhase:
         if not claim_units:
             return self._unverified("invalid_output", "candidate_has_no_addressable_claim_units")
         handoff = self._handoff(candidate, claim_units=claim_units)
-        candidate, claim_units, handoff, transport_outcome, projected = self._resolve_transport_candidate(
+        candidate, claim_units, handoff, omitted_claim_ids, projected = self._project_transport_candidate(
             candidate, claim_units, handoff
         )
-        if transport_outcome is not None:
-            return transport_outcome
+        preparation_outcome = self._resolve_candidate_preparation(handoff, omitted_claim_ids, claim_units)
+        if preparation_outcome is not None:
+            return preparation_outcome
         skip_reason = runtime._run.finalization_rewrite_skip_reason()
         if skip_reason is not None:
             return self._unverified("deadline_or_finalization_budget", skip_reason, handoff=handoff)
-        self._accept_transport_rewrite(handoff, claim_units)
+        self._accept_candidate_preparation(handoff, claim_units)
         state.attempted = True
         state.review_round += 1
         state.claim_units = claim_units
@@ -197,78 +226,106 @@ class ReadOnlyReviewPhase:
             rewrite_message=reviewer_rewrite_message(result, profile=contract.read_only_review_profile, handoff=handoff),
         )
 
-    def _request_transport_rewrite_or_unverified(
+    def _resolve_candidate_preparation(
         self,
         handoff: Any,
         omitted_claim_ids: set[str],
         claim_units: tuple[Any, ...],
-    ) -> ReviewerPhaseOutcome:
+    ) -> ReviewerPhaseOutcome | None:
         runtime = self._runtime
         state = runtime._run.read_only_review
+        audit = self._preparation_audit
+        if audit is None and not omitted_claim_ids:
+            return None
         detail = f"omitted_claims={len(omitted_claim_ids)}"
-        if not state.transport_rewrite_requested and not state.transport_rewrite_accepted:
-            if runtime._run.queue_finalization_rewrite(kind="read_only_reviewer_claim_transport"):
+        preparation_available = not (
+            self._preparation_rewrite_requested
+            or self._preparation_rewrite_accepted
+            or state.transport_rewrite_accepted
+        )
+        if preparation_available and runtime._run.queue_finalization_rewrite(
+            kind="read_only_reviewer_candidate_preparation"
+        ):
+            self._preparation_rewrite_requested = True
+            if audit is not None:
+                runtime._run.collector.record_pre_review_audit(categories=audit.categories, exhausted=False)
+            if omitted_claim_ids:
                 state.transport_rewrite_requested = True
-                state.transport_original_omitted_count = len(omitted_claim_ids)
                 runtime._run.collector.record_read_only_review_claim_transport_rewrite()
-                runtime._session.append(
-                    "read_only_reviewer",
-                    {
-                        "event": "claim_transport_rewrite_queued",
-                        "omitted_claims": len(omitted_claim_ids),
-                    },
-                )
-                runtime._events.emit(
-                    "ContextUpdated",
-                    {
-                        "kind": "read_only_reviewer_claim_transport_rewrite_queued",
-                        "omitted_claims": len(omitted_claim_ids),
-                    },
-                )
-                return ReviewerPhaseOutcome(
-                    "rewrite",
-                    rewrite_message=reviewer_transport_rewrite_message(
+            state.transport_original_omitted_count = len(omitted_claim_ids)
+            runtime._session.append(
+                "read_only_reviewer",
+                {
+                    "event": "candidate_preparation_rewrite_queued",
+                    "audit_categories": list(audit.categories if audit is not None else ()),
+                    "omitted_claims": len(omitted_claim_ids),
+                },
+            )
+            runtime._events.emit(
+                "ContextUpdated",
+                {
+                    "kind": "read_only_reviewer_candidate_preparation_rewrite_queued",
+                    "omitted_claims": len(omitted_claim_ids),
+                },
+            )
+            messages = ["Runtime candidate preparation: rewrite once without tools before isolated review."]
+            if audit is not None:
+                messages.append(audit.render())
+            if omitted_claim_ids:
+                messages.append(
+                    reviewer_transport_rewrite_message(
                         handoff=handoff,
                         omitted_claim_ids=tuple(sorted(omitted_claim_ids)),
                         claim_units=claim_units,
-                    ),
-                    reason="claim_evidence_transport_incomplete",
+                    )
                 )
-        state.transport_rewrite_exhausted = True
-        runtime._run.collector.record_read_only_review_claim_transport_rewrite_exhausted()
+            return ReviewerPhaseOutcome(
+                "rewrite",
+                rewrite_message="\n\n".join(messages),
+                reason="claim_evidence_transport_incomplete" if omitted_claim_ids else "pre_review_audit",
+            )
+        if audit is not None:
+            runtime._run.collector.record_pre_review_audit_exhausted(audit.categories)
+        if omitted_claim_ids and not state.transport_rewrite_exhausted:
+            state.transport_rewrite_exhausted = True
+            runtime._run.collector.record_read_only_review_claim_transport_rewrite_exhausted()
         runtime._session.append(
             "read_only_reviewer",
             {
-                "event": "claim_transport_rewrite_exhausted",
+                "event": "candidate_preparation_rewrite_exhausted",
+                "audit_categories": list(audit.categories if audit is not None else ()),
                 "omitted_claims": len(omitted_claim_ids),
-                "detail": runtime._run.finalization_rewrite_skip_reason() or "transport_rewrite_already_used",
+                "detail": runtime._run.finalization_rewrite_skip_reason() or "preparation_rewrite_already_used",
             },
         )
         return self._unverified(
-            "claim_evidence_transport_incomplete",
-            detail,
+            "claim_evidence_transport_incomplete" if omitted_claim_ids else "pre_review_audit_unverified",
+            detail if omitted_claim_ids else ",".join(audit.categories if audit is not None else ()),
             handoff=handoff,
         )
 
-    def _accept_transport_rewrite(self, handoff: Any, claim_units: tuple[Any, ...]) -> None:
+    def _accept_candidate_preparation(self, handoff: Any, claim_units: tuple[Any, ...]) -> None:
         runtime = self._runtime
         state = runtime._run.read_only_review
-        if not state.transport_rewrite_requested or state.transport_rewrite_accepted:
+        if not self._preparation_rewrite_requested or self._preparation_rewrite_accepted:
             return
-        state.transport_rewrite_requested = False
-        state.transport_rewrite_accepted = True
-        runtime._run.collector.record_read_only_review_claim_transport_rewrite_acceptance()
+        self._preparation_rewrite_requested = False
+        self._preparation_rewrite_accepted = True
+        if state.transport_rewrite_requested:
+            state.transport_rewrite_requested = False
+            state.transport_rewrite_accepted = True
+            runtime._run.collector.record_read_only_review_claim_transport_rewrite_acceptance()
         runtime._session.append(
             "read_only_reviewer",
             {
-                "event": "claim_transport_rewrite_accepted",
+                "event": "candidate_preparation_rewrite_accepted",
                 "claim_units": len(claim_units),
                 "items": len(handoff.items),
             },
         )
         runtime._events.emit(
             "ContextUpdated",
-            {"kind": "read_only_reviewer_claim_transport_rewrite_accepted", "items": len(handoff.items)},
+            {"kind": "read_only_reviewer_candidate_preparation_rewrite_accepted", "items": len(handoff.items)},
         )
 
     def _verify_rewrite_candidate(self, candidate: str) -> ReviewerPhaseOutcome:
@@ -281,12 +338,13 @@ class ReadOnlyReviewPhase:
         if not claim_units:
             return self._unverified("invalid_output", "candidate_has_no_addressable_claim_units")
         handoff = self._handoff(candidate, claim_units=claim_units)
-        candidate, claim_units, handoff, transport_outcome, projected = self._resolve_transport_candidate(
+        candidate, claim_units, handoff, omitted_claim_ids, projected = self._project_transport_candidate(
             candidate, claim_units, handoff
         )
-        if transport_outcome is not None:
-            return transport_outcome
-        self._accept_transport_rewrite(handoff, claim_units)
+        preparation_outcome = self._resolve_candidate_preparation(handoff, omitted_claim_ids, claim_units)
+        if preparation_outcome is not None:
+            return preparation_outcome
+        self._accept_candidate_preparation(handoff, claim_units)
         artifact = classify_provider_content_artifact(runtime._config.provider, candidate)
         if artifact is not None:
             return self._unverified("protocol_error", f"provider_markup_artifact:{artifact.kind}", handoff=handoff)
@@ -339,17 +397,17 @@ class ReadOnlyReviewPhase:
         )
         return ReviewerPhaseOutcome("pass", final_candidate=candidate if projected else "")
 
-    def _resolve_transport_candidate(
+    def _project_transport_candidate(
         self,
         candidate: str,
         claim_units: tuple[Any, ...],
         handoff: Any,
-    ) -> tuple[str, tuple[Any, ...], Any, ReviewerPhaseOutcome | None, bool]:
+    ) -> tuple[str, tuple[Any, ...], Any, set[str], bool]:
         runtime = self._runtime
         state = runtime._run.read_only_review
         omitted_claim_ids = set(getattr(handoff, "transport_omitted_claim_ids", ()) or ())
         if not omitted_claim_ids:
-            return candidate, claim_units, handoff, None, False
+            return candidate, claim_units, handoff, set(), False
         improving_transport_rewrite = (
             state.transport_rewrite_requested
             and state.transport_original_omitted_count > len(omitted_claim_ids)
@@ -388,9 +446,8 @@ class ReadOnlyReviewPhase:
                             "projection_round": state.transport_projection_rounds,
                         },
                     )
-                    return projected_candidate, projected_units, projected_handoff, None, True
-        outcome = self._request_transport_rewrite_or_unverified(handoff, omitted_claim_ids, claim_units)
-        return candidate, claim_units, handoff, outcome, False
+                    return projected_candidate, projected_units, projected_handoff, set(), True
+        return candidate, claim_units, handoff, omitted_claim_ids, False
 
     def _queue_rewrite_correction_or_unverified(
         self,
