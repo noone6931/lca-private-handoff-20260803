@@ -68,7 +68,7 @@
       ]
     },
     {
-      "content": "## Source facts\n- `backend/src/AnalogOwner.java:1` defines AnalogOwner for an adjacent flow.\n- `frontend/src/RouteShell.ts:1` defines RouteShell for navigation only.\n\n## Blocking dependencies\n- Verified owner, data contract, write target, test entry, and rollback boundary remain unlocated.\n\n## Implementation readiness\n- Selected slice: implement `/api/example/ready-slice`, table `candidate_table`, field `candidate_status`, and status codes `10/20/30` now."
+      "content": "## Source facts\n- `backend/src/AnalogOwner.java:1` defines AnalogOwner for an adjacent flow.\n- `frontend/src/RouteShell.ts:1` defines RouteShell for navigation only.\n\n## Blocking dependencies\n- Verified owner, data contract, write target, test entry, and rollback boundary remain unlocated.\n\n## Design proposal\n- Selected slice: implement `/api/example/ready-slice`, table `candidate_table`, field `candidate_status`, and status codes `10/20/30` now."
     },
     {
       "tool_calls": [

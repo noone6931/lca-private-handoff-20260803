@@ -5140,6 +5140,94 @@ class ReadOnlyReviewerTests(unittest.TestCase):
                 handoff=handoff,
             )
 
+    def test_readiness_unsupported_identifier_finding_can_target_proposal_claim(self) -> None:
+        candidate = (
+            "## Source facts\n- src/Owner.java:1 closes owner.\n\n"
+            "## Blocking dependencies\n- Data, write, test, and rollback remain unlocated.\n\n"
+            "## Design proposal\n- Implement `/api/example/ready-slice` now."
+        )
+        units = candidate_claim_units(candidate)
+        contract = generate_requirement_contract(
+            "只读做证据化技术设计，选择可实施切片；依赖不闭合则 blocked。"
+        )
+        handoff = ExploreHandoff(
+            request="review readiness",
+            contract=contract,
+            items=(
+                ClaimEvidenceItem(
+                    "source_locator",
+                    "read_file",
+                    "src/Owner.java",
+                    "/repo",
+                    "root_local",
+                    "observed",
+                    "owner evidence",
+                    claim_ids=("c001",),
+                ),
+            ),
+        )
+        payload = {
+            "verdict": "revise",
+            "confidence": 0.95,
+            "findings": [
+                {
+                    "claim_id": "c003",
+                    "finding_scope": "candidate_defect",
+                    "issue": "The proposed endpoint has no requirement or source provenance.",
+                    "action": "Remove the concrete endpoint and keep the implementation decision blocked.",
+                }
+            ],
+            "reason": "unsupported proposal identifier",
+            "implementation_readiness": {
+                "status": "blocked",
+                "dimensions": {
+                    "owner": {"status": "closed", "claim_ids": ["c001"]},
+                    "data_contract_or_source": {"status": "unlocated", "claim_ids": ["c002"]},
+                    "write_target": {"status": "unlocated", "claim_ids": ["c002"]},
+                    "test_entry": {"status": "unlocated", "claim_ids": ["c002"]},
+                    "rollback_boundary": {"status": "unlocated", "claim_ids": ["c002"]},
+                },
+                "unsupported_identifier_claim_ids": ["c003"],
+                "reason": "core dependencies are unlocated",
+            },
+        }
+
+        result = parse_reviewer_payload(
+            payload,
+            claim_units=units,
+            implementation_readiness=True,
+            handoff=handoff,
+        )
+        self.assertEqual(result.findings[0].claim_id, "c003")
+
+        payload["implementation_readiness"]["unsupported_identifier_claim_ids"] = []
+        with self.assertRaisesRegex(ReviewerValidationError, "claim_role_out_of_scope"):
+            parse_reviewer_payload(
+                payload,
+                claim_units=units,
+                implementation_readiness=True,
+                handoff=handoff,
+            )
+
+    def test_incremental_readiness_finding_defers_proposal_binding_to_final_submit(self) -> None:
+        units = candidate_claim_units("## Design proposal\n- Implement `/api/example/ready-slice` now.")
+        finding = {
+            "claim_id": "c001",
+            "finding_scope": "candidate_defect",
+            "issue": "The proposed endpoint has no provenance.",
+            "action": "Remove the endpoint until evidence closes the dependency.",
+        }
+
+        with self.assertRaisesRegex(ReviewerValidationError, "claim_role_out_of_scope"):
+            parse_reviewer_finding_payload(finding, claim_units=units)
+
+        parsed = parse_reviewer_finding_payload(
+            finding,
+            claim_units=units,
+            implementation_readiness=True,
+        )
+        self.assertEqual(parsed.claim_id, "c001")
+
     def test_document_consistency_contract_passes_an_explicit_unresolved_conflict(self) -> None:
         contract = generate_requirement_contract(
             "只根据需求 Markdown、原型 HTML 和示例图分析需求，不要检查代码。"

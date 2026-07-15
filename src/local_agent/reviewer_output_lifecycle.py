@@ -190,6 +190,7 @@ def parse_reviewer_output_turn(
                         payload,
                         claim_units=claim_units,
                         document_consistency=document_consistency,
+                        implementation_readiness=implementation_readiness,
                     )
                 except ReviewerValidationError as exc:
                     events.append(_event("finding_rejected", call_id, exc.code, index, exc.diagnostics))
@@ -226,6 +227,7 @@ def parse_reviewer_output_turn(
                     payload,
                     claim_units=claim_units,
                     document_consistency=document_consistency,
+                    implementation_readiness=implementation_readiness,
                 )
             except ReviewerValidationError as exc:
                 events.append(_event("finding_rejected", call_id, exc.code, index, exc.diagnostics))

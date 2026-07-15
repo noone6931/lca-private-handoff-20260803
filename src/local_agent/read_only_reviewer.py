@@ -469,7 +469,7 @@ Review contract:
 - Similar names, same-domain capabilities, and general reusable code are analogous candidates, never verified owners.
 - Missing or incomplete searches mean unlocated within their stated scope, not absent everywhere.
 - Requirement facts, repository facts, proposals, and open questions must remain distinct.
-- Each candidate_claim has a typed claim_role derived from its Markdown section. This evidence reviewer owns repository factual grounding, not proposal quality: never report findings for claim_role `proposal` or `pending`. For owner/design profiles, `requirement_fact` is also outside this reviewer because the requirement-evidence pipeline already owns it; do not demand current-source implementation evidence for a requirement fact. A document-consistency profile may review requirement facts against document evidence. Imperative wording, a proposed identifier, an unanswered prerequisite, or an optional missing detail does not change that ownership.
+- Each candidate_claim has a typed claim_role derived from its Markdown section. This evidence reviewer owns repository factual grounding, not proposal quality: never report findings for claim_role `proposal` or `pending`, except that an implementation-readiness review must report a proposal claim explicitly classified in its typed `unsupported_identifier_claim_ids`. For owner/design profiles, `requirement_fact` is also outside this reviewer because the requirement-evidence pipeline already owns it; do not demand current-source implementation evidence for a requirement fact. A document-consistency profile may review requirement facts against document evidence. Imperative wording, an unanswered prerequisite, or an optional missing detail does not change that ownership.
 - Some handoff claim_matrix items include claim_ids. Those are claim-scoped evidence excerpts for those candidate claims only; check that the addressed claim_id is a member of claim_ids before using the excerpt, and do not use an image observation to prove a Markdown requirement rule or vice versa.
 - `requirement_locator` excerpts bind requirement/document claims; `source_locator` excerpts bind repository-source claims. Prefer these claim-scoped excerpts over generic summaries. A failed or missing path in one root never invalidates a successful read in another root, even when basenames match.
 - For owner/design profiles, every candidate statement presented as a current repository/source fact must be bound by a claim-scoped `source_locator`. Generic source items establish inspected artifacts and may help locate evidence, but they never substitute for claim-scoped support. A bare path, symbol name, or assertion that files were read is not evidence for the claimed behavior. When that binding is absent, report the claim as unsupported evidence scope; this proves an answer defect without asserting that the repository fact itself is false. Clearly labeled requirement facts, proposals, and open questions are not current-source claims and do not require `source_locator` support.
@@ -812,6 +812,7 @@ def parse_reviewer_finding_payload(
     *,
     claim_units: tuple[CandidateClaimUnit, ...],
     document_consistency: bool = False,
+    implementation_readiness: bool = False,
 ) -> ReviewerFinding:
     """Validate one incremental finding payload."""
 
@@ -824,6 +825,7 @@ def parse_reviewer_finding_payload(
         },
         claim_units=claim_units,
         allow_requirement_fact_findings=document_consistency,
+        allow_implementation_readiness_proposal_findings=implementation_readiness,
     )
     return result.findings[0]
 
@@ -871,6 +873,7 @@ def parse_reviewer_payload(
     handoff: ExploreHandoff | None = None,
     candidate: str = "",
     allow_requirement_fact_findings: bool = False,
+    allow_implementation_readiness_proposal_findings: bool = False,
 ) -> ReviewerResult:
     if not isinstance(raw, Mapping):
         raise ReviewerValidationError("top_level_not_object", {"top_level_type": type(raw).__name__})
@@ -903,6 +906,17 @@ def parse_reviewer_payload(
     claim_unit_by_id = {unit.claim_id: unit for unit in claim_units}
     claim_text_by_id = {claim_id: unit.text for claim_id, unit in claim_unit_by_id.items()}
     known_claim_ids = set(claim_text_by_id)
+    readiness_assessment = None
+    readiness_unsupported_claim_ids: set[str] = set()
+    if implementation_readiness:
+        try:
+            readiness_assessment = parse_implementation_readiness_assessment(
+                raw.get("implementation_readiness"),
+                claim_ids=known_claim_ids,
+            )
+        except ImplementationReadinessValidationError as exc:
+            raise ReviewerValidationError(exc.code, {**diagnostics, **exc.diagnostics}) from None
+        readiness_unsupported_claim_ids = set(readiness_assessment.unsupported_identifier_claim_ids)
     used_claim_ids: set[str] = set()
     source_material_gap_count = 0
     candidate_defect_count = 0
@@ -938,7 +952,17 @@ def parse_reviewer_payload(
         if finding_scope not in {"candidate_defect", "source_material_gap"}:
             raise ReviewerValidationError("finding_scope_invalid", diagnostics)
         claim_role = claim_unit_by_id[claim_id].claim_role
-        role_out_of_scope = claim_role in {"proposal", "pending"} or (
+        readiness_identifier_finding = bool(
+            claim_role == "proposal"
+            and (
+                allow_implementation_readiness_proposal_findings
+                or (implementation_readiness and claim_id in readiness_unsupported_claim_ids)
+            )
+        )
+        role_out_of_scope = (
+            claim_role in {"proposal", "pending"}
+            and not readiness_identifier_finding
+        ) or (
             claim_role == "requirement_fact"
             and not document_consistency
             and not allow_requirement_fact_findings
@@ -1026,15 +1050,8 @@ def parse_reviewer_payload(
                 },
                 pending_candidate_claim_ids=finding_issue.claim_ids,
             )
-    readiness_assessment = None
     if implementation_readiness:
-        try:
-            readiness_assessment = parse_implementation_readiness_assessment(
-                raw.get("implementation_readiness"),
-                claim_ids=known_claim_ids,
-            )
-        except ImplementationReadinessValidationError as exc:
-            raise ReviewerValidationError(exc.code, {**diagnostics, **exc.diagnostics}) from None
+        assert readiness_assessment is not None
         readiness_code = validate_implementation_readiness_assessment(
             readiness_assessment,
             verdict=verdict,
