@@ -5607,6 +5607,32 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertTrue(summary["session_evidence"]["reused_paths"][0].endswith("service-b/app.py"))
         self.assertEqual(fresh_runtime._session_evidence.snapshot()["entries"], 0)
 
+    def test_full_read_retains_bounded_local_artifact_references_beyond_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            requirement = workspace / "requirements.md"
+            requirement.write_text(("x" * 2400) + "\n[image](example.png)\n", encoding="utf-8")
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=workspace,
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+            )
+            runtime = AgentRuntime(config, show_tool_logs=False)
+            runtime._evidence_phase.record_tool_choice_result(
+                "read_file",
+                {"path": "requirements.md"},
+                ToolResult(requirement.read_text(encoding="utf-8")),
+            )
+
+        observation = runtime._run.tool_choice_results[-1]
+        self.assertNotIn("example.png", observation.content)
+        self.assertEqual(observation.metadata["local_artifact_references"], ["example.png"])
+
     def test_absolute_read_paths_preserve_cached_source_and_requirement_provenance(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             primary = Path(tmp).resolve() / "primary"

@@ -58,6 +58,7 @@ _LOCAL_ARTIFACT_REFERENCE = re.compile(
     re.IGNORECASE,
 )
 MAX_LINKED_DOCUMENT_MATERIAL_TARGETS = 4
+MAX_LOCAL_ARTIFACT_REFERENCES = 8
 
 
 def extract_document_artifact_requirements(prompt: str) -> tuple[DocumentArtifactRequirement, ...]:
@@ -111,6 +112,37 @@ def extract_document_artifact_requirements(prompt: str) -> tuple[DocumentArtifac
     if "image" not in exact_kinds and _modality_is_requested(lower, "image"):
         add("image", "image", exact=False)
     return tuple(requirements)
+
+
+def local_artifact_references(content: str) -> tuple[str, ...]:
+    """Return bounded local artifact references from a full read observation.
+
+    The runtime retains only a short display summary for ordinary reads.  This
+    narrow metadata projection keeps local material links discoverable without
+    re-injecting the full document into the tool-choice ledger.  Remote URLs
+    are deliberately excluded because they are not executable workspace
+    targets.
+    """
+
+    text = content or ""
+    remote_spans = tuple(match.span() for match in _REMOTE_URL.finditer(text))
+    references: list[str] = []
+    seen: set[str] = set()
+    for match in _LOCAL_ARTIFACT_REFERENCE.finditer(text):
+        start, end = match.span("reference")
+        if any(start >= url_start and end <= url_end for url_start, url_end in remote_spans):
+            continue
+        reference = match.group("reference").strip()
+        if not reference or "://" in reference:
+            continue
+        key = reference.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        references.append(reference)
+        if len(references) >= MAX_LOCAL_ARTIFACT_REFERENCES:
+            break
+    return tuple(references)
 
 
 _MODALITY_MARKERS: dict[ArtifactKind, tuple[str, ...]] = {
@@ -338,9 +370,17 @@ def _linked_local_artifact_paths(
         resolved_path = _result_canonical_path(result)
         if resolved_path is None:
             continue
+        if _EXTENSION_KIND.get(resolved_path.suffix.lower()) not in {"markdown", "html"}:
+            continue
         parent = resolved_path.parent
-        for match in _LOCAL_ARTIFACT_REFERENCE.finditer(result.content or ""):
-            reference = match.group("reference").strip()
+        metadata_references = result.metadata.get("local_artifact_references")
+        references = (
+            tuple(reference for reference in metadata_references if isinstance(reference, str))
+            if isinstance(metadata_references, (list, tuple))
+            else local_artifact_references(result.content or "")
+        )
+        for reference in references:
+            reference = reference.strip()
             if "://" in reference or reference.startswith(("/", "../", "~")):
                 continue
             local_candidate = str((parent / reference).resolve(strict=False))

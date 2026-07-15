@@ -4,6 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Mapping, Protocol
 
+from .document_artifacts import local_artifact_references
 from .evidence import EvidenceRecord, evidence_root_for_path, evidence_root_label
 from .patch.anchored import PatchError, display_workspace_path, resolve_workspace_path
 from .patch_reviewer import review_input_metadata, review_input_summary
@@ -81,6 +82,11 @@ class EvidenceVerificationLifecycle:
                 path=_tool_choice_result_path(arguments, result),
                 metadata={
                     **review_input_metadata(name, result.content),
+                    **(
+                        {"local_artifact_references": list(local_artifact_references(result.content))}
+                        if name == "read_file"
+                        else {}
+                    ),
                     **metadata,
                 },
             )

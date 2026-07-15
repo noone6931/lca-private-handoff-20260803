@@ -1949,6 +1949,39 @@ class ToolChoiceQueueTests(unittest.TestCase):
         self.assertEqual(decision.allowed_tool_names, frozenset({"inspect_image"}))
         self.assertEqual(json.loads(decision.required_tool_arguments_json), {"path": str(image)})
 
+    def test_late_linked_image_metadata_survives_bounded_read_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            specification = root / "requirements.md"
+            image = root / "example.png"
+            specification.write_text(("x" * 2400) + "\n[image](example.png)\n", encoding="utf-8")
+            image.write_bytes(b"fixture")
+            artifacts = (DocumentArtifactRequirement("markdown", "requirements.md", exact=True),)
+            decision = evaluate_tool_choice_state(
+                task_kind="read-only",
+                prompt="Read the local requirement material before the bounded design analysis.",
+                tool_results=(
+                    ToolResultSummary(
+                        "read_file",
+                        specification.read_text(encoding="utf-8")[:2000],
+                        path="requirements.md",
+                        metadata={
+                            "resolved_path": str(specification),
+                            "evidence_root": str(root),
+                            "local_artifact_references": ["example.png"],
+                        },
+                    ),
+                ),
+                workspace_roots=(str(root),),
+                evidence_domain="repository_code",
+                read_only_review_profile="design",
+                document_artifacts=artifacts,
+            )
+
+        self.assertEqual(decision.rule_id, "requirement_material_read")
+        self.assertEqual(decision.allowed_tool_names, frozenset({"inspect_image"}))
+        self.assertEqual(json.loads(decision.required_tool_arguments_json), {"path": str(image)})
+
     def test_material_gate_does_not_preempt_code_implementation(self) -> None:
         decision = evaluate_tool_choice_state(
             task_kind="code-implementation",

@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 
+from local_agent.document_artifacts import local_artifact_references
 from local_agent.task_contract import generate_requirement_contract
 from local_agent.task_contract import render_contract_context
 
@@ -304,6 +305,10 @@ class RequirementContractTests(unittest.TestCase):
         )
 
         self.assertFalse(any(item.exact for item in contract.document_artifacts))
+        self.assertEqual(
+            local_artifact_references("See https://example.invalid/spec.html before local inspection."),
+            (),
+        )
 
     def test_read_only_reviewer_profile_is_typed_by_contract_owner(self) -> None:
         self.assertEqual(
