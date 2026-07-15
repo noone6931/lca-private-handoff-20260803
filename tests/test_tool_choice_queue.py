@@ -1920,6 +1920,35 @@ class ToolChoiceQueueTests(unittest.TestCase):
         self.assertEqual(third_target.allowed_tool_names, frozenset({"inspect_image"}))
         self.assertEqual(json.loads(third_target.required_tool_arguments_json), {"path": str(image)})
 
+    def test_linked_local_image_becomes_a_bounded_material_target_without_prompt_modality(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            specification = root / "requirements.md"
+            image = root / "example.png"
+            specification.write_text("See [example](example.png).\n", encoding="utf-8")
+            image.write_bytes(b"fixture")
+            artifacts = (DocumentArtifactRequirement("markdown", "requirements.md", exact=True),)
+            decision = evaluate_tool_choice_state(
+                task_kind="read-only",
+                prompt="Read the local requirement material before the bounded design analysis.",
+                tool_results=(
+                    ToolResultSummary(
+                        "read_file",
+                        specification.read_text(encoding="utf-8"),
+                        path="requirements.md",
+                        metadata={"resolved_path": str(specification), "evidence_root": str(root)},
+                    ),
+                ),
+                workspace_roots=(str(root),),
+                evidence_domain="repository_code",
+                read_only_review_profile="design",
+                document_artifacts=artifacts,
+            )
+
+        self.assertEqual(decision.rule_id, "requirement_material_read")
+        self.assertEqual(decision.allowed_tool_names, frozenset({"inspect_image"}))
+        self.assertEqual(json.loads(decision.required_tool_arguments_json), {"path": str(image)})
+
     def test_material_gate_does_not_preempt_code_implementation(self) -> None:
         decision = evaluate_tool_choice_state(
             task_kind="code-implementation",

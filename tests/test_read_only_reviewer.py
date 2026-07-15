@@ -5052,6 +5052,17 @@ class ReadOnlyReviewerTests(unittest.TestCase):
         self.assertIn("no more than 8 highest-risk findings", repair[-1]["content"])
         self.assertIn("original output tools", repair[-1]["content"])
         self.assertIn("Runtime binds the exact claim by claim_id", repair[-1]["content"])
+        readiness_repair = reviewer_repair_messages(
+            handoff,
+            candidate_claim_units("candidate"),
+            {"error_code": "top_level_keys_invalid"},
+            implementation_readiness=True,
+        )
+        self.assertIn(
+            "exactly verdict, confidence, reason, implementation_readiness",
+            readiness_repair[-1]["content"],
+        )
+        self.assertIn("do not include findings in the final submit", readiness_repair[-1]["content"])
 
     def test_reviewer_schema_and_parser_require_typed_readiness_when_enabled(self) -> None:
         candidate = "## Source facts\n- src/Owner.java:1 closes owner.\n\n## Blocking dependencies\n- Rollback remains unlocated."

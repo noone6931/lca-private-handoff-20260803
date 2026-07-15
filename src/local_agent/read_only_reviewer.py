@@ -729,6 +729,8 @@ def reviewer_repair_messages(
     *,
     accepted_claim_ids: tuple[str, ...] = (),
     required_resubmit_claim_ids: tuple[str, ...] = (),
+    document_consistency: bool = False,
+    implementation_readiness: bool = False,
 ) -> list[dict[str, str]]:
     """Repeat the isolated review with sanitized schema-only feedback."""
 
@@ -738,6 +740,8 @@ def reviewer_repair_messages(
             diagnostics,
             accepted_claim_ids=accepted_claim_ids,
             required_resubmit_claim_ids=required_resubmit_claim_ids,
+            document_consistency=document_consistency,
+            implementation_readiness=implementation_readiness,
         )
     )
     return messages
@@ -748,6 +752,8 @@ def reviewer_repair_message(
     *,
     accepted_claim_ids: tuple[str, ...] = (),
     required_resubmit_claim_ids: tuple[str, ...] = (),
+    document_consistency: bool = False,
+    implementation_readiness: bool = False,
 ) -> dict[str, str]:
     """Return one sanitized schema-repair turn without resetting prior yield transcript."""
 
@@ -771,7 +777,11 @@ def reviewer_repair_message(
                     "required_resubmit_candidate_defect_claim_ids were validated in a response that could not be safely "
                     "paired, so report those findings again before submitting the final verdict. "
                     "Do not include candidate claim text; Runtime binds the exact claim by claim_id. "
-                    + _repair_shape_instruction(diagnostics)
+                    + _repair_shape_instruction(
+                        diagnostics,
+                        document_consistency=document_consistency,
+                        implementation_readiness=implementation_readiness,
+                    )
                 ),
             },
             ensure_ascii=False,
@@ -1220,14 +1230,25 @@ def _sanitize_diagnostics(diagnostics: Mapping[str, Any]) -> dict[str, Any]:
     return {key: diagnostics[key] for key in allowed if key in diagnostics}
 
 
-def _repair_shape_instruction(diagnostics: Mapping[str, Any]) -> str:
+def _repair_shape_instruction(
+    diagnostics: Mapping[str, Any],
+    *,
+    document_consistency: bool = False,
+    implementation_readiness: bool = False,
+) -> str:
     """Describe the failed schema rule without repeating provider content."""
 
     code = str(diagnostics.get("error_code") or "")
+    final_fields = ["verdict", "confidence", "reason"]
+    if document_consistency:
+        final_fields.append("document_consistency")
+    if implementation_readiness:
+        final_fields.append("implementation_readiness")
     common = (
-        "Use report_read_only_finding once per candidate defect, then call submit_read_only_review with "
-        "verdict, confidence, and reason only. Keep the complete output under 9000 characters and use "
-        "unique known claim IDs."
+        "Use report_read_only_finding once per candidate defect, then call submit_read_only_review with exactly "
+        + ", ".join(final_fields)
+        + "; do not include findings in the final submit because accepted findings are already recorded. "
+        "Keep the complete output under 9000 characters and use unique known claim IDs."
     )
     if code == "findings_too_many":
         return "Report no more than 8 highest-risk findings. " + common

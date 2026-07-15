@@ -57,6 +57,7 @@ _LOCAL_ARTIFACT_REFERENCE = re.compile(
     rf"(?P<reference>[^\s`'\"，,；;()（）<>?#\[\]]+\.{_ARTIFACT_SUFFIX})(?:\?[^\s`'\"，,；;()（）<>]*)?",
     re.IGNORECASE,
 )
+MAX_LINKED_DOCUMENT_MATERIAL_TARGETS = 4
 
 
 def extract_document_artifact_requirements(prompt: str) -> tuple[DocumentArtifactRequirement, ...]:
@@ -234,6 +235,16 @@ def document_material_targets(
             add(DocumentArtifactRequirement(requirement.kind, listed[0], exact=True))
             continue
         add(requirement)
+
+    # A successfully read local material may explicitly link a companion
+    # document or image that was not named as a modality in the prompt.  The
+    # link, rather than a directory sibling, is the bounded provenance for
+    # following it.  This is intentionally capped so one document cannot
+    # turn the material lifecycle into an open-ended crawl.
+    for path in linked_paths[:MAX_LINKED_DOCUMENT_MATERIAL_TARGETS]:
+        kind = _EXTENSION_KIND.get(Path(path).suffix.lower())
+        if kind is not None:
+            add(DocumentArtifactRequirement(kind, path, exact=True))
     return tuple(targets)
 
 

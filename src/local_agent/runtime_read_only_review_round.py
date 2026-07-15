@@ -197,6 +197,8 @@ def run_review_round(
                     diagnostic,
                     accepted_claim_ids=accepted_claim_ids,
                     required_resubmit_claim_ids=required_candidate_claim_ids,
+                    document_consistency=document_consistency,
+                    implementation_readiness=implementation_readiness,
                 )
             )
             timeout = refresh_timeout()
