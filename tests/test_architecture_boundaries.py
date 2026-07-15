@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from pathlib import Path
+import ast
+import importlib
 import re
 import unittest
 
@@ -60,18 +62,121 @@ class ArchitectureBoundaryTests(unittest.TestCase):
 
     def test_tool_choice_steering_helpers_live_with_queue_owner(self) -> None:
         queue = (ROOT / "src/local_agent/tool_choice_queue.py").read_text(encoding="utf-8")
+        decision = (ROOT / "src/local_agent/tool_choice_decision.py").read_text(encoding="utf-8")
         gateway = (ROOT / "src/local_agent/tool_gateway.py").read_text(encoding="utf-8")
-        self.assertIn("def tool_choice_steering_message", queue)
-        self.assertIn("def tool_choice_steering_signature", queue)
+        self.assertIn("from .tool_choice_decision import tool_choice_steering_message", queue)
+        self.assertIn("def tool_choice_steering_message", decision)
+        self.assertIn("def tool_choice_steering_signature", decision)
         self.assertNotIn("def _tool_choice_steering_message", gateway)
         self.assertNotIn("def _tool_choice_steering_signature", gateway)
+
+    def test_split_facades_and_debt_files_obey_complexity_ratchets(self) -> None:
+        limits = {
+            "src/local_agent/tool_choice_queue.py": 800,
+            "src/local_agent/read_only_reviewer.py": 600,
+            "src/local_agent/tool_choice_decision.py": 900,
+            "src/local_agent/tool_choice_read_only.py": 900,
+            "src/local_agent/tool_choice_implementation.py": 900,
+            "src/local_agent/tool_choice_task_classification.py": 900,
+            "src/local_agent/read_only_reviewer_types.py": 900,
+            "src/local_agent/read_only_reviewer_claims.py": 900,
+            "src/local_agent/read_only_reviewer_contract.py": 900,
+            "src/local_agent/read_only_reviewer_validation.py": 900,
+            "src/local_agent/agent.py": 1876,
+            "src/local_agent/tools/lsp.py": 1166,
+            "src/local_agent/completion_audit.py": 1093,
+            "src/local_agent/explore_handoff.py": 991,
+            "src/local_agent/benchmark.py": 989,
+            "src/local_agent/steering/evidence.py": 985,
+            "src/local_agent/read_only_explore.py": 981,
+            "src/local_agent/document_consistency.py": 939,
+            "src/local_agent/task_contract.py": 935,
+        }
+        for relative_path, limit in limits.items():
+            with self.subTest(path=relative_path):
+                lines = (ROOT / relative_path).read_text(encoding="utf-8").splitlines()
+                self.assertLessEqual(len(lines), limit)
+
+    def test_split_facades_preserve_public_api_and_phase_order(self) -> None:
+        queue = importlib.import_module("local_agent.tool_choice_queue")
+        queue_decision = importlib.import_module("local_agent.tool_choice_decision")
+        reviewer = importlib.import_module("local_agent.read_only_reviewer")
+        reviewer_claims = importlib.import_module("local_agent.read_only_reviewer_claims")
+        reviewer_contract = importlib.import_module("local_agent.read_only_reviewer_contract")
+        reviewer_validation = importlib.import_module("local_agent.read_only_reviewer_validation")
+        self.assertIs(queue.ToolChoiceDecision, queue_decision.ToolChoiceDecision)
+        self.assertIs(queue.tool_choice_steering_message, queue_decision.tool_choice_steering_message)
+        self.assertIs(reviewer.candidate_claim_units, reviewer_claims.candidate_claim_units)
+        self.assertIs(reviewer.reviewer_output_tool_schema, reviewer_contract.reviewer_output_tool_schema)
+        self.assertIs(reviewer.parse_reviewer_payload, reviewer_validation.parse_reviewer_payload)
+        self.assertIs(reviewer.reviewer_rewrite_message, reviewer_validation.reviewer_rewrite_message)
+        self.assertIs(reviewer.rewrite_complies_with_review, reviewer_validation.rewrite_complies_with_review)
+        content = (ROOT / "src/local_agent/tool_choice_queue.py").read_text(encoding="utf-8")
+        self.assertLess(
+            content.index("if is_inspection_forbidden(prompt):"),
+            content.index("read_only_decision = evaluate_read_only_phase("),
+        )
+        self.assertLess(
+            content.index("read_only_decision = evaluate_read_only_phase("),
+            content.index("implementation_decision = evaluate_implementation_phase("),
+        )
+
+    def test_split_owner_import_direction_is_acyclic_and_runtime_free(self) -> None:
+        split_modules = {
+            "tool_choice_queue",
+            "tool_choice_decision",
+            "tool_choice_read_only",
+            "tool_choice_implementation",
+            "tool_choice_task_classification",
+            "read_only_reviewer",
+            "read_only_reviewer_types",
+            "read_only_reviewer_claims",
+            "read_only_reviewer_contract",
+            "read_only_reviewer_validation",
+        }
+        edges: dict[str, set[str]] = {name: set() for name in split_modules}
+        for name in split_modules:
+            path = ROOT / f"src/local_agent/{name}.py"
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.ImportFrom) or node.level != 1 or not node.module:
+                    continue
+                imported = node.module.split(".", 1)[0]
+                if imported in split_modules:
+                    edges[name].add(imported)
+                self.assertFalse(
+                    name not in {"tool_choice_queue", "read_only_reviewer"}
+                    and (imported in {"tool_choice_queue", "read_only_reviewer"} or imported.startswith("runtime_"))
+                )
+        visiting: set[str] = set()
+        visited: set[str] = set()
+
+        def visit(name: str) -> None:
+            if name in visited:
+                return
+            self.assertNotIn(name, visiting, f"split owner import cycle at {name}")
+            visiting.add(name)
+            for dependency in edges[name]:
+                visit(dependency)
+            visiting.remove(name)
+            visited.add(name)
+
+        for name in split_modules:
+            visit(name)
 
     def test_runtime_strategy_owners_do_not_reintroduce_business_keyword_guards(self) -> None:
         strategy_files = (
             ROOT / "src/local_agent/task_contract.py",
             ROOT / "src/local_agent/tool_choice_queue.py",
+            ROOT / "src/local_agent/tool_choice_decision.py",
+            ROOT / "src/local_agent/tool_choice_read_only.py",
+            ROOT / "src/local_agent/tool_choice_implementation.py",
+            ROOT / "src/local_agent/tool_choice_task_classification.py",
             ROOT / "src/local_agent/read_only_explore.py",
             ROOT / "src/local_agent/read_only_reviewer.py",
+            ROOT / "src/local_agent/read_only_reviewer_claims.py",
+            ROOT / "src/local_agent/read_only_reviewer_contract.py",
+            ROOT / "src/local_agent/read_only_reviewer_validation.py",
             ROOT / "src/local_agent/runtime_read_only_review.py",
             ROOT / "src/local_agent/reviewer_output_lifecycle.py",
             ROOT / "src/local_agent/steering/evidence.py",
