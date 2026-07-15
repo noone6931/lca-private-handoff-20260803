@@ -23,8 +23,9 @@ OWNER_COMPLEXITY_CEILINGS = {
     "src/local_agent/read_only_reviewer_validation.py": 419,
     "src/local_agent/reviewer_correction_contract.py": 148,
     "src/local_agent/reviewer_output_lifecycle.py": 418,
-    "src/local_agent/runtime_read_only_review.py": 639,
+    "src/local_agent/runtime_read_only_review.py": 641,
     "src/local_agent/runtime_read_only_review_round.py": 450,
+    "src/local_agent/safe_partial_report.py": 446,
     "src/local_agent/steering/pre_review.py": 83,
     "src/local_agent/steering/final_answer.py": 59,
 }
@@ -211,6 +212,7 @@ class ArchitectureBoundaryTests(unittest.TestCase):
             ROOT / "src/local_agent/read_only_reviewer_contract.py",
             ROOT / "src/local_agent/read_only_reviewer_validation.py",
             ROOT / "src/local_agent/runtime_read_only_review.py",
+            ROOT / "src/local_agent/safe_partial_report.py",
             ROOT / "src/local_agent/reviewer_output_lifecycle.py",
             ROOT / "src/local_agent/steering/evidence.py",
             ROOT / "src/local_agent/implementation_readiness.py",

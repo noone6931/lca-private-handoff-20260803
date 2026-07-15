@@ -604,6 +604,7 @@ class ReadOnlyReviewPhase:
             state.findings,
             reason=reason,
             document_consistency=document_consistency,
+            implementation_readiness=state.implementation_readiness,
         )
         state.safe_partial_emitted = True
         runtime._run.collector.record_safe_partial_report(
@@ -618,6 +619,7 @@ class ReadOnlyReviewPhase:
                 "observations": partial.observation_count,
                 "missing": partial.missing_count,
                 "rejected_categories": list(partial.rejected_categories),
+                "delivery_status": partial.delivery_status,
             },
         )
         return partial.content

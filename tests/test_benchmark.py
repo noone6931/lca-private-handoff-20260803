@@ -20,7 +20,7 @@ class BenchmarkTests(unittest.TestCase):
         tasks = load_benchmark_tasks()
         identifiers = {task.identifier for task in tasks}
 
-        self.assertEqual(len(tasks), 60)
+        self.assertEqual(len(tasks), 61)
         self.assertEqual(
             identifiers,
             {
@@ -84,6 +84,7 @@ class BenchmarkTests(unittest.TestCase):
                 "readonly-implementation-readiness-blocked",
                 "readonly-required-material-candidate-recovery",
                 "readonly-readiness-final-repair",
+                "readonly-typed-blocked-delivery",
             },
         )
         self.assertTrue(DEFAULT_TASKS_DIR.is_dir())
@@ -95,9 +96,9 @@ class BenchmarkTests(unittest.TestCase):
             payload = json.loads((output_dir / "benchmark-report.json").read_text(encoding="utf-8"))
             markdown = (output_dir / "benchmark-report.md").read_text(encoding="utf-8")
 
-            self.assertEqual(len(results), 60)
+            self.assertEqual(len(results), 61)
         self.assertTrue(all(result.passed for result in results))
-        self.assertEqual(payload["passed"], 60)
+        self.assertEqual(payload["passed"], 61)
         self.assertEqual(payload["failed"], 0)
         self.assertIn("small-code-change-test-diff", markdown)
         self.assertIn("budget-exhausted-incomplete", markdown)
@@ -154,6 +155,7 @@ class BenchmarkTests(unittest.TestCase):
         self.assertIn("readonly-implementation-readiness-blocked", markdown)
         self.assertIn("readonly-required-material-candidate-recovery", markdown)
         self.assertIn("readonly-readiness-final-repair", markdown)
+        self.assertIn("readonly-typed-blocked-delivery", markdown)
 
     def test_scripted_tool_call_can_emit_raw_malformed_arguments(self) -> None:
         client = ScriptedBenchmarkClient(

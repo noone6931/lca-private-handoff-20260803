@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import unittest
 
+from local_agent.document_artifacts import DocumentArtifactRequirement
 from local_agent.explore_handoff import ClaimEvidenceItem, ExploreHandoff
 from local_agent.document_consistency import DocumentConsistencyAssessment
+from local_agent.implementation_readiness import ImplementationReadinessAssessment
+from local_agent.implementation_readiness import ImplementationReadinessDimension
 from local_agent.read_only_reviewer import ReviewerFinding
 from local_agent.safe_partial_report import build_safe_partial_report
 from local_agent.explore_handoff import build_explore_handoff
@@ -39,7 +42,180 @@ def _handoff() -> ExploreHandoff:
     )
 
 
+def _readiness_handoff() -> ExploreHandoff:
+    contract = RequirementContract(
+        objective="choose a safe implementation slice",
+        scope="read-only evidence roots",
+        acceptance_items=["Classify implementation readiness without selecting an unsupported slice."],
+        evidence_requirements=["Bind every core implementation dependency to requirement or source evidence."],
+        verification_requirements=["Verify the test entry and rollback boundary before implementation."],
+        risk_notes=["A nearby module is not necessarily the requested owner."],
+        task_kind="read-only",
+        evidence_domain="repository_code",
+        read_only_review_profile="design",
+        document_artifacts=(
+            DocumentArtifactRequirement("markdown", "requirements.md", exact=True),
+            DocumentArtifactRequirement("html", "prototype.html", exact=True),
+            DocumentArtifactRequirement("image", "example.png", exact=True),
+        ),
+        implementation_readiness_required=True,
+    )
+    return ExploreHandoff(
+        request="read-only readiness",
+        contract=contract,
+        items=(
+            ClaimEvidenceItem(
+                "requirement_fact", "read_file", "/workspace/docs/requirements.md",
+                "/workspace/docs", "root_local", "ok", "Bounded requirement observation.",
+            ),
+            ClaimEvidenceItem(
+                "requirement_fact", "read_file", "/workspace/docs/prototype.html",
+                "/workspace/docs", "root_local", "ok", "Bounded prototype observation.",
+            ),
+            ClaimEvidenceItem(
+                "visual_observation", "inspect_image", "/workspace/docs/example.png",
+                "/workspace/docs", "root_local", "ok", "Bounded visual observation.",
+            ),
+            ClaimEvidenceItem(
+                "observed_candidate", "search_code", "/workspace/backend/src",
+                "/workspace/backend", "root_local", "ok", "One bounded search hit.",
+            ),
+            ClaimEvidenceItem(
+                "observed_candidate", "read_file", "/workspace/backend/src/Analog.java",
+                "/workspace/backend", "root_local", "ok", "One bounded source read.",
+            ),
+            ClaimEvidenceItem(
+                "unlocated", "search_code", "/workspace/frontend/src",
+                "/workspace/frontend", "root_local", "no_match", "Bounded search found no direct owner.",
+            ),
+            ClaimEvidenceItem(
+                "observed_candidate", "read_file", "/workspace/frontend/src/RouteShell.ts",
+                "/workspace/frontend", "root_local", "ok", "One bounded source read.",
+            ),
+        ),
+    )
+
+
 class SafePartialReportTests(unittest.TestCase):
+    def test_readiness_safe_partial_is_typed_blocked_delivery_without_candidate_text(self) -> None:
+        report = build_safe_partial_report(
+            _readiness_handoff(),
+            (
+                ReviewerFinding(
+                    "c099",
+                    "Concrete identifiers have no source provenance.",
+                    "Remove the unsupported implementation selection.",
+                    "InventedController uses /api/phantom and phantom_table.phantom_field.",
+                    "candidate_defect",
+                ),
+            ),
+            reason="pre_review_audit_unverified",
+        )
+
+        self.assertEqual(report.delivery_status, "blocked")
+        self.assertEqual(report.termination_reason, "pre_review_audit_unverified")
+        self.assertIn("Implementation readiness: BLOCKED", report.content)
+        self.assertIn("未选择实施切片", report.content)
+        for heading in (
+            "为什么不能选择实施切片",
+            "已完成调查：需求材料",
+            "已完成调查：代码根",
+            "已验证文件 / 模块与搜索边界",
+            "接口与数据契约状态",
+            "验收与测试状态",
+            "阻塞项与进入实现前需要的信息",
+            "安全边界",
+        ):
+            self.assertIn(heading, report.content)
+        for path in (
+            "/workspace/docs/requirements.md",
+            "/workspace/docs/prototype.html",
+            "/workspace/docs/example.png",
+            "/workspace/backend/src/Analog.java",
+            "/workspace/frontend/src/RouteShell.ts",
+        ):
+            self.assertIn(path, report.content)
+        self.assertNotIn("root=`/workspace/docs`", report.content)
+        self.assertIn("search observation", report.content)
+        self.assertIn("不自动证明它是目标 Owner", report.content)
+        self.assertIn("不提出 API、DDL、表、字段、状态码或 Owner 名称", report.content)
+        for sentinel in ("InventedController", "/api/phantom", "phantom_table", "phantom_field"):
+            self.assertNotIn(sentinel, report.content)
+
+    def test_readiness_dimensions_use_typed_assessment_and_keep_missing_core_dependencies(self) -> None:
+        dimensions = {
+            key: ImplementationReadinessDimension(
+                "closed" if key == "owner" else "unlocated",
+                ("c001",),
+            )
+            for key in (
+                "owner", "data_contract_or_source", "write_target", "test_entry", "rollback_boundary"
+            )
+        }
+        assessment = ImplementationReadinessAssessment("blocked", dimensions, reason="core dependencies remain open")
+
+        report = build_safe_partial_report(
+            _readiness_handoff(),
+            reason="invalid_output",
+            implementation_readiness=assessment,
+        )
+
+        self.assertNotIn("[未闭合] Owner / 调用归属", report.content)
+        self.assertIn("[未闭合] 数据契约 / 来源", report.content)
+        self.assertIn("[未闭合] 写入目标", report.content)
+        self.assertIn("[未闭合] 测试入口", report.content)
+        self.assertIn("[未闭合] 回滚边界", report.content)
+
+    def test_source_html_keeps_code_root_role_without_material_contract(self) -> None:
+        contract = RequirementContract(
+            objective="assess implementation readiness",
+            scope="read-only source inspection",
+            acceptance_items=["Return a blocked result when dependencies remain open."],
+            evidence_requirements=["Use typed source observations."],
+            verification_requirements=["Keep source and material roles distinct."],
+            risk_notes=[],
+            task_kind="read-only",
+            evidence_domain="repository_code",
+            read_only_review_profile="design",
+            implementation_readiness_required=True,
+        )
+        handoff = ExploreHandoff(
+            request="read-only readiness",
+            contract=contract,
+            items=(
+                ClaimEvidenceItem(
+                    "observed_candidate",
+                    "read_file",
+                    "/repo/web/page.html",
+                    "/repo/web",
+                    "root_local",
+                    "ok",
+                    "A bounded source read.",
+                ),
+            ),
+        )
+
+        report = build_safe_partial_report(handoff, reason="pre_review_audit_unverified")
+
+        self.assertIn("root=`/repo/web`", report.content)
+        self.assertIn("direct_read=`/repo/web/page.html`", report.content)
+        material_section = report.content.split("### 已完成调查：代码根", 1)[0]
+        self.assertNotIn("/repo/web/page.html", material_section)
+
+    def test_readiness_hard_reasons_all_preserve_typed_blocked_terminal(self) -> None:
+        for reason in (
+            "invalid_output",
+            "pre_review_audit_unverified",
+            "deadline_or_finalization_budget",
+            "provider_error",
+        ):
+            with self.subTest(reason=reason):
+                report = build_safe_partial_report(_readiness_handoff(), reason=reason)
+                self.assertEqual(report.delivery_status, "blocked")
+                self.assertEqual(report.termination_reason, reason)
+                self.assertIn(f"termination={reason}", report.content)
+                self.assertIn(f"hard termination reason 保留为 `{reason}`", report.content)
+
     def test_handoff_dedupes_relative_requirement_and_absolute_current_read(self) -> None:
         workspace = "/tmp/lca-doc-root"
         handoff = build_explore_handoff(
@@ -268,6 +444,8 @@ class SafePartialReportTests(unittest.TestCase):
     def test_timeout_partial_is_not_mislabelled_as_a_reviewer_rejection(self) -> None:
         report = build_safe_partial_report(_handoff(), reason="llm_timeout")
 
+        self.assertEqual(report.delivery_status, "unverified")
+        self.assertEqual(report.termination_reason, "llm_timeout")
         self.assertIn("有界运行提前终止", report.content)
         self.assertIn("termination=llm_timeout", report.content)
         self.assertNotIn("候选草稿未通过独立证据审查", report.content)
