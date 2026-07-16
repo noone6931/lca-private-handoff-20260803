@@ -242,6 +242,7 @@ def _write_config_loading_mini_agent(root: Path) -> None:
     repository = Path(__file__).resolve().parents[1]
     shutil.copy2(repository / "src" / "local_agent" / "config.py", package / "config.py")
     shutil.copy2(repository / "src" / "local_agent" / "state.py", package / "state.py")
+    shutil.copy2(repository / "src" / "local_agent" / "workflow_profile.py", package / "workflow_profile.py")
     (package / "cli.py").write_text(
         "from __future__ import annotations\n"
         "import os\n"

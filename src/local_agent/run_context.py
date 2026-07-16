@@ -24,12 +24,16 @@ from .session_evidence import SessionEvidenceReuse
 from .temporary_tool_directive import DirectiveTransition
 from .temporary_tool_directive import TemporaryToolDirectiveOwner
 from .read_only_reviewer import ReadOnlyReviewState
+from .workflow_profile import WorkflowProfileResolution
+from .workflow_profile import resolve_workflow_profile
 
 
 @dataclass
 class RunContext:
     """All mutable state whose authority ends with the current user task."""
 
+    workflow_profile_selector: str = "auto"
+    workflow_profile: WorkflowProfileResolution | None = None
     run_id: str | None = None
     started_monotonic: float | None = None
     deadline_monotonic: float | None = None
@@ -168,6 +172,7 @@ class RunContext:
         self.tool_choice_results.clear()
         self.tool_choice_tool_names.clear()
         self.requirement_contract = requirement_contract
+        self.workflow_profile = resolve_workflow_profile(self.workflow_profile_selector, requirement_contract)
         self.requirement_contract_context = requirement_contract_context
         self.verification_plan = VerificationPlan.from_contract(requirement_contract)
         self.verification_test_plan = None
@@ -184,6 +189,28 @@ class RunContext:
         self.negative_claim_metrics.clear()
         self.read_only_review.reset()
         self.read_only_explore_finalized = False
+
+    def workflow_profile_payload(self) -> dict[str, Any]:
+        if self.workflow_profile is None:
+            return {
+                "selector": self.workflow_profile_selector,
+                "resolved_profile": "pending",
+                "reason": "awaiting_typed_requirement_contract",
+                "enabled_capabilities": [],
+            }
+        return self.workflow_profile.to_dict()
+
+    def workflow_profile_status(self) -> str:
+        payload = self.workflow_profile_payload()
+        return (
+            "- workflow_profile: "
+            f"selector={payload['selector']}, resolved={payload['resolved_profile']}, reason={payload['reason']}"
+        )
+
+    def active_design_evidence_roots(self) -> tuple[str, ...]:
+        if self.workflow_profile is not None and self.workflow_profile.capabilities.read_only_explore:
+            return self.design_evidence_coverage.roots
+        return ()
 
     def checkpoint_active_messages(self, messages: list[dict[str, Any]], next_message_start: int) -> None:
         """Preserve this run's pre-checkpoint suffix before history is replaced."""

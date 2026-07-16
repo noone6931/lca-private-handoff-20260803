@@ -8,6 +8,7 @@ from pathlib import Path
 from .state import default_config_root
 from .state import resolve_state_root
 from .state import workspace_state_dir
+from .workflow_profile import normalize_workflow_profile_selector
 
 
 class ConfigError(RuntimeError):
@@ -50,6 +51,7 @@ class AgentConfig:
     memory_scope: str = "state"
     vision_model: str = ""
     reviewer_model: str = ""
+    workflow_profile: str = "auto"
 
 
 def load_config(
@@ -75,6 +77,7 @@ def load_config(
     memory_scope: str | None = None,
     allowed_dirs: object | None = None,
     reviewer_model: str | None = None,
+    workflow_profile: str | None = None,
 ) -> AgentConfig:
     file_config = _load_json_config(config_path)
     workspace = Path(cwd or file_config.get("workspace") or os.getcwd()).expanduser().resolve()
@@ -213,6 +216,16 @@ def load_config(
         or "state"
     )
     resolved_memory_scope = _memory_scope(raw_memory_scope)
+    raw_workflow_profile = (
+        workflow_profile
+        or file_config.get("workflow_profile")
+        or os.environ.get("LCA_WORKFLOW_PROFILE")
+        or "auto"
+    )
+    try:
+        resolved_workflow_profile = normalize_workflow_profile_selector(raw_workflow_profile)
+    except ValueError as exc:
+        raise ConfigError(str(exc)) from exc
     raw_allowed_dirs = (
         allowed_dirs
         if allowed_dirs is not None
@@ -249,6 +262,7 @@ def load_config(
         memory_scope=resolved_memory_scope,
         vision_model=resolved_vision_model,
         reviewer_model=resolved_reviewer_model,
+        workflow_profile=resolved_workflow_profile,
     )
 
 

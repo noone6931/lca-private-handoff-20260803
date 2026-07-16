@@ -30,9 +30,11 @@ OWNER_COMPLEXITY_CEILINGS = {
     "src/local_agent/tools/test_runner_policy.py": 217,
     "src/local_agent/steering/pre_review.py": 83,
     "src/local_agent/steering/final_answer.py": 59,
+    "src/local_agent/workflow_profile.py": 165,
+    "src/local_agent/runtime_workflow_profile.py": 44,
 }
 LEGACY_COMPLEXITY_DEBT_CEILINGS = {
-    "src/local_agent/agent.py": 1873,
+    "src/local_agent/agent.py": 1808,
     "src/local_agent/tools/lsp.py": 1166,
     "src/local_agent/completion_audit.py": 1093,
     "src/local_agent/explore_handoff.py": 991,
@@ -200,6 +202,16 @@ class ArchitectureBoundaryTests(unittest.TestCase):
         for name in split_modules:
             visit(name)
 
+    def test_workflow_profile_owner_and_runtime_facade_have_one_way_dependencies(self) -> None:
+        owner = (ROOT / "src/local_agent/workflow_profile.py").read_text(encoding="utf-8")
+        facade = (ROOT / "src/local_agent/runtime_workflow_profile.py").read_text(encoding="utf-8")
+        runtime = (ROOT / "src/local_agent/agent.py").read_text(encoding="utf-8")
+        self.assertNotIn("from .runtime_", owner)
+        self.assertIn("from .workflow_profile import", facade)
+        self.assertIn("from .runtime_read_only_review import ReadOnlyReviewPhase", facade)
+        self.assertNotIn("implementation_readiness_required", runtime)
+        self.assertNotIn("if self._config.workflow_profile", runtime)
+
     def test_runtime_strategy_owners_do_not_reintroduce_business_keyword_guards(self) -> None:
         strategy_files = (
             ROOT / "src/local_agent/task_contract.py",
@@ -218,6 +230,8 @@ class ArchitectureBoundaryTests(unittest.TestCase):
             ROOT / "src/local_agent/reviewer_output_lifecycle.py",
             ROOT / "src/local_agent/steering/evidence.py",
             ROOT / "src/local_agent/implementation_readiness.py",
+            ROOT / "src/local_agent/workflow_profile.py",
+            ROOT / "src/local_agent/runtime_workflow_profile.py",
         )
         forbidden = re.compile(
             r"(拓展服务费|结算单|服务费|分账|退款|计费|(?<![A-Za-z])settlement(?![A-Za-z])|"

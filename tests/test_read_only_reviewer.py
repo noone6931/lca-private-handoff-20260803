@@ -45,6 +45,7 @@ from local_agent.finalization import MAX_FINALIZATION_ATTEMPTS
 from local_agent.requirement_evidence import RequirementEvidence
 from local_agent.requirement_evidence import parse_document_locators
 from local_agent.tool_observation import ToolResultSummary
+from local_agent.workflow_profile import resolve_workflow_profile
 
 
 def _review_submit(payload: dict) -> object:
@@ -3328,7 +3329,11 @@ class ReadOnlyReviewerTests(unittest.TestCase):
     def test_pending_transport_directive_owns_candidate_before_other_final_steerers(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             runtime = AgentRuntime(_config(Path(tmp).resolve()), show_tool_logs=False)
-
+            contract = generate_requirement_contract(
+                "只读分析当前服务 owner、调用链和影响范围，不要修改。"
+            )
+            runtime._run.requirement_contract = contract
+            runtime._run.workflow_profile = resolve_workflow_profile("auto", contract)
             runtime._run.read_only_review.transport_rewrite_requested = True
             self.assertIsNone(runtime._decide_final_answer_steering("I used read_file and completed the task.", 0))
 

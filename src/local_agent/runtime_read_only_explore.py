@@ -12,6 +12,7 @@ from .read_only_explore import OBSERVATION_TOOLS
 from .read_only_explore import ReadOnlyExploreDecision
 from .read_only_explore import evaluate_read_only_explore
 from .tool_observation import ToolResultSummary
+from .workflow_profile import workflow_read_only_explore_enabled
 
 
 class ReadOnlyExploreRuntimePort(Protocol):
@@ -43,6 +44,8 @@ class RuntimeReadOnlyExplorePhase:
         if tool_name not in OBSERVATION_TOOLS:
             return None
         runtime = self._runtime
+        if not workflow_read_only_explore_enabled(runtime._run):
+            return None
         if runtime._run.read_only_explore_finalized:
             return None
         contract = runtime._run.requirement_contract
@@ -85,6 +88,8 @@ class RuntimeReadOnlyExplorePhase:
         """
 
         runtime = self._runtime
+        if not workflow_read_only_explore_enabled(runtime._run):
+            return False
         contract = runtime._run.requirement_contract
         if (
             contract is None

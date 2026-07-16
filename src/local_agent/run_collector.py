@@ -15,6 +15,7 @@ class RunStats:
     run_id: str
     prompt_chars: int
     started_monotonic: float
+    workflow_profile: dict[str, Any] = field(default_factory=dict)
     llm_requests: int = 0
     tool_calls: int = 0
     tool_errors: int = 0
@@ -116,11 +117,13 @@ class RunCollector:
         *,
         guard_start: dict[str, int],
         steer_start: dict[str, int],
+        workflow_profile: Mapping[str, Any] | None = None,
     ) -> None:
         self._stats = RunStats(
             run_id=run_id,
             prompt_chars=len(prompt),
             started_monotonic=started_monotonic,
+            workflow_profile=dict(workflow_profile or {}),
             guard_start=dict(guard_start),
             steer_start=dict(steer_start),
         )
@@ -482,6 +485,7 @@ class RunCollector:
         return {
             "run_id": stats.run_id,
             "termination_reason": reason,
+            "workflow_profile": dict(stats.workflow_profile),
             "elapsed_ms": _elapsed_ms_since(stats.started_monotonic),
             "prompt_chars": stats.prompt_chars,
             "llm_requests": stats.llm_requests,

@@ -131,7 +131,7 @@ from .runtime_memory import MemoryConsolidationLifecycle
 from .runtime_tool_directive import RuntimeToolDirectivePhase
 from .runtime_tool_choice_directive import RuntimeToolChoiceDirectivePhase
 from .runtime_tool_choice_queue import RuntimeToolChoiceQueuePhase
-from .runtime_read_only_review import ReadOnlyReviewPhase
+from .runtime_workflow_profile import WorkflowReadOnlyReviewPhase
 from .runtime_read_only_explore import RuntimeReadOnlyExplorePhase
 from .runtime_provider_terminal import ProviderTerminalPhase
 from .runtime_workspace import WorkspaceLifecycle
@@ -242,75 +242,6 @@ WORKFLOW_NUDGE = (
     "preview meaningful existing-file edits with apply_patch dry_run=true; verify changes with tests/checks and git_diff."
 )
 
-WORKFLOW_NUDGE_KEYWORDS = {
-    "agent",
-    "bug",
-    "change",
-    "code",
-    "diff",
-    "fix",
-    "implement",
-    "patch",
-    "readme",
-    "refactor",
-    "review",
-    "test",
-    "update",
-    "代码",
-    "修改",
-    "实现",
-    "修复",
-    "测试",
-    "需求",
-    "项目",
-    "文档",
-}
-
-READ_FILE_DRIFT_GUARD_KEYWORDS = {
-    "analysis",
-    "analyze",
-    "describe",
-    "inspect",
-    "review",
-    "readonly",
-    "read-only",
-    "只读",
-    "分析",
-    "总结",
-    "阅读",
-    "定位",
-    "压测",
-}
-READ_FILE_DRIFT_GUARD_STRONG_READONLY_KEYWORDS = {
-    "do not edit files",
-    "do not modify files",
-    "don't edit files",
-    "don't modify files",
-    "no edits",
-    "read-only",
-    "readonly",
-    "不要改文件",
-    "不要修改文件",
-    "不要写文件",
-    "不修改文件",
-    "不写文件",
-    "禁止修改文件",
-    "只读",
-}
-READ_FILE_DRIFT_GUARD_EDIT_KEYWORDS = {
-    "apply_patch",
-    "change",
-    "edit",
-    "fix",
-    "implement",
-    "modify",
-    "patch",
-    "write",
-    "修改",
-    "修复",
-    "实现",
-    "写入",
-}
 class AgentRuntime:
     def __init__(
         self,
@@ -333,7 +264,7 @@ class AgentRuntime:
         self._session_guards = SessionGuardState()
         self._session_evidence = SessionEvidenceCache()
         self._user_facts = UserFactsLayer()
-        self._run = RunContext()
+        self._run = RunContext(workflow_profile_selector=config.workflow_profile)
         self._last_run_summary: dict[str, Any] | None = None
         self._final_answer_steerers: tuple[FinalAnswerSteerer, ...] = (
             ReadOnlyEvidenceSteerer(max_steers=MAX_READ_ONLY_EVIDENCE_STEERS),
@@ -371,7 +302,7 @@ class AgentRuntime:
         self._tool_choice_directive_phase = RuntimeToolChoiceDirectivePhase(self)
         self._tool_choice_queue_phase = RuntimeToolChoiceQueuePhase(self)
         self._read_only_explore_phase = RuntimeReadOnlyExplorePhase(self)
-        self._read_only_review_phase = ReadOnlyReviewPhase(self)
+        self._read_only_review_phase = WorkflowReadOnlyReviewPhase(self)
         self._provider_terminal_phase = ProviderTerminalPhase(self)
         missing_roots = self._workspace_phase.restore_session_workspace_roots()
         self._path_rule_index = discover_path_scoped_rules(self._workspace_context.all_roots)
@@ -481,10 +412,12 @@ class AgentRuntime:
                 "objective": self._run.requirement_contract.objective,
             },
         )
-        if self._run.design_evidence_coverage.roots:
+        self._session.append("workflow_profile", self._run.workflow_profile_payload())
+        self._events.emit("ContextUpdated", {"kind": "workflow_profile", **self._run.workflow_profile_payload()})
+        if self._run.active_design_evidence_roots():
             self._session.append(
                 "runtime_steering",
-                {"kind": "design_evidence_roots", "roots": list(self._run.design_evidence_coverage.roots)},
+                {"kind": "design_evidence_roots", "roots": list(self._run.active_design_evidence_roots())},
             )
         if model_prompt != prompt:
             self._session.append("workflow_nudge", {"content": WORKFLOW_NUDGE})
@@ -962,6 +895,7 @@ class AgentRuntime:
             f"- max_steps: {self._config.max_steps}",
             f"- summary_mode: {self._config.summary_mode}",
             f"- memory_consolidation: {self._config.memory_consolidation}",
+            self._run.workflow_profile_status(),
         ]
         if self._workspace_context.additional_roots:
             lines.append("- allowed_dirs:")
@@ -1033,6 +967,7 @@ class AgentRuntime:
             prompt,
             started_monotonic,
             guard_start=self._session_guards.counts(),
+            workflow_profile=self._run.workflow_profile_payload(),
             steer_start={
                 "duplicate_tool_final_answer": self._run.tool_loop_steering.count("duplicate_tool_final_answer"),
                 "useless_search_pattern_final_answer": self._run.tool_loop_steering.count("useless_search_pattern_final_answer"),
@@ -1452,7 +1387,7 @@ class AgentRuntime:
             read_file_evidence_paths=list(self._run.evidence.read_file_paths),
             source_evidence=list(self._run.evidence.source_evidence),
             requirement_evidence=list(self._run.evidence.pinned_requirement_evidence),
-            required_design_evidence_roots=self._run.design_evidence_coverage.roots,
+            required_design_evidence_roots=self._run.active_design_evidence_roots(),
             design_evidence_read_paths=list(self._run.evidence.design_read_paths),
             open_todos=self._provider_context_phase.open_todo_summary(),
             is_code_implementation_request=requires_no_edit_final_hygiene(self._run.requirement_contract),

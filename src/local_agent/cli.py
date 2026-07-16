@@ -60,6 +60,11 @@ def main(argv: list[str] | None = None) -> int:
         help="Optional model for the isolated reviewer role. Defaults to the main model.",
     )
     parser.add_argument(
+        "--workflow-profile",
+        choices=["auto", "coding", "enterprise-evidence", "readiness-audit"],
+        help="Workflow hooks: typed auto selection, coding, enterprise evidence, or readiness audit.",
+    )
+    parser.add_argument(
         "--max-steps",
         type=int,
         help="Safety cap for model/tool iterations. 0 means unlimited; use budget seconds for normal limits.",
@@ -149,6 +154,7 @@ def main(argv: list[str] | None = None) -> int:
             memory_scope=args.memory_scope,
             allowed_dirs=args.allowed_dirs,
             reviewer_model=args.reviewer_model,
+            workflow_profile=args.workflow_profile,
         )
         chat_requested = args.chat or _is_chat_prompt(args.prompt)
         event_sink = (
