@@ -3385,7 +3385,7 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertGreaterEqual(steering_records[0]["payload"]["missing_count"], 1)
         self.assertEqual(runtime._last_run_summary["steering_counts"], {"completion_audit": 1})
 
-    def test_patch_reviewer_steers_after_diff_when_requested_test_is_missing(self) -> None:
+    def test_patch_reviewer_steers_after_diff_when_public_api_callers_are_unchecked(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp).resolve()
             config = AgentConfig(
@@ -3399,7 +3399,7 @@ class AgentRuntimeTests(unittest.TestCase):
                 approval_mode="yolo",
             )
             runtime = AgentRuntime(config, show_tool_logs=False)
-            runtime._run.current_user_request = "请实现用户名规范化，并补充单元测试。"
+            runtime._run.current_user_request = "请实现用户名规范化。"
             runtime._run.requirement_contract = generate_requirement_contract(runtime._run.current_user_request)
             runtime._run.tool_choice_results = [
                 ToolResultSummary("read_file", "class UserService {}", path="src/UserService.java"),
@@ -3412,7 +3412,7 @@ class AgentRuntimeTests(unittest.TestCase):
                         "+++ b/src/UserService.java\n"
                         "@@ -1 +1 @@\n"
                         "-    private String normalize(String value) { return value; }\n"
-                        "+    private String normalize(String value) { return value.trim(); }\n"
+                        "+    public String normalize(String value) { return value.trim(); }\n"
                         "\n[diff summary]\n- Total: 1 file(s), +1 -1, 1 hunk(s).\n"
                     ),
                 ),
@@ -3423,12 +3423,12 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertIsNotNone(decision)
         assert decision is not None
         self.assertEqual(decision.kind, "patch_reviewer")
-        self.assertIn("requested_test_missing", str(decision.payload))
+        self.assertIn("call_site_review_missing", str(decision.payload))
         self.assertFalse(decision.force_final_answer_without_tools)
-        self.assertIn("apply_patch", decision.temporary_tool_allowlist or set())
-        self.assertIn("run_tests", decision.temporary_tool_allowlist or set())
+        self.assertIn("search_code", decision.temporary_tool_allowlist or set())
+        self.assertIn("git_diff", decision.temporary_tool_allowlist or set())
 
-    def test_post_diff_patch_reviewer_steers_before_the_model_attempts_a_final_answer(self) -> None:
+    def test_post_diff_patch_reviewer_clears_after_call_site_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp).resolve()
             config = AgentConfig(
@@ -3442,7 +3442,7 @@ class AgentRuntimeTests(unittest.TestCase):
                 approval_mode="yolo",
             )
             runtime = AgentRuntime(config, show_tool_logs=False)
-            runtime._run.current_user_request = "请修复用户名规范化，并补充单元测试。"
+            runtime._run.current_user_request = "请修复用户名规范化。"
             runtime._run.requirement_contract = generate_requirement_contract(runtime._run.current_user_request)
             runtime._run.tool_choice_results = [
                 ToolResultSummary("read_file", "class UserService {}", path="src/UserService.java"),
@@ -3455,19 +3455,23 @@ class AgentRuntimeTests(unittest.TestCase):
                         "+++ b/src/UserService.java\n"
                         "@@ -1 +1 @@\n"
                         "-    private String normalize(String value) { return value; }\n"
-                        "+    private String normalize(String value) { return value.trim(); }\n"
+                        "+    public String normalize(String value) { return value.trim(); }\n"
                         "\n[diff summary]\n- Total: 1 file(s), +1 -1, 1 hunk(s).\n"
                     ),
                 ),
             ]
 
-            decision = runtime._decide_post_diff_patch_review(0)
+            missing_decision = runtime._decide_post_diff_patch_review(0)
+            runtime._run.tool_choice_results.append(
+                ToolResultSummary("search_code", "src/UserController.java: userService.normalize(name)")
+            )
+            cleared_decision = runtime._decide_post_diff_patch_review(0)
 
-        self.assertIsNotNone(decision)
-        assert decision is not None
-        self.assertEqual(decision.kind, "patch_reviewer")
-        self.assertIn("requested_test_missing", str(decision.payload))
-        self.assertIn("apply_patch", decision.temporary_tool_allowlist or set())
+        self.assertIsNotNone(missing_decision)
+        assert missing_decision is not None
+        self.assertEqual(missing_decision.kind, "patch_reviewer")
+        self.assertIn("call_site_review_missing", str(missing_decision.payload))
+        self.assertIsNone(cleared_decision)
 
     def test_runtime_records_post_diff_reviewer_pass_and_skip_distinctly(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

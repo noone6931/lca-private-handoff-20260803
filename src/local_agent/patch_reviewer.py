@@ -13,7 +13,6 @@ from .verification_timeline import workspace_write_happened
 ReviewSeverity = Literal["blocking", "warning"]
 
 CALL_SITE_EVIDENCE_TOOLS = frozenset({"search_code", "lsp_references", "read_file"})
-TEST_REMEDIATION_TOOLS = frozenset({"read_file", "search_code", "apply_patch", "write_file", "run_tests", "git_diff"})
 QUALITY_REMEDIATION_TOOLS = frozenset(
     {"read_file", "search_code", "lsp_references", "apply_patch", "write_file", "rollback_patch", "run_tests", "git_diff"}
 )
@@ -26,41 +25,6 @@ _PUBLIC_METHOD_PATTERN = re.compile(
 _EXPORTED_JS_API_PATTERN = re.compile(
     r"^[+-]\s*export\s+(?:default\s+)?(?:async\s+)?(?:function|class|const|let|var)\s+(?P<symbol>[A-Za-z_$][\w$]*)",
 )
-_TEST_INTENT_HARD_BOUNDARY = re.compile(r"[\n.;!?。；！？]+")
-_ENGLISH_TEST_CHANGE_ACTION = re.compile(
-    r"\b(?:add|write|create|modify|change|update|extend)\b"
-    r"(?:\s+(?:a|an|the|new|existing|unit|integration|regression|boundary|additional|related)){0,4}"
-    r"\s+tests?\b",
-    re.IGNORECASE,
-)
-_ENGLISH_TEST_COVERAGE_ACTION = re.compile(
-    r"\b(?:increase|improve|expand|extend)\s+(?:the\s+)?test\s+coverage\b",
-    re.IGNORECASE,
-)
-_ENGLISH_NEGATED_ACTION_PREFIX = re.compile(
-    r"\b(?:do\s+not|don't|does\s+not|must\s+not|should\s+not|never|without|"
-    r"no\s+need\s+to|need\s+not|not\s+required\s+to)"
-    r"(?:\s*(?:\([^();.!?\n]{1,32}\)|[,，]\s*[^,，;.!?\n]{1,32}\s*[,，]))?"
-    r"(?:\s+\w+){0,3}\s*$",
-    re.IGNORECASE,
-)
-_CHINESE_TEST_CHANGE_ACTION = re.compile(
-    r"(?:补充|新增|添加|编写|增加|修改|改动|调整|加)\s*"
-    r"(?:一个|一条|一些|相关|新的|新)?\s*(?:单元|集成|回归|边界)?\s*测试(?:用例)?"
-)
-_CHINESE_TEST_COVERAGE_ACTION = re.compile(r"(?:提高|提升|增加|扩大)\s*测试覆盖(?:率)?")
-_CHINESE_NEGATED_ACTION_PREFIX = re.compile(
-    r"(?:不要|不得|不需(?:要)?|不必|禁止|无需|无须|不用|避免|不要求|请勿)"
-    r"\s*(?:再|额外|另外|继续|重新)?\s*$"
-)
-_TEST_CHANGE_ACTION_PATTERNS = (
-    _ENGLISH_TEST_CHANGE_ACTION,
-    _ENGLISH_TEST_COVERAGE_ACTION,
-    _CHINESE_TEST_CHANGE_ACTION,
-    _CHINESE_TEST_COVERAGE_ACTION,
-)
-
-
 @dataclass(frozen=True)
 class PatchReviewFinding:
     code: str
@@ -106,13 +70,11 @@ class PatchReviewResult:
 @dataclass(frozen=True)
 class PatchReviewFacts:
     changed_paths: tuple[str, ...]
-    test_paths: tuple[str, ...]
     public_api_symbols: tuple[str, ...]
 
     def metadata(self) -> dict[str, object]:
         return {
             "changed_paths": list(self.changed_paths),
-            "test_paths": list(self.test_paths),
             "public_api_symbols": list(self.public_api_symbols),
         }
 
@@ -170,15 +132,6 @@ def review_patch(
         )
 
     facts = _review_facts_for_diff(latest_diff)
-    if _request_requires_test_change(request) and _has_changed_source_file(facts) and not facts.test_paths:
-        findings.append(
-            _finding(
-                "requested_test_missing",
-                "blocking",
-                "The request explicitly asks for tests, but the reviewed diff contains source changes without a test-file change.",
-                TEST_REMEDIATION_TOOLS,
-            )
-        )
     if facts.public_api_symbols and not _has_call_site_evidence_after_last_write(tool_results, facts):
         findings.append(
             _finding(
@@ -269,23 +222,6 @@ def _section_from(content: str, header: str) -> str:
     return content[start:end].strip()
 
 
-def _request_requires_test_change(request: str | None) -> bool:
-    for clause in _TEST_INTENT_HARD_BOUNDARY.split(request or ""):
-        for pattern in _TEST_CHANGE_ACTION_PATTERNS:
-            for match in pattern.finditer(clause):
-                if not _test_change_action_is_negated(clause, match.start()):
-                    return True
-    return False
-
-
-def _test_change_action_is_negated(clause: str, action_start: int) -> bool:
-    prefix = clause[max(0, action_start - 48) : action_start]
-    return bool(
-        _ENGLISH_NEGATED_ACTION_PREFIX.search(prefix)
-        or _CHINESE_NEGATED_ACTION_PREFIX.search(prefix)
-    )
-
-
 def _changed_paths(raw_diff: str) -> set[str]:
     paths: set[str] = set()
     for line in raw_diff.splitlines():
@@ -300,34 +236,17 @@ def _changed_paths(raw_diff: str) -> set[str]:
 
 def _diff_review_facts(raw_diff: str) -> PatchReviewFacts:
     changed_paths = tuple(sorted(_changed_paths(raw_diff)))
-    test_paths = tuple(path for path in changed_paths if _is_test_path(path))
     public_api_symbols = tuple(sorted(_public_api_symbols(raw_diff)))
-    return PatchReviewFacts(changed_paths, test_paths, public_api_symbols)
+    return PatchReviewFacts(changed_paths, public_api_symbols)
 
 
 def _review_facts_for_diff(result: ToolResultSummary) -> PatchReviewFacts:
     metadata = result.metadata.get("patch_review") if isinstance(result.metadata, Mapping) else None
     if isinstance(metadata, Mapping):
         changed_paths = _metadata_strings(metadata.get("changed_paths"))
-        test_paths = _metadata_strings(metadata.get("test_paths"))
         public_api_symbols = _metadata_strings(metadata.get("public_api_symbols"))
-        return PatchReviewFacts(changed_paths, test_paths, public_api_symbols)
+        return PatchReviewFacts(changed_paths, public_api_symbols)
     return _diff_review_facts(_raw_diff_content(result.content))
-
-
-def _has_changed_source_file(facts: PatchReviewFacts) -> bool:
-    return any(path.lower().endswith((".java", ".py", ".js", ".jsx", ".ts", ".tsx", ".vue")) for path in facts.changed_paths)
-
-
-def _is_test_path(path: str) -> bool:
-    lowered = path.lower()
-    filename = lowered.rsplit("/", 1)[-1]
-    return (
-        "/test/" in f"/{lowered}"
-        or "/tests/" in f"/{lowered}"
-        or "/spec/" in f"/{lowered}"
-        or any(token in filename for token in ("test", "spec"))
-    )
 
 
 def _public_api_symbols(raw_diff: str) -> set[str]:
