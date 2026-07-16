@@ -25,7 +25,7 @@ from local_agent.tools.search import glob_files
 from local_agent.tools.search import list_files
 from local_agent.tools.search import search_code
 from local_agent.tools.search import search_tools
-from local_agent.tools.shell import run_shell, run_tests
+from local_agent.tools.shell import run_shell, run_tests, shell_tools
 from local_agent.tools.todo import todo_add, todo_read, todo_tools, todo_update
 
 
@@ -2035,16 +2035,202 @@ class ToolTests(unittest.TestCase):
     def test_run_tests_runs_command(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp).resolve()
+            tests = workspace / "tests"
+            tests.mkdir()
+            (tests / "test_ok.py").write_text(
+                "import unittest\n\n"
+                "class OkTests(unittest.TestCase):\n"
+                "    def test_ok(self):\n"
+                "        self.assertTrue(True)\n",
+                encoding="utf-8",
+            )
             result = run_tests(
-                {"command": "python3 -c \"print('ok')\"", "timeout": 10},
+                {"command": "PYTHONPATH=. python3 -m unittest discover -s tests", "timeout": 10},
                 ToolContext(workspace=workspace, approval_mode="yolo"),
             )
 
         self.assertFalse(result.is_error)
-        self.assertIn("ok", result.content)
+        self.assertIn("OK", result.content)
         self.assertIn("[exit_code] 0", result.content)
-        self.assertEqual(result.metadata["executed_command"], "python3 -c \"print('ok')\"")
+        self.assertEqual(result.metadata["argv"], ["python3", "-m", "unittest", "discover", "-s", "tests"])
+        self.assertEqual(result.metadata["environment_keys"], ["PYTHONPATH"])
+        self.assertEqual(result.metadata["exit_code"], 0)
+        self.assertEqual(result.metadata["working_directory"], str(workspace))
         self.assertEqual(result.metadata["execution_status"], "succeeded")
+
+    def test_run_tests_propagates_real_python_test_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            tests = workspace / "tests"
+            tests.mkdir()
+            (tests / "test_fail.py").write_text(
+                "import unittest\n\n"
+                "class FailTests(unittest.TestCase):\n"
+                "    def test_failure(self):\n"
+                "        self.fail('expected failure')\n",
+                encoding="utf-8",
+            )
+            result = run_tests(
+                {"command": "python3 -m unittest discover -s tests", "timeout": 10},
+                ToolContext(workspace=workspace, approval_mode="yolo"),
+            )
+
+        self.assertTrue(result.is_error)
+        self.assertIn("FAILED", result.content)
+        self.assertEqual(result.metadata["exit_code"], 1)
+        self.assertEqual(result.metadata["execution_status"], "failed")
+
+    def test_run_tests_rejects_shell_syntax_and_arbitrary_exec_without_side_effects(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            side_effect = workspace / "should-not-exist.txt"
+            commands = (
+                "false || true",
+                "mvn test | tail || true",
+                "mvn test > test.log",
+                f"python3 -c \"from pathlib import Path; Path('{side_effect}').write_text('bad')\"",
+                f"bash -c \"touch {side_effect}\"",
+                f"touch {side_effect}",
+                "python3 -m unittest $(echo tests.test_ok)",
+                "python3 -m unittest `echo tests.test_ok`",
+                "python3 -m unittest tests.test_ok\nprintf nope",
+            )
+            for command in commands:
+                with self.subTest(command=command):
+                    result = run_tests(
+                        {"command": command},
+                        ToolContext(workspace=workspace, approval_mode="yolo"),
+                    )
+                    self.assertTrue(result.is_error)
+                    self.assertEqual(result.metadata["execution_status"], "not_run")
+                    self.assertIsNone(result.metadata["exit_code"])
+                    self.assertFalse(side_effect.exists())
+
+    def test_run_tests_supports_test_runner_families_without_shell(self) -> None:
+        completed = subprocess.CompletedProcess([], 0, stdout="ok\n", stderr="")
+        commands = (
+            "python3 -m pytest tests",
+            "pytest tests",
+            "mvn test",
+            "./mvnw verify",
+            "gradle test",
+            "./gradlew check",
+            "npm test",
+            "pnpm run test:unit",
+            "yarn test",
+            "bun test",
+            "go test ./...",
+            "cargo test",
+            "dotnet test",
+            "make check",
+            "tox",
+            "nox",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            with patch("local_agent.tools.shell.subprocess.run", return_value=completed) as mocked_run:
+                for command in commands:
+                    with self.subTest(command=command):
+                        result = run_tests(
+                            {"command": command},
+                            ToolContext(workspace=workspace, approval_mode="yolo"),
+                        )
+                        self.assertFalse(result.is_error)
+                        self.assertEqual(result.metadata["execution_status"], "succeeded")
+                        self.assertFalse(mocked_run.call_args.kwargs["shell"])
+
+    def test_run_tests_maven_policy_preserves_env_and_real_exit_codes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            bin_dir = workspace / "bin"
+            bin_dir.mkdir()
+            maven = bin_dir / "mvn"
+            maven.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            maven.chmod(0o755)
+            context = ToolContext(workspace=workspace, approval_mode="yolo")
+            command = (
+                f"PATH={bin_dir}:$PATH JAVA_HOME=/java8 mvn -s settings.xml "
+                "-Dmaven.repo.local=.m2 -Dmaven.compiler.source=1.8 "
+                "-Dmaven.compiler.target=1.8 test"
+            )
+
+            passed = run_tests({"command": command}, context)
+            maven.write_text("#!/bin/sh\nexit 7\n", encoding="utf-8")
+            failed = run_tests({"command": command.replace(" test", " verify")}, context)
+            skipped = run_tests({"command": "mvn -DskipTests test"}, context)
+
+        self.assertFalse(passed.is_error)
+        self.assertEqual(passed.metadata["exit_code"], 0)
+        self.assertEqual(passed.metadata["environment_keys"], ["JAVA_HOME", "PATH"])
+        self.assertTrue(failed.is_error)
+        self.assertEqual(failed.metadata["exit_code"], 7)
+        self.assertEqual(failed.metadata["execution_status"], "failed")
+        self.assertTrue(skipped.is_error)
+        self.assertEqual(skipped.metadata["execution_status"], "not_run")
+
+    def test_run_tests_cwd_is_canonical_and_cannot_escape_workspace(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            workspace = root / "workspace"
+            module = workspace / "module"
+            outside = root / "outside"
+            module.mkdir(parents=True)
+            outside.mkdir()
+            tests = module / "tests"
+            tests.mkdir()
+            (tests / "test_ok.py").write_text(
+                "import unittest\nclass T(unittest.TestCase):\n    def test_ok(self): self.assertTrue(True)\n",
+                encoding="utf-8",
+            )
+            context = ToolContext(workspace=workspace, approval_mode="yolo")
+
+            allowed = run_tests(
+                {"command": "python3 -m unittest discover -s tests", "cwd": "module"},
+                context,
+            )
+            denied = run_tests(
+                {"command": "python3 -m unittest discover -s tests", "cwd": "../outside"},
+                context,
+            )
+
+        self.assertFalse(allowed.is_error)
+        self.assertEqual(allowed.metadata["working_directory"], str(module))
+        self.assertTrue(denied.is_error)
+        self.assertEqual(denied.metadata["execution_status"], "not_run")
+        self.assertIn("escapes workspace", denied.content)
+
+    def test_run_tests_allow_policy_does_not_bypass_denied_shell(self) -> None:
+        registry = ToolRegistry(shell_tools())
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            tests = workspace / "tests"
+            tests.mkdir()
+            (tests / "test_ok.py").write_text(
+                "import unittest\nclass T(unittest.TestCase):\n    def test_ok(self): self.assertTrue(True)\n",
+                encoding="utf-8",
+            )
+            side_effect = workspace / "side-effect.txt"
+            context = ToolContext(
+                workspace=workspace,
+                approval_mode="yolo",
+                tool_approval={"shell": "deny", "run_tests": "allow"},
+            )
+
+            valid = registry.execute(
+                "run_tests",
+                {"command": "python3 -m unittest discover -s tests"},
+                context,
+            )
+            escaped = registry.execute("run_tests", {"command": f"touch {side_effect}"}, context)
+            shell = registry.execute("shell", {"command": f"touch {side_effect}"}, context)
+            side_effect_exists = side_effect.exists()
+
+        self.assertFalse(valid.is_error)
+        self.assertTrue(escaped.is_error)
+        self.assertEqual(escaped.metadata["execution_status"], "not_run")
+        self.assertTrue(shell.is_error)
+        self.assertEqual(shell.metadata["execution_status"], "denied")
+        self.assertFalse(side_effect_exists)
 
     def test_run_tests_rejects_bare_test_module_with_actionable_command_hint(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

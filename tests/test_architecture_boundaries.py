@@ -26,6 +26,7 @@ OWNER_COMPLEXITY_CEILINGS = {
     "src/local_agent/runtime_read_only_review.py": 641,
     "src/local_agent/runtime_read_only_review_round.py": 450,
     "src/local_agent/safe_partial_report.py": 446,
+    "src/local_agent/tools/shell.py": 474,
     "src/local_agent/steering/pre_review.py": 83,
     "src/local_agent/steering/final_answer.py": 59,
 }

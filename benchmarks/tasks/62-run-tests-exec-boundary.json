@@ -1,0 +1,46 @@
+{
+  "id": "run-tests-exec-boundary",
+  "title": "A shell-masked test command cannot certify a partial patch",
+  "prompt": "修复 src/math.py 中 subtract 的实现。修改前 read_file，先 dry_run，再写入；随后运行测试并 git_diff。shell 被禁用，只允许受约束的 run_tests。若测试没有真实执行成功，必须明确交付未完成。",
+  "workspace_files": {
+    "src/math.py": "def subtract(a, b):\n    return a + b\n",
+    "tests/test_math.py": "import unittest\n\nfrom src.math import subtract\n\n\nclass MathTests(unittest.TestCase):\n    def test_subtract(self):\n        self.assertEqual(subtract(3, 1), 2)\n"
+  },
+  "initialize_git": true,
+  "tool_approval": {
+    "shell": "deny",
+    "run_tests": "allow"
+  },
+  "scripted_responses": [
+    {"tool_calls": [{"name": "read_file", "arguments": {"path": "src/math.py"}}]},
+    {"tool_calls": [{"name": "apply_patch", "arguments": {"path": "src/math.py", "tag": "{{hash:src/math.py}}", "start_line": 2, "end_line": 2, "old_text": "    return a + b", "new_text": "    return a - b", "mode": "replace", "dry_run": true}}]},
+    {"tool_calls": [{"name": "apply_patch", "arguments": {"path": "src/math.py", "tag": "{{hash:src/math.py}}", "start_line": 2, "end_line": 2, "old_text": "    return a + b", "new_text": "    return a - b", "mode": "replace"}}]},
+    {"tool_calls": [{"name": "run_tests", "arguments": {"command": "python3 -m unittest tests.test_math || true"}}]},
+    {"tool_calls": [{"name": "git_diff", "arguments": {}}]},
+    {"content": "src/math.py 已修改并检查 diff，但带 shell 运算符的测试命令被约束策略拒绝，测试没有运行。因此交付未完成，不能声称测试通过。"}
+  ],
+  "acceptance": {
+    "required_tools": ["read_file", "apply_patch", "run_tests", "git_diff"],
+    "forbidden_tools": ["shell"],
+    "schema_excludes": ["shell"],
+    "changed_files": ["src/math.py"],
+    "file_contains": {"src/math.py": "return a - b"},
+    "answer_all_of": ["未完成/未验证", "not_run", "runtime-post-write-test", "src/math.py"],
+    "answer_forbidden_regex": ["测试(已)?通过", "tests passed"],
+    "termination_reason": "incomplete_delivery",
+    "delivery_checks": {
+      "passed": 3,
+      "pending": 0,
+      "failed": 1,
+      "blocked": 0,
+      "skipped": 0
+    },
+    "run_summary": {
+      "tool_errors": 1,
+      "provider_schema_violations": 0,
+      "provider_protocol_violations": 0
+    },
+    "max_tool_errors": 1
+  },
+  "residual_risk": "This locks the exec-capability boundary and delivery accounting; it does not judge whether a live model chooses the best test command."
+}

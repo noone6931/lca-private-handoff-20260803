@@ -43,3 +43,16 @@ class VerificationTimelineTests(unittest.TestCase):
         ]
 
         self.assertIsNone(successful_nonempty_git_diff_after_last_write(results))
+
+    def test_not_run_test_result_is_not_successful_tool_evidence(self) -> None:
+        results = [
+            ToolResultSummary("apply_patch", "Applied patch", changed=True, path="src/App.py"),
+            ToolResultSummary(
+                "run_tests",
+                "shell syntax rejected",
+                is_error=True,
+                metadata={"execution_status": "not_run", "exit_code": None},
+            ),
+        ]
+
+        self.assertFalse(successful_tool_after_last_write(results, "run_tests"))

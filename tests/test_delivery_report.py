@@ -47,6 +47,32 @@ class DeliveryReportTests(unittest.TestCase):
         self.assertIn("failed", report)
         self.assertIn("runtime-post-write-test", report)
 
+    def test_not_run_command_is_a_failed_delivery_check_not_test_evidence(self) -> None:
+        plan = VerificationPlan.from_contract(generate_requirement_contract("修复 subtract 并运行测试。"))
+        results = [
+            ToolResultSummary("read_file", "def subtract(a, b): return a + b", path="src/math.py"),
+            ToolResultSummary("apply_patch", "Applied patch", changed=True, path="src/math.py"),
+            ToolResultSummary(
+                "run_tests",
+                "shell syntax rejected",
+                is_error=True,
+                metadata={
+                    "executed_command": "python3 -m unittest tests.test_math || true",
+                    "execution_status": "not_run",
+                    "exit_code": None,
+                },
+            ),
+            ToolResultSummary("git_diff", "diff --git a/src/math.py b/src/math.py"),
+        ]
+        plan.observe(results, test_plan=TestPlan("python3 -m unittest discover", "project fallback", "project"))
+        plan.record_patch_review(passed=True, reason="review passed", refs=["git_diff:post-write"])
+
+        report = render_delivery_report(plan, results)
+
+        self.assertIn("not_run", report)
+        self.assertIn("failed=1", report)
+        self.assertIn("runtime-post-write-test", report)
+
 
 def _successful_delivery() -> tuple[VerificationPlan, list[ToolResultSummary]]:
     plan = VerificationPlan.from_contract(generate_requirement_contract("修复 subtract 并运行测试。"))

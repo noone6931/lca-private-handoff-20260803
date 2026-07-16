@@ -114,6 +114,23 @@ class VerificationPlanTests(unittest.TestCase):
         self.assertEqual(_item(plan, "runtime-post-write-test").status, "blocked")
         self.assertNotEqual(_item(plan, "runtime-post-write-test").status, "passed")
 
+    def test_rejected_run_tests_command_does_not_satisfy_post_write_verification(self) -> None:
+        plan = self._plan()
+        results = [
+            ToolResultSummary("apply_patch", "Applied patch", changed=True, path="src/UserService.java"),
+            ToolResultSummary(
+                "run_tests",
+                "run_tests rejects shell operators",
+                is_error=True,
+                metadata={"execution_status": "not_run", "exit_code": None},
+            ),
+        ]
+
+        plan.observe(results, test_plan=TestPlan("mvn test", "project fallback", "project"))
+
+        self.assertEqual(_item(plan, "runtime-post-write-test").status, "failed")
+        self.assertNotEqual(_item(plan, "runtime-post-write-test").status, "passed")
+
     def test_reviewer_status_is_explicit(self) -> None:
         plan = self._plan()
 
