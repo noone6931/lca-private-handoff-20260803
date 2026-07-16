@@ -9,6 +9,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
+from ..execution_policy import ExecutionPolicyDecision
+from ..execution_policy import evaluate_execution_policy
+from ..execution_policy import execution_action
 from ..protocol.interactions import InteractionHandler
 from ..protocol.interactions import InteractionRequest
 from ..terminal_io import terminal_input_prompt
@@ -133,7 +136,13 @@ class ToolRegistry:
                 },
             )
         try:
-            denial_reason = _approval_denial_reason(tool, context)
+            policy_decision = _execution_policy_decision(
+                tool,
+                context,
+                interactive_available=_interaction_tool_can_prompt(context),
+            )
+            _emit_context_event(context, "ExecutionPolicyEvaluated", policy_decision.event_payload())
+            denial_reason = _execution_policy_denial_reason(tool, context, policy_decision)
             if denial_reason:
                 return ToolResult(
                     denial_reason,
@@ -225,33 +234,6 @@ def _runtime_read_file_scope_denial_reason(
     )
 
 
-def _approval_denial_reason(tool: Tool, context: ToolContext) -> str | None:
-    config_policy = (context.tool_approval or {}).get(tool.name)
-    session_policy = (context.session_tool_approval or {}).get(tool.name)
-    if config_policy == "deny":
-        return f"Tool '{tool.name}' is denied by tool_approval policy."
-    if session_policy == "reject_always":
-        return f"Tool '{tool.name}' is denied by session approval policy."
-    if config_policy == "prompt":
-        return _interactive_approval_denial_reason(tool, context, allow_session_cache=False)
-    if session_policy == "prompt":
-        return _interactive_approval_denial_reason(tool, context)
-    if session_policy == "allow_always":
-        return None
-    if config_policy == "allow":
-        return None
-    if _approval_mode(context.approval_mode) == "yolo":
-        return None
-    if config_policy is None and tool.name in context.auto_approve_tools:
-        return None
-    mode = _approval_mode(context.approval_mode)
-    if mode == "write" and tool.tier in {"read", "state", "interaction", "write"}:
-        return None
-    if mode == "always-ask" and tool.tier in {"read", "state", "interaction"}:
-        return None
-    return _interactive_approval_denial_reason(tool, context)
-
-
 def _interaction_tool_can_prompt(context: ToolContext) -> bool:
     return context.interaction_handler is not None or sys.stdin.isatty()
 
@@ -259,25 +241,61 @@ def _interaction_tool_can_prompt(context: ToolContext) -> bool:
 def tool_is_preapproved(tool: Tool, context: ToolContext) -> bool:
     """Pure approval projection for background lifecycle owners.
 
-    Background restore paths must never open an approval prompt.  This mirrors
-    the non-interactive branches of ``_approval_denial_reason`` and returns
-    false whenever policy would require user input.
+    Background restore paths never open an approval prompt. The same typed
+    evaluator used by execution returns false for every prompt or denial.
     """
 
-    config_policy = (context.tool_approval or {}).get(tool.name)
-    session_policy = (context.session_tool_approval or {}).get(tool.name)
-    if config_policy in {"deny", "prompt"} or session_policy in {"reject_always", "prompt"}:
-        return False
-    if session_policy == "allow_always" or config_policy == "allow":
-        return True
-    if _approval_mode(context.approval_mode) == "yolo":
-        return True
-    if config_policy is None and tool.name in context.auto_approve_tools:
-        return True
-    mode = _approval_mode(context.approval_mode)
-    if mode == "write":
-        return tool.tier in {"read", "state", "interaction", "write"}
-    return mode == "always-ask" and tool.tier in {"read", "state", "interaction"}
+    return _execution_policy_decision(tool, context, interactive_available=True).outcome == "allow"
+
+
+def _execution_policy_decision(
+    tool: Tool,
+    context: ToolContext,
+    *,
+    interactive_available: bool,
+) -> ExecutionPolicyDecision:
+    return evaluate_execution_policy(
+        execution_action(tool.name, tool.tier),
+        approval_mode=context.approval_mode,
+        config_policy=(context.tool_approval or {}).get(tool.name),
+        session_policy=(context.session_tool_approval or {}).get(tool.name),
+        auto_approved=tool.name in context.auto_approve_tools,
+        interactive_available=interactive_available,
+    )
+
+
+def _execution_policy_denial_reason(
+    tool: Tool,
+    context: ToolContext,
+    decision: ExecutionPolicyDecision,
+) -> str | None:
+    if decision.outcome == "allow":
+        return None
+    if decision.outcome == "prompt":
+        return _interactive_approval_denial_reason(
+            tool,
+            context,
+            allow_session_cache=decision.session_cache_allowed,
+        )
+    if decision.source == "config_per_tool":
+        return f"Tool '{tool.name}' is denied by tool_approval policy."
+    if decision.source == "session_per_tool":
+        return f"Tool '{tool.name}' is denied by session approval policy."
+    _emit_context_event(
+        context,
+        "ApprovalResult",
+        {
+            "tool": tool.name,
+            "tier": tool.tier,
+            "decision": "non_interactive",
+            "allowed": False,
+        },
+    )
+    return (
+        f"Tool '{tool.name}' requires approval, but stdin is not interactive. "
+        "Run with an interactive terminal, use --approval-mode write for write-safe tasks, "
+        "or use --approval-mode yolo only in a trusted workspace."
+    )
 
 
 def _interactive_approval_denial_reason(
@@ -288,22 +306,6 @@ def _interactive_approval_denial_reason(
 ) -> str | None:
     if context.interaction_handler is not None:
         return _interactive_approval_with_handler(tool, context, allow_session_cache=allow_session_cache)
-    if not sys.stdin.isatty():
-        _emit_context_event(
-            context,
-            "ApprovalResult",
-            {
-                "tool": tool.name,
-                "tier": tool.tier,
-                "decision": "non_interactive",
-                "allowed": False,
-            },
-        )
-        return (
-            f"Tool '{tool.name}' requires approval, but stdin is not interactive. "
-            "Run with an interactive terminal, use --approval-mode write for write-safe tasks, "
-            "or use --approval-mode yolo only in a trusted workspace."
-        )
     prompt = _approval_prompt(tool, allow_session_cache=allow_session_cache)
     _emit_context_event(
         context,
@@ -456,11 +458,6 @@ def _emit_approval_result(tool: Tool, context: ToolContext, decision: str, *, al
 def _emit_context_event(context: ToolContext, event_type: str, payload: dict[str, Any]) -> None:
     if context.event_callback is not None:
         context.event_callback(event_type, payload)
-
-
-def _approval_mode(raw_mode: str) -> str:
-    aliases = {"ask": "always-ask", "auto-read": "always-ask", "always_ask": "always-ask"}
-    return aliases.get(raw_mode, raw_mode)
 
 
 def validate_tool_arguments(schema: dict[str, Any], arguments: dict[str, Any]) -> dict[str, Any]:

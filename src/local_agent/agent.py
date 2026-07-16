@@ -186,7 +186,6 @@ from .tool_gateway import _llm_failure_reason
 from .tool_gateway import _validate_runtime_tool_name
 from .tool_gateway import is_session_evidence_reread
 
-
 SYSTEM_PROMPT = """You are a local coding agent running inside a user's workspace.
 
 Default working style:
@@ -1796,6 +1795,7 @@ class AgentRuntime:
         self._session.append("event_v1", event.to_dict())
 
     def _emit_event(self, event_type: str, payload: dict[str, Any]) -> None:
+        self._run.collector.record_event(event_type, payload)
         self._events.emit(event_type, payload)
 
 

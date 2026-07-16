@@ -21,6 +21,7 @@ EVENT_TYPES = {
     "ToolFailed",
     "ApprovalRequested",
     "ApprovalResult",
+    "ExecutionPolicyEvaluated",
     "InteractionRequested",
     "InteractionResolved",
     "InteractionCancelled",

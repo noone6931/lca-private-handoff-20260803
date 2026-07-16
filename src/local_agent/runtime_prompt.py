@@ -387,6 +387,18 @@ def _format_last_run_status(summary: dict[str, Any]) -> list[str]:
     if isinstance(tool_counts, dict) and tool_counts:
         rendered_tools = ", ".join(f"{name}={count}" for name, count in sorted(tool_counts.items()))
         lines.append(f"  - tools: {rendered_tools}")
+    execution_policy = summary.get("execution_policy")
+    if isinstance(execution_policy, dict) and execution_policy.get("evaluated", 0):
+        lines.append(
+            "  - execution_policy: "
+            f"evaluated={execution_policy.get('evaluated', 0)}, "
+            f"allow={execution_policy.get('allow', 0)}, "
+            f"prompt={execution_policy.get('prompt', 0)}, "
+            f"deny={execution_policy.get('deny', 0)}, "
+            "unsandboxed_exec_evaluations="
+            f"{execution_policy.get('unsandboxed_exec_evaluations', 0)}, "
+            f"invalid_events={execution_policy.get('invalid_events', 0)}"
+        )
     discovery_calls = summary.get("file_discovery_calls", 0)
     unknown_tool_calls = summary.get("unknown_tool_calls", 0)
     if discovery_calls or unknown_tool_calls:

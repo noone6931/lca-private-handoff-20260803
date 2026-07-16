@@ -32,6 +32,8 @@ OWNER_COMPLEXITY_CEILINGS = {
     "src/local_agent/steering/final_answer.py": 59,
     "src/local_agent/workflow_profile.py": 165,
     "src/local_agent/runtime_workflow_profile.py": 44,
+    "src/local_agent/execution_policy.py": 170,
+    "src/local_agent/tools/base.py": 550,
 }
 LEGACY_COMPLEXITY_DEBT_CEILINGS = {
     "src/local_agent/agent.py": 1808,
@@ -211,6 +213,17 @@ class ArchitectureBoundaryTests(unittest.TestCase):
         self.assertIn("from .runtime_read_only_review import ReadOnlyReviewPhase", facade)
         self.assertNotIn("implementation_readiness_required", runtime)
         self.assertNotIn("if self._config.workflow_profile", runtime)
+
+    def test_execution_policy_owner_is_pure_and_registry_has_no_duplicate_policy_tree(self) -> None:
+        owner = (ROOT / "src/local_agent/execution_policy.py").read_text(encoding="utf-8")
+        registry = (ROOT / "src/local_agent/tools/base.py").read_text(encoding="utf-8")
+        self.assertNotIn("from .tools", owner)
+        self.assertNotIn("from .agent", owner)
+        self.assertNotIn("input(", owner)
+        self.assertNotIn("event_callback", owner)
+        self.assertIn("return evaluate_execution_policy(", registry)
+        self.assertNotIn("def _approval_denial_reason", registry)
+        self.assertNotIn("config_policy in", registry)
 
     def test_runtime_strategy_owners_do_not_reintroduce_business_keyword_guards(self) -> None:
         strategy_files = (

@@ -4,6 +4,10 @@ from dataclasses import dataclass, field
 import time
 from typing import Any, Mapping
 
+from .execution_policy import EXECUTION_POLICY_OUTCOMES
+from .execution_policy import EXECUTION_POLICY_SOURCES
+from .execution_policy import EXECUTION_SANDBOX_STATES
+
 
 READ_ONLY_REVIEWER_LIFECYCLE_CATEGORIES = frozenset(
     {"arguments", "document_consistency", "implementation_readiness", "protocol"}
@@ -97,6 +101,13 @@ class RunStats:
     safe_partial_rejected_categories: dict[str, int] = field(default_factory=dict)
     tool_choice_exact_forces: int = 0
     tool_choice_exact_exhausted: int = 0
+    execution_policy_evaluated: int = 0
+    execution_policy_allow: int = 0
+    execution_policy_prompt: int = 0
+    execution_policy_deny: int = 0
+    execution_policy_unsandboxed_exec_evaluations: int = 0
+    execution_policy_invalid_events: int = 0
+    execution_policy_sources: dict[str, int] = field(default_factory=dict)
     tool_counts: dict[str, int] = field(default_factory=dict)
     guard_start: dict[str, int] = field(default_factory=dict)
     steer_start: dict[str, int] = field(default_factory=dict)
@@ -181,6 +192,29 @@ class RunCollector:
         self._stats.tool_counts[name] = self._stats.tool_counts.get(name, 0) + 1
         if name == "glob_files":
             self._stats.file_discovery_calls += 1
+
+    def record_event(self, event_type: str, payload: Mapping[str, Any]) -> None:
+        if event_type != "ExecutionPolicyEvaluated" or self._stats is None:
+            return
+        outcome = payload.get("outcome")
+        source = payload.get("source")
+        sandbox_state = payload.get("sandbox_state")
+        if (
+            outcome not in EXECUTION_POLICY_OUTCOMES
+            or source not in EXECUTION_POLICY_SOURCES
+            or sandbox_state not in EXECUTION_SANDBOX_STATES
+        ):
+            self._stats.execution_policy_invalid_events += 1
+            return
+        self._stats.execution_policy_evaluated += 1
+        setattr(
+            self._stats,
+            f"execution_policy_{outcome}",
+            getattr(self._stats, f"execution_policy_{outcome}") + 1,
+        )
+        self._stats.execution_policy_sources[source] = self._stats.execution_policy_sources.get(source, 0) + 1
+        if sandbox_state == "unsandboxed":
+            self._stats.execution_policy_unsandboxed_exec_evaluations += 1
 
     def record_tool_finished(self, *, is_error: bool) -> None:
         if self._stats is not None and is_error:
@@ -582,6 +616,15 @@ class RunCollector:
             "tool_choice_exact": {
                 "forces": stats.tool_choice_exact_forces,
                 "exhausted": stats.tool_choice_exact_exhausted,
+            },
+            "execution_policy": {
+                "evaluated": stats.execution_policy_evaluated,
+                "allow": stats.execution_policy_allow,
+                "prompt": stats.execution_policy_prompt,
+                "deny": stats.execution_policy_deny,
+                "unsandboxed_exec_evaluations": stats.execution_policy_unsandboxed_exec_evaluations,
+                "invalid_events": stats.execution_policy_invalid_events,
+                "sources": dict(sorted(stats.execution_policy_sources.items())),
             },
             "tool_counts": dict(sorted(stats.tool_counts.items())),
             "guard_hits": {key: value for key, value in guard_hits.items() if value},

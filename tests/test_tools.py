@@ -2464,11 +2464,15 @@ class ToolTests(unittest.TestCase):
                 result = registry.execute("sample_exec", "{}", context)
 
         self.assertFalse(result.is_error)
-        self.assertEqual(events[0][0], "ApprovalRequested")
-        self.assertEqual(events[0][1]["tool"], "sample_exec")
-        self.assertEqual(events[1][0], "ApprovalResult")
-        self.assertEqual(events[1][1]["decision"], "allow_once")
-        self.assertTrue(events[1][1]["allowed"])
+        self.assertEqual([event_type for event_type, _payload in events], [
+            "ExecutionPolicyEvaluated",
+            "ApprovalRequested",
+            "ApprovalResult",
+        ])
+        self.assertEqual(events[0][1]["outcome"], "prompt")
+        self.assertEqual(events[1][1]["tool"], "sample_exec")
+        self.assertEqual(events[2][1]["decision"], "allow_once")
+        self.assertTrue(events[2][1]["allowed"])
 
     def test_write_tool_approval_eof_returns_tool_error(self) -> None:
         registry = ToolRegistry(
