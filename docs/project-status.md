@@ -32,7 +32,7 @@ LCA、OMP 与 Codex 的当前源码级对照和路线校正见 `docs/lca-omp-cod
 
 ## 当前进度
 
-当前 stable 为 T-203：release `20260715T074350Z-7ccc7ad323dc-7bf1bbf4c507`，revision `7ccc7ad323dcc9ce521e0c710b93fc65b4f4888f`，digest `7bf1bbf4c5078fa510d2370b5bfbc37ee05735768e5db49c70724de432219f53`；发布基线为 950/950 unittest、61/61 deterministic benchmark、13/13 architecture checks。T-203 在 `SafePartialReport` Owner 内把 implementation-readiness 失败装配为完整、可行动的 typed `BLOCKED` 交付；不新增 gate、LLM、reviewer、rewrite 或 attempt，也不接收 rejected candidate。独立 review 修复 `.html/.md` 后缀覆盖 typed source role 的误分类。小牙对 immutable candidate 连跑三次 fresh S4：3/3 读取 Markdown、HTML、image 和两个 code root，hard invariant 3/3、typed BLOCKED usability 3/3；无写入、协议破坏、虚构 Owner/API/表或 rejected candidate 泄漏。run 1 的 3 次 provider schema violation 与历史读取 error 作为残余 telemetry 保留，run 2/3 为零 tool/schema/protocol error 的 clean usable。P12 S4 至此收口。
+当前 stable 为 T-207：release `20260716T014653Z-3d792ecb992d-5e1883ffdcdb`，revision `3d792ecb992ddad8f3cb91fbb69ed2f3667f10ea`，digest `5e1883ffdcdb988990908ba258a706b7b18578fa864bd4c80cb166ec81ce545b`；release gate 通过 963/963 unittest、compileall 和 diff-check，独立门禁另通过 62/62 deterministic benchmark 与 13/13 architecture checks。该版本继承 T-203 的完整、可行动 typed `BLOCKED` 交付和三次 fresh S4 hard/usability 验收，并新增 T-207 的 `run_tests` exec 边界修复。P12 S4 与 test evidence blocker 至此收口。
 
 T-204 已完成 S5 readiness closure，结论为 typed `BLOCKED`，未选择实施切片、未进入阶段 B。新增 `zqylfinancebasemasterfccb090b` 与 `zqylcrclfinancemaster7b875cd3c` 后已证实：直接保理底层值为 `FACTOR_TYPE=4`，`104` 是云信融资 10 与直接保理 4 的组合码；放款完成是 `T_FINANCE_PROJECT.APPLY_STATUS=60`；云信 `XF0003` 显示为“拓展服务费”，计划费用经 `findDetailList` 映射到旧名 `expectApplySponsorTaxFee`，而 `YJ0001` 保荐商佣金是独立费用项。放款完成链路会向 payment 推送实际费用和部分主体/日期，但 payment 现有结构化字段与 JSON 参数仍不能形成完整待制单数据源，`BusinessPayer.finalAmount` 还是多费用合计而非 `XF0003` 单项。五个候选均缺至少一项 Owner、完整 data contract、write target、test entry 或 rollback boundary，因此未修改业务原目录。下一步不再扩展 LCA gate，而是补齐目标业务契约后重新进入 S5。项目状态暂只维护 Markdown，不同步 Excel。
 
@@ -40,7 +40,7 @@ T-205 已完成最小业务架构契约，见 `docs/extension-service-fee-s5-con
 
 T-206 已按 `HARNESS_BLOCKED` 收束。Corretto `1.8.0_472` + 显式 source/target 1.8 下，finance-base 983 个源文件与 payment 660 个源文件基线及独立复验均成功；loan-base / loan-application Owner 审计也未改变 finance-base + zqylpayment 写范围。fresh stable session `20260715T102324610470Z` 仅修改一个 finance-base DTO，未实现 payment 持久化、API、DDL 或测试，却通过 `run_tests` 中的 pipe/`||` 把 Maven 失败包装为 exit 0，delivery audit 未识别 7/7 业务验收仍未验证。根因不是环境或业务契约，而是 `shell=deny,run_tests=allow` 时 `run_tests` 仍复用 `shell=True`，形成执行权限绕过和测试证据失真。T-207 先在 Tool Owner 内把 run_tests 收为非 shell、受约束的测试 runner；独立 review/stable 后再用 fresh T-208 重跑 S5-1。生产 Oracle JDK 1.8.0_121 VM 复核仍保留为业务交付门禁。
 
-T-207 R1 candidate 已完成并通过独立 review：revision `3d792ecb992ddad8f3cb91fbb69ed2f3667f10ea`，candidate `20260716T013934Z-3d792ecb992d-d63b607e551d`，digest `d63b607e551d4528573eb6833ba6e79ead3b89fa14ad153bf05ea1d857b98d55`。R1 拒绝 runner path（仅允许 canonical cwd 内 `./mvnw` / `./gradlew`）、在模型环境生效前由进程 PATH 固定 bare runner，并拒绝加载型注入环境；`shell.py` 降至 357 行，runner policy 由 217 行窄 Owner 承担，`agent.py` 保持 1,873 行/71 methods。独立门禁为 963/963 unittest、62/62 deterministic benchmark、13/13 architecture checks，compileall、diff-check、CLI help 全绿。`run_tests` 的真实边界是 exec-tier 测试/构建代码执行：保证结构化 argv、无 shell 拼接和真实退出状态，但不是 sandbox。默认 stable 暂保持 T-203，待 immutable 黑盒权限/证据回归后发布 T-207 stable，再启动 fresh T-208。
+T-207 R1 已发布 stable。小牙 immutable 黑盒 session `20260716T014326712365Z` / run `40059c1df1934f589afe0b37da612bf3` 证明合法 unittest 和显式 PATH 场景真实成功，指定五类危险调用全部 `not_run`，危险 marker 为零，provider protocol violation 为零；最初两次 `run_tests` 因默认 workflow 尚未释放工具而产生 2 次 schema violation，不是 runner 失败。`shell.py` 为 357 行，runner policy 由 217 行窄 Owner 承担，`agent.py` 保持 1,873 行/71 methods。残余观察是 ToolResult metadata 尚未投影到用户可见 JSONL/输出，特殊审计任务也支付了 20 次 LLM 请求；它们进入 ExecutionPolicy observability / workflow profile 路线，不为单一样本继续加 gate。首个 candidate 因从带 ignored build artifacts 的 checkout 构建而与 clean stable digest 不同；tracked runtime 文件逐项一致，stable 已从 clean detached worktree 发布，后续 candidate 同样必须从 clean worktree 构建。
 
 已具备的核心能力：
 
@@ -226,7 +226,7 @@ T-207 R1 candidate 已完成并通过独立 review：revision `3d792ecb992ddad8f
 | no-edit evidence gate | 已完成 | CompletionAudit 不再接受只有“blocked/unexecuted”的文字自述；必须有 search/LSP 未命中、路径缺失、relevance/approval 拒绝等工具证据，才允许实现任务在无 diff 时收尾。 |
 | ToolRegistry 参数归一 | 已完成 MVP 版 | `src/local_agent/tools/argument_normalization.py` 在 schema 校验前仅映射已观测 scalar alias；冲突值直接拒绝，随后仍执行原 schema、approval、path/hash 和 anchored patch 校验。 |
 | 跨 root owner / impact evidence matrix | 已完成 MVP 版 | “设计/架构”以及“owner 定位/影响范围/调用链”的多 root 只读任务共用 requirement + 每 root source-read + 六次补证据预算；避免任务名称不是“设计”就无限探索。 |
-| 测试基线 | 已完成，分层记录 | T-203 stable 为 950/950 unittest、61/61 benchmark、13/13 architecture；T-207 R1 candidate 已独立通过 963/963、62/62、13/13，compileall、diff check、help 均通过。三次 fresh S4 hard 3/3、usability 3/3。 |
+| 测试基线 | 已完成，分层记录 | T-207 stable 为 963/963 unittest、62/62 benchmark、13/13 architecture；compileall、diff check、help 与 release publish gate 通过。三次 fresh S4 hard 3/3、usability 3/3；T-207 immutable 权限/证据黑盒通过。 |
 
 ## 下一步 Todo
 
@@ -397,9 +397,9 @@ T-207 R1 candidate 已完成并通过独立 review：revision `3d792ecb992ddad8f
 | T-202 | OMP-aligned Read-only Control-flow Simplification | 已完成并独立 review；S4 可用性未通过，未发布 | P12/Architecture | pre-review audit、claim transport 与 reviewer correction 各自有重复候选改写/纠正生命周期，安全价值存在，但控制流叠加降低可用性。 | commits `3f9e149` + `39c93d6` 删除有状态 pre-review coordinator，候选准备共享最多 1 次改写，reviewer correction 统一由纯 Owner 与单预算管理；未新增 gate/attempt，生产和控制链净减。946/60/13 与静态门禁通过。三次 fresh S4 hard 3/3、usability 0/3，candidate `20260715T065304Z-39c93d652e59-898b70eac3d2` 不发布。 |
 | T-203 | Typed Blocked Delivery | 已完成并发布 stable | P12/S4 | 现有 safe partial 能阻止 rejected draft 泄漏，但只是泛化 evidence dump；在无法安全选择实施切片时，用户拿不到完整的阻塞结论和下一步所需信息。 | commit `7ccc7ad` 只由 typed contract/handoff/findings/reason 生成完整 BLOCKED 交付，不接收 rejected candidate、不新增 gate/reviewer/rewrite/attempt。950/61/13、三次 S4 hard 3/3、usability 3/3；stable `20260715T074350Z-7ccc7ad323dc-7bf1bbf4c507`。 |
 | T-204 | S5 Readiness Closure + Conditional Isolated Delivery | 已完成只读调查；typed BLOCKED，未进入阶段 B | P12/S5 | 首轮只有 zqylpayment/mpspay，无法证明目标数据契约、Owner 与测试入口；补充 finance-base/crcl-finance 后关闭了费用、状态和类型事实缺口，但五候选仍无一五维全闭合。 | 已确认 `XF0003` 拓展服务费、`YJ0001` 独立保荐商佣金、`FACTOR_TYPE=4`、`APPLY_STATUS=60` 及实际费用推送链；仍缺目标列表完整契约、目标写入模型、可执行测试入口和回滚边界。未创建隔离副本、未运行 stable 写路径、未修改五个只读根。下一步由业务设计补齐最小契约后再开 S5。 |
-| T-205 | S5-1 Minimal Business Contract | 架构契约已完成；准备 Maven preflight 与 stable 执行 | P12/S5 | T-204 的 BLOCKED 来自业务契约缺失，不应通过修改 Harness 或猜字段推进。需要选择能真实验证跨仓 write/test/diff/reviewer 的最小闭合切片。 | `docs/extension-service-fee-s5-contract.md` 决定由 finance-base 扩展通用 fee event，zqylpayment 持有候选快照与待制单列表；实际 `XF0003` 为唯一金额口径，无历史回灌。首切片不含前端/Word/回退/导出。现有 `~/.m2/settings.xml` 需在隔离副本验证能否解析私有 parent，成功后由 T-203 stable 执行。 |
+| T-205 | S5-1 Minimal Business Contract | 架构契约已完成；Maven/JDK preflight 已通过 | P12/S5 | T-204 的 BLOCKED 来自业务契约缺失，不应通过修改 Harness 或猜字段推进。需要选择能真实验证跨仓 write/test/diff/reviewer 的最小闭合切片。 | `docs/extension-service-fee-s5-contract.md` 决定由 finance-base 扩展通用 fee event，zqylpayment 持有候选快照与待制单列表；实际 `XF0003` 为唯一金额口径，无历史回灌。首切片不含前端/Word/回退/导出。私有 Maven 与 Java 8 preflight 已通过，下一步由 T-207 stable 执行 fresh T-208。 |
 | T-206 | Immutable Stable S5-1 Write-path | 已完成失败审计：HARNESS_BLOCKED | P12/S5 | 必须在冻结 Harness、原业务仓只读和隔离 Maven/JDK 环境下证明 stable LCA 能完成真实跨仓闭环。 | session `20260715T102324610470Z` 只改一个 DTO，遗漏其余 7/7 验收；`run_tests` 通过 shell control syntax 掩盖失败并被误计为成功。独立 Java 8 编译证明环境正常，业务原目录未改；残留 `/private/tmp` 工作区已被系统清理，不作为交付。 |
-| T-207 | RunTests Exec-Capability Boundary | R1 candidate 已完成并独立通过；待 immutable 黑盒回归后发布 | P12/S5/Security | `run_tests` 可单独批准却与 shell 共用 `shell=True`，既能绕过 `shell=deny`，又能把失败包装为成功证据。 | 初版 `d0f9153` 关闭 shell 拼接和伪退出码；R1 `3d792ec` 固定 runner identity、拒绝 path/env 直接绕过并明确 exec-tier/非 sandbox。独立 963/62/13 与静态门禁通过，未改 `agent.py`、未新增 gate/attempt；immutable 回归合格后发布并开 T-208。 |
+| T-207 | RunTests Exec-Capability Boundary | 已完成并发布 stable | P12/S5/Security | `run_tests` 可单独批准却与 shell 共用 `shell=True`，既能绕过 `shell=deny`，又能把失败包装为成功证据。 | 初版 `d0f9153` 关闭 shell 拼接和伪退出码；R1 `3d792ec` 固定 runner identity、拒绝 path/env 直接绕过并明确 exec-tier/非 sandbox。963/62/13、immutable 黑盒和 release gate 通过；stable `20260716T014653Z-3d792ecb992d-5e1883ffdcdb`。 |
 
 ## 风险清单
 
@@ -560,10 +560,10 @@ T-207 R1 candidate 已完成并通过独立 review：revision `3d792ecb992ddad8f
 | 项目 | 结论 | 依据 |
 |---|---|---|
 | 主链路 | 通过 | 百炼真实小改复测已跑通 todo、dry_run、apply_patch、session allow、rollback、run_tests、git_diff。 |
-| 测试 | 分层通过 | P5 收口时 90 个 unittest；当前 T-203 stable 为 950/61/13；T-207 R1 candidate 独立门禁为 963/62/13；fresh S4 hard invariant 3/3、typed BLOCKED usability 3/3。 |
+| 测试 | 分层通过 | P5 收口时 90 个 unittest；当前 T-207 stable 为 963/62/13；fresh S4 hard invariant 3/3、typed BLOCKED usability 3/3，T-207 immutable 权限/证据黑盒通过。 |
 | 日用入口 | 通过 | README 已补只读分析和小改任务命令模板。 |
 | 开放风险 | 可接受 | shell 仍非沙箱、prompt injection 仍需靠审批和封闭 VM；provider/model 专用 tokenizer、输出 reserve、managed skills、完整 reviewer 和完整 OMP ToolChoiceQueue 继续后置评估。 |
-| 下一阶段 | S5 首个真实小切片 | P12 已完成并发布 T-203 stable。立即在隔离 worktree 选择一个边界小、证据明确的真实实现切片，完成 read -> preview -> patch -> test -> diff -> reviewer -> delivery audit；之后进入 S6~S10。 |
+| 下一阶段 | S5 首个真实小切片 | P12 与 T-207 已完成并发布 stable。立即以 fresh T-208 在隔离业务副本执行已固定的 S5-1，完成 read -> preview -> patch -> test -> diff -> reviewer -> delivery audit；之后进入 S6~S10。 |
 
 ## 推荐工作流
 
@@ -598,6 +598,6 @@ T-207 R1 candidate 已完成并通过独立 review：revision `3d792ecb992ddad8f
 
 用户确认本文件后，建议按以下顺序继续：
 
-1. 完成 T-207 immutable 黑盒回归并发布 stable，然后以 fresh T-208 重跑已固定契约的 S5-1，要求需求、源码证据、patch、测试、diff、reviewer 和 delivery audit 都可审计。
+1. 以 fresh T-208 在隔离业务副本重跑已固定契约的 S5-1，要求需求、源码证据、patch、测试、diff、reviewer 和 delivery audit 都可审计。
 2. 随后按 S6~S10 顺序推进失败恢复、连续性、权限、需求变更和交付审计；每一段都用小切片和 deterministic benchmark 证明。
 3. Subagent/Advisor、AST/LSP write、MCP、Browser 和完整 TUI 继续后置；只有真实小切片暴露明确收益时再提升优先级。

@@ -159,7 +159,7 @@ T-207 初版将 `run_tests` 从 `shell=True` 改为 `shell=False`，拒绝 shell
 
 ### 建议
 
-T-207 R1 `3d792ec` 已按这一边界完成：拒绝 runner path（仅允许 canonical cwd 内 wrapper）、先从进程 PATH 固定 bare runner、拒绝直接加载型 env，并把工具说明与 metadata 明确标为 exec-tier、非 sandbox。独立门禁为 963/963 unittest、62/62 benchmark、13/13 architecture checks；没有新增 Runtime gate、LLM attempt 或业务关键词。
+T-207 R1 `3d792ec` 已按这一边界完成并发布 stable：拒绝 runner path（仅允许 canonical cwd 内 wrapper）、先从进程 PATH 固定 bare runner、拒绝直接加载型 env，并把工具说明与 metadata 明确标为 exec-tier、非 sandbox。独立门禁为 963/963 unittest、62/62 benchmark、13/13 architecture checks；immutable 黑盒证明合法 runner 成功、指定五类危险调用全部 `not_run` 且 marker 干净。没有新增 Runtime gate、LLM attempt 或业务关键词。残余是 metadata 尚未进入用户可见审计流，归后续 ExecutionPolicy observability，而不是继续扩 runner blacklist。
 
 近期只做两件事：
 
@@ -299,7 +299,7 @@ CLI / Terminal / Future TUI / Remote
 
 | 优先级 | 工作 | 验收 |
 |---|---|---|
-| P0 | 完成 T-207 immutable 黑盒回归并发布 stable | runner identity/env 直接绕过已关闭；验证权限/证据语义后原子发布 |
+| 已完成 | T-207 immutable 黑盒回归并发布 stable | stable `20260716T014653Z-3d792ecb992d-5e1883ffdcdb` |
 | P0 | fresh T-208 重跑 S5-1 | 真正完成 DTO + persistence + API + DDL + tests + diff + delivery，或给出可信 blocker |
 | P0 | 冻结新的 read-only gate/taxonomy | 除安全漏洞或两个独立跨场景复现外，不扩 Harness |
 | P1 | 将重型只读流水线变成 workflow profile | 保留能力；默认 coding 不支付 reviewer/repair 成本 |
