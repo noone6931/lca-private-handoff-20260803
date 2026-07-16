@@ -400,6 +400,7 @@ T-207 R1 已发布 stable。小牙 immutable 黑盒 session `20260716T0143267123
 | T-205 | S5-1 Minimal Business Contract | 架构契约已完成；Maven/JDK preflight 已通过 | P12/S5 | T-204 的 BLOCKED 来自业务契约缺失，不应通过修改 Harness 或猜字段推进。需要选择能真实验证跨仓 write/test/diff/reviewer 的最小闭合切片。 | `docs/extension-service-fee-s5-contract.md` 决定由 finance-base 扩展通用 fee event，zqylpayment 持有候选快照与待制单列表；实际 `XF0003` 为唯一金额口径，无历史回灌。首切片不含前端/Word/回退/导出。私有 Maven 与 Java 8 preflight 已通过，下一步由 T-207 stable 执行 fresh T-208。 |
 | T-206 | Immutable Stable S5-1 Write-path | 已完成失败审计：HARNESS_BLOCKED | P12/S5 | 必须在冻结 Harness、原业务仓只读和隔离 Maven/JDK 环境下证明 stable LCA 能完成真实跨仓闭环。 | session `20260715T102324610470Z` 只改一个 DTO，遗漏其余 7/7 验收；`run_tests` 通过 shell control syntax 掩盖失败并被误计为成功。独立 Java 8 编译证明环境正常，业务原目录未改；残留 `/private/tmp` 工作区已被系统清理，不作为交付。 |
 | T-207 | RunTests Exec-Capability Boundary | 已完成并发布 stable | P12/S5/Security | `run_tests` 可单独批准却与 shell 共用 `shell=True`，既能绕过 `shell=deny`，又能把失败包装为成功证据。 | 初版 `d0f9153` 关闭 shell 拼接和伪退出码；R1 `3d792ec` 固定 runner identity、拒绝 path/env 直接绕过并明确 exec-tier/非 sandbox。963/62/13、immutable 黑盒和 release gate 通过；stable `20260716T014653Z-3d792ecb992d-5e1883ffdcdb`。 |
+| T-208 | Fresh T-207 Stable S5-1 Write-path | 执行中 | P12/S5 | 用已发布 stable 而非开发 checkout，在全新隔离业务副本验证完整的跨仓需求交付，不把模型低效转化为新 Harness 功能。 | 大猛已收到整批任务：stable LCA 必须完成 finance-base producer、zqylpayment 候选快照/事务幂等/分页 API/DDL/tests/diff/reviewer/delivery；原业务目录与 LCA 源码保持只读。最终只接受 `DELIVERED` 或证据完整的 `BLOCKED/FAILED`。 |
 
 ## 风险清单
 

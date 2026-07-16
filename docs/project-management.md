@@ -319,6 +319,7 @@ python3 scripts/sync_project_excel.py
 | T-205 | P0 | P12/S5 | Minimal Business Contract for Stable Write-path | 架构契约已完成；准备 Maven preflight | 小红设计/维护状态，大猛执行 | T-204 已证明不能把业务不确定性当 Harness 缺陷；需要在冻结 Harness 的情况下给 stable LCA 一个完整、真实、可测的跨仓切片。 | 选择 finance-base 通用单项费用事件 + zqylpayment 实际 XF0003 候选快照/待制单列表；禁止预计值和 payer 汇总回退，后置前端/制单/Word/回退/导出。契约见 `docs/extension-service-fee-s5-contract.md`。现有 Maven settings 先在隔离副本验证私有依赖可用性。 |
 | T-206 | P0 | P12/S5 | Immutable Stable S5-1 Write-path | 已完成失败审计：HARNESS_BLOCKED | 大猛执行，小红复核/维护状态 | 用真实跨仓需求验证 stable LCA 的 scope、patch、test、diff、reviewer 和 delivery，不在 Harness 中加入业务补丁。 | Java 8 基线与 Owner 审计通过；session `20260715T102324610470Z` 仅改一个 DTO，未完成 payment/DDL/test，并用 run_tests shell control syntax 将失败包装为成功。独立编译成功，排除 ENV_BLOCKED；原目录未改。 |
 | T-207 | P0 | P12/S5/Security | RunTests Exec-Capability Boundary | 已完成并发布 stable | 大猛实现，小红独立 review/维护状态，小牙 candidate 回归 | 关闭 `shell=deny,run_tests=allow` 下的任意 shell 能力走私和伪成功测试证据，同时保留可单独批准测试的体验。 | `3d792ec` 已用非 shell argv、固定 runner identity、受控 cwd、注入 env 拒绝与真实 exit metadata 完成通用修复；963/62/13、immutable 黑盒和 release gate 通过。stable `20260716T014653Z-3d792ecb992d-5e1883ffdcdb`。 |
+| T-208 | P0 | P12/S5 | Fresh T-207 Stable S5-1 Write-path | 执行中 | 大猛执行，小红独立 review/维护状态 | 用已发布 T-207 stable 在隔离业务副本完成拓展服务费 S5-1 的 producer、候选快照、事务幂等、查询、DDL、测试、diff 和交付审计。 | 禁止改 Harness、业务原目录或手工代写；最终只接受 `DELIVERED` 或证据完整的 `BLOCKED/FAILED`，完成后由小红独立审查。 |
 
 ## 风险与决策
 
