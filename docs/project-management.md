@@ -1,6 +1,6 @@
 # Local Coding Agent 开发项目管理数据源
 
-更新时间：2026-07-15
+更新时间：2026-07-16
 
 本文件是开发 `local-coding-agent` 过程中的项目管理数据源，给参与开发本项目的人和协作 Agent 读取。它不是 LCA 运行时自己的 memory 或用户项目记忆。
 
@@ -17,10 +17,11 @@ python3 scripts/sync_project_excel.py
 | 字段 | 当前值 | 说明 |
 |---|---|---|
 | 最终目标 | 个人本地编程助手 Agent | 本地优先、封闭 VM 可用、只访问指定 AI API，能读代码、搜代码、改代码、跑测试、生成 diff、沉淀项目记忆。 |
-| 当前阶段 | P12 S4 已发布 T-203 stable；T-206 暴露 run_tests 权限/证据缺口，T-207 修复中 | 当前 stable 仍为 T-203 `20260715T074350Z-7ccc7ad323dc-7bf1bbf4c507`。T-206 的 Java 8 基线和 Owner 审计均通过，但 session `20260715T102324610470Z` 只改一个 DTO，并通过 `run_tests` 的 pipe/`||` 掩盖 Maven 失败；结论 `HARNESS_BLOCKED`，不是业务或环境阻塞。T-207 将 run_tests 收为受约束的非 shell 测试 runner，独立 review/stable 后再开 fresh T-208 重跑 S5-1。`agent.py` 1,873 行/71 methods。 |
+| 当前阶段 | P12 S4 已发布 T-203 stable；T-207 R1 candidate 已独立通过 | 当前 stable 仍为 T-203 `20260715T074350Z-7ccc7ad323dc-7bf1bbf4c507`。T-206 的 Java 8 基线和 Owner 审计均通过，但 session `20260715T102324610470Z` 只改一个 DTO，并通过 `run_tests` 的 pipe/`||` 掩盖 Maven 失败；结论 `HARNESS_BLOCKED`。T-207 R1 `3d792ec` 已关闭 shell 拼接、伪退出码及 runner identity/env 直接绕过，并明确 exec-tier/非 sandbox；待 immutable 黑盒回归后发布，再开 fresh T-208。`agent.py` 1,873 行/71 methods。 |
 | 推荐入口 | `./agent "阅读当前项目"` | 自动设置 `PYTHONPATH=src`，默认当前目录为 workspace。 |
 | Token 配置 | 环境变量 / `--env-file` / `.env` | 优先级为真实环境变量、显式 env-file、用户级 `${AGENT_CONFIG_DIR:-~/.config/local-coding-agent}/.env`、workspace `.env`；stable snapshot 不携带密钥。 |
-| 测试数 | stable 950 | T-203 stable 为 950/61/13；完整 unittest、deterministic benchmark、architecture、compile、diff、help 与 release publish gate 均通过。三次 live S4 hard invariant 3/3、usability 3/3。Excel 由本 Markdown 生成。 |
+| 测试数 | stable 950；T-207 R1 candidate 963 | T-203 stable 为 950/61/13；T-207 R1 candidate 已独立通过 963/62/13，compileall、diff-check、CLI help 全绿。三次 live S4 hard invariant 3/3、usability 3/3。Excel 本轮按用户要求暂不生成。 |
+| 三方架构对照 | 已完成 2026-07-16 基线 | 见 `docs/lca-omp-codex-architecture-comparison-2026-07-16.md`；目标修正为 OMP/Codex 级通用底座 + LCA 企业工作流，不以完整复制 OMP platform 为 KPI。 |
 | 默认 budget_seconds | 600 | 单次任务默认 10 分钟墙钟预算；`--budget-seconds 0` 可关闭。 |
 | 默认 max_steps | 0 | 表示不限步；仅在用户显式设置时作为防失控保险丝。 |
 | 预算执行 | 细粒度 | LLM 请求和 shell/run_tests timeout 会按剩余预算夹紧；deadline 到期会补齐未执行工具结果。 |
@@ -46,7 +47,7 @@ python3 scripts/sync_project_excel.py
 | Evidence Ledger | 已完成 MVP 版 | Runtime 会从 `read_file`、`search_code`、LSP、patch、run_tests、git 等工具结果提炼短证据账本，作为 provider-bound context 注入，并写入 session JSONL `evidence` 事件。 |
 | Implementation quality / safe new-file | 已完成 MVP 版 | `git_diff` 会对 comment-only 代码实现 patch 输出 reviewer warning；`write_file dry_run=true` 可预览新文件 diff，真实创建写 patch log，`rollback_patch` 可删除本 session 新建文件。 |
 | No-edit final hygiene | 已完成 MVP 版 | 实现任务准备以“无法安全实现/目标服务缺失/无改动”停止时，runtime 会要求先做 todo/git 收束，并临时只开放 todo/git hygiene 工具。 |
-| Event/Command Protocol | 已完成 MVP 版 | `src/local_agent/protocol/events.py` / `commands.py` 提供 dataclass event/command shape；Runtime 可注入 `EventSink`，CLI 使用 `StderrEventSink` 渲染，session JSONL 写入 `event_v1`。 |
+| Event/Command Protocol | 已完成数据形状和 event MVP | `src/local_agent/protocol/events.py` / `commands.py` 提供 dataclass shape；Runtime 可注入 `EventSink`，CLI 使用 `StderrEventSink`，session JSONL 写入 `event_v1`。`AssistantDelta`、统一 command dispatcher、worker/runtime 隔离尚未完成，terminal 当前仍直接调用 Runtime。 |
 | Terminal Frontend | 已完成 MVP 版 | `./agent`、`./agent --chat`、`./agent chat` 进入 terminal-native 交互；可选 `prompt_toolkit` / `rich` 增强输入和输出，缺失时降级；支持 `/help`、`/status`、`/tools`、`/approval`，并对 `/`、`/workspace`、`/approval` 提供带说明的 Tab 补全。 |
 | Run summary / coverage | 已完成 MVP 版 | 每轮结束写 `run_summary` session 事件和 `RunSummary` typed event；`/status` 可看最近一轮终止原因、LLM/工具次数、guard/steering/compaction 统计。 |
 | VerificationPlan / TestPlanner / DeliveryAudit | 已完成 MVP 版 | `verification_plan.py` / `test_planner.py` / `verification_timeline.py`：contract 业务验收保持未机器验证；只有路径关联代码证据、当前本轮净 diff、最后写入后测试、deterministic reviewer 进入 delivery checks。测试候选明确标记 module/project/blocked，绝不绕过 approval。 |
@@ -317,7 +318,7 @@ python3 scripts/sync_project_excel.py
 | T-204 | P0 | P12/S5 | Readiness Closure + Conditional Isolated Delivery | 已完成只读调查；typed BLOCKED，未进入阶段 B | 大猛执行，小红复核/维护状态 | 首轮只有 zqylpayment/mpspay，无法证明目标数据契约、Owner 与测试入口；新增 finance-base/crcl-finance 后可以沿真实持久层和消息链复核，但不能用相邻平台缴费实现代替目标 Owner。 | 已确认 `XF0003` 拓展服务费、`YJ0001` 独立保荐商佣金、`FACTOR_TYPE=4`、`APPLY_STATUS=60` 与实际费用推送；payment 当前字段/JSON 仍不是完整待制单数据源，五候选均缺至少一项 Owner/data source/write target/test/rollback。未改业务根、未建隔离副本、未运行 stable 写路径。下一步补最小业务契约后再开 S5；暂只维护 Markdown。 |
 | T-205 | P0 | P12/S5 | Minimal Business Contract for Stable Write-path | 架构契约已完成；准备 Maven preflight | 小红设计/维护状态，大猛执行 | T-204 已证明不能把业务不确定性当 Harness 缺陷；需要在冻结 Harness 的情况下给 stable LCA 一个完整、真实、可测的跨仓切片。 | 选择 finance-base 通用单项费用事件 + zqylpayment 实际 XF0003 候选快照/待制单列表；禁止预计值和 payer 汇总回退，后置前端/制单/Word/回退/导出。契约见 `docs/extension-service-fee-s5-contract.md`。现有 Maven settings 先在隔离副本验证私有依赖可用性。 |
 | T-206 | P0 | P12/S5 | Immutable Stable S5-1 Write-path | 已完成失败审计：HARNESS_BLOCKED | 大猛执行，小红复核/维护状态 | 用真实跨仓需求验证 stable LCA 的 scope、patch、test、diff、reviewer 和 delivery，不在 Harness 中加入业务补丁。 | Java 8 基线与 Owner 审计通过；session `20260715T102324610470Z` 仅改一个 DTO，未完成 payment/DDL/test，并用 run_tests shell control syntax 将失败包装为成功。独立编译成功，排除 ENV_BLOCKED；原目录未改。 |
-| T-207 | P0 | P12/S5/Security | RunTests Exec-Capability Boundary | 执行中 | 大猛实现，小红独立 review/维护状态，小牙 candidate 回归 | 关闭 `shell=deny,run_tests=allow` 下的任意 shell 能力走私和伪成功测试证据，同时保留可单独批准测试的体验。 | 对照 OMP 的单一 bash approval owner；LCA run_tests 改用非 shell argv、明确 runner policy、受控 cwd 与真实 exit metadata。禁止向 Runtime/agent.py 增加 guard；candidate 通过完整门禁和小牙回归后发布，再进入 T-208。 |
+| T-207 | P0 | P12/S5/Security | RunTests Exec-Capability Boundary | R1 candidate 已独立通过；待小牙 immutable 回归 | 大猛实现，小红独立 review/维护状态，小牙 candidate 回归 | 关闭 `shell=deny,run_tests=allow` 下的任意 shell 能力走私和伪成功测试证据，同时保留可单独批准测试的体验。 | `3d792ec` 已用非 shell argv、固定 runner identity、受控 cwd、注入 env 拒绝与真实 exit metadata完成通用修复；963/62/13 独立通过。小牙回归合格后发布，再进入 T-208。 |
 
 ## 风险与决策
 
@@ -452,17 +453,21 @@ python3 scripts/sync_project_excel.py
 | ADR | ADR-047 | 2026-07-15 | read-only queue/reviewer 采用稳定 facade、单向 Owner 与全 production complexity ratchet | 已接受并落地 T-201 | 保持原公开 import/API 与 phase 顺序；所有 production Python 默认不超过 900 行，split owner、薄 facade 和历史债务锁当前实际 ceiling。 | 参考 OMP queue/turn/reviewer/yield owner 分工；LCA 保留本地 evidence/readiness 增强，但不得回流 Runtime 或迁移到新大模块。 |
 | ADR | ADR-048 | 2026-07-15 | Harness 只硬编码安全/协议不变量，语义质量采用有界 steering、reviewer 与统计评测 | 已接受 | 普通语义问题至少两个独立复现或跨场景复现后才进入 Runtime 设计；连续两次修复仍转移 blocker 时停止局部补丁。 | 新机制必须有 OMP 对照、唯一 Owner、次数上限、失败终态和 merge/delete 条件；详见 `docs/harness-engineering-governance.md`。 |
 | ADR | ADR-049 | 2026-07-15 | 模型候选被拒后由 typed terminal assembly 交付完整 BLOCKED 报告 | 已接受、落地并发布 T-203 | 安全 gate 已正确拒绝不可靠草稿；用户价值应由可信 typed observations、contract 与终止 reason 组装，而不是继续要求同一模型改写。 | 参考 OMP `task/yield-assembly.ts`/`task/executor.ts` 的 section/terminal 分离；LCA 的 SafePartialReport 是本地增强。实现不接收 rejected candidate、不新增 gate/LLM/retry；typed source role 优先于文件后缀启发式。 |
+| ADR | ADR-050 | 2026-07-16 | 目标是 OMP/Codex 级核心底座加 LCA 企业工作流 | 已接受 | 完整复制 OMP platform 会让平台功能挤压真实交付；Python、封闭 VM、单 API 是 LCA 的差异化。 | 先补真实写交付、ExecutionPolicy、provider/command protocol；其他平台能力按真实收益进入。 |
+| ADR | ADR-051 | 2026-07-16 | 重型证据/reviewer 迁为 workflow profile，能力不删除 | 已接受，待实施 | 默认 Runtime 直接编排过多只读语义阶段，已影响复杂度和交付节奏。 | 默认 `coding` 保留安全/协议/交付事实硬门；`enterprise-evidence`、`readiness-audit` 显式启用重型流水线。 |
+| ADR | ADR-052 | 2026-07-16 | LOC/method ceiling 只是 ratchet，不是薄 loop 充分条件 | 已接受 | OMP/Codex 也有大型 lifecycle aggregate；Owner 和依赖方向比绝对行数重要。 | ceiling 继续只降不升，同时新增 profile/hook 接入和 core 无业务语义的架构验收。 |
+| ADR | ADR-053 | 2026-07-16 | run_tests 是 exec-tier 验证完整性工具，不是 sandbox | 已接受并完成 T-207 R1 candidate | 测试/构建必然执行仓库代码；runner 关键词无法提供真正隔离。 | 防 shell 拼接、固定 runner identity、真实 exit metadata；真正隔离归 ExecutionPolicy/Sandbox Owner。 |
 
 ## 阶段回顾
 
 | 项目 | 结论 | 依据 | 后续 |
 |---|---|---|---|
-| 阶段判断 | P12 S4 已收口并发布 T-203 stable | T-203 为 950/61/13；三次 fresh S4 hard invariant 3/3、typed BLOCKED usability 3/3，正式替代 T-196。 | 不再增加只读 gate，立即进入 S5 首个真实小切片 write -> test -> diff -> reviewer -> delivery audit。 |
+| 阶段判断 | P12 S4 已收口，S5 写路径尚未通过 | T-203 为 950/61/13；T-206 首个真实写交付被判定 HARNESS_BLOCKED；T-207 R1 已独立通过 963/62/13。 | T-207 immutable 黑盒回归合格后发布，随即 fresh T-208 重跑 S5-1；不再增加只读 gate。 |
 | 与 OMP 的主要差距 | P12 MVP 可用，但不等于完整追平 OMP | OMP 的完整 task/explore/advisor/subagent、AST/LSP write、MCP/Browser、完整 TUI 仍未搬入；LCA 的 document reviewer 与 WorkspaceEvidenceRootProjection 是本地增强。 | Subagent/Advisor、AST/LSP write、MCP、Browser、完整 TUI 继续按收益后置。 |
 | 已关闭风险 | T-203 已关闭 S4 安全失败不可行动风险 | T-192~T-196 live 不再释放不可靠 owner/资料结论；T-202 合并重复控制生命周期；T-203 将被拒候选转为完整 typed BLOCKED，三次 S4 hard/usability 均通过。 | 保留现有 gate，不新增 transport/repair 层；run 1 的 provider schema/error 只记残余 telemetry，避免再次陷入局部补丁。 |
 | reviewer 决策 | 首次 isolated review + deterministic closure | T-193 后不再以 fresh second reviewer pass 作为终止条件；S2 reviewer revise 后 closure accepted，S3 reviewer pass。 | 真实 patch 质量仍由 implementation/delivery reviewer 链路处理；Advisor/Subagent 后置。 |
 | ToolChoiceQueue 决策 | 已做裁剪版 MiniToolChoiceQueue | 当前覆盖只读证据、需求文档前置读取、写后测试/diff hygiene；不做完整多队列/并发/子任务调度 | 后续若仍出现关键工具不用/乱用，再扩展 queue 规则；若出现 patch/总结质量不稳，补 reviewer。 |
-| 下一步 | 真实需求设计与小改压测 | T-121 已在服务费结算任务中验证需求、后端与前端最小 evidence coverage，并以 final 收束。 | 选择一个范围和验收边界明确的真实切片：先产出 evidence-backed 设计，再实施小改、运行测试和 diff reviewer；anchored patch 参数效率继续作为独立风险观察。 |
+| 下一步 | 拓展服务费 S5-1 真实写交付 | 业务合同、Owner、Java 8、私有 Maven 依赖和 Harness test evidence 修复已闭合；只剩 T-207 发布门禁。 | immutable 回归并发布 T-207 后直接 fresh T-208，完成 DTO、persistence、API、DDL、tests、diff 和 delivery，或输出可信 blocker；不换母需求。 |
 
 ## P7 综合压测问题
 

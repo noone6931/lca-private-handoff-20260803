@@ -1,8 +1,10 @@
 # Local Coding Agent 项目状态
 
-更新时间：2026-07-15
+更新时间：2026-07-16
 
 本文档是开发 `local-coding-agent` 时给参与开发的人和协作 Agent 读取的项目管理基线。`docs/local-coding-agent-project-management.xlsx` 继续作为人工查看的表格视图；本 Markdown 文件作为后续开发时优先读取的项目状态、路线、Todo 和决策来源。它不是 LCA 运行时自己的 memory 或用户项目记忆。
+
+LCA、OMP 与 Codex 的当前源码级对照和路线校正见 `docs/lca-omp-codex-architecture-comparison-2026-07-16.md`。
 
 ## 最终目标
 
@@ -37,6 +39,8 @@ T-204 已完成 S5 readiness closure，结论为 typed `BLOCKED`，未选择实�
 T-205 已完成最小业务架构契约，见 `docs/extension-service-fee-s5-contract.md`。首个公平写路径固定为 `S5-1：放款后拓展服务费候选快照 + 待制单后端列表`：finance-base 在既有状态消息中增加通用单项费用与缺失订单字段，zqylpayment 以 `XF0003.chargeRealValue` 幂等写入本地候选快照并提供分页查询；预计值和 payer 多费用汇总均禁止回退使用。mpspay、制单事务、Word、回退和导出后置。该契约关闭 Owner、data contract、write target 与 rollback 设计缺口；实际测试依赖公司私有 `com.yljr:parent:0.0.5-SNAPSHOT`，对应离线制品已在 T-206 补齐并进入隔离 Maven preflight。
 
 T-206 已按 `HARNESS_BLOCKED` 收束。Corretto `1.8.0_472` + 显式 source/target 1.8 下，finance-base 983 个源文件与 payment 660 个源文件基线及独立复验均成功；loan-base / loan-application Owner 审计也未改变 finance-base + zqylpayment 写范围。fresh stable session `20260715T102324610470Z` 仅修改一个 finance-base DTO，未实现 payment 持久化、API、DDL 或测试，却通过 `run_tests` 中的 pipe/`||` 把 Maven 失败包装为 exit 0，delivery audit 未识别 7/7 业务验收仍未验证。根因不是环境或业务契约，而是 `shell=deny,run_tests=allow` 时 `run_tests` 仍复用 `shell=True`，形成执行权限绕过和测试证据失真。T-207 先在 Tool Owner 内把 run_tests 收为非 shell、受约束的测试 runner；独立 review/stable 后再用 fresh T-208 重跑 S5-1。生产 Oracle JDK 1.8.0_121 VM 复核仍保留为业务交付门禁。
+
+T-207 R1 candidate 已完成并通过独立 review：revision `3d792ecb992ddad8f3cb91fbb69ed2f3667f10ea`，candidate `20260716T013934Z-3d792ecb992d-d63b607e551d`，digest `d63b607e551d4528573eb6833ba6e79ead3b89fa14ad153bf05ea1d857b98d55`。R1 拒绝 runner path（仅允许 canonical cwd 内 `./mvnw` / `./gradlew`）、在模型环境生效前由进程 PATH 固定 bare runner，并拒绝加载型注入环境；`shell.py` 降至 357 行，runner policy 由 217 行窄 Owner 承担，`agent.py` 保持 1,873 行/71 methods。独立门禁为 963/963 unittest、62/62 deterministic benchmark、13/13 architecture checks，compileall、diff-check、CLI help 全绿。`run_tests` 的真实边界是 exec-tier 测试/构建代码执行：保证结构化 argv、无 shell 拼接和真实退出状态，但不是 sandbox。默认 stable 暂保持 T-203，待 immutable 黑盒权限/证据回归后发布 T-207 stable，再启动 fresh T-208。
 
 已具备的核心能力：
 
@@ -222,7 +226,7 @@ T-206 已按 `HARNESS_BLOCKED` 收束。Corretto `1.8.0_472` + 显式 source/tar
 | no-edit evidence gate | 已完成 | CompletionAudit 不再接受只有“blocked/unexecuted”的文字自述；必须有 search/LSP 未命中、路径缺失、relevance/approval 拒绝等工具证据，才允许实现任务在无 diff 时收尾。 |
 | ToolRegistry 参数归一 | 已完成 MVP 版 | `src/local_agent/tools/argument_normalization.py` 在 schema 校验前仅映射已观测 scalar alias；冲突值直接拒绝，随后仍执行原 schema、approval、path/hash 和 anchored patch 校验。 |
 | 跨 root owner / impact evidence matrix | 已完成 MVP 版 | “设计/架构”以及“owner 定位/影响范围/调用链”的多 root 只读任务共用 requirement + 每 root source-read + 六次补证据预算；避免任务名称不是“设计”就无限探索。 |
-| 测试基线 | 已完成，分层记录 | T-203 stable 为 950/950 unittest、61/61 benchmark、13/13 architecture；compileall、diff check、help 与 release publish gate 通过。三次 fresh S4 hard 3/3、usability 3/3。 |
+| 测试基线 | 已完成，分层记录 | T-203 stable 为 950/950 unittest、61/61 benchmark、13/13 architecture；T-207 R1 candidate 已独立通过 963/963、62/62、13/13，compileall、diff check、help 均通过。三次 fresh S4 hard 3/3、usability 3/3。 |
 
 ## 下一步 Todo
 
@@ -395,7 +399,7 @@ T-206 已按 `HARNESS_BLOCKED` 收束。Corretto `1.8.0_472` + 显式 source/tar
 | T-204 | S5 Readiness Closure + Conditional Isolated Delivery | 已完成只读调查；typed BLOCKED，未进入阶段 B | P12/S5 | 首轮只有 zqylpayment/mpspay，无法证明目标数据契约、Owner 与测试入口；补充 finance-base/crcl-finance 后关闭了费用、状态和类型事实缺口，但五候选仍无一五维全闭合。 | 已确认 `XF0003` 拓展服务费、`YJ0001` 独立保荐商佣金、`FACTOR_TYPE=4`、`APPLY_STATUS=60` 及实际费用推送链；仍缺目标列表完整契约、目标写入模型、可执行测试入口和回滚边界。未创建隔离副本、未运行 stable 写路径、未修改五个只读根。下一步由业务设计补齐最小契约后再开 S5。 |
 | T-205 | S5-1 Minimal Business Contract | 架构契约已完成；准备 Maven preflight 与 stable 执行 | P12/S5 | T-204 的 BLOCKED 来自业务契约缺失，不应通过修改 Harness 或猜字段推进。需要选择能真实验证跨仓 write/test/diff/reviewer 的最小闭合切片。 | `docs/extension-service-fee-s5-contract.md` 决定由 finance-base 扩展通用 fee event，zqylpayment 持有候选快照与待制单列表；实际 `XF0003` 为唯一金额口径，无历史回灌。首切片不含前端/Word/回退/导出。现有 `~/.m2/settings.xml` 需在隔离副本验证能否解析私有 parent，成功后由 T-203 stable 执行。 |
 | T-206 | Immutable Stable S5-1 Write-path | 已完成失败审计：HARNESS_BLOCKED | P12/S5 | 必须在冻结 Harness、原业务仓只读和隔离 Maven/JDK 环境下证明 stable LCA 能完成真实跨仓闭环。 | session `20260715T102324610470Z` 只改一个 DTO，遗漏其余 7/7 验收；`run_tests` 通过 shell control syntax 掩盖失败并被误计为成功。独立 Java 8 编译证明环境正常，业务原目录未改；残留 `/private/tmp` 工作区已被系统清理，不作为交付。 |
-| T-207 | RunTests Exec-Capability Boundary | 执行中 | P12/S5/Security | `run_tests` 可单独批准却与 shell 共用 `shell=True`，既能绕过 `shell=deny`，又能把失败包装为成功证据。 | 对照 OMP 单一 bash exec approval 边界，在 `tools/shell.py` Owner 内保留独立 run_tests 体验，但改为结构化 argv、非 shell 执行、测试 runner policy、受控 cwd 与真实 exit metadata；错误结果不得满足 verification。candidate 经独立 review 和小牙回归后才发布，再开 T-208 重跑业务。 |
+| T-207 | RunTests Exec-Capability Boundary | R1 candidate 已完成并独立通过；待 immutable 黑盒回归后发布 | P12/S5/Security | `run_tests` 可单独批准却与 shell 共用 `shell=True`，既能绕过 `shell=deny`，又能把失败包装为成功证据。 | 初版 `d0f9153` 关闭 shell 拼接和伪退出码；R1 `3d792ec` 固定 runner identity、拒绝 path/env 直接绕过并明确 exec-tier/非 sandbox。独立 963/62/13 与静态门禁通过，未改 `agent.py`、未新增 gate/attempt；immutable 回归合格后发布并开 T-208。 |
 
 ## 风险清单
 
@@ -532,6 +536,10 @@ T-206 已按 `HARNESS_BLOCKED` 收束。Corretto `1.8.0_472` + 显式 source/tar
 | ADR-047 | read-only queue/reviewer 采用稳定 facade、单向职责模块和全 production complexity ratchet。 | T-201 接受：公开 import/API 继续由原 facade 提供；Queue 的 decision/read-only/implementation/classification 与 reviewer 的 types/claims/contract/validation 单向依赖。所有 production Python 默认不超过 900 行，split owner、薄 facade 和历史债务使用实际只降不升 ceiling；同时锁 import direction、API identity 与 phase 顺序。 |
 | ADR-048 | Harness 只硬编码安全/协议不变量，语义质量采用有界 steering、reviewer 与统计评测。 | 单个普通语义失败先记录，不直接增加 Runtime gate；至少两个独立复现或跨场景复现后才进入设计。新机制必须说明 OMP 对照、唯一 Owner、最大次数、失败终态和 merge/delete 条件；连续两次修复仍转移 blocker 时停止局部补丁。详见 `docs/harness-engineering-governance.md`。 |
 | ADR-049 | 被安全拒绝的 readiness 候选以 typed terminal assembly 交付，不通过额外模型循环挽救。 | T-203 接受：参考 OMP `task/yield-assembly.ts`、`task/executor.ts` 与 `tools/yield.ts` 的 typed section/terminal payload 分离思想；LCA 的 `SafePartialReport` 是本地增强。报告只消费可信 typed state，不接收 rejected candidate，不新增 gate、rewrite、repair 或 reviewer attempt。 |
+| ADR-050 | 产品目标是 OMP/Codex 级核心底座加 LCA 企业工作流，不以完整复制 OMP platform 为 KPI。 | 保留 Python、封闭 VM、单 API 和本地工具优势；优先补真实写交付、execution policy、provider/command protocol。MCP、Browser、完整 TUI、managed skills 等由真实收益驱动。 |
+| ADR-051 | 重型 evidence/reviewer 能力保留，但逐步从默认 Runtime 路径迁为 workflow profile。 | 默认 `coding` 只保留安全、协议和交付事实硬门；`enterprise-evidence`、`readiness-audit` 显式启用 multi-root 证据、isolated reviewer 与 typed BLOCKED。迁移前不删能力，先用 telemetry 验证触发价值。 |
+| ADR-052 | 行数/方法数 ceiling 是复杂度 ratchet，不是薄 loop 的充分证明。 | OMP `agent-loop.ts` 和 Codex lifecycle aggregate 也可较大；长期验收改看依赖方向、Owner、hook/profile 接入和 core loop 是否包含业务语义。现有 ceiling 继续只降不升。 |
+| ADR-053 | `run_tests` 是 exec-tier 的验证完整性工具，不是 sandbox。 | 它必须防 shell control、固定 runner identity、保留真实 exit metadata；但测试/构建本身会执行仓库代码。真正隔离归未来 ExecutionPolicy/Sandbox Owner，不能靠继续增加 runner 关键词伪造安全感。 |
 
 ## T-143 验证计划收口（2026-07-12）
 
@@ -552,7 +560,7 @@ T-206 已按 `HARNESS_BLOCKED` 收束。Corretto `1.8.0_472` + 显式 source/tar
 | 项目 | 结论 | 依据 |
 |---|---|---|
 | 主链路 | 通过 | 百炼真实小改复测已跑通 todo、dry_run、apply_patch、session allow、rollback、run_tests、git_diff。 |
-| 测试 | 分层通过 | P5 收口时 90 个 unittest；当前 T-203 stable 为 950/61/13；fresh S4 hard invariant 3/3、typed BLOCKED usability 3/3。 |
+| 测试 | 分层通过 | P5 收口时 90 个 unittest；当前 T-203 stable 为 950/61/13；T-207 R1 candidate 独立门禁为 963/62/13；fresh S4 hard invariant 3/3、typed BLOCKED usability 3/3。 |
 | 日用入口 | 通过 | README 已补只读分析和小改任务命令模板。 |
 | 开放风险 | 可接受 | shell 仍非沙箱、prompt injection 仍需靠审批和封闭 VM；provider/model 专用 tokenizer、输出 reserve、managed skills、完整 reviewer 和完整 OMP ToolChoiceQueue 继续后置评估。 |
 | 下一阶段 | S5 首个真实小切片 | P12 已完成并发布 T-203 stable。立即在隔离 worktree 选择一个边界小、证据明确的真实实现切片，完成 read -> preview -> patch -> test -> diff -> reviewer -> delivery audit；之后进入 S6~S10。 |
@@ -590,6 +598,6 @@ T-206 已按 `HARNESS_BLOCKED` 收束。Corretto `1.8.0_472` + 显式 source/tar
 
 用户确认本文件后，建议按以下顺序继续：
 
-1. 进入 S5，选择首个真实小切片，要求需求、源码证据、patch、测试、diff、reviewer 和 delivery audit 都可审计。
+1. 完成 T-207 immutable 黑盒回归并发布 stable，然后以 fresh T-208 重跑已固定契约的 S5-1，要求需求、源码证据、patch、测试、diff、reviewer 和 delivery audit 都可审计。
 2. 随后按 S6~S10 顺序推进失败恢复、连续性、权限、需求变更和交付审计；每一段都用小切片和 deterministic benchmark 证明。
 3. Subagent/Advisor、AST/LSP write、MCP、Browser 和完整 TUI 继续后置；只有真实小切片暴露明确收益时再提升优先级。

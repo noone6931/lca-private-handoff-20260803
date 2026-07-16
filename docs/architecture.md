@@ -1,8 +1,10 @@
 # Local Coding Agent 架构设计
 
-更新时间：2026-07-14
+更新时间：2026-07-16
 
 本文档描述 `local-coding-agent` 当前架构基线，以及按技术成熟度划分的待加入能力。它是给后续实现者和协作 Agent 读取的架构视图；项目进度事实源仍以 `docs/project-status.md` 和 `docs/project-management.md` 为准。
+
+2026-07-16 的 LCA / OMP / Codex 源码级对照与路线判断见 `docs/lca-omp-codex-architecture-comparison-2026-07-16.md`。
 
 ## 状态标签
 
@@ -11,7 +13,7 @@
 | `[CORE-已落地]` | 主链路稳定可用，有测试或真实运行验证。 | 作为后续设计依赖，不轻易推翻。 |
 | `[MVP-已落地]` | 第一版已可用，但能力故意轻量。 | 允许按真实任务反馈继续增强。 |
 | `[WIP-增强中]` | 局部能力已有，关键闭环还缺一段。 | 优先补齐闭环，不做大范围重构。 |
-| `[NEXT-近期待加入]` | 与当前 P7 目标直接相关，设计已基本明确。 | 大猛或后续会话可直接按任务拆实现。 |
+| `[NEXT-近期待加入]` | 与当前真实交付目标直接相关，设计已基本明确。 | 大猛或后续会话可直接按任务拆实现。 |
 | `[LATER-后续候选]` | 有价值，但会显著增加复杂度。 | 先保留接口空间，不抢当前阶段。 |
 | `[DEFER-暂缓]` | 方向合理，但当前收益不足或依赖条件不成熟。 | 不进入近期排期。 |
 | `[OUT-阶段外]` | 与第一阶段本地、封闭 VM、单 Agent 边界冲突。 | 明确不做，除非项目目标改变。 |
@@ -35,13 +37,45 @@
 - 可审计优先：写入、执行、审批、回滚都要有本地记录。
 - OMP 思路本地化：吸收 approval、context compaction、default workflow、memory/skills 的成熟设计，但避免引入当前阶段不需要的外部依赖。
 
+## 2026-07-16 架构校正
+
+当前目标不再表述为“尽可能追平 OMP 的全部功能”，而是：
+
+> OMP/Codex 级通用执行底座 + LCA 自己的本地、封闭 VM、企业证据工作流。
+
+建议目标分层：
+
+```text
+CLI / Terminal / Future TUI / Remote
+                |
+          Command + Event Protocol
+                |
+          Core Runtime
+  Turn Loop / Tool Router / Session / Context
+  Approval + ExecutionPolicy / Compaction / Hooks
+                |
+        Workflow Profiles
+  coding | enterprise-evidence | readiness-audit
+                |
+       Tools / Skills / Agents / Extensions
+```
+
+架构约束：
+
+- Core Runtime 只拥有 turn、tool、context、session、approval、deadline 和 protocol 生命周期。
+- RequirementContract、Evidence Ledger、read-only reviewer、document consistency 与 SafePartialReport 保留，但逐步作为 profile-scoped workflow 接入；不再默认代表所有普通任务的停止条件。
+- 安全/协议/工具结果配对可以 hard gate；语义质量默认 advisory，只有显式 profile 才成为 hard gate。
+- 当前 LOC/method ceiling 继续作为只降不升的复杂度 ratchet，但不再把“文件低于某行数”当作 Owner 正确的充分证明。
+- `run_tests` 是 exec-tier：无 shell 拼接和真实 exit code属于验证完整性，测试代码无副作用不属于其保证；真正隔离由未来 ExecutionPolicy/Sandbox Owner 提供。
+- Frontend/Event 已完成事件数据形状和同步 terminal MVP；Command Bus、provider streaming、worker/runtime 隔离仍是待加入能力，不能写成已经完全解耦。
+
 ## 总体分层
 
 | 层 | 状态 | 职责 | 当前实现 |
 |---|---|---|---|
 | 用户入口层 | `[CORE-已落地]` | CLI、REPL、一次性 prompt、继续会话。 | `./agent`、`src/local_agent/cli.py`。 |
 | 配置层 | `[CORE-已落地]` | 合并 CLI、环境变量、JSON config、provider preset、approval、summary、memory consolidation、预算、allowed dirs。 | `src/local_agent/config.py`。 |
-| Agent Runtime | `[CORE-已落地]` | 模型循环、工具分发、deadline、synthetic tool result 与阶段编排；不再持有 prompt 投影、workspace roots、memory 归档、tool metadata、证据/verification/session-cache 或 session guard 窗口的具体实现。 | `src/local_agent/agent.py` 当前为 1,876 行、71 个方法的 orchestration facade；`provider_context.py`、`runtime_workspace.py`、`runtime_evidence.py`、`runtime_memory.py`、`runtime_prompt.py`、`tool_gateway.py`、`evidence.py`、`run_context.py`、`runtime_read_only_explore.py` 分担阶段职责。phase 通过显式 Protocol ports 协作，禁止 `__getattr__` service-locator 转发。 |
+| Agent Runtime | `[CORE-已落地]` | 模型循环、工具分发、deadline、synthetic tool result 与阶段编排；不再持有 prompt 投影、workspace roots、memory 归档、tool metadata、证据/verification/session-cache 或 session guard 窗口的具体实现。 | `src/local_agent/agent.py` 当前为 1,873 行、71 个方法的 orchestration facade；`provider_context.py`、`runtime_workspace.py`、`runtime_evidence.py`、`runtime_memory.py`、`runtime_prompt.py`、`tool_gateway.py`、`evidence.py`、`run_context.py`、`runtime_read_only_explore.py` 分担阶段职责。phase 通过显式 Protocol ports 协作，禁止 `__getattr__` service-locator 转发。 |
 | Provider 层 | `[CORE-已落地]` | OpenAI-compatible chat completions，对接百炼和通用 endpoint。 | `src/local_agent/llm.py`。 |
 | 工具系统 | `[CORE-已落地]` | 工具注册、schema、tier、approval policy、参数校验、错误包装。 | `src/local_agent/tools/base.py`。 |
 | 本地工具层 | `[CORE-已落地]` | 文件、搜索、shell/test、git、patch、rollback、memory、learn、todo、ask_user。 | `src/local_agent/tools/`。 |
@@ -50,7 +84,7 @@
 | 代码导航 / LSP | `[MVP-已落地]` | Python、Java、JS、TS、Vue 的 symbols/definition/references/diagnostics；可选外部 LSP server，缺失时回退 lightweight fallback。 | `src/local_agent/tools/lsp.py`、`src/local_agent/lsp/`。 |
 | 本地持久化 | `[CORE-已落地]` | JSONL session、patch log、todo、Markdown memory。 | runtime state 默认在用户级 state dir；显式项目 memory/skills 在 `.local-agent/`，自动 consolidation 默认写 state memory。 |
 | Memory / Skills | `[MVP-已落地]` | Markdown memory 启动注入、learn、可选 session memory consolidation 和 authored skills discovery 已落地；managed skills 待评估。 | `docs/memory-skills-implementation-plan.md`。 |
-| Frontend / Event Protocol | `[MVP-已落地]` | 把 CLI、Terminal Frontend 和未来 Remote/Web 与 Runtime 解耦。 | dataclass Event/Command Protocol、EventSink、session `event_v1`、CLI stderr renderer 和 terminal-native frontend 已落地。 |
+| Frontend / Event Protocol | `[MVP-已落地]` | 为 CLI、Terminal Frontend 和未来 Remote/Web 提供统一事件形状；完整解耦仍在进行。 | dataclass Event/Command Protocol、EventSink、session `event_v1`、CLI stderr renderer 和 terminal-native frontend 已落地；当前 terminal 仍直接持有 Runtime，`AssistantDelta`、Command Bus dispatcher 和 worker/runtime 隔离尚未落地。 |
 | 项目管理视图 | `[CORE-已落地]` | Markdown 事实源和 Excel 人工视图。 | `docs/project-management.md`、同步脚本。 |
 
 ## 执行流程
@@ -116,7 +150,7 @@ flowchart TD
 | Frontend boundary | `[MVP-已落地]` | CLI、Terminal Frontend 和未来 Remote/Web 通过 Command/Event 协议接入 Runtime。 | Runtime 已开始产出 typed events；现有 CLI 输出由 `StderrEventSink` 渲染，Terminal Frontend 复用同一事件流。 |
 | Run summary / coverage | `[MVP-已落地]` | 每轮结束写入 `run_summary` session 事件，并产出 `RunSummary` typed event。 | 记录 termination reason、耗时、LLM 请求数、工具调用/错误/无效结果、synthetic tool result、compaction、tool counts、guard hits 和 steering counts；`/status` 可查看最近一轮摘要。T-141/T-146 后还会单列 `provider_schema_violations`、`finalization_attempts`、forced-final protocol violation、markup artifact 与 suppressed execution；T-155 增加 `pre_review_audit` 的 rounds/categories/exhausted，T-156 增加安全部分交付的 emitted/observations/missing/rejected categories，方便区分安全终态与候选草稿。 |
 | Verification Plan / Test Planner / Delivery Audit | `[MVP-已落地]` | `verification_plan.py`、`test_planner.py`、`verification_timeline.py`、`delivery_report.py`、CompletionAudit。 | 对齐 OMP queue/turn ownership：业务 contract 不能被任意工具代理事实自动标记完成；只有 path-related evidence、last effective write 的当前净 diff、post-write test、post-diff reviewer 可推进 delivery checks。未闭环写入以 `incomplete_delivery` 终止；每个有效写入的终态由 Runtime 追加变更路径、实际测试命令、diff/reviewer 和未闭环项，测试候选不直接执行、不绕过 approval。 |
-| Session Evidence Continuity / User Facts | `[MVP-已落地]` | `session_evidence.py`、`runtime_evidence.py`、`user_facts.py`、`evidence.py`、RunSummary。 | 对齐 OMP session tool-result continuity：同一 Runtime 仅复用 fresh positive concrete-path read/search/LSP evidence，投影前逐路径 hash；negative/incomplete/global evidence 不跨轮复用。重复观测按 canonical path + query/range 替换。命名 session 跨进程恢复只接受重新从磁盘校验并重建的正向 `read_file` 证据；JSONL 中的 content/search/LSP payload 不被信任，且后台恢复只在当前 read policy 已预授权时执行，绝不打开审批 prompt。缓存命中后 ToolChoiceQueue 只发一次 soft directive，不移除 `read_file` schema；模型复读仍正常执行并单列 telemetry。 | write/rollback、workspace revision/root change、`/move` 或外部内容变化会失效；summary 以 `role=user` + `attribution=runtime` 发送，不能把混合摘要提升为 system。T-156 后成功 compaction 会把 summary + 有界最近消息安装为 active checkpoint，并在命名 session 恢复；同一未变化、仍超预算前缀只记 skip，不重复压缩。当前 Runtime facade 为 1,876 行、71 个方法，final-answer facade 为 59 行；architecture checks 锁定 `<=2,100` 行、`<=75` methods 与禁止领域 helper 回流。 |
+| Session Evidence Continuity / User Facts | `[MVP-已落地]` | `session_evidence.py`、`runtime_evidence.py`、`user_facts.py`、`evidence.py`、RunSummary。 | 对齐 OMP session tool-result continuity：同一 Runtime 仅复用 fresh positive concrete-path read/search/LSP evidence，投影前逐路径 hash；negative/incomplete/global evidence 不跨轮复用。重复观测按 canonical path + query/range 替换。命名 session 跨进程恢复只接受重新从磁盘校验并重建的正向 `read_file` 证据；JSONL 中的 content/search/LSP payload 不被信任，且后台恢复只在当前 read policy 已预授权时执行，绝不打开审批 prompt。缓存命中后 ToolChoiceQueue 只发一次 soft directive，不移除 `read_file` schema；模型复读仍正常执行并单列 telemetry。 | write/rollback、workspace revision/root change、`/move` 或外部内容变化会失效；summary 以 `role=user` + `attribution=runtime` 发送，不能把混合摘要提升为 system。T-156 后成功 compaction 会把 summary + 有界最近消息安装为 active checkpoint，并在命名 session 恢复；同一未变化、仍超预算前缀只记 skip，不重复压缩。当前 Runtime facade 为 1,873 行、71 个方法，final-answer facade 为 59 行；architecture checks 锁定 `<=2,100` 行、`<=75` methods 与禁止领域 helper 回流。 |
 | Epistemic negative-evidence taxonomy | `[MVP-已落地]` | `negative_evidence.py`、`steering/final_answer.py`、CompletionAudit、RunSummary。 | 对齐 OMP tool-result provenance 和 bounded continuation：一个 deterministic clause-local parser 产生 `asserted_absence`、`observed_no_match`、`epistemically_qualified`、`quoted_or_hypothetical`，消费者不再各自关键词扫描。绝对缺失需完整、未截断、同 scope 的 path/Git evidence；`observed_no_match` 也必须有本轮、同 root、匹配的真实观察，但不因此证明全局不存在；qualified/quoted 不补搜。root-local scope 不外推，multi-root 需覆盖多个 root。 | OMP `agent-loop.ts` / `tool-choice-queue.ts` 的终态 owner 与 active-tool 边界提供方向，不复制平台代码。session/RunSummary 记录 stance、blocked assertion/observation、qualified skip；live provider 的额外探索或文本质量仍作为 provider reliability 观察项。 |
 | Read-only convergence | `[MVP-已落地]` | `temporary_tool_directive.py`、`runtime_tool_directive.py`、`task_contract.py`、`tool_choice_queue.py`、CompletionAudit。 | 临时 active-tool restriction 是 run-scoped directive，不是 raw allowlist：source 级 attempt/turn/outcome 显式 resolve/reject/exhaust，最终一次允许的发现工具执行后才可转入 `tools=[]` truthful final。`requirement_documents` domain 与 repository-code investigation 分离，持续只投影文档浏览、读取和澄清工具。 | 对齐 OMP `tool-choice-queue.ts` 的 in-flight/resolve/reject 以及 `agent-loop.ts` 的 per-turn active tools；LCA 的 document domain/audit 是本地增强，不宣称 OMP 有同名 contract。 |
 | Isolated read-only reviewer / ExploreHandoff | `[MVP-已落地]` | `explore_handoff.py`、`read_only_reviewer.py`、`runtime_read_only_review.py`、`read_only_explore.py`、`runtime_read_only_explore.py`、`root_coverage.py`、`design_evidence.py`、`task_contract.py`、RunSummary。 | 高风险 read-only owner/impact/design contract 先产生 typed profile；reviewer 只通过 isolated output-only `submit_read_only_review` 提交结构化结论，不进入 ToolRegistry、approval 或工作区执行。T-192 收束 role/transport ownership，T-193 将 rewrite 后 fresh second reviewer 改为 deterministic advisory closure，T-194/T-195 将 targeted explore directive 与 semantic source candidate commit 收回 Queue/Explore Owner，T-196 通过 workspace evidence-root projection 区分授权根与代码证据根。 | 借鉴 OMP `tool-choice-queue.ts` 的 directive 生命周期、`agent-loop.ts` 的 turn boundary、`prompts/agents/explore.md` 的 alternate strategy、`tools/glob.ts` 的 bounded inventory 与 `yield.ts` 的结构化输出；LCA 的 document stance、isolated reviewer 和 multi-root evidence projection 是本地证据增强，不宣称 OMP 有同名 taxonomy 或 projection 类。 |
