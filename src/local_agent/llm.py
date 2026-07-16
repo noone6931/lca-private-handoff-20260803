@@ -5,12 +5,16 @@ import socket
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Generator
 
 from .config import AgentConfig
 from .provider_protocol import ProviderProtocolArtifact
 from .provider_protocol import classify_provider_content_artifact
 from .provider_protocol import normalize_provider_dialect_message
+from .provider_stream import ProviderStreamError
+from .provider_stream import ProviderTextDelta
+from .provider_stream import RawChatCompletion
+from .provider_stream import iter_chat_completion_response
 
 
 VISION_OBSERVATION_SYSTEM_PROMPT = """You are an evidence-first visual observation assistant.
@@ -52,6 +56,43 @@ class OpenAICompatibleClient:
         tool_choice: dict[str, Any] | str | None = None,
     ) -> ChatResponse:
         return self._complete(messages, tools, timeout=timeout, model=model, tool_choice=tool_choice)
+
+    def chat_stream(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        *,
+        timeout: float | None = None,
+        model: str | None = None,
+        tool_choice: dict[str, Any] | str | None = None,
+    ) -> Generator[ProviderTextDelta, None, ChatResponse]:
+        """Stream only visible text deltas; return one complete normalized response."""
+
+        request, request_timeout = self._request(
+            messages,
+            tools,
+            timeout=timeout,
+            model=model,
+            tool_choice=tool_choice,
+            stream=True,
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=request_timeout) as response:
+                raw = yield from iter_chat_completion_response(response)
+        except ProviderStreamError as exc:
+            raise LlmError(f"LLM API returned an invalid stream: {exc}") from exc
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")
+            raise LlmError(f"LLM API returned HTTP {exc.code}: {detail}") from exc
+        except urllib.error.URLError as exc:
+            if isinstance(exc.reason, (TimeoutError, socket.timeout)):
+                raise LlmTimeoutError(f"LLM API request timed out after {request_timeout} seconds.") from exc
+            raise LlmError(f"LLM API request failed: {exc}") from exc
+        except (TimeoutError, socket.timeout) as exc:
+            raise LlmTimeoutError(f"LLM API request timed out after {request_timeout} seconds.") from exc
+        except OSError as exc:
+            raise LlmError(f"LLM API response stream failed: {exc}") from exc
+        return self._response_from_raw(raw)
 
     def inspect_image(
         self,
@@ -100,24 +141,14 @@ class OpenAICompatibleClient:
         model: str | None = None,
         tool_choice: dict[str, Any] | str | None = None,
     ) -> ChatResponse:
-        url = f"{self._config.api_base_url}/chat/completions"
-        payload = {
-            "model": model or self._config.model,
-            "messages": messages,
-        }
-        if tools:
-            payload["tools"] = tools
-            payload["tool_choice"] = tool_choice or "auto"
-        request = urllib.request.Request(
-            url,
-            data=json.dumps(payload).encode("utf-8"),
-            headers={
-                "Authorization": f"Bearer {self._config.api_key}",
-                "Content-Type": "application/json",
-            },
-            method="POST",
+        request, request_timeout = self._request(
+            messages,
+            tools,
+            timeout=timeout,
+            model=model,
+            tool_choice=tool_choice,
+            stream=False,
         )
-        request_timeout = timeout if timeout is not None else self._config.request_timeout
         try:
             with urllib.request.urlopen(request, timeout=request_timeout) as response:
                 body = response.read().decode("utf-8")
@@ -128,7 +159,7 @@ class OpenAICompatibleClient:
             if isinstance(exc.reason, (TimeoutError, socket.timeout)):
                 raise LlmTimeoutError(f"LLM API request timed out after {request_timeout} seconds.") from exc
             raise LlmError(f"LLM API request failed: {exc}") from exc
-        except TimeoutError as exc:
+        except (TimeoutError, socket.timeout) as exc:
             raise LlmTimeoutError(f"LLM API request timed out after {request_timeout} seconds.") from exc
 
         try:
@@ -144,13 +175,52 @@ class OpenAICompatibleClient:
         if not isinstance(message, dict):
             raise LlmError(f"LLM API returned malformed message: {data}")
         finish_reason = choice.get("finish_reason")
+        return self._response_from_raw(
+            RawChatCompletion(
+                message=message,
+                finish_reason=finish_reason if isinstance(finish_reason, str) else None,
+            )
+        )
+
+    def _request(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        *,
+        timeout: float | None,
+        model: str | None,
+        tool_choice: dict[str, Any] | str | None,
+        stream: bool,
+    ) -> tuple[urllib.request.Request, float]:
+        payload: dict[str, Any] = {
+            "model": model or self._config.model,
+            "messages": messages,
+        }
+        if stream:
+            payload["stream"] = True
+        if tools:
+            payload["tools"] = tools
+            payload["tool_choice"] = tool_choice or "auto"
+        request = urllib.request.Request(
+            f"{self._config.api_base_url}/chat/completions",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {self._config.api_key}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        return request, timeout if timeout is not None else self._config.request_timeout
+
+    def _response_from_raw(self, raw: RawChatCompletion) -> ChatResponse:
+        message = raw.message
         normalized_message, normalizations = normalize_provider_dialect_message(
             message,
             provider=self._config.provider,
         )
         return ChatResponse(
             message=normalized_message,
-            finish_reason=finish_reason if isinstance(finish_reason, str) else None,
+            finish_reason=raw.finish_reason,
             protocol_artifact=classify_provider_content_artifact(self._config.provider, message.get("content")),
             protocol_normalizations=normalizations,
         )

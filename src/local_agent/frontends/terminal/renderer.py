@@ -18,10 +18,25 @@ class TerminalEventSink:
         self._stream = stream or sys.stdout
         self._show_tools = show_tools
         self._console = _load_console(self._stream) if use_rich else None
+        self._streamed_messages: dict[str, str] = {}
+        self._delta_indices: dict[str, int] = {}
+        self._last_assistant_message_id: str | None = None
+        self._stream_line_open = False
 
     def emit(self, event: AgentEvent) -> None:
-        if event.type == "SessionStarted":
+        if event.type == "AssistantDelta":
+            self._render_assistant_delta(event)
+            return
+        if self._stream_line_open:
+            self._finish_stream_line()
+        if event.type == "TurnStarted":
+            self._reset_turn_stream_state()
+        elif event.type == "SessionStarted":
             self._print_muted(f"[session] {event.session_id}")
+        elif event.type == "AssistantMessage":
+            message_id = event.payload.get("message_id")
+            if isinstance(message_id, str) and message_id:
+                self._last_assistant_message_id = message_id
         elif event.type == "ToolStarted" and self._show_tools:
             self._render_tool_started(event)
         elif event.type == "ToolOutput" and self._show_tools:
@@ -65,12 +80,46 @@ class TerminalEventSink:
 
     def _render_final(self, event: AgentEvent) -> None:
         content = str(event.payload.get("content", ""))
+        streamed = self._streamed_messages.get(self._last_assistant_message_id or "")
+        had_provisional = any(self._streamed_messages.values())
+        if streamed is not None and streamed == content:
+            self._reset_turn_stream_state()
+            return
+        if had_provisional:
+            self._print_muted("[authoritative final]")
         if self._console is not None:
             markdown = _load_rich_markdown(content)
             if markdown is not None:
                 self._console.print(markdown)
+                self._reset_turn_stream_state()
                 return
         print(content, file=self._stream)
+        self._reset_turn_stream_state()
+
+    def _render_assistant_delta(self, event: AgentEvent) -> None:
+        message_id = event.payload.get("message_id")
+        delta = event.payload.get("delta")
+        delta_index = event.payload.get("delta_index")
+        if not isinstance(message_id, str) or not message_id or not isinstance(delta, str):
+            return
+        expected = self._delta_indices.get(message_id, 0)
+        if type(delta_index) is not int or delta_index != expected:
+            return
+        self._delta_indices[message_id] = expected + 1
+        self._streamed_messages[message_id] = self._streamed_messages.get(message_id, "") + delta
+        self._last_assistant_message_id = message_id
+        print(delta, end="", file=self._stream, flush=True)
+        self._stream_line_open = True
+
+    def _finish_stream_line(self) -> None:
+        print(file=self._stream, flush=True)
+        self._stream_line_open = False
+
+    def _reset_turn_stream_state(self) -> None:
+        self._streamed_messages.clear()
+        self._delta_indices.clear()
+        self._last_assistant_message_id = None
+        self._stream_line_open = False
 
     def _print_muted(self, text: str) -> None:
         if self._console is not None:

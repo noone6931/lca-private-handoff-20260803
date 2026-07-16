@@ -70,6 +70,12 @@ def classify_provider_content_artifact(
     )
 
 
+def provider_allows_provisional_text(provider: str) -> bool:
+    """Return whether provider text can be shown before full protocol classification."""
+
+    return provider.strip().lower() not in _BAILIAN_PROVIDER_NAMES
+
+
 def bounded_tool_call_names(tool_calls: list[object], *, limit: int = 8) -> list[str]:
     """Return only structural names; never retain provider argument values."""
 
@@ -368,5 +374,6 @@ __all__ = [
     "protocol_violation_message",
     "protocol_violation_payload",
     "normalize_provider_dialect_message",
+    "provider_allows_provisional_text",
     "provider_safe_assistant_message",
 ]

@@ -16,7 +16,9 @@ from local_agent.compaction import resolve_compaction_threshold_tokens
 from local_agent.config import AgentConfig
 from local_agent.design_evidence import DesignEvidenceCoverageSteerer
 from local_agent.design_evidence import missing_design_evidence_roots
-from local_agent.llm import LlmError
+from local_agent.llm import ChatResponse, LlmError
+from local_agent.provider_protocol import classify_provider_content_artifact
+from local_agent.provider_stream import ProviderTextDelta
 from local_agent.protocol.commands import new_command
 from local_agent.protocol.interactions import InteractionResult
 from local_agent.protocol.events import ListEventSink
@@ -128,6 +130,36 @@ class _FinalClient:
 
     def chat(self, messages, tools, *, timeout=None):
         return type("Response", (), {"message": {"content": "done"}})()
+
+
+class _StreamingFinalClient:
+    def __init__(self, config: AgentConfig):
+        self.config = config
+
+    def chat_stream(self, messages, tools, *, timeout=None):
+        del messages, tools, timeout
+        yield ProviderTextDelta("streamed ")
+        yield ProviderTextDelta("done")
+        return ChatResponse(
+            message={"role": "assistant", "content": "streamed done"},
+            finish_reason="stop",
+        )
+
+
+class _BailianXmlStreamingClient:
+    markup = "<tool_call><function=read_file><parameter=path>secret.py</parameter></function></tool_call>"
+
+    def __init__(self, config: AgentConfig):
+        self.config = config
+
+    def chat_stream(self, messages, tools, *, timeout=None):
+        del messages, tools, timeout
+        yield ProviderTextDelta(self.markup)
+        return ChatResponse(
+            message={"role": "assistant", "content": self.markup},
+            finish_reason="stop",
+            protocol_artifact=classify_provider_content_artifact("bailian", self.markup),
+        )
 
 
 class _NoInspectionSemanticClient:
@@ -2843,6 +2875,8 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertIn("UserMessage", event_types)
         self.assertIn("LlmRequest", event_types)
         self.assertIn("AssistantMessage", event_types)
+        assistant_events = [event.to_dict() for event in sink.events if event.type == "AssistantMessage"]
+        self.assertNotIn("arguments", json.dumps(assistant_events))
         self.assertIn("ToolStarted", event_types)
         self.assertIn("ToolOutput", event_types)
         self.assertIn("ToolFinished", event_types)
@@ -2892,6 +2926,112 @@ class AgentRuntimeTests(unittest.TestCase):
                 for record in records
             )
         )
+
+    def test_streamed_assistant_events_share_message_command_and_run_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            sink = ListEventSink()
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=workspace,
+                state_dir=workspace / "state",
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _StreamingFinalClient):
+                runtime = AgentRuntime(config, show_tool_logs=False, event_sink=sink)
+                command = new_command("SubmitPrompt", {"prompt": "hello"})
+                result = runtime.commands.dispatch(command)
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.payload["content"], "streamed done")
+        deltas = [event for event in sink.events if event.type == "AssistantDelta"]
+        messages = [event for event in sink.events if event.type == "AssistantMessage"]
+        self.assertEqual([event.payload["delta"] for event in deltas], ["streamed ", "done"])
+        self.assertEqual([event.payload["delta_index"] for event in deltas], [0, 1])
+        self.assertTrue(all(event.payload["provisional"] is True for event in deltas))
+        self.assertEqual(len(messages), 1)
+        self.assertEqual({event.payload["message_id"] for event in deltas + messages}, {messages[0].payload["message_id"]})
+        self.assertTrue(all(event.command_id == command.command_id for event in deltas + messages))
+        self.assertTrue(all(event.run_id == result.run_id for event in deltas + messages))
+        self.assertNotIn("arguments", json.dumps([event.to_dict() for event in deltas]))
+
+    def test_incomplete_stream_never_emits_complete_assistant_or_executes_a_tool(self) -> None:
+        body = (
+            'data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_x",'
+            '"type":"function","function":{"name":"read_file"}}]},"finish_reason":"tool_calls"}]}\n\n'
+            "data: [DONE]\n\n"
+        ).encode("utf-8")
+
+        class _Response:
+            def __init__(self) -> None:
+                self.body = body
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, traceback):
+                return None
+
+            def read1(self, size=-1):
+                del size
+                chunk, self.body = self.body, b""
+                return chunk
+
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            sink = ListEventSink()
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=workspace,
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+            )
+            with patch("urllib.request.urlopen", return_value=_Response()):
+                runtime = AgentRuntime(config, show_tool_logs=False, event_sink=sink)
+                result = runtime.commands.dispatch(new_command("SubmitPrompt", {"prompt": "hello"}))
+
+        event_types = [event.type for event in sink.events]
+        self.assertTrue(result.ok)
+        self.assertEqual(result.payload["status"], "error")
+        self.assertEqual(event_types.count("AssistantDelta"), 0)
+        self.assertNotIn("AssistantMessage", event_types)
+        self.assertNotIn("ToolStarted", event_types)
+        self.assertEqual(event_types.count("TurnStarted"), 1)
+        self.assertEqual(event_types.count("TurnFinished"), 1)
+
+    def test_bailian_protocol_artifact_is_buffered_without_raw_delta_or_markup(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            sink = ListEventSink()
+            config = AgentConfig(
+                provider="bailian",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=workspace,
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _BailianXmlStreamingClient):
+                runtime = AgentRuntime(config, show_tool_logs=False, event_sink=sink)
+                result = runtime.commands.dispatch(new_command("SubmitPrompt", {"prompt": "hello"}))
+                session_text = runtime._session.path.read_text(encoding="utf-8")
+
+        self.assertTrue(result.ok)
+        self.assertNotIn("AssistantDelta", [event.type for event in sink.events])
+        self.assertNotIn("ToolStarted", [event.type for event in sink.events])
+        self.assertNotIn(_BailianXmlStreamingClient.markup, result.payload["content"])
+        self.assertNotIn(_BailianXmlStreamingClient.markup, session_text)
 
     def test_run_facade_and_typed_submit_share_the_same_runtime_lifecycle(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -5,9 +5,16 @@ import unittest
 
 from local_agent.provider_protocol import classify_provider_content_artifact
 from local_agent.provider_protocol import normalize_provider_dialect_message
+from local_agent.provider_protocol import provider_allows_provisional_text
 
 
 class ProviderProtocolTests(unittest.TestCase):
+    def test_only_non_bailian_providers_allow_provisional_visible_text(self) -> None:
+        self.assertTrue(provider_allows_provisional_text("openai-compatible"))
+        for provider in ("bailian", "bailian-intl", "dashscope", "aliyun"):
+            with self.subTest(provider=provider):
+                self.assertFalse(provider_allows_provisional_text(provider))
+
     def test_normalizes_complete_bailian_xml_inside_matching_structured_tool_call(self) -> None:
         message, artifacts = normalize_provider_dialect_message(
             {

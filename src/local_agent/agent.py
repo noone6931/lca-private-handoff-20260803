@@ -40,12 +40,9 @@ from .evidence import first_search_result_paths
 from .evidence import evidence_root_for_path
 from .evidence import evidence_root_label
 from .finalization import FINAL_ANSWER_STEERING_HARD
-from .llm import LlmError
-from .llm import LlmTimeoutError
-from .llm import OpenAICompatibleClient
-from .provider_protocol import ProviderProtocolArtifact
-from .provider_protocol import provider_safe_assistant_message as _provider_safe_assistant_message
-from .provider_protocol import classify_provider_content_artifact
+from .llm import LlmError, LlmTimeoutError, OpenAICompatibleClient
+from .provider_protocol import ProviderProtocolArtifact, provider_safe_assistant_message as _provider_safe_assistant_message
+from .provider_protocol import classify_provider_content_artifact, provider_allows_provisional_text
 from .provider_protocol import normalize_provider_dialect_message
 from .lsp.client import close_all_clients
 from .negative_evidence import negative_claim_metrics as _negative_claim_metrics
@@ -136,9 +133,7 @@ from .runtime_workflow_profile import WorkflowReadOnlyReviewPhase
 from .runtime_read_only_explore import RuntimeReadOnlyExplorePhase
 from .runtime_provider_terminal import ProviderTerminalPhase
 from .runtime_workspace import WorkspaceLifecycle
-from .runtime_prompt import _assistant_event_payload
-from .runtime_prompt import _tool_call_event_payload
-from .runtime_prompt import _event_preview
+from .runtime_prompt import _assistant_event_payload, _event_preview, _tool_call_event_payload
 from .runtime_prompt import _parse_tool_arguments
 from .runtime_prompt import _clip_memory_text
 from .runtime_prompt import _clip_context_text
@@ -485,6 +480,7 @@ class AgentRuntime:
             )
             force_final_answer = self._run.finalization.begin_forced_final_turn()
             forced_final_kind = self._run.finalization.kind if force_final_answer else None
+            message_id = hashlib.sha256(f"{self._run.run_id}:{step}:{time.monotonic_ns()}".encode()).hexdigest()[:32]
             try:
                 response = call_chat_with_timeout(
                     self._client,
@@ -492,6 +488,10 @@ class AgentRuntime:
                     tools_for_model,
                     timeout=self._provider_context_phase.remaining_timeout(deadline),
                     tool_choice=tool_choice_turn.tool_choice,
+                    use_stream=True,
+                    on_text_delta=self._events.assistant_delta_callback(
+                        message_id, enabled=provider_allows_provisional_text(self._config.provider)
+                    ),
                 )
             except LlmError as exc:
                 fallback = self._forced_final_timeout_fallback(
@@ -563,7 +563,7 @@ class AgentRuntime:
                         message = {**message, "content": ""}
                     self._messages.append(message)
                     self._session.append("assistant", message)
-                    self._events.emit("AssistantMessage", _assistant_event_payload(message))
+                    self._events.emit("AssistantMessage", _assistant_event_payload(message, message_id=message_id))
                     if tool_choice_outcome.kind == "force":
                         step += 1
                         continue
@@ -596,7 +596,7 @@ class AgentRuntime:
             message = _provider_safe_assistant_message(raw_message)
             self._messages.append(message)
             self._session.append("assistant", message)
-            self._events.emit("AssistantMessage", _assistant_event_payload(message))
+            self._events.emit("AssistantMessage", _assistant_event_payload(message, message_id=message_id))
 
             tool_calls = message.get("tool_calls") or []
             tool_choice_outcome = self._tool_choice_directive_phase.after_model_turn(tool_calls)

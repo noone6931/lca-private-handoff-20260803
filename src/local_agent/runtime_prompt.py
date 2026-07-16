@@ -34,9 +34,10 @@ READ_FILE_DRIFT_GUARD_EDIT_KEYWORDS = {
 }
 STICKY_RULES_CHAR_LIMIT = 4000
 
-def _assistant_event_payload(message: dict[str, Any]) -> dict[str, Any]:
+def _assistant_event_payload(message: dict[str, Any], *, message_id: str) -> dict[str, Any]:
     tool_calls = message.get("tool_calls") or []
     return {
+        "message_id": message_id,
         "content": message.get("content") or "",
         "tool_calls": [_tool_call_event_payload(tool_call) for tool_call in tool_calls if isinstance(tool_call, dict)],
     }
@@ -47,7 +48,6 @@ def _tool_call_event_payload(tool_call: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": tool_call.get("id"),
         "name": function.get("name") or "",
-        "arguments_preview": _event_preview(function.get("arguments") or ""),
     }
 
 

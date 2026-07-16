@@ -167,6 +167,60 @@ class TerminalFrontendTests(unittest.TestCase):
         self.assertNotIn("read_file", rendered)
         self.assertIn("done", rendered)
 
+    def test_terminal_streams_deltas_and_does_not_repeat_identical_final(self) -> None:
+        output = io.StringIO()
+        sink = TerminalEventSink(stream=output, show_tools=True, use_rich=False)
+
+        sink.emit(_event("TurnStarted", {}))
+        sink.emit(
+            _event(
+                "AssistantDelta",
+                {"message_id": "m1", "delta": "streamed ", "delta_index": 0, "provisional": True},
+            )
+        )
+        sink.emit(
+            _event(
+                "AssistantDelta",
+                {"message_id": "m1", "delta": "answer", "delta_index": 1, "provisional": True},
+            )
+        )
+        sink.emit(_event("AssistantMessage", {"message_id": "m1", "content": "streamed answer"}))
+        sink.emit(_event("TurnFinished", {"content": "streamed answer"}))
+
+        self.assertEqual(output.getvalue(), "streamed answer\n")
+
+    def test_terminal_marks_a_different_authoritative_final_after_provisional_text(self) -> None:
+        output = io.StringIO()
+        sink = TerminalEventSink(stream=output, show_tools=True, use_rich=False)
+
+        sink.emit(_event("TurnStarted", {}))
+        sink.emit(
+            _event(
+                "AssistantDelta",
+                {"message_id": "m1", "delta": "unsafe draft", "delta_index": 0, "provisional": True},
+            )
+        )
+        sink.emit(_event("TurnFinished", {"content": "safe authoritative final"}))
+
+        rendered = output.getvalue()
+        self.assertEqual(rendered.count("unsafe draft"), 1)
+        self.assertEqual(rendered.count("safe authoritative final"), 1)
+        self.assertIn("[authoritative final]", rendered)
+
+    def test_terminal_keeps_tool_logs_on_their_own_line_after_a_delta(self) -> None:
+        output = io.StringIO()
+        sink = TerminalEventSink(stream=output, show_tools=True, use_rich=False)
+
+        sink.emit(
+            _event(
+                "AssistantDelta",
+                {"message_id": "m1", "delta": "working", "delta_index": 0, "provisional": True},
+            )
+        )
+        sink.emit(_event("ToolStarted", {"name": "read_file", "arguments": {"path": "README.md"}}))
+
+        self.assertIn("working\n[tool:start] read_file", output.getvalue())
+
     def test_terminal_event_sink_renders_approval_result(self) -> None:
         output = io.StringIO()
         sink = TerminalEventSink(stream=output, show_tools=True, use_rich=False)

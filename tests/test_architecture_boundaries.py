@@ -35,6 +35,13 @@ OWNER_COMPLEXITY_CEILINGS = {
     "src/local_agent/execution_policy.py": 170,
     "src/local_agent/tools/base.py": 550,
     "src/local_agent/command_dispatcher.py": 219,
+    "src/local_agent/provider_stream.py": 340,
+    "src/local_agent/chat_runtime.py": 162,
+    "src/local_agent/llm.py": 226,
+    "src/local_agent/protocol/events.py": 222,
+    "src/local_agent/frontends/terminal/renderer.py": 165,
+    "src/local_agent/provider_protocol.py": 379,
+    "src/local_agent/runtime_prompt.py": 475,
 }
 LEGACY_COMPLEXITY_DEBT_CEILINGS = {
     "src/local_agent/agent.py": 1792,
@@ -253,6 +260,37 @@ class ArchitectureBoundaryTests(unittest.TestCase):
         self.assertNotIn("from .agent import", dispatcher)
         self.assertNotIn("tool_choice", dispatcher)
         self.assertNotIn('"SessionFinished"', production)
+
+    def test_provider_streaming_has_one_parser_owner_and_redacted_delta_boundary(self) -> None:
+        production = list((ROOT / "src/local_agent").rglob("*.py"))
+        parser_owners = [
+            path.relative_to(ROOT).as_posix()
+            for path in production
+            if "class _SseDecoder" in path.read_text(encoding="utf-8")
+        ]
+        self.assertEqual(parser_owners, ["src/local_agent/provider_stream.py"])
+
+        owner = (ROOT / "src/local_agent/provider_stream.py").read_text(encoding="utf-8")
+        llm = (ROOT / "src/local_agent/llm.py").read_text(encoding="utf-8")
+        runtime = (ROOT / "src/local_agent/agent.py").read_text(encoding="utf-8")
+        prompt = (ROOT / "src/local_agent/runtime_prompt.py").read_text(encoding="utf-8")
+        renderer_path = ROOT / "src/local_agent/frontends/terminal/renderer.py"
+        renderer = renderer_path.read_text(encoding="utf-8")
+        self.assertNotIn("from .agent", owner)
+        self.assertNotIn("from .runtime_", owner)
+        self.assertIn("from .provider_stream import iter_chat_completion_response", llm)
+        self.assertNotIn("class _SseDecoder", runtime)
+        self.assertNotIn("data: [DONE]", runtime)
+        self.assertEqual(runtime.count("use_stream=True"), 1)
+        self.assertIn("assistant_delta_callback", runtime)
+        self.assertNotIn("arguments_preview", prompt)
+
+        tree = ast.parse(renderer)
+        delta_renderer = next(
+            node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name == "_render_assistant_delta"
+        )
+        delta_source = ast.get_source_segment(renderer, delta_renderer) or ""
+        self.assertNotIn("arguments", delta_source)
 
     def test_runtime_strategy_owners_do_not_reintroduce_business_keyword_guards(self) -> None:
         strategy_files = (

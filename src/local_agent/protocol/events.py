@@ -161,6 +161,28 @@ class EventEmitter:
             },
         )
 
+    def assistant_delta_callback(
+        self,
+        message_id: str,
+        *,
+        enabled: bool,
+    ) -> Callable[[str, int], None] | None:
+        if not enabled:
+            return None
+
+        def emit_delta(delta: str, delta_index: int) -> None:
+            self.emit(
+                "AssistantDelta",
+                {
+                    "message_id": message_id,
+                    "delta": delta,
+                    "delta_index": delta_index,
+                    "provisional": True,
+                },
+            )
+
+        return emit_delta
+
     def emit(self, event_type: str, payload: dict[str, Any] | None = None) -> AgentEvent:
         if event_type not in EVENT_TYPES:
             raise ValueError(f"Unknown event type: {event_type}")

@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import queue
 import threading
+import time
+from collections.abc import Callable, Iterator
 from typing import Any
 
 from .llm import LlmError
 from .llm import LlmTimeoutError
+from .provider_stream import ProviderTextDelta
 
 
 def call_chat_with_timeout(
@@ -16,6 +19,8 @@ def call_chat_with_timeout(
     timeout: float | None,
     model: str | None = None,
     tool_choice: dict[str, Any] | str | None = None,
+    use_stream: bool = False,
+    on_text_delta: Callable[[str, int], None] | None = None,
 ) -> Any:
     """Enforce an outer timeout even when the client ignores its own timeout arg."""
 
@@ -24,6 +29,13 @@ def call_chat_with_timeout(
         kwargs["model"] = model
     if tool_choice is not None:
         kwargs["tool_choice"] = tool_choice
+    stream_method = getattr(client, "chat_stream", None)
+    if use_stream and callable(stream_method):
+        return _call_stream_with_timeout(
+            lambda: stream_method(messages, tools, **kwargs),
+            timeout=timeout,
+            on_text_delta=on_text_delta,
+        )
     if timeout is None:
         return client.chat(messages, tools, **kwargs)
     result_queue: queue.Queue[tuple[str, Any]] = queue.Queue(maxsize=1)
@@ -47,6 +59,104 @@ def call_chat_with_timeout(
         raise LlmError("LLM API request ended without returning a response.") from exc
     if status == "ok":
         return payload
-    if isinstance(payload, LlmError):
-        raise payload
-    raise LlmError(f"LLM client failed: {type(payload).__name__}: {payload}")
+    _raise_client_error(payload)
+
+
+def _call_stream_with_timeout(
+    stream_factory: Callable[[], Iterator[ProviderTextDelta]],
+    *,
+    timeout: float | None,
+    on_text_delta: Callable[[str, int], None] | None,
+) -> Any:
+    if timeout is None:
+        return _consume_stream(stream_factory(), on_text_delta=on_text_delta)
+
+    result_queue: queue.Queue[tuple[str, Any]] = queue.Queue(maxsize=256)
+    cancelled = threading.Event()
+
+    def publish(kind: str, payload: Any) -> bool:
+        while not cancelled.is_set():
+            try:
+                result_queue.put((kind, payload), timeout=0.05)
+                return True
+            except queue.Full:
+                continue
+        return False
+
+    def worker() -> None:
+        stream: Iterator[ProviderTextDelta] | None = None
+        try:
+            stream = stream_factory()
+            while not cancelled.is_set():
+                try:
+                    event = next(stream)
+                except StopIteration as complete:
+                    publish("complete", complete.value)
+                    return
+                if not isinstance(event, ProviderTextDelta):
+                    raise LlmError(f"LLM stream yielded unsupported event: {type(event).__name__}.")
+                if not publish("delta", event.delta):
+                    return
+        except BaseException as exc:  # noqa: BLE001 - normalized on the calling thread.
+            publish("error", exc)
+        finally:
+            if cancelled.is_set() and stream is not None:
+                close = getattr(stream, "close", None)
+                if callable(close):
+                    close()
+
+    thread = threading.Thread(target=worker, daemon=True)
+    thread.start()
+    deadline = time.monotonic() + timeout
+    delta_index = 0
+    try:
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise LlmTimeoutError(f"LLM API request timed out after {timeout} seconds.")
+            try:
+                kind, payload = result_queue.get(timeout=remaining)
+            except queue.Empty as exc:
+                raise LlmTimeoutError(f"LLM API request timed out after {timeout} seconds.") from exc
+            if kind == "delta":
+                if on_text_delta is not None:
+                    on_text_delta(payload, delta_index)
+                delta_index += 1
+                continue
+            if kind == "complete":
+                if payload is None:
+                    raise LlmError("LLM stream ended without returning a response.")
+                return payload
+            _raise_client_error(payload)
+    finally:
+        cancelled.set()
+
+
+def _consume_stream(
+    stream: Iterator[ProviderTextDelta],
+    *,
+    on_text_delta: Callable[[str, int], None] | None,
+) -> Any:
+    delta_index = 0
+    while True:
+        try:
+            event = next(stream)
+        except StopIteration as complete:
+            if complete.value is None:
+                raise LlmError("LLM stream ended without returning a response.")
+            return complete.value
+        except BaseException as exc:  # noqa: BLE001 - normalized below.
+            _raise_client_error(exc)
+        if not isinstance(event, ProviderTextDelta):
+            raise LlmError(f"LLM stream yielded unsupported event: {type(event).__name__}.")
+        if on_text_delta is not None:
+            on_text_delta(event.delta, delta_index)
+        delta_index += 1
+
+
+def _raise_client_error(error: BaseException) -> None:
+    if isinstance(error, KeyboardInterrupt):
+        raise error
+    if isinstance(error, LlmError):
+        raise error
+    raise LlmError(f"LLM client failed: {type(error).__name__}: {error}") from error
