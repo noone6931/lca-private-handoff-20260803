@@ -74,6 +74,24 @@ class RequirementContractTests(unittest.TestCase):
 
         self.assertEqual(contract.task_kind, "code-implementation")
 
+    def test_scoped_write_boundary_does_not_become_global_read_only(self) -> None:
+        contract = generate_requirement_contract(
+            "实现 A，只允许修改 src/ 和 tests/，不得修改 reference/、docs/ 或范围外文件。"
+        )
+
+        self.assertEqual(contract.task_kind, "code-implementation")
+        self.assertEqual(contract.document_artifacts, ())
+
+    def test_t208_write_shape_keeps_implementation_contract_and_no_material_gate(self) -> None:
+        contract = generate_requirement_contract(
+            "在 synthetic Git workspace 完整交付实现；必须完成 Patch、run_tests 和 git_diff。"
+            "唯一合同是 inputs/extension-service-fee-s5-contract.md；可写范围严格只有两个模块，"
+            "不得修改 inputs、reference、Harness、原目录或任何范围外文件。"
+        )
+
+        self.assertEqual(contract.task_kind, "code-implementation")
+        self.assertEqual(contract.document_artifacts, ())
+
     def test_chinese_status_questions_are_read_only(self) -> None:
         for prompt in (
             "这个功能实现了吗？",
@@ -129,6 +147,10 @@ class RequirementContractTests(unittest.TestCase):
         )
 
         self.assertEqual(contract.task_kind, "read-only")
+        self.assertEqual(
+            generate_requirement_contract("只读分析，不要修改任何文件，即使发现问题也不要写。").task_kind,
+            "read-only",
+        )
 
     def test_reviewed_design_contract_requires_path_bound_source_facts(self) -> None:
         contract = generate_requirement_contract(
@@ -286,6 +308,16 @@ class RequirementContractTests(unittest.TestCase):
         self.assertEqual(
             [(item.kind, item.reference, item.exact) for item in contract.document_artifacts],
             [("markdown", "spec-a.md", True), ("html", "./prototypes/spec-b.html", True), ("image", "image-c.png", True)],
+        )
+
+    def test_unquoted_workspace_relative_artifact_keeps_its_full_subpath(self) -> None:
+        contract = generate_requirement_contract(
+            "只读读取 inputs/spec.md 做证据分析，不要修改任何文件。"
+        )
+
+        self.assertEqual(
+            [(item.kind, item.reference, item.exact) for item in contract.document_artifacts],
+            [("markdown", "inputs/spec.md", True)],
         )
 
     def test_absolute_artifact_reference_remains_an_executable_material_target(self) -> None:

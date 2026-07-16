@@ -4,8 +4,7 @@ from dataclasses import dataclass
 import re
 from typing import Literal
 
-from .document_artifacts import DocumentArtifactRequirement
-from .document_artifacts import extract_document_artifact_requirements
+from .document_artifacts import DocumentArtifactRequirement, extract_document_artifact_requirements
 from .implementation_readiness import has_implementation_readiness_intent
 
 TaskKind = Literal["read-only", "code-implementation", "unclear"]
@@ -574,12 +573,13 @@ def classify_task_kind(user_prompt: str) -> TaskKind:
     has_design_marker = _contains_any(lower, _DESIGN_MARKERS)
     has_implementation_intent = _has_implementation_intent(lower)
     has_readiness_intent = has_implementation_readiness_intent(lower)
+    has_scoped_write_boundary = bool(re.search(r"(?:可写|写入|修改)(?:文件)?范围|(?:只|仅)(?:允许)?(?:修改|写入)|\b(?:write|writable|edit) scope\b|\bonly (?:modify|write to)\b", lower))
 
     if _looks_like_status_question(lower):
         return "read-only"
     if has_read_only_marker and has_readiness_intent:
         return "read-only"
-    if has_implementation_intent and not has_explicit_read_only_directive:
+    if has_implementation_intent and (has_scoped_write_boundary or not has_explicit_read_only_directive):
         return "code-implementation"
     if has_read_only_marker or (has_question_marker and has_code_evidence and not has_implementation_intent):
         return "read-only"

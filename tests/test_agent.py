@@ -152,6 +152,7 @@ class _NoInspectionSemanticClient:
 
 class _DocumentOnlyRequirementClient:
     calls: list[dict] = []
+    read_path = "requirements.md"
 
     def __init__(self, config: AgentConfig):
         self.config = config
@@ -190,6 +191,8 @@ class _DocumentOnlyRequirementClient:
                 },
             )()
         if len(type(self).calls) == 1:
+            read_schema = tools[0]["function"]["parameters"]
+            type(self).read_path = read_schema.get("properties", {}).get("path", {}).get("enum", ["requirements.md"])[0]
             return type(
                 "Response",
                 (),
@@ -202,7 +205,7 @@ class _DocumentOnlyRequirementClient:
                                 "type": "function",
                                 "function": {
                                     "name": "read_file",
-                                    "arguments": json.dumps({"path": "requirements.md"}),
+                                    "arguments": json.dumps({"path": type(self).read_path}),
                                 },
                             }
                         ],
@@ -215,7 +218,7 @@ class _DocumentOnlyRequirementClient:
             {
                 "message": {
                     "content": (
-                        "需求事实：有效结算单为未回退的结算单（requirements.md:1）。"
+                        f"需求事实：有效结算单为未回退的结算单（{type(self).read_path}:1）。"
                         "示例图未读取，图片规则未验证，因此不据此补充规则；本结论不判断系统归属。"
                     )
                 }
@@ -3959,6 +3962,33 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertEqual(runtime._last_run_summary["tool_counts"], {"read_file": 1})
         self.assertNotIn("read_only_evidence", runtime._last_run_summary["steering_counts"])
         self.assertNotIn("negative_existence", runtime._last_run_summary["steering_counts"])
+        self.assertEqual(runtime._last_run_summary["termination_reason"], "final")
+
+    def test_workspace_relative_material_projects_to_runtime_scoped_read(self) -> None:
+        _DocumentOnlyRequirementClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            material = workspace / "inputs" / "spec.md"
+            material.parent.mkdir()
+            material.write_text("Evidence-bound requirement.\n", encoding="utf-8")
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=workspace,
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _DocumentOnlyRequirementClient):
+                runtime = AgentRuntime(config, show_tool_logs=False)
+                result = runtime.run("只读读取 inputs/spec.md 做证据分析，不要修改任何文件。")
+
+        read_schema = _DocumentOnlyRequirementClient.calls[0]["tools"][0]["function"]["parameters"]
+        self.assertEqual(read_schema["properties"]["path"]["enum"], ["inputs/spec.md"])
+        self.assertIn("inputs/spec.md:1", result)
+        self.assertEqual(runtime._last_run_summary["tool_errors"], 0)
         self.assertEqual(runtime._last_run_summary["termination_reason"], "final")
 
     def test_explicit_document_artifacts_force_synthesis_after_all_modalities_observed(self) -> None:

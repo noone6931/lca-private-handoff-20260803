@@ -49,7 +49,8 @@ _QUOTED_ARTIFACT = re.compile(
     re.IGNORECASE,
 )
 _PATHLIKE_ARTIFACT = re.compile(
-    rf"((?:~?/|\.?\.?/)[^\s`'\"，,；;()（）]+?\.{_ARTIFACT_SUFFIX})",
+    rf"(?<![\w./~:-])((?:(?:~|\.{1,2})?/|[^\s`'\"、，,；;()（）<>?#\[\]/]+/)"
+    rf"[^\s`'\"、，,；;()（）<>?#\[\]]+?\.{_ARTIFACT_SUFFIX})",
     re.IGNORECASE,
 )
 _REMOTE_URL = re.compile(r"\b[a-z][a-z0-9+.-]*://[^\s`'\"，,；;()（）<>]+", re.IGNORECASE)
@@ -382,6 +383,8 @@ def _linked_local_artifact_paths(
         for reference in references:
             reference = reference.strip()
             if "://" in reference or reference.startswith(("/", "../", "~")):
+                continue
+            if reference.replace("\\", "/") == str(result.path or "").replace("\\", "/"):
                 continue
             local_candidate = str((parent / reference).resolve(strict=False))
             listed = listed_normalized.get(local_candidate)
