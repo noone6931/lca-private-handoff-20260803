@@ -31,6 +31,50 @@ def _java_diff(*, test_changed: bool = False, public_api: bool = False) -> str:
 
 
 class PatchReviewerTests(unittest.TestCase):
+    TEST_CHANGE_REQUESTS = (
+        "Write tests for the new parser.",
+        "Add a unit test for this boundary.",
+        "Please add tests and make them pass.",
+        "Increase test coverage for the cache fix.",
+        "请补充单元测试。",
+        "请新增测试用例。",
+        "修复登录功能，并加一个测试。",
+        "Add tests for the bug; do not rewrite unrelated existing tests.",
+        "请补充边界测试，但不要修改其他现有测试。",
+    )
+    NO_TEST_CHANGE_REQUESTS = (
+        "Fix the boundary bug so the existing tests pass. Preserve behavior. Do not rewrite tests.",
+        "Do not change tests.",
+        "Do not write tests.",
+        "Without modifying tests, make the existing tests pass.",
+        "Run the unit tests.",
+        "Existing tests must pass.",
+        "Tests should pass after the fix.",
+        "不要修改测试。",
+        "不要重写测试。",
+        "让现有测试通过。",
+        "运行单元测试并确认通过。",
+        "测试必须通过。",
+    )
+
+    def test_explicit_test_change_requests_require_a_test_diff(self) -> None:
+        for request in self.TEST_CHANGE_REQUESTS:
+            with self.subTest(request=request):
+                result = _review_request(request, test_changed=False)
+                self.assertIn("requested_test_missing", {finding.code for finding in result.findings})
+
+    def test_explicit_test_change_requests_pass_when_a_test_diff_exists(self) -> None:
+        for request in self.TEST_CHANGE_REQUESTS:
+            with self.subTest(request=request):
+                result = _review_request(request, test_changed=True)
+                self.assertNotIn("requested_test_missing", {finding.code for finding in result.findings})
+
+    def test_test_verification_and_local_negations_do_not_require_a_test_diff(self) -> None:
+        for request in self.NO_TEST_CHANGE_REQUESTS:
+            with self.subTest(request=request):
+                result = _review_request(request, test_changed=False)
+                self.assertNotIn("requested_test_missing", {finding.code for finding in result.findings})
+
     def test_requested_tests_must_appear_in_reviewed_diff(self) -> None:
         contract = generate_requirement_contract("请实现用户名规范化，并补充单元测试。")
         result = review_patch(
@@ -179,6 +223,18 @@ class PatchReviewerTests(unittest.TestCase):
         )
 
         self.assertNotIn("requested_test_missing", {finding.code for finding in result.findings})
+
+
+def _review_request(request: str, *, test_changed: bool):
+    contract = generate_requirement_contract("Implement a source code boundary fix.")
+    return review_patch(
+        contract,
+        request=request,
+        tool_results=[
+            ToolResultSummary("apply_patch", "Applied patch", path="src/UserService.java", changed=True),
+            ToolResultSummary("git_diff", _java_diff(test_changed=test_changed)),
+        ],
+    )
 
 
 if __name__ == "__main__":

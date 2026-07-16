@@ -26,22 +26,33 @@ _PUBLIC_METHOD_PATTERN = re.compile(
 _EXPORTED_JS_API_PATTERN = re.compile(
     r"^[+-]\s*export\s+(?:default\s+)?(?:async\s+)?(?:function|class|const|let|var)\s+(?P<symbol>[A-Za-z_$][\w$]*)",
 )
-_TEST_REQUEST_MARKERS = (
-    "单元测试",
-    "补测试",
-    "补充测试",
-    "新增测试",
-    "加测试",
-    "加一个测试",
-    "添加测试",
-    "编写测试",
-    "测试用例",
-    "test coverage",
-    "unit test",
-    "add test",
-    "add tests",
-    "write test",
-    "write tests",
+_TEST_INTENT_CLAUSE_BOUNDARY = re.compile(r"[\n.;!?。；！？,，]+|\b(?:but|however)\b", re.IGNORECASE)
+_ENGLISH_TEST_CHANGE_ACTION = re.compile(
+    r"\b(?:add|write|create|modify|change|update|extend)\b"
+    r"(?:\s+(?:a|an|the|new|existing|unit|integration|regression|boundary|additional|related)){0,4}"
+    r"\s+tests?\b",
+    re.IGNORECASE,
+)
+_ENGLISH_TEST_COVERAGE_ACTION = re.compile(
+    r"\b(?:increase|improve|expand|extend)\s+(?:the\s+)?test\s+coverage\b",
+    re.IGNORECASE,
+)
+_ENGLISH_NEGATED_ACTION_PREFIX = re.compile(
+    r"\b(?:do\s+not|don't|does\s+not|must\s+not|should\s+not|never|without)"
+    r"(?:\s+\w+){0,3}\s*$",
+    re.IGNORECASE,
+)
+_CHINESE_TEST_CHANGE_ACTION = re.compile(
+    r"(?:补充|新增|添加|编写|增加|修改|改动|调整|加)\s*"
+    r"(?:一个|一条|一些|相关|新的|新)?\s*(?:单元|集成|回归|边界)?\s*测试(?:用例)?"
+)
+_CHINESE_TEST_COVERAGE_ACTION = re.compile(r"(?:提高|提升|增加|扩大)\s*测试覆盖(?:率)?")
+_CHINESE_NEGATED_ACTION_PREFIX = re.compile(r"(?:不要|不得|不需|不必|禁止|无需|不用|避免)\s*$")
+_TEST_CHANGE_ACTION_PATTERNS = (
+    _ENGLISH_TEST_CHANGE_ACTION,
+    _ENGLISH_TEST_COVERAGE_ACTION,
+    _CHINESE_TEST_CHANGE_ACTION,
+    _CHINESE_TEST_COVERAGE_ACTION,
 )
 
 
@@ -254,8 +265,20 @@ def _section_from(content: str, header: str) -> str:
 
 
 def _request_requires_test_change(request: str | None) -> bool:
-    lowered = (request or "").lower()
-    return any(marker in lowered for marker in _TEST_REQUEST_MARKERS)
+    for clause in _TEST_INTENT_CLAUSE_BOUNDARY.split(request or ""):
+        for pattern in _TEST_CHANGE_ACTION_PATTERNS:
+            for match in pattern.finditer(clause):
+                if not _test_change_action_is_negated(clause, match.start()):
+                    return True
+    return False
+
+
+def _test_change_action_is_negated(clause: str, action_start: int) -> bool:
+    prefix = clause[max(0, action_start - 48) : action_start]
+    return bool(
+        _ENGLISH_NEGATED_ACTION_PREFIX.search(prefix)
+        or _CHINESE_NEGATED_ACTION_PREFIX.search(prefix)
+    )
 
 
 def _changed_paths(raw_diff: str) -> set[str]:
