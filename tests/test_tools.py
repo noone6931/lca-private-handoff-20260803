@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -25,7 +26,7 @@ from local_agent.tools.search import glob_files
 from local_agent.tools.search import list_files
 from local_agent.tools.search import search_code
 from local_agent.tools.search import search_tools
-from local_agent.tools.shell import run_shell, run_tests, shell_tools
+from local_agent.tools.shell import _test_runner_denial_reason, run_shell, run_tests, shell_tools
 from local_agent.tools.todo import todo_add, todo_read, todo_tools, todo_update
 
 
@@ -2052,11 +2053,15 @@ class ToolTests(unittest.TestCase):
         self.assertFalse(result.is_error)
         self.assertIn("OK", result.content)
         self.assertIn("[exit_code] 0", result.content)
-        self.assertEqual(result.metadata["argv"], ["python3", "-m", "unittest", "discover", "-s", "tests"])
+        self.assertEqual(result.metadata["argv"][1:], ["-m", "unittest", "discover", "-s", "tests"])
+        self.assertEqual(result.metadata["argv"][0], result.metadata["runner_executable"])
         self.assertEqual(result.metadata["environment_keys"], ["PYTHONPATH"])
         self.assertEqual(result.metadata["exit_code"], 0)
         self.assertEqual(result.metadata["working_directory"], str(workspace))
         self.assertEqual(result.metadata["execution_status"], "succeeded")
+        self.assertEqual(result.metadata["execution_capability"], "exec")
+        self.assertFalse(result.metadata["sandboxed"])
+        self.assertIn("repository-controlled", result.metadata["trust_boundary"])
 
     def test_run_tests_propagates_real_python_test_failure(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -2106,6 +2111,108 @@ class ToolTests(unittest.TestCase):
                     self.assertIsNone(result.metadata["exit_code"])
                     self.assertFalse(side_effect.exists())
 
+    def test_run_tests_rejects_runner_paths_and_loader_environments(self) -> None:
+        self.assertIsNotNone(_test_runner_denial_reason(("/tmp/python3", "-m", "unittest")))
+        self.assertIsNotNone(_test_runner_denial_reason(("/tmp/mvn", "test")))
+        environments = (
+            "LD_PRELOAD=/tmp/evil.so",
+            "DYLD_INSERT_LIBRARIES=/tmp/evil.dylib",
+            "NODE_OPTIONS=--require=/tmp/evil.js",
+            "BASH_ENV=/tmp/evil.sh",
+            "ENV=/tmp/evil.sh",
+            "JAVA_TOOL_OPTIONS=-javaagent:/tmp/evil.jar",
+            "_JAVA_OPTIONS=-javaagent:/tmp/evil.jar",
+            "MAVEN_OPTS=-Dmaven.ext.class.path=/tmp/evil.jar",
+            "GRADLE_OPTS=-I/tmp/evil.gradle",
+            "RUSTC_WRAPPER=/tmp/evil",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            context = ToolContext(workspace=workspace, approval_mode="yolo")
+            with patch("local_agent.tools.shell.subprocess.run") as mocked_run:
+                for assignment in environments:
+                    with self.subTest(assignment=assignment):
+                        result = run_tests({"command": f"{assignment} python3 -m unittest"}, context)
+                        self.assertTrue(result.is_error)
+                        self.assertEqual(result.metadata["execution_status"], "not_run")
+                        self.assertNotIn(assignment.split("=", 1)[1], result.content)
+                for command in ("/tmp/python3 -m unittest", "/tmp/mvn test"):
+                    with self.subTest(command=command):
+                        result = run_tests({"command": command}, context)
+                        self.assertTrue(result.is_error)
+                        self.assertEqual(result.metadata["execution_status"], "not_run")
+                mocked_run.assert_not_called()
+
+    def test_run_tests_pins_bare_runner_before_applying_explicit_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            trusted_bin = workspace / "trusted-bin"
+            model_bin = workspace / "model-bin"
+            trusted_bin.mkdir()
+            model_bin.mkdir()
+            trusted_runner = trusted_bin / "pytest"
+            trusted_runner.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            trusted_runner.chmod(0o755)
+            side_effect = workspace / "model-runner-executed"
+            model_runner = model_bin / "pytest"
+            model_runner.write_text(f"#!/bin/sh\ntouch '{side_effect}'\nexit 9\n", encoding="utf-8")
+            model_runner.chmod(0o755)
+            process_path = f"{trusted_bin}:{os.environ.get('PATH', '')}"
+            with patch.dict(os.environ, {"PATH": process_path}):
+                result = run_tests(
+                    {"command": f"PATH={model_bin}:$PATH pytest"},
+                    ToolContext(workspace=workspace, approval_mode="yolo"),
+                )
+                side_effect_exists = side_effect.exists()
+
+        self.assertFalse(result.is_error)
+        self.assertEqual(result.metadata["runner_executable"], str(trusted_runner))
+        self.assertEqual(result.metadata["argv"][0], str(trusted_runner))
+        self.assertEqual(result.metadata["environment_keys"], ["PATH"])
+        self.assertFalse(side_effect_exists)
+
+    def test_run_tests_only_allows_canonical_cwd_wrappers(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            workspace = root / "workspace"
+            outside = root / "outside"
+            nested = workspace / "nested"
+            workspace.mkdir()
+            outside.mkdir()
+            nested.mkdir()
+            wrapper = workspace / "mvnw"
+            wrapper.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            wrapper.chmod(0o755)
+            nested_wrapper = nested / "mvnw"
+            nested_wrapper.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            nested_wrapper.chmod(0o755)
+            outside_wrapper = outside / "gradlew"
+            outside_wrapper.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            outside_wrapper.chmod(0o755)
+            (workspace / "gradlew").symlink_to(outside_wrapper)
+            context = ToolContext(workspace=workspace, approval_mode="yolo")
+
+            allowed = run_tests({"command": "./mvnw test"}, context)
+            denied = (
+                run_tests({"command": "nested/mvnw test"}, context),
+                run_tests({"command": f"{wrapper} test"}, context),
+                run_tests({"command": "./gradlew test"}, context),
+            )
+
+        self.assertFalse(allowed.is_error)
+        self.assertEqual(allowed.metadata["runner_executable"], str(wrapper))
+        for result in denied:
+            self.assertTrue(result.is_error)
+            self.assertEqual(result.metadata["execution_status"], "not_run")
+
+    def test_run_tests_description_declares_exec_tier_and_non_sandbox_boundary(self) -> None:
+        run_tests_tool = next(tool for tool in shell_tools() if tool.name == "run_tests")
+
+        self.assertEqual(run_tests_tool.tier, "exec")
+        self.assertIn("Exec-tier", run_tests_tool.description)
+        self.assertIn("not a sandbox", run_tests_tool.description)
+        self.assertIn("side effects", run_tests_tool.description)
+
     def test_run_tests_supports_test_runner_families_without_shell(self) -> None:
         completed = subprocess.CompletedProcess([], 0, stdout="ok\n", stderr="")
         commands = (
@@ -2128,40 +2235,56 @@ class ToolTests(unittest.TestCase):
         )
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp).resolve()
-            with patch("local_agent.tools.shell.subprocess.run", return_value=completed) as mocked_run:
-                for command in commands:
-                    with self.subTest(command=command):
-                        result = run_tests(
-                            {"command": command},
-                            ToolContext(workspace=workspace, approval_mode="yolo"),
-                        )
-                        self.assertFalse(result.is_error)
-                        self.assertEqual(result.metadata["execution_status"], "succeeded")
-                        self.assertFalse(mocked_run.call_args.kwargs["shell"])
+            for wrapper in ("mvnw", "gradlew"):
+                target = workspace / wrapper
+                target.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+                target.chmod(0o755)
+            with patch("local_agent.tools.test_runner_policy.shutil.which", return_value="/usr/bin/true"):
+                with patch("local_agent.tools.shell.subprocess.run", return_value=completed) as mocked_run:
+                    for command in commands:
+                        with self.subTest(command=command):
+                            result = run_tests(
+                                {"command": command},
+                                ToolContext(workspace=workspace, approval_mode="yolo"),
+                            )
+                            self.assertFalse(result.is_error)
+                            self.assertEqual(result.metadata["execution_status"], "succeeded")
+                            self.assertFalse(mocked_run.call_args.kwargs["shell"])
 
     def test_run_tests_maven_policy_preserves_env_and_real_exit_codes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp).resolve()
             bin_dir = workspace / "bin"
+            model_bin = workspace / "model-bin"
             bin_dir.mkdir()
+            model_bin.mkdir()
             maven = bin_dir / "mvn"
             maven.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
             maven.chmod(0o755)
+            side_effect = workspace / "model-maven-executed"
+            model_maven = model_bin / "mvn"
+            model_maven.write_text(f"#!/bin/sh\ntouch '{side_effect}'\nexit 0\n", encoding="utf-8")
+            model_maven.chmod(0o755)
             context = ToolContext(workspace=workspace, approval_mode="yolo")
             command = (
-                f"PATH={bin_dir}:$PATH JAVA_HOME=/java8 mvn -s settings.xml "
+                f"PATH={model_bin}:$PATH JAVA_HOME=/java8 mvn -s settings.xml "
                 "-Dmaven.repo.local=.m2 -Dmaven.compiler.source=1.8 "
                 "-Dmaven.compiler.target=1.8 test"
             )
 
-            passed = run_tests({"command": command}, context)
-            maven.write_text("#!/bin/sh\nexit 7\n", encoding="utf-8")
-            failed = run_tests({"command": command.replace(" test", " verify")}, context)
-            skipped = run_tests({"command": "mvn -DskipTests test"}, context)
+            process_path = f"{bin_dir}:{os.environ.get('PATH', '')}"
+            with patch.dict(os.environ, {"PATH": process_path}):
+                passed = run_tests({"command": command}, context)
+                maven.write_text("#!/bin/sh\nexit 7\n", encoding="utf-8")
+                failed = run_tests({"command": command.replace(" test", " verify")}, context)
+                skipped = run_tests({"command": "mvn -DskipTests test"}, context)
+                side_effect_exists = side_effect.exists()
 
         self.assertFalse(passed.is_error)
         self.assertEqual(passed.metadata["exit_code"], 0)
+        self.assertEqual(passed.metadata["runner_executable"], str(maven))
         self.assertEqual(passed.metadata["environment_keys"], ["JAVA_HOME", "PATH"])
+        self.assertFalse(side_effect_exists)
         self.assertTrue(failed.is_error)
         self.assertEqual(failed.metadata["exit_code"], 7)
         self.assertEqual(failed.metadata["execution_status"], "failed")

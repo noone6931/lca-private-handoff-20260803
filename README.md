@@ -333,7 +333,7 @@ python3 scripts/sync_project_excel.py
 - `list_files`: 列出项目文件，默认跳过 `.git`、`.local-agent` 和缓存目录。
 - `search_code`: 使用 `rg` 搜索代码。
 - `shell`: 运行本地命令，带超时和确认。
-- `run_tests`: 运行测试命令，默认执行 `PYTHONPATH=src python3 -m unittest discover -s tests`。
+- `run_tests`: exec-tier 的受约束测试/构建入口，默认执行 `PYTHONPATH=src python3 -m unittest discover -s tests`。它使用结构化 argv、固定可信 PATH 解析出的 runner、真实退出码和显式 `cwd`，不解释 shell 管道或重定向。
 - `git_status`: 查看本地 git 状态。
 - `git_diff`: 查看本地 diff，追加轻量 diff summary，并在有 run start baseline 时提示 pre-existing、本轮 apply_patch 和未归因变更。
 - `apply_patch`: 简化版 anchored patch，校验文件 hash 与旧文本后写入；支持 `replace`、`insert_before`、`insert_after`，也支持 `dry_run=true` 只预览 diff 不写文件；若误传 `[path#hash]` 会提取 hash 并提示下次传纯 tag。
@@ -401,7 +401,7 @@ AGENT_LSP_VUE_COMMAND="/path/to/vue-language-server --stdio"
 - 需求不清时可使用 `ask_user` 暂停并提问，也可传 `timeout_seconds` / `default_answer` 避免长任务无限等待；
 - 读、搜、写默认限制在 workspace 内；显式 `--allow-dir` / `AGENT_ALLOWED_DIRS` 可授权额外目录给文件、搜索、LSP 和 patch 工具；
 - 交互模式的 `/move PATH` 可把当前 session 的 primary workspace 原子切换到 PATH；旧 primary 仍作为 session root 可读，但 Git、shell、startup context、project memory/skills 和默认 LSP root 全部改用新 primary；
-- `shell` / `run_tests` 仍然可以执行任意本地命令；危险命令黑名单只是防手滑，不是安全沙箱，真正隔离依赖封闭 VM 和人工审批；
+- `shell` 可以执行任意本地命令；`run_tests` 只接受受支持的测试/构建 runner，但允许它仍会执行仓库控制的代码并可能产生副作用。`JAVA_HOME`、`PATH`、`PYTHONPATH` 兼容性也不构成沙箱；真正隔离仍依赖封闭 VM、sandbox owner 和人工审批；
 - 读取文件有大小和行数限制；
 - 明显危险的 shell 命令会被拒绝；
 - patch 必须可校验；

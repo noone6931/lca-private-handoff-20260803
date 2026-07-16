@@ -11,6 +11,8 @@ from typing import Any
 from local_agent.patch.anchored import PatchError, resolve_workspace_path
 
 from .base import Tool, ToolContext, ToolResult
+from .test_runner_policy import resolve_test_runner, test_environment_denial_reason
+from .test_runner_policy import test_runner_denial_reason as _test_runner_denial_reason
 
 DANGEROUS_COMMAND_PATTERNS = [
     re.compile(pattern, re.IGNORECASE)
@@ -31,53 +33,17 @@ DANGEROUS_COMMAND_PATTERNS = [
 
 _ENV_ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=(.*)", re.DOTALL)
 _ENV_REFERENCE = re.compile(r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))")
-_PYTHON_RUNNER = re.compile(r"python(?:\d+(?:\.\d+)*)?", re.IGNORECASE)
-_MAVEN_VALUE_OPTIONS = frozenset(
-    {
-        "-D",
-        "-f",
-        "--file",
-        "-l",
-        "--log-file",
-        "-P",
-        "--activate-profiles",
-        "-pl",
-        "--projects",
-        "-rf",
-        "--resume-from",
-        "-s",
-        "--settings",
-        "-T",
-        "--threads",
-        "-t",
-        "--toolchains",
-    }
-)
-_GRADLE_VALUE_OPTIONS = frozenset(
-    {
-        "--console",
-        "--dependency-verification",
-        "--max-workers",
-        "--priority",
-        "--tests",
-        "--warning-mode",
-    }
-)
-_GRADLE_FORBIDDEN_OPTIONS = frozenset(
-    {"-b", "--build-file", "-c", "--settings-file", "-I", "--init-script", "-p", "--project-dir"}
-)
-_NODE_CWD_OPTIONS = frozenset({"--cwd", "--dir", "--prefix", "-C"})
-
-
 def shell_tools() -> list[Tool]:
     return [
         Tool(
             name="run_tests",
             description=(
-                "Run an approved test runner without shell interpretation. Defaults to Python unittest. "
+                "Exec-tier: run repository test/build code without shell interpretation; this is not a sandbox. "
+                "Defaults to Python unittest. "
                 "Use cwd for a module directory and leading environment assignments when needed, for example "
                 "`PYTHONPATH=src python3 -m unittest tests.test_config`. Pipes, redirects, shell operators, "
-                "and arbitrary executables are rejected."
+                "loader/injection environments, runner paths, and arbitrary executables are rejected. "
+                "Allowed test/build code may still have side effects."
             ),
             tier="exec",
             input_schema={
@@ -111,6 +77,7 @@ def shell_tools() -> list[Tool]:
 
 def run_tests(args: dict[str, Any], context: ToolContext) -> ToolResult:
     command = args.get("command") or "PYTHONPATH=src python3 -m unittest discover -s tests"
+    trusted_path = os.environ.get("PATH", "")
     try:
         working_directory = _resolve_test_cwd(args.get("cwd"), context)
     except (PatchError, OSError) as exc:
@@ -127,12 +94,21 @@ def run_tests(args: dict[str, Any], context: ToolContext) -> ToolResult:
         return _test_not_run(command, working_directory, denial)
     assert parsed is not None
     environment, argv = parsed
-    policy_denial = _test_runner_denial_reason(argv)
+    policy_denial = test_environment_denial_reason(environment)
     if policy_denial:
         return _test_not_run(command, working_directory, policy_denial, argv=argv, environment=environment)
+    resolved_runner, policy_denial = resolve_test_runner(
+        argv,
+        working_directory=working_directory,
+        trusted_path=trusted_path,
+    )
+    if policy_denial:
+        return _test_not_run(command, working_directory, policy_denial, argv=argv, environment=environment)
+    assert resolved_runner is not None
     return _run_test_process(
         command=command,
-        argv=argv,
+        argv=resolved_runner.argv,
+        runner_executable=resolved_runner.executable,
         environment=environment,
         working_directory=working_directory,
         args=args,
@@ -216,118 +192,11 @@ def _expand_environment_references(value: str, environment: dict[str, str]) -> s
     return _ENV_REFERENCE.sub(lambda match: environment.get(match.group(1) or match.group(2) or "", ""), value)
 
 
-def _test_runner_denial_reason(argv: tuple[str, ...]) -> str | None:
-    runner = Path(argv[0]).name.casefold()
-    runner_args = argv[1:]
-    if _PYTHON_RUNNER.fullmatch(runner):
-        if len(runner_args) >= 2 and runner_args[0] == "-m" and runner_args[1] in {"pytest", "unittest"}:
-            return None
-        return "run_tests permits Python only as `python -m unittest ...` or `python -m pytest ...`; `-c` is not allowed."
-    if runner in {"pytest", "py.test"}:
-        return None
-    if runner in {"mvn", "mvnw"}:
-        return _maven_runner_denial_reason(runner_args)
-    if runner in {"gradle", "gradlew"}:
-        return _gradle_runner_denial_reason(runner_args)
-    if runner in {"npm", "pnpm", "yarn", "bun"}:
-        return _node_runner_denial_reason(runner, runner_args)
-    if runner == "go":
-        return _subcommand_denial_reason("go", runner_args, {"test"})
-    if runner == "cargo":
-        return _subcommand_denial_reason("cargo", runner_args, {"test"})
-    if runner == "dotnet":
-        return _subcommand_denial_reason("dotnet", runner_args, {"test"})
-    if runner == "make":
-        targets = [arg for arg in runner_args if not arg.startswith("-") and "=" not in arg]
-        if targets and all(target in {"check", "test"} for target in targets):
-            return None
-        return "run_tests permits make only with test/check targets."
-    if runner in {"tox", "nox"}:
-        return None
-    return (
-        f"run_tests runner '{runner}' is not allowed. Use unittest/pytest, Maven, Gradle, a package-manager "
-        "test task, go/cargo/dotnet test, make test/check, tox, or nox."
-    )
-
-
-def _maven_runner_denial_reason(args: tuple[str, ...]) -> str | None:
-    for arg in args:
-        lowered = arg.casefold()
-        if lowered in {"-dskiptests", "-dmaven.test.skip"}:
-            return "run_tests rejects Maven test-skipping properties."
-        if lowered.startswith("-dskiptests=") and lowered.split("=", 1)[1] != "false":
-            return "run_tests rejects Maven test-skipping properties."
-        if lowered.startswith("-dmaven.test.skip=") and lowered.split("=", 1)[1] != "false":
-            return "run_tests rejects Maven test-skipping properties."
-        if lowered.startswith("-dmaven.ext.class.path="):
-            return "run_tests rejects Maven extension classpath overrides."
-    goals = _positional_arguments(args, _MAVEN_VALUE_OPTIONS)
-    if not any(goal in {"test", "verify"} for goal in goals):
-        return "run_tests Maven commands must include the test or verify lifecycle goal."
-    invalid = [goal for goal in goals if goal not in {"clean", "test", "verify"}]
-    if invalid:
-        return f"run_tests rejects non-test Maven goals: {', '.join(invalid)}."
-    return None
-
-
-def _gradle_runner_denial_reason(args: tuple[str, ...]) -> str | None:
-    for index, arg in enumerate(args):
-        if arg in _GRADLE_FORBIDDEN_OPTIONS or any(
-            arg.startswith(f"{option}=") for option in _GRADLE_FORBIDDEN_OPTIONS if option.startswith("--")
-        ):
-            return "run_tests rejects Gradle build/init/project path overrides; use the cwd argument."
-        if index > 0 and args[index - 1] in _GRADLE_FORBIDDEN_OPTIONS:
-            return "run_tests rejects Gradle build/init/project path overrides; use the cwd argument."
-    tasks = _positional_arguments(args, _GRADLE_VALUE_OPTIONS)
-    if not tasks:
-        return "run_tests Gradle commands must include a test or check task."
-    invalid = [task for task in tasks if task != "clean" and task.rsplit(":", 1)[-1] not in {"check", "test"}]
-    if invalid or not any(task.rsplit(":", 1)[-1] in {"check", "test"} for task in tasks):
-        return "run_tests Gradle commands may only invoke clean plus test/check tasks."
-    return None
-
-
-def _node_runner_denial_reason(runner: str, args: tuple[str, ...]) -> str | None:
-    if any(arg in _NODE_CWD_OPTIONS or any(arg.startswith(f"{option}=") for option in _NODE_CWD_OPTIONS) for arg in args):
-        return "run_tests rejects package-manager cwd/prefix overrides; use the cwd argument."
-    operands = [arg for arg in args if not arg.startswith("-")]
-    if not operands:
-        return f"run_tests {runner} commands must invoke a test script."
-    script = operands[1] if operands[0] == "run" and len(operands) > 1 else operands[0]
-    if script == "test" or script.startswith("test:"):
-        return None
-    return f"run_tests {runner} commands may only invoke test or test:* scripts."
-
-
-def _subcommand_denial_reason(runner: str, args: tuple[str, ...], allowed: set[str]) -> str | None:
-    command = next((arg for arg in args if not arg.startswith("-")), None)
-    if command in allowed:
-        return None
-    return f"run_tests {runner} commands must use the test subcommand."
-
-
-def _positional_arguments(args: tuple[str, ...], value_options: frozenset[str]) -> list[str]:
-    positional: list[str] = []
-    skip_next = False
-    for arg in args:
-        if skip_next:
-            skip_next = False
-            continue
-        if arg == "--":
-            break
-        if arg in value_options:
-            skip_next = True
-            continue
-        if arg.startswith("-"):
-            continue
-        positional.append(arg)
-    return positional
-
-
 def _run_test_process(
     *,
     command: str,
     argv: tuple[str, ...],
+    runner_executable: str,
     environment: dict[str, str],
     working_directory: Path,
     args: dict[str, Any],
@@ -335,7 +204,15 @@ def _run_test_process(
 ) -> ToolResult:
     timeout = min(max(int(args.get("timeout") or 120), 1), 600)
     timeout = _clamp_timeout_to_budget(timeout, context)
-    metadata = _test_metadata(command, working_directory, argv, environment, exit_code=None, status="failed")
+    metadata = _test_metadata(
+        command,
+        working_directory,
+        argv,
+        environment,
+        exit_code=None,
+        status="failed",
+        runner_executable=runner_executable,
+    )
     if timeout < 1:
         return ToolResult("Test command was not run because budget_seconds is exhausted.", is_error=True, metadata=metadata)
     try:
@@ -373,6 +250,7 @@ def _run_test_process(
             environment,
             exit_code=completed.returncode,
             status=status,
+            runner_executable=runner_executable,
         ),
     )
 
@@ -408,6 +286,7 @@ def _test_metadata(
     *,
     exit_code: int | None,
     status: str,
+    runner_executable: str | None = None,
 ) -> dict[str, Any]:
     return {
         "executed_command": command,
@@ -417,6 +296,10 @@ def _test_metadata(
         "working_directory": str(working_directory.resolve()),
         "exit_code": exit_code,
         "execution_status": status,
+        "execution_capability": "exec",
+        "runner_executable": runner_executable,
+        "sandboxed": False,
+        "trust_boundary": "executes repository-controlled test/build code",
     }
 
 
