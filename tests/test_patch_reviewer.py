@@ -40,6 +40,8 @@ class PatchReviewerTests(unittest.TestCase):
         "请新增测试用例。",
         "修复登录功能，并加一个测试。",
         "Add tests for the bug; do not rewrite unrelated existing tests.",
+        "Add tests, but do not rewrite existing tests.",
+        "Do not rewrite existing tests; add a regression test.",
         "请补充边界测试，但不要修改其他现有测试。",
     )
     NO_TEST_CHANGE_REQUESTS = (
@@ -55,6 +57,13 @@ class PatchReviewerTests(unittest.TestCase):
         "让现有测试通过。",
         "运行单元测试并确认通过。",
         "测试必须通过。",
+        "不需要新增测试。",
+        "不要求添加测试。",
+        "请勿编写测试。",
+        "无须补充测试。",
+        "No need to add tests.",
+        "Need not write tests.",
+        "Do not, however, add tests.",
     )
 
     def test_explicit_test_change_requests_require_a_test_diff(self) -> None:

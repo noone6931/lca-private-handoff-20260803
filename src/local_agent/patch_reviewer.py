@@ -26,7 +26,7 @@ _PUBLIC_METHOD_PATTERN = re.compile(
 _EXPORTED_JS_API_PATTERN = re.compile(
     r"^[+-]\s*export\s+(?:default\s+)?(?:async\s+)?(?:function|class|const|let|var)\s+(?P<symbol>[A-Za-z_$][\w$]*)",
 )
-_TEST_INTENT_CLAUSE_BOUNDARY = re.compile(r"[\n.;!?。；！？,，]+|\b(?:but|however)\b", re.IGNORECASE)
+_TEST_INTENT_HARD_BOUNDARY = re.compile(r"[\n.;!?。；！？]+")
 _ENGLISH_TEST_CHANGE_ACTION = re.compile(
     r"\b(?:add|write|create|modify|change|update|extend)\b"
     r"(?:\s+(?:a|an|the|new|existing|unit|integration|regression|boundary|additional|related)){0,4}"
@@ -38,7 +38,9 @@ _ENGLISH_TEST_COVERAGE_ACTION = re.compile(
     re.IGNORECASE,
 )
 _ENGLISH_NEGATED_ACTION_PREFIX = re.compile(
-    r"\b(?:do\s+not|don't|does\s+not|must\s+not|should\s+not|never|without)"
+    r"\b(?:do\s+not|don't|does\s+not|must\s+not|should\s+not|never|without|"
+    r"no\s+need\s+to|need\s+not|not\s+required\s+to)"
+    r"(?:\s*(?:\([^();.!?\n]{1,32}\)|[,，]\s*[^,，;.!?\n]{1,32}\s*[,，]))?"
     r"(?:\s+\w+){0,3}\s*$",
     re.IGNORECASE,
 )
@@ -47,7 +49,10 @@ _CHINESE_TEST_CHANGE_ACTION = re.compile(
     r"(?:一个|一条|一些|相关|新的|新)?\s*(?:单元|集成|回归|边界)?\s*测试(?:用例)?"
 )
 _CHINESE_TEST_COVERAGE_ACTION = re.compile(r"(?:提高|提升|增加|扩大)\s*测试覆盖(?:率)?")
-_CHINESE_NEGATED_ACTION_PREFIX = re.compile(r"(?:不要|不得|不需|不必|禁止|无需|不用|避免)\s*$")
+_CHINESE_NEGATED_ACTION_PREFIX = re.compile(
+    r"(?:不要|不得|不需(?:要)?|不必|禁止|无需|无须|不用|避免|不要求|请勿)"
+    r"\s*(?:再|额外|另外|继续|重新)?\s*$"
+)
 _TEST_CHANGE_ACTION_PATTERNS = (
     _ENGLISH_TEST_CHANGE_ACTION,
     _ENGLISH_TEST_COVERAGE_ACTION,
@@ -265,7 +270,7 @@ def _section_from(content: str, header: str) -> str:
 
 
 def _request_requires_test_change(request: str | None) -> bool:
-    for clause in _TEST_INTENT_CLAUSE_BOUNDARY.split(request or ""):
+    for clause in _TEST_INTENT_HARD_BOUNDARY.split(request or ""):
         for pattern in _TEST_CHANGE_ACTION_PATTERNS:
             for match in pattern.finditer(clause):
                 if not _test_change_action_is_negated(clause, match.start()):
