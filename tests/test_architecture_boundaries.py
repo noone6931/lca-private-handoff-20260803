@@ -34,9 +34,10 @@ OWNER_COMPLEXITY_CEILINGS = {
     "src/local_agent/runtime_workflow_profile.py": 44,
     "src/local_agent/execution_policy.py": 170,
     "src/local_agent/tools/base.py": 550,
+    "src/local_agent/command_dispatcher.py": 219,
 }
 LEGACY_COMPLEXITY_DEBT_CEILINGS = {
-    "src/local_agent/agent.py": 1808,
+    "src/local_agent/agent.py": 1792,
     "src/local_agent/tools/lsp.py": 1166,
     "src/local_agent/completion_audit.py": 1093,
     "src/local_agent/explore_handoff.py": 991,
@@ -224,6 +225,34 @@ class ArchitectureBoundaryTests(unittest.TestCase):
         self.assertIn("return evaluate_execution_policy(", registry)
         self.assertNotIn("def _approval_denial_reason", registry)
         self.assertNotIn("config_policy in", registry)
+
+    def test_frontends_submit_typed_commands_through_one_runtime_boundary(self) -> None:
+        cli = (ROOT / "src/local_agent/cli.py").read_text(encoding="utf-8")
+        terminal = (ROOT / "src/local_agent/frontends/terminal/app.py").read_text(encoding="utf-8")
+        registry = (ROOT / "src/local_agent/frontends/terminal/command_registry.py").read_text(encoding="utf-8")
+        dispatcher = (ROOT / "src/local_agent/command_dispatcher.py").read_text(encoding="utf-8")
+        production = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in (ROOT / "src/local_agent").rglob("*.py")
+        )
+        self.assertNotIn("runtime.run(", cli)
+        self.assertNotIn("runtime.run(", terminal)
+        self.assertIn("runtime.commands.dispatch(", cli)
+        self.assertIn("runtime.commands.dispatch(", terminal)
+        self.assertNotIn("class TerminalRuntime", registry)
+        for method in (
+            "def add_workspace_root",
+            "def remove_workspace_root",
+            "def reset_workspace_roots",
+            "def move_workspace",
+            "def set_session_approval_mode",
+            "def set_session_tool_policy",
+        ):
+            self.assertNotIn(method, registry)
+        self.assertIn("from ...protocol.commands import new_command", registry)
+        self.assertNotIn("from .agent import", dispatcher)
+        self.assertNotIn("tool_choice", dispatcher)
+        self.assertNotIn('"SessionFinished"', production)
 
     def test_runtime_strategy_owners_do_not_reintroduce_business_keyword_guards(self) -> None:
         strategy_files = (

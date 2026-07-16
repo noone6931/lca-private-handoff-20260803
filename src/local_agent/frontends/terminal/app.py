@@ -1,19 +1,16 @@
 from __future__ import annotations
 
-from collections.abc import Callable
 from pathlib import Path
 import sys
-from typing import TextIO
 
 from ...agent import AgentRuntime
+from ...protocol.commands import CommandResult
+from ...protocol.commands import new_command
 from ...terminal_io import silenced_terminal_input
 from .command_registry import TerminalCommandCompletion
 from .command_registry import TerminalCommandRegistry
 from .interactions import TerminalInteractionController
 from .renderer import TerminalEventSink
-
-
-CommandHandler = Callable[[AgentRuntime, str, TextIO], None]
 
 
 def slash_command_completions(text_before_cursor: str) -> tuple[TerminalCommandCompletion, ...]:
@@ -33,7 +30,6 @@ def is_slash_command_input(text: str) -> bool:
 def run_terminal_chat(
     runtime: AgentRuntime,
     *,
-    command_handler: CommandHandler | None = None,
     command_registry: TerminalCommandRegistry | None = None,
     interaction_controller: TerminalInteractionController | None = None,
     history_path: Path | None = None,
@@ -64,18 +60,16 @@ def run_terminal_chat(
             if not text:
                 continue
             if text.startswith("/"):
-                if registry.is_exit_command(text):
+                dispatched = registry.dispatch(text)
+                _print_lines(dispatched.output, output)
+                if dispatched.exit_requested:
                     return 0
-                if command_handler is not None:
-                    command_handler(runtime, text, output)
-                else:
-                    dispatched = registry.dispatch(runtime, text, output)
-                    if dispatched.exit_requested:
-                        return 0
+                if dispatched.command is not None:
+                    _render_command_result(runtime.commands.dispatch(dispatched.command), output)
                 continue
             try:
                 with silenced_terminal_input():
-                    runtime.run(text)
+                    runtime.commands.dispatch(new_command("SubmitPrompt", {"prompt": text}))
             except KeyboardInterrupt:
                 print("interrupted", file=output)
     finally:
@@ -85,6 +79,20 @@ def run_terminal_chat(
 
 def create_terminal_event_sink(*, show_tools: bool = True, stream=None) -> TerminalEventSink:
     return TerminalEventSink(stream=stream, show_tools=show_tools)
+
+
+def _render_command_result(result: CommandResult, output) -> None:
+    if result.ok:
+        text = result.payload.get("text")
+        if text is not None:
+            print(str(text), file=output)
+        return
+    print(f"error: {result.error_message or result.error_code or 'Command failed.'}", file=output)
+
+
+def _print_lines(lines: tuple[str, ...], output) -> None:
+    for line in lines:
+        print(line, file=output)
 
 
 def _build_prompt(history_path: Path | None):

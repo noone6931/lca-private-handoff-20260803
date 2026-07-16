@@ -9,6 +9,8 @@ from local_agent.frontends.terminal.app import run_terminal_chat
 from local_agent.frontends.terminal.app import is_slash_command_input
 from local_agent.frontends.terminal.interactions import InputState
 from local_agent.frontends.terminal.interactions import TerminalInteractionController
+from local_agent.protocol.commands import AgentCommand
+from local_agent.protocol.commands import CommandResult
 from local_agent.protocol.interactions import InteractionRequest
 from local_agent.tools.base import Tool
 from local_agent.tools.base import ToolContext
@@ -20,6 +22,7 @@ from local_agent.tools.interaction import ask_user
 class _NestedInteractionRuntime:
     def __init__(self, workspace: Path) -> None:
         self._workspace = workspace
+        self.commands = self
         self.handler = None
         self.prompts: list[str] = []
         self.results: list[ToolResult] = []
@@ -27,7 +30,8 @@ class _NestedInteractionRuntime:
     def set_interaction_handler(self, handler) -> None:
         self.handler = handler
 
-    def run(self, prompt: str) -> str:
+    def dispatch(self, command: AgentCommand) -> CommandResult:
+        prompt = str(command.payload["prompt"])
         self.prompts.append(prompt)
         result = ask_user(
             {"question": "Which scope should I inspect?"},
@@ -38,7 +42,7 @@ class _NestedInteractionRuntime:
             ),
         )
         self.results.append(result)
-        return result.content
+        return CommandResult(command.command_id, "s1", "r1", "ok", {"content": result.content})
 
 
 class TerminalInteractionTests(unittest.TestCase):

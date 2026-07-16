@@ -376,6 +376,8 @@ def _display_optional_int(value: int | None) -> str:
 def _format_last_run_status(summary: dict[str, Any]) -> list[str]:
     lines = [
         "- last_run:",
+        f"  - command_id: {summary.get('command_id', 'unknown')}",
+        f"  - run_id: {summary.get('run_id', 'unknown')}",
         f"  - reason: {summary.get('termination_reason', 'unknown')}",
         f"  - elapsed_ms: {summary.get('elapsed_ms', 0)}",
         f"  - llm_requests: {summary.get('llm_requests', 0)}",

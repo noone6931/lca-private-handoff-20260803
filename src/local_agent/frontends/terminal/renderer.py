@@ -30,7 +30,7 @@ class TerminalEventSink:
             self._render_tool_finished(event)
         elif event.type == "ApprovalResult":
             self._render_approval_result(event)
-        elif event.type == "SessionFinished":
+        elif event.type == "TurnFinished":
             self._render_final(event)
         elif event.type == "ErrorEvent":
             self._print_error(str(event.payload.get("message", "Unknown error.")))

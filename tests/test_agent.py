@@ -17,6 +17,7 @@ from local_agent.config import AgentConfig
 from local_agent.design_evidence import DesignEvidenceCoverageSteerer
 from local_agent.design_evidence import missing_design_evidence_roots
 from local_agent.llm import LlmError
+from local_agent.protocol.commands import new_command
 from local_agent.protocol.interactions import InteractionResult
 from local_agent.protocol.events import ListEventSink
 from local_agent.requirement_evidence import RequirementEvidence
@@ -2846,20 +2847,36 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertIn("ToolOutput", event_types)
         self.assertIn("ToolFinished", event_types)
         self.assertIn("RunSummary", event_types)
-        self.assertIn("SessionFinished", event_types)
+        self.assertIn("TurnFinished", event_types)
+        self.assertNotIn("SessionFinished", event_types)
+        self.assertEqual(event_types.count("TurnStarted"), 1)
+        self.assertEqual(event_types.count("TurnFinished"), 1)
+        self.assertLess(event_types.index("RunSummary"), event_types.index("TurnFinished"))
         self.assertTrue(all(event.session_id == runtime._session.session_id for event in sink.events))
-        self.assertTrue(any(event.run_id for event in sink.events if event.type != "SessionStarted"))
+        session_started = next(event for event in sink.events if event.type == "SessionStarted")
+        self.assertIsNone(session_started.command_id)
+        self.assertIsNone(session_started.run_id)
+        turn_events = [event for event in sink.events if event.type != "SessionStarted"]
+        self.assertEqual(len({event.command_id for event in turn_events}), 1)
+        self.assertNotIn(None, {event.command_id for event in turn_events})
+        self.assertEqual(len({event.run_id for event in turn_events}), 1)
+        self.assertNotIn(None, {event.run_id for event in turn_events})
         run_summary_events = [event for event in sink.events if event.type == "RunSummary"]
         self.assertEqual(len(run_summary_events), 1)
         self.assertEqual(run_summary_events[0].payload["termination_reason"], "final")
+        self.assertEqual(run_summary_events[0].payload["command_id"], run_summary_events[0].command_id)
         self.assertEqual(run_summary_events[0].payload["llm_requests"], 2)
         self.assertEqual(run_summary_events[0].payload["tool_calls"], 1)
         self.assertEqual(run_summary_events[0].payload["tool_counts"], {"read_file": 1})
+        turn_finished = [event for event in sink.events if event.type == "TurnFinished"][-1]
         status = runtime.status_summary()
         self.assertIn("- last_run:", status)
+        self.assertIn(f"command_id: {turn_finished.command_id}", status)
+        self.assertIn(f"run_id: {turn_finished.run_id}", status)
         self.assertIn("read_file=1", status)
-        session_finished = [event for event in sink.events if event.type == "SessionFinished"][-1]
-        self.assertEqual(session_finished.payload["run_summary"]["termination_reason"], "final")
+        self.assertEqual(turn_finished.payload["run_summary"]["termination_reason"], "final")
+        self.assertEqual(turn_finished.payload["status"], "completed")
+        self.assertTrue(turn_finished.payload["delivered"])
         self.assertTrue(
             any(
                 record.get("event") == "event_v1"
@@ -2875,6 +2892,45 @@ class AgentRuntimeTests(unittest.TestCase):
                 for record in records
             )
         )
+
+    def test_run_facade_and_typed_submit_share_the_same_runtime_lifecycle(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+
+            def build_runtime(name: str, sink: ListEventSink) -> AgentRuntime:
+                workspace = root / name
+                workspace.mkdir()
+                return AgentRuntime(
+                    AgentConfig(
+                        provider="openai-compatible",
+                        api_base_url="https://example.invalid/v1",
+                        api_key="token",
+                        model="model",
+                        workspace=workspace,
+                        state_dir=root / f"{name}-state",
+                        max_steps=0,
+                        budget_seconds=None,
+                        approval_mode="yolo",
+                    ),
+                    show_tool_logs=False,
+                    event_sink=sink,
+                )
+
+            facade_sink = ListEventSink()
+            direct_sink = ListEventSink()
+            with patch("local_agent.agent.OpenAICompatibleClient", _FinalClient):
+                facade = build_runtime("facade", facade_sink)
+                direct = build_runtime("direct", direct_sink)
+                facade_answer = facade.run("hello")
+                direct_result = direct.commands.dispatch(new_command("SubmitPrompt", {"prompt": "hello"}))
+
+        self.assertEqual(facade_answer, direct_result.payload["content"])
+        self.assertEqual(
+            [event.type for event in facade_sink.events],
+            [event.type for event in direct_sink.events],
+        )
+        self.assertEqual([event.type for event in direct_sink.events].count("TurnStarted"), 1)
+        self.assertEqual([event.type for event in direct_sink.events].count("TurnFinished"), 1)
 
     def test_tool_choice_results_preserve_additional_root_provenance(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -5189,7 +5245,10 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertEqual(_InitialHangingClient.calls, 1)
         self.assertTrue(any(record.get("event") == "final" for record in records))
         self.assertTrue(any(record.get("event") == "run_summary" for record in records))
-        self.assertIn("SessionFinished", [event.type for event in sink.events])
+        turn_finished = [event for event in sink.events if event.type == "TurnFinished"]
+        self.assertEqual(len(turn_finished), 1)
+        self.assertEqual(turn_finished[0].payload["status"], "error")
+        self.assertFalse(turn_finished[0].payload["delivered"])
 
     def test_initial_provider_error_returns_terminal_closure(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -5214,7 +5273,10 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertEqual(runtime._last_run_summary["termination_reason"], "provider_error")
         self.assertTrue(any(record.get("event") == "final" for record in records))
         self.assertTrue(any(record.get("event") == "run_summary" for record in records))
-        self.assertIn("SessionFinished", [event.type for event in sink.events])
+        turn_finished = [event for event in sink.events if event.type == "TurnFinished"]
+        self.assertEqual(len(turn_finished), 1)
+        self.assertEqual(turn_finished[0].payload["status"], "error")
+        self.assertFalse(turn_finished[0].payload["delivered"])
 
     def test_provider_error_after_tool_does_not_claim_no_prior_actions(self) -> None:
         _ToolThenProviderErrorClient.calls = 0
@@ -6223,6 +6285,7 @@ class AgentRuntimeTests(unittest.TestCase):
 
     def test_budget_stop_synthesizes_remaining_tool_results(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
+            sink = ListEventSink()
             config = AgentConfig(
                 provider="openai-compatible",
                 api_base_url="https://example.invalid/v1",
@@ -6240,16 +6303,21 @@ class AgentRuntimeTests(unittest.TestCase):
                     side_effect=[0.0, 0.1, 0.2, 0.3, 2.0],
                 ),
             ):
-                runtime = AgentRuntime(config, show_tool_logs=False)
+                runtime = AgentRuntime(config, show_tool_logs=False, event_sink=sink)
                 result = runtime.run("hello")
 
         tool_messages = [message for message in runtime._messages if message.get("role") == "tool"]
         self.assertEqual(result, "Stopped after reaching budget_seconds=1.")
         self.assertEqual([message["tool_call_id"] for message in tool_messages], ["call_1", "call_2"])
         self.assertIn("Tool call was not executed", tool_messages[1]["content"])
+        finished = [event for event in sink.events if event.type == "TurnFinished"]
+        self.assertEqual(len(finished), 1)
+        self.assertEqual(finished[0].payload["status"], "stopped")
+        self.assertFalse(finished[0].payload["delivered"])
 
     def test_length_finish_reason_synthesizes_tool_results_without_execution(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
+            sink = ListEventSink()
             config = AgentConfig(
                 provider="openai-compatible",
                 api_base_url="https://example.invalid/v1",
@@ -6264,13 +6332,17 @@ class AgentRuntimeTests(unittest.TestCase):
                 patch("local_agent.agent.OpenAICompatibleClient", _LengthToolClient),
                 patch("local_agent.agent.create_default_registry", return_value=_UnexpectedRegistry()),
             ):
-                runtime = AgentRuntime(config, show_tool_logs=False)
+                runtime = AgentRuntime(config, show_tool_logs=False, event_sink=sink)
                 result = runtime.run("hello")
 
         tool_messages = [message for message in runtime._messages if message.get("role") == "tool"]
         self.assertIn("finish_reason=length", result)
         self.assertEqual([message["tool_call_id"] for message in tool_messages], ["call_1", "call_2"])
         self.assertTrue(all("output token limit" in message["content"] for message in tool_messages))
+        finished = [event for event in sink.events if event.type == "TurnFinished"]
+        self.assertEqual(len(finished), 1)
+        self.assertEqual(finished[0].payload["status"], "stopped")
+        self.assertFalse(finished[0].payload["delivered"])
 
     def test_invalid_tool_call_name_is_sanitized_before_next_provider_request(self) -> None:
         _InvalidToolCallThenFinalClient.calls = []
@@ -6696,6 +6768,7 @@ class AgentRuntimeTests(unittest.TestCase):
 
     def test_keyboard_interrupt_synthesizes_remaining_tool_results(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
+            sink = ListEventSink()
             config = AgentConfig(
                 provider="openai-compatible",
                 api_base_url="https://example.invalid/v1",
@@ -6710,7 +6783,7 @@ class AgentRuntimeTests(unittest.TestCase):
                 patch("local_agent.agent.OpenAICompatibleClient", _TwoToolClient),
                 patch("local_agent.agent.create_default_registry", return_value=_InterruptingRegistry()),
             ):
-                runtime = AgentRuntime(config, show_tool_logs=False)
+                runtime = AgentRuntime(config, show_tool_logs=False, event_sink=sink)
                 with self.assertRaises(KeyboardInterrupt):
                     runtime.run("hello")
             records = [json.loads(line) for line in runtime._session.path.read_text(encoding="utf-8").splitlines()]
@@ -6718,6 +6791,14 @@ class AgentRuntimeTests(unittest.TestCase):
         tool_messages = [message for message in runtime._messages if message.get("role") == "tool"]
         self.assertEqual([message["tool_call_id"] for message in tool_messages], ["call_1", "call_2"])
         self.assertTrue(all("interrupted execution" in message["content"] for message in tool_messages))
+        event_types = [event.type for event in sink.events]
+        self.assertEqual(event_types.count("TurnStarted"), 1)
+        self.assertEqual(event_types.count("TurnFinished"), 1)
+        self.assertEqual(event_types.count("ErrorEvent"), 1)
+        self.assertLess(event_types.index("RunSummary"), event_types.index("TurnFinished"))
+        finished = next(event for event in sink.events if event.type == "TurnFinished")
+        self.assertEqual(finished.payload["status"], "interrupted")
+        self.assertFalse(finished.payload["delivered"])
         self.assertTrue(
             any(
                 record.get("event") == "final"

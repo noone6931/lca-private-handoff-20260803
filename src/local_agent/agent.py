@@ -29,6 +29,7 @@ from .compaction import summary_request_content as _summary_request_content
 from .compaction import tool_snippets as _tool_snippets
 from .compaction import truncate_recent_tool_outputs as _truncate_recent_tool_outputs
 from .chat_runtime import call_chat_with_timeout
+from .command_dispatcher import CommandDispatcher
 from .config import AgentConfig
 from .config import normalize_approval_mode
 from .design_evidence import project_workspace_evidence_roots
@@ -292,6 +293,7 @@ class AgentRuntime:
             sink=sink,
             recorder=self._record_event_v1,
         )
+        self.commands = CommandDispatcher(self, self._events, self._session.session_id)
         self._user_config_dir = default_config_root()
         self._provider_context_phase = ProviderContextPhase(self)
         self._workspace_phase = WorkspaceLifecycle(self)
@@ -345,13 +347,7 @@ class AgentRuntime:
             )
 
     def run(self, prompt: str) -> str:
-        if self._is_running:
-            raise RuntimeError("Cannot start a new run while the current run is still active.")
-        self._is_running = True
-        try:
-            return self._run_prompt(prompt)
-        finally:
-            self._is_running = False
+        return self.commands.run(prompt)
 
     def set_interaction_handler(self, handler: InteractionHandler | None) -> None:
         """Attach a frontend-owned interaction channel while the Runtime is idle."""
@@ -361,7 +357,7 @@ class AgentRuntime:
         self._tool_context = replace(self._tool_context, interaction_handler=handler)
 
     def _run_prompt(self, prompt: str) -> str:
-        run_id = self._events.start_run()
+        run_id = self._events.run_id
         started_monotonic = time.monotonic()
         deadline = (
             started_monotonic + self._config.budget_seconds
@@ -1043,6 +1039,7 @@ class AgentRuntime:
             },
         )
         payload["finalization_attempts"] = self._run.finalization.aggregate_attempts
+        payload["command_id"] = self._events.command_id
         payload["provider_terminal"] = self._run.finalization.terminal_response_snapshot()
         payload["temporary_tool_directive"] = self._run.temporary_tool_directive.snapshot()
         if self._run.negative_claim_metrics:
@@ -1582,14 +1579,7 @@ class AgentRuntime:
         else:
             self._memory_phase.consolidate_session_memory(run_messages, content, deadline)
         run_summary = self._finish_run_summary(reason)
-        self._events.emit(
-            "SessionFinished",
-            {
-                "content": content,
-                "reason": reason,
-                "run_summary": run_summary,
-            },
-        )
+        self._events.finish_turn(content=content, reason=reason, run_summary=run_summary)
         return content
 
     def _stop_for_budget(self, deadline: float | None, run_start_index: int) -> str:
@@ -1600,15 +1590,9 @@ class AgentRuntime:
         content = "Stopped after user interrupt."
         self._tool_directive_phase.close_terminal("interrupt")
         self._session.append("final", {"content": content})
+        self._events.emit("ErrorEvent", {"kind": "interrupt", "message": content})
         run_summary = self._finish_run_summary("interrupt")
-        self._events.emit(
-            "SessionFinished",
-            {
-                "content": content,
-                "reason": "interrupt",
-                "run_summary": run_summary,
-            },
-        )
+        self._events.finish_turn(content=content, reason="interrupt", run_summary=run_summary)
         return content
 
     def _length_stop_tool_message(self) -> str:

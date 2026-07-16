@@ -10,7 +10,8 @@ from typing import Any, Callable, Protocol, TextIO
 
 EVENT_TYPES = {
     "SessionStarted",
-    "SessionFinished",
+    "TurnStarted",
+    "TurnFinished",
     "UserMessage",
     "AssistantDelta",
     "AssistantMessage",
@@ -39,17 +40,19 @@ EVENT_TYPES = {
 class AgentEvent:
     event_id: str
     session_id: str
-    run_id: str
+    run_id: str | None
     seq: int
     timestamp: float
     type: str
     payload: dict[str, Any]
+    command_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "event_id": self.event_id,
             "session_id": self.session_id,
             "run_id": self.run_id,
+            "command_id": self.command_id,
             "seq": self.seq,
             "timestamp": self.timestamp,
             "type": self.type,
@@ -102,14 +105,61 @@ class EventEmitter:
         recorder: Callable[[AgentEvent], None] | None = None,
     ) -> None:
         self.session_id = session_id
-        self.run_id = ""
+        self.run_id: str | None = None
+        self.command_id: str | None = None
         self._seq = 0
         self._sink = sink or NullEventSink()
         self._recorder = recorder
+        self._run_summary_emitted = False
+        self._turn_finished_payload: dict[str, Any] | None = None
+
+    def begin_command(self, command_id: str) -> None:
+        if self.command_id is not None:
+            raise RuntimeError("Cannot begin a command while another command is active.")
+        self.command_id = command_id
+        self.run_id = None
+        self._run_summary_emitted = False
+        self._turn_finished_payload = None
 
     def start_run(self) -> str:
+        if self.command_id is None:
+            raise RuntimeError("Cannot start a run without an active command.")
         self.run_id = uuid.uuid4().hex
         return self.run_id
+
+    def end_command(self, command_id: str) -> None:
+        if self.command_id != command_id:
+            raise RuntimeError("Cannot end a command that is not active.")
+        self.command_id = None
+        self.run_id = None
+
+    @property
+    def run_summary_emitted(self) -> bool:
+        return self._run_summary_emitted
+
+    @property
+    def turn_finished_payload(self) -> dict[str, Any] | None:
+        return dict(self._turn_finished_payload) if self._turn_finished_payload is not None else None
+
+    def finish_turn(self, *, content: str, reason: str, run_summary: dict[str, Any]) -> AgentEvent:
+        if reason == "final":
+            status = "completed"
+        elif reason == "interrupt":
+            status = "interrupted"
+        elif reason in {"provider_error", "llm_timeout", "command_error"}:
+            status = "error"
+        else:
+            status = "stopped"
+        return self.emit(
+            "TurnFinished",
+            {
+                "content": content,
+                "reason": reason,
+                "status": status,
+                "delivered": reason == "final",
+                "run_summary": run_summary,
+            },
+        )
 
     def emit(self, event_type: str, payload: dict[str, Any] | None = None) -> AgentEvent:
         if event_type not in EVENT_TYPES:
@@ -123,7 +173,14 @@ class EventEmitter:
             timestamp=time.time(),
             type=event_type,
             payload=payload or {},
+            command_id=self.command_id,
         )
+        if event_type == "RunSummary":
+            self._run_summary_emitted = True
+        elif event_type == "TurnFinished":
+            if self._turn_finished_payload is not None:
+                raise RuntimeError("TurnFinished was already emitted for the active run.")
+            self._turn_finished_payload = dict(event.payload)
         if self._recorder is not None:
             self._recorder(event)
         self._sink.emit(event)

@@ -12,55 +12,48 @@ from unittest.mock import patch
 from local_agent.cli import _handle_repl_command
 from local_agent.cli import _is_chat_prompt
 from local_agent.cli import main
+from local_agent.protocol.commands import AgentCommand
+from local_agent.protocol.commands import CommandResult
 
 
 class _FakeRuntime:
     def __init__(self):
+        self.commands = self
         self.calls: list[tuple[str, str | None]] = []
 
-    def approval_summary(self) -> str:
-        return "summary"
-
-    def status_summary(self) -> str:
-        return "status"
-
-    def tool_summary(self) -> str:
-        return "tools"
-
-    def workspace_summary(self) -> str:
-        return "workspace roots"
-
-    def add_workspace_root(self, path: str) -> None:
-        self.calls.append(("workspace-add", path))
-
-    def remove_workspace_root(self, path: str) -> None:
-        self.calls.append(("workspace-remove", path))
-
-    def reset_workspace_roots(self) -> None:
-        self.calls.append(("workspace-reset", None))
-
-    def move_workspace(self, path: str) -> None:
-        self.calls.append(("workspace-move", path))
-
-    def set_session_approval_mode(self, mode: str) -> None:
-        self.calls.append(("mode", mode))
-
-    def set_session_tool_policy(self, tool: str, policy: str) -> None:
-        self.calls.append((policy, tool))
-
-    def reset_session_tool_policy(self, tool: str) -> None:
-        self.calls.append(("reset", tool))
+    def dispatch(self, command: AgentCommand) -> CommandResult:
+        payload = command.payload
+        if command.type == "SetApprovalMode":
+            self.calls.append(("mode", payload["mode"]))
+        elif command.type == "SetToolApproval":
+            self.calls.append((payload["policy"], payload["tool"]))
+        elif command.type == "ResetToolApproval":
+            self.calls.append(("reset", payload["tool"]))
+        elif command.type == "AddWorkspaceRoot":
+            self.calls.append(("workspace-add", payload["path"]))
+        elif command.type == "RemoveWorkspaceRoot":
+            self.calls.append(("workspace-remove", payload["path"]))
+        elif command.type == "ResetWorkspaceRoots":
+            self.calls.append(("workspace-reset", None))
+        elif command.type == "MoveWorkspace":
+            self.calls.append(("workspace-move", payload["path"]))
+        text = {
+            "GetStatus": "status",
+            "ListTools": "tools",
+            "ListWorkspaceRoots": "workspace roots",
+        }.get(command.type, "summary" if "Approval" in command.type else "workspace roots")
+        return CommandResult(command.command_id, "s1", None, "ok", {"text": text})
 
 
 class _FakeAgentRuntime:
     prompts: list[str] = []
 
     def __init__(self, *args, **kwargs) -> None:
-        return None
+        self.commands = self
 
-    def run(self, prompt: str) -> str:
-        type(self).prompts.append(prompt)
-        return "done"
+    def dispatch(self, command: AgentCommand) -> CommandResult:
+        type(self).prompts.append(str(command.payload["prompt"]))
+        return CommandResult(command.command_id, "s1", "r1", "ok", {"content": "done"})
 
 
 class CliTests(unittest.TestCase):

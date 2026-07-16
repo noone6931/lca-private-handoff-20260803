@@ -11,6 +11,8 @@ from .frontends.terminal import run_terminal_chat
 from .frontends.terminal.command_registry import TerminalCommandDispatch
 from .frontends.terminal.command_registry import TerminalCommandRegistry
 from .llm import LlmError
+from .protocol.commands import CommandResult
+from .protocol.commands import new_command
 from .session.jsonl_store import SessionError
 from .terminal_io import silenced_terminal_input
 
@@ -176,34 +178,19 @@ def main(argv: list[str] | None = None) -> int:
             )
         if args.prompt:
             with silenced_terminal_input():
-                print(runtime.run(" ".join(args.prompt)))
+                result = runtime.commands.dispatch(new_command("SubmitPrompt", {"prompt": " ".join(args.prompt)}))
+            if not result.ok:
+                print(f"error: {result.error_message or 'Command failed.'}", file=sys.stderr)
+                return 2
+            print(str(result.payload.get("content", "")))
             return 0
-        return _repl(runtime)
+        return 0
     except (ConfigError, LlmError, SessionError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
     except KeyboardInterrupt:
         print("\ninterrupted", file=sys.stderr)
         return 130
-
-
-def _repl(runtime: AgentRuntime) -> int:
-    print("local-agent REPL. Press Ctrl-D to exit.")
-    while True:
-        try:
-            prompt = input("> ").strip()
-        except EOFError:
-            print()
-            return 0
-        if not prompt:
-            continue
-        if prompt.startswith("/"):
-            dispatched = _handle_repl_command(runtime, prompt)
-            if dispatched.exit_requested:
-                return 0
-            continue
-        with silenced_terminal_input():
-            print(runtime.run(prompt))
 
 
 def _is_chat_prompt(prompt: list[str]) -> bool:
@@ -215,7 +202,22 @@ def _handle_repl_command(
     command: str,
     stream: TextIO | None = None,
 ) -> TerminalCommandDispatch:
-    return _TERMINAL_COMMANDS.dispatch(runtime, command, stream or sys.stdout)
+    output = stream or sys.stdout
+    dispatched = _TERMINAL_COMMANDS.dispatch(command)
+    for line in dispatched.output:
+        print(line, file=output)
+    if dispatched.command is not None:
+        _print_command_result(runtime.commands.dispatch(dispatched.command), output)
+    return dispatched
+
+
+def _print_command_result(result: CommandResult, output: TextIO) -> None:
+    if result.ok:
+        text = result.payload.get("text")
+        if text is not None:
+            print(str(text), file=output)
+        return
+    print(f"error: {result.error_message or result.error_code or 'Command failed.'}", file=output)
 
 
 if __name__ == "__main__":

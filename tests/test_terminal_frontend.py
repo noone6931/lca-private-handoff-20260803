@@ -7,16 +7,20 @@ from unittest.mock import patch
 
 from local_agent.frontends.terminal.app import run_terminal_chat, slash_command_completions
 from local_agent.frontends.terminal.renderer import TerminalEventSink
+from local_agent.protocol.commands import AgentCommand
+from local_agent.protocol.commands import CommandResult
 from local_agent.protocol.events import AgentEvent
 
 
 class _FakeRuntime:
     def __init__(self) -> None:
-        self.prompts: list[str] = []
+        self.commands = self
+        self.submitted: list[AgentCommand] = []
 
-    def run(self, prompt: str) -> str:
-        self.prompts.append(prompt)
-        return "done"
+    def dispatch(self, command: AgentCommand) -> CommandResult:
+        self.submitted.append(command)
+        payload = {"text": "approval summary"} if command.type == "GetApproval" else {"content": "done"}
+        return CommandResult(command.command_id, "s1", "r1", "ok", payload)
 
 
 class TerminalFrontendTests(unittest.TestCase):
@@ -57,37 +61,37 @@ class TerminalFrontendTests(unittest.TestCase):
 
     def test_terminal_chat_runs_prompts_and_routes_commands(self) -> None:
         runtime = _FakeRuntime()
-        commands = []
         input_stream = io.StringIO("/approval\nhello\n/exit\n")
         output = io.StringIO()
 
         code = run_terminal_chat(
             runtime,  # type: ignore[arg-type]
-            command_handler=lambda rt, command, _stream: commands.append((rt, command)),
             input_stream=input_stream,
             output_stream=output,
         )
 
         self.assertEqual(code, 0)
-        self.assertEqual(runtime.prompts, ["hello"])
-        self.assertEqual(commands, [(runtime, "/approval")])
+        self.assertEqual([command.type for command in runtime.submitted], ["GetApproval", "SubmitPrompt"])
+        self.assertEqual(runtime.submitted[-1].payload, {"prompt": "hello"})
         self.assertIn("local-agent chat", output.getvalue())
         self.assertIn("Type /help", output.getvalue())
+        self.assertIn("approval summary", output.getvalue())
+        self.assertEqual(output.getvalue().count("approval summary"), 1)
 
-    def test_terminal_chat_sends_command_output_to_frontend_stream(self) -> None:
+    def test_terminal_chat_keeps_help_and_exit_frontend_local(self) -> None:
         runtime = _FakeRuntime()
         input_stream = io.StringIO("/help\n/exit\n")
         output = io.StringIO()
 
         code = run_terminal_chat(
             runtime,  # type: ignore[arg-type]
-            command_handler=lambda _rt, _command, stream: print("command help", file=stream),
             input_stream=input_stream,
             output_stream=output,
         )
 
         self.assertEqual(code, 0)
-        self.assertIn("command help", output.getvalue())
+        self.assertIn("Commands:", output.getvalue())
+        self.assertEqual(runtime.submitted, [])
 
     def test_terminal_chat_silences_input_echo_while_runtime_runs(self) -> None:
         runtime = _FakeRuntime()
@@ -111,8 +115,29 @@ class TerminalFrontendTests(unittest.TestCase):
             )
 
         self.assertEqual(code, 0)
-        self.assertEqual(runtime.prompts, ["hello"])
+        self.assertEqual([command.type for command in runtime.submitted], ["SubmitPrompt"])
         self.assertEqual(calls, ["enter", "exit"])
+
+    def test_terminal_chat_relies_on_turn_event_for_one_final_render(self) -> None:
+        output = io.StringIO()
+        sink = TerminalEventSink(stream=output, show_tools=False, use_rich=False)
+
+        class _RenderingRuntime(_FakeRuntime):
+            def dispatch(self, command: AgentCommand) -> CommandResult:
+                result = super().dispatch(command)
+                if command.type == "SubmitPrompt":
+                    sink.emit(_event("TurnFinished", {"content": "done"}))
+                return result
+
+        runtime = _RenderingRuntime()
+        code = run_terminal_chat(
+            runtime,  # type: ignore[arg-type]
+            input_stream=io.StringIO("hello\n/exit\n"),
+            output_stream=output,
+        )
+
+        self.assertEqual(code, 0)
+        self.assertEqual(output.getvalue().count("done"), 1)
 
     def test_terminal_event_sink_renders_append_only_lines(self) -> None:
         output = io.StringIO()
@@ -122,7 +147,7 @@ class TerminalFrontendTests(unittest.TestCase):
         sink.emit(_event("ToolStarted", {"name": "read_file", "arguments": '{"path":"README.md"}'}))
         sink.emit(_event("ToolOutput", {"name": "read_file", "is_error": False, "content_preview": "ok"}))
         sink.emit(_event("ToolFinished", {"name": "read_file", "content_length": 42}))
-        sink.emit(_event("SessionFinished", {"content": "final answer"}))
+        sink.emit(_event("TurnFinished", {"content": "final answer"}))
 
         rendered = output.getvalue()
         self.assertIn("[session] s1", rendered)
@@ -136,7 +161,7 @@ class TerminalFrontendTests(unittest.TestCase):
         sink = TerminalEventSink(stream=output, show_tools=False, use_rich=False)
 
         sink.emit(_event("ToolStarted", {"name": "read_file", "arguments": "{}"}))
-        sink.emit(_event("SessionFinished", {"content": "done"}))
+        sink.emit(_event("TurnFinished", {"content": "done"}))
 
         rendered = output.getvalue()
         self.assertNotIn("read_file", rendered)

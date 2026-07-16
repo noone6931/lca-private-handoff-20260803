@@ -110,10 +110,12 @@ class _ProfileRuntimeClient:
 
 class _CliRuntime:
     def __init__(self, *_args, **_kwargs) -> None:
-        pass
+        self.commands = self
 
-    def run(self, _prompt: str) -> str:
-        return "done"
+    def dispatch(self, command) -> object:
+        from local_agent.protocol.commands import CommandResult
+
+        return CommandResult(command.command_id, "s1", "r1", "ok", {"content": "done"})
 
 
 class WorkflowProfileTests(unittest.TestCase):
