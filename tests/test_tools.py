@@ -2212,6 +2212,27 @@ class ToolTests(unittest.TestCase):
         self.assertIn("Exec-tier", run_tests_tool.description)
         self.assertIn("not a sandbox", run_tests_tool.description)
         self.assertIn("side effects", run_tests_tool.description)
+        self.assertIn("read_file", run_tests_tool.description)
+        self.assertIn("search_code", run_tests_tool.description)
+        self.assertIn("cwd", run_tests_tool.description)
+
+    def test_run_tests_rejections_point_to_read_search_and_cwd_without_changing_policy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            context = ToolContext(workspace=workspace, approval_mode="yolo")
+            denied = (
+                run_tests({"command": "cat pom.xml"}, context),
+                run_tests({"command": "grep Owner src/App.java"}, context),
+                run_tests({"command": "cd module"}, context),
+                run_tests({"command": "mvn test | tail"}, context),
+            )
+
+        for result in denied:
+            self.assertTrue(result.is_error)
+            self.assertEqual(result.metadata["execution_status"], "not_run")
+            self.assertIn("read_file", result.content)
+            self.assertIn("search_code", result.content)
+            self.assertIn("cwd", result.content)
 
     def test_run_tests_supports_test_runner_families_without_shell(self) -> None:
         completed = subprocess.CompletedProcess([], 0, stdout="ok\n", stderr="")
@@ -3024,6 +3045,53 @@ class ToolTests(unittest.TestCase):
         self.assertFalse(preview.is_error)
         self.assertTrue(real_write.is_error)
         self.assertIn("Preview contract", real_write.content)
+
+    def test_apply_patch_recovery_reports_authored_range_and_preserves_preview_rollback_contract(self) -> None:
+        checked_args: list[dict] = []
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            target = workspace / "README.md"
+            original = "header\nanchor one\nanchor two\nfooter\n"
+            target.write_text(original, encoding="utf-8")
+            args = {
+                "path": "README.md",
+                "tag": hash_text(original),
+                "start_line": 1,
+                "end_line": 1,
+                "old_text": "anchor one\nanchor two",
+                "new_text": "replacement",
+            }
+
+            def preview_checker(patch_args, path):
+                checked_args.append(dict(patch_args))
+                return None
+
+            context = ToolContext(
+                workspace=workspace,
+                approval_mode="yolo",
+                state_dir=workspace / ".agent-state",
+                session_id="session-1",
+                patch_preview_checker=preview_checker,
+            )
+            preview = patch_file({**args, "dry_run": True}, context)
+            content_after_preview = target.read_text(encoding="utf-8")
+            applied = patch_file(args, context)
+            content_after_apply = target.read_text(encoding="utf-8")
+            rolled_back = rollback_patch({}, context)
+            content_after_rollback = target.read_text(encoding="utf-8")
+
+        self.assertFalse(preview.is_error)
+        self.assertEqual(content_after_preview, original)
+        self.assertIn("authored range 1-1 -> effective range 2-3", preview.content)
+        self.assertEqual(preview.metadata["authored_range"], [1, 1])
+        self.assertEqual(preview.metadata["effective_range"], [2, 3])
+        self.assertTrue(preview.metadata["range_recovered"])
+        self.assertFalse(applied.is_error)
+        self.assertEqual(content_after_apply, "header\nreplacement\nfooter\n")
+        self.assertEqual(checked_args[0]["start_line"], 1)
+        self.assertEqual(checked_args[0]["end_line"], 1)
+        self.assertFalse(rolled_back.is_error)
+        self.assertEqual(content_after_rollback, original)
 
     def test_registry_normalizes_cmd_for_run_tests_only(self) -> None:
         received: list[dict[str, str]] = []

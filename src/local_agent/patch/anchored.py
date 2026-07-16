@@ -16,6 +16,8 @@ class PatchError(RuntimeError):
 class PatchResult:
     diff: str
     new_tag: str
+    effective_start_line: int
+    effective_end_line: int
 
 
 def hash_text(text: str) -> str:
@@ -76,7 +78,11 @@ def apply_anchored_patch(
     old_slice = "".join(lines[start_line - 1 : end_line])
     normalized_old = _normalize_to_match_existing(old_text, old_slice)
     if old_slice != normalized_old:
-        raise PatchError("old_text does not match the selected line range. Re-read the file.")
+        start_line, end_line = _recover_exact_unique_anchor(lines, old_text)
+        old_slice = "".join(lines[start_line - 1 : end_line])
+        normalized_old = _normalize_to_match_existing(old_text, old_slice)
+        if old_slice != normalized_old:
+            raise PatchError("Exact anchor recovery did not preserve old_text. Re-read the file.")
 
     new_lines = _apply_patch_mode(
         lines=lines,
@@ -98,7 +104,12 @@ def apply_anchored_patch(
     persisted = bom + _restore_line_endings(updated, line_ending)
     if not dry_run:
         target.write_bytes(persisted.encode("utf-8"))
-    return PatchResult(diff=diff, new_tag=hash_text(persisted))
+    return PatchResult(
+        diff=diff,
+        new_tag=hash_text(persisted),
+        effective_start_line=start_line,
+        effective_end_line=end_line,
+    )
 
 
 def _apply_patch_mode(
@@ -233,6 +244,39 @@ def _normalize_insert_text(text: str) -> str:
     if not normalized.endswith("\n"):
         normalized += "\n"
     return normalized
+
+
+def _recover_exact_unique_anchor(lines: list[str], old_text: str) -> tuple[int, int]:
+    expected = _normalized_anchor_lines(old_text)
+    existing = tuple(_line_content(line) for line in lines)
+    width = len(expected)
+    matches = [
+        (index + 1, index + width)
+        for index in range(len(existing) - width + 1)
+        if existing[index : index + width] == expected
+    ]
+    if not matches:
+        raise PatchError(
+            "old_text does not match the authored range and no complete exact anchor exists in the tagged file. "
+            "Re-read the file."
+        )
+    if len(matches) != 1:
+        raise PatchError(
+            "old_text does not match the authored range and occurs in multiple exact locations in the tagged file. "
+            "Refusing ambiguous recovery; use the precise range from a fresh read."
+        )
+    return matches[0]
+
+
+def _normalized_anchor_lines(text: str) -> tuple[str, ...]:
+    normalized = _normalize_to_lf(text)
+    if normalized == "":
+        return ("",)
+    return tuple(normalized.splitlines())
+
+
+def _line_content(line: str) -> str:
+    return line[:-1] if line.endswith("\n") else line
 
 
 def _detect_line_ending(text: str) -> str:

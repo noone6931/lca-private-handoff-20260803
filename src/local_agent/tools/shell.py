@@ -39,8 +39,8 @@ def shell_tools() -> list[Tool]:
             name="run_tests",
             description=(
                 "Exec-tier: run repository test/build code without shell interpretation; this is not a sandbox. "
-                "Defaults to Python unittest. "
-                "Use cwd for a module directory and leading environment assignments when needed, for example "
+                "Defaults to Python unittest. Do not use it for cat, grep, cd, or shell inspection: use read_file "
+                "for file content, search_code for text search, and cwd for a module directory. For example, "
                 "`PYTHONPATH=src python3 -m unittest tests.test_config`. Pipes, redirects, shell operators, "
                 "loader/injection environments, runner paths, and arbitrary executables are rejected. "
                 "Allowed test/build code may still have side effects."
@@ -184,7 +184,7 @@ def _shell_control_reason(command: str) -> str | None:
             quote = char
             continue
         if char in "|&;<>":
-            return "run_tests rejects shell operators, pipes, and redirections. Use cwd and runner arguments instead."
+            return "run_tests rejects shell operators, pipes, and redirections. Use read_file/search_code for inspection, the cwd argument for a module, and a bare test runner command."
     return None
 
 

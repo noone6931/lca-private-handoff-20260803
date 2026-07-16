@@ -11,6 +11,7 @@ from local_agent.patch.anchored import apply_anchored_patch
 from local_agent.patch.anchored import display_workspace_path
 from local_agent.patch.anchored import hash_text
 from local_agent.patch.anchored import PatchError
+from local_agent.patch.anchored import PatchResult
 from local_agent.patch.anchored import resolve_workspace_path
 
 from .base import Tool, ToolContext, ToolResult, VisionInspectionUnavailableError, tool_state_dir
@@ -62,7 +63,7 @@ def file_tools() -> list[Tool]:
             description=(
                 "Apply a safe anchored patch to a previously read workspace or allowed-directory file. "
                 "Use mode=replace to replace the anchored lines, insert_before to insert before them, "
-                "or insert_after to insert after them. old_text must match the anchored lines. "
+                "or insert_after to insert after them. old_text must be an exact, uniquely located line anchor. "
                 "Set dry_run=true to preview the diff without changing the file."
             ),
             tier="write",
@@ -394,10 +395,13 @@ def patch_file(args: dict[str, Any], context: ToolContext) -> ToolResult:
         allowed_roots=context.allowed_dirs,
     )
     tag_note = _interpreted_tag_note(interpreted_from, tag)
+    range_note = _patch_range_note(args, result)
+    range_metadata = _patch_range_metadata(args, result)
     if args.get("dry_run"):
         return ToolResult(
-            f"{tag_note}Patch preview only. File not changed. "
-            f"New tag after apply would be: {result.new_tag}\n\n{result.diff}"
+            f"{tag_note}{range_note}Patch preview only. File not changed. "
+            f"New tag after apply would be: {result.new_tag}\n\n{result.diff}",
+            metadata=range_metadata,
         )
     patch_id = _record_patch(
         context=context,
@@ -408,9 +412,33 @@ def patch_file(args: dict[str, Any], context: ToolContext) -> ToolResult:
         diff=result.diff,
     )
     return ToolResult(
-        f"{tag_note}Applied patch. Patch id: {patch_id}. New tag: {result.new_tag}\n\n{result.diff}",
-        metadata={"changed_path": display_workspace_path(context.workspace, path, context.allowed_dirs)},
+        f"{tag_note}{range_note}Applied patch. Patch id: {patch_id}. New tag: {result.new_tag}\n\n{result.diff}",
+        metadata={
+            "changed_path": display_workspace_path(context.workspace, path, context.allowed_dirs),
+            **range_metadata,
+        },
     )
+
+
+def _patch_range_note(args: dict[str, Any], result: PatchResult) -> str:
+    authored = (int(args["start_line"]), int(args["end_line"]))
+    effective = (result.effective_start_line, result.effective_end_line)
+    if authored == effective:
+        return ""
+    return (
+        "Recovered exact unique old_text anchor: "
+        f"authored range {authored[0]}-{authored[1]} -> effective range {effective[0]}-{effective[1]}.\n\n"
+    )
+
+
+def _patch_range_metadata(args: dict[str, Any], result: PatchResult) -> dict[str, Any]:
+    authored = [int(args["start_line"]), int(args["end_line"])]
+    effective = [result.effective_start_line, result.effective_end_line]
+    return {
+        "authored_range": authored,
+        "effective_range": effective,
+        "range_recovered": authored != effective,
+    }
 
 
 def rollback_patch(args: dict[str, Any], context: ToolContext) -> ToolResult:

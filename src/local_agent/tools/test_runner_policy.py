@@ -106,8 +106,8 @@ def test_runner_denial_reason(argv: tuple[str, ...]) -> str | None:
     if runner in {"tox", "nox"}:
         return None
     return (
-        f"run_tests runner '{runner}' is not allowed. Use unittest/pytest, Maven, Gradle, a package-manager "
-        "test task, go/cargo/dotnet test, make test/check, tox, or nox."
+        f"run_tests runner '{runner}' is not allowed. Use read_file for file content, search_code for text search, "
+        "and cwd for module selection; start command with an allowed test runner such as unittest/pytest, Maven, or Gradle."
     )
 
 
