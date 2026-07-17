@@ -43,7 +43,7 @@ OWNER_COMPLEXITY_CEILINGS = {
     "src/local_agent/provider_protocol.py": 379,
     "src/local_agent/runtime_prompt.py": 490,
     "src/local_agent/run_collector.py": 668,
-    "src/local_agent/explore_subagent.py": 541,
+    "src/local_agent/explore_subagent.py": 560,
 }
 LEGACY_COMPLEXITY_DEBT_CEILINGS = {
     "src/local_agent/agent.py": 1792,

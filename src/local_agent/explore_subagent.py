@@ -86,6 +86,15 @@ class ExploreRunError(RuntimeError):
         self.tool_errors = tool_errors
 
 
+class ExploreRunInterrupted(KeyboardInterrupt):
+    """Propagate an interrupt after preserving bounded child activity."""
+
+    def __init__(self, tool_calls: int, tool_errors: int) -> None:
+        super().__init__()
+        self.tool_calls = tool_calls
+        self.tool_errors = tool_errors
+
+
 class ExploreSubagentRunner:
     """Run one bounded, synchronous, read-only scout without a child Runtime."""
 
@@ -127,15 +136,15 @@ class ExploreSubagentRunner:
                     tool_calls=exc.tool_calls,
                     tool_errors=exc.tool_errors,
                 )
-            except KeyboardInterrupt:
+            except ExploreRunInterrupted as exc:
                 self._emit(
                     context,
                     "SubagentFinished",
                     child_id,
                     status="failed",
                     elapsed_ms=_elapsed_ms(started),
-                    tool_calls=0,
-                    tool_errors=0,
+                    tool_calls=exc.tool_calls,
+                    tool_errors=exc.tool_errors,
                 )
                 raise
         encoded = json.dumps(outcome.to_dict(), ensure_ascii=False, sort_keys=True)
@@ -187,6 +196,12 @@ class ExploreSubagentRunner:
                 raise LlmTimeoutError("Explore subtask has no remaining parent deadline.")
             child_context = replace(
                 parent_context_obj,
+                session_id=None,
+                run_id=None,
+                current_user_request=None,
+                git_baseline=None,
+                patch_relevance_checker=None,
+                patch_preview_checker=None,
                 deadline_monotonic=deadline,
                 event_callback=None,
                 interaction_handler=None,
@@ -253,9 +268,13 @@ class ExploreSubagentRunner:
                         }
                     )
             raise ExploreYieldError("Child exhausted its bounded rounds without a typed yield.")
+        except KeyboardInterrupt as exc:
+            raise ExploreRunInterrupted(tool_calls, tool_errors) from exc
         except LlmTimeoutError as exc:
             raise ExploreRunError("timeout", tool_calls, tool_errors) from exc
         except (LlmError, ExploreYieldError) as exc:
+            raise ExploreRunError("failed", tool_calls, tool_errors) from exc
+        except Exception as exc:  # noqa: BLE001 - child failures must always emit a typed terminal.
             raise ExploreRunError("failed", tool_calls, tool_errors) from exc
 
     def _failure(

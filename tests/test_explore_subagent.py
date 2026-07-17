@@ -342,6 +342,114 @@ class ExploreSubagentTests(unittest.TestCase):
         self.assertEqual(summary["subagents"]["tool_calls"], 1)
         self.assertEqual(summary["subagents"]["statuses"], {"failed": 1})
 
+    def test_unexpected_schema_failure_emits_one_typed_terminal(self) -> None:
+        class _FailingSchemaRegistry(ToolRegistry):
+            def model_schemas(self, context: ToolContext) -> list[dict[str, object]]:
+                raise RuntimeError("private schema failure")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            events: list[tuple[str, dict[str, object]]] = []
+            runner = ExploreSubagentRunner(_ScriptedClient([]), _FailingSchemaRegistry([]), budget_seconds=60)
+            result = runner.run("Locate.", "", _context(Path(tmp).resolve(), events))
+
+        payload = json.loads(result.content)
+        self.assertTrue(result.is_error)
+        self.assertEqual(payload["status"], "failed")
+        self.assertNotIn("private schema failure", result.content)
+        self.assertEqual([kind for kind, _ in events], ["SubagentStarted", "SubagentFinished"])
+        collector = RunCollector()
+        collector.start("run-1", "locate", 1.0, guard_start={}, steer_start={})
+        for kind, event in events:
+            collector.record_event(kind, event)
+        summary = collector.finish("final", guard_values={}, steering_values={})
+        self.assertEqual(summary["subagents"]["calls"], 1)
+        self.assertEqual(summary["subagents"]["statuses"], {"failed": 1})
+
+    def test_unexpected_provider_failure_after_read_preserves_terminal_counts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            (root / "owner.py").write_text("pass\n", encoding="utf-8")
+            client = _ScriptedClient(
+                [_response(_call("read_file", {"path": "owner.py"})), RuntimeError("private provider failure")]
+            )
+            events: list[tuple[str, dict[str, object]]] = []
+            runner = ExploreSubagentRunner(client, create_default_registry(), budget_seconds=60)
+            result = runner.run("Locate.", "", _context(root, events))
+
+        payload = json.loads(result.content)
+        self.assertEqual((payload["status"], payload["tool_calls"], payload["tool_errors"]), ("failed", 1, 0))
+        self.assertNotIn("private provider failure", result.content)
+        finished = [event for kind, event in events if kind == "SubagentFinished"]
+        self.assertEqual(len(finished), 1)
+        self.assertEqual((finished[0]["tool_calls"], finished[0]["tool_errors"]), (1, 0))
+
+    def test_keyboard_interrupt_after_read_emits_terminal_then_propagates(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            (root / "owner.py").write_text("pass\n", encoding="utf-8")
+            client = _ScriptedClient(
+                [_response(_call("read_file", {"path": "owner.py"})), KeyboardInterrupt()]
+            )
+            events: list[tuple[str, dict[str, object]]] = []
+            runner = ExploreSubagentRunner(client, create_default_registry(), budget_seconds=60)
+            with self.assertRaises(KeyboardInterrupt):
+                runner.run("Locate.", "", _context(root, events))
+
+        self.assertEqual([kind for kind, _ in events], ["SubagentStarted", "SubagentFinished"])
+        finished = events[-1][1]
+        self.assertEqual((finished["status"], finished["tool_calls"], finished["tool_errors"]), ("failed", 1, 0))
+
+    def test_child_context_clears_parent_turn_and_session_state(self) -> None:
+        captured: list[ToolContext] = []
+        registry = self._read_registry(
+            lambda _args, context: captured.append(context) or ToolResult("candidate")
+        )
+        client = _ScriptedClient(
+            [_response(_call("read_file", {"path": "candidate.py"})), _response(_yield_call())]
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            parent = ToolContext(
+                workspace=root,
+                approval_mode="always-ask",
+                state_dir=root / "state",
+                allowed_dirs=(),
+                session_id="parent-session-secret",
+                run_id="run-1",
+                tool_call_id="parent-call-1",
+                workspace_revision=9,
+                auto_approve_tools=("read_file",),
+                tool_approval={"read_file": "allow"},
+                session_tool_approval={"read_file": "allow_always"},
+                current_user_request="PARENT_REQUEST_SECRET",
+                git_baseline={"tag": "parent-git-secret"},
+                patch_relevance_checker=lambda _name, _path: "parent-relevance-secret",
+                patch_preview_checker=lambda _args, _path: "parent-preview-secret",
+                event_callback=lambda _kind, _payload: None,
+            )
+            runner = ExploreSubagentRunner(client, registry, budget_seconds=60)
+            result = runner.run("bounded assignment", "bounded context", parent)
+
+        self.assertFalse(result.is_error)
+        child = captured[0]
+        self.assertIsNone(child.session_id)
+        self.assertIsNone(child.run_id)
+        self.assertIsNone(child.tool_call_id)
+        self.assertIsNone(child.current_user_request)
+        self.assertIsNone(child.git_baseline)
+        self.assertIsNone(child.patch_relevance_checker)
+        self.assertIsNone(child.patch_preview_checker)
+        self.assertEqual((child.workspace, child.workspace_revision, child.state_dir), (root, 9, root / "state"))
+        self.assertEqual(child.auto_approve_tools, ("read_file",))
+        self.assertEqual(child.tool_approval, {"read_file": "allow"})
+        self.assertEqual(child.session_tool_approval, {"read_file": "allow_always"})
+        child_messages = json.dumps(client.calls[0]["messages"])
+        self.assertIn("bounded assignment", child_messages)
+        self.assertIn("bounded context", child_messages)
+        self.assertNotIn("PARENT_REQUEST_SECRET", child_messages)
+        self.assertNotIn("parent-session-secret", child_messages)
+        self.assertNotIn("parent-git-secret", child_messages)
+
     def test_completed_yield_with_limitation_is_downgraded_to_partial(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             client = _ScriptedClient([_response(_yield_call(limitations=["A source remained unlocated."]))])
