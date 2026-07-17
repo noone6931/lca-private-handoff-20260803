@@ -159,10 +159,28 @@ class TuiController:
             )
             return
         if self._view.palette:
-            selected = self._view.palette[self._view.palette_index].split("  ", 1)[0]
-            if self._view.input_text != selected:
-                self._view = replace(self._view, input_text=selected, cursor=len(selected), palette=())
-                return
+            completions = self._registry.completions(self._view.input_text[:self._view.cursor])
+            if completions and self._view.palette_index < len(completions):
+                completion = completions[self._view.palette_index]
+                start = max(self._view.cursor + completion.start_position, 0)
+                selected = (
+                    self._view.input_text[:start]
+                    + completion.text
+                    + self._view.input_text[self._view.cursor:]
+                )
+                if self._view.input_text != selected:
+                    self._view = replace(
+                        self._view,
+                        input_text=selected,
+                        cursor=start + len(completion.text),
+                        palette=(),
+                    )
+                    return
+            else:
+                selected = self._view.palette[self._view.palette_index].split("  ", 1)[0]
+                if self._view.input_text != selected:
+                    self._view = replace(self._view, input_text=selected, cursor=len(selected), palette=())
+                    return
             self._view = replace(self._view, palette=())
         text = self._view.input_text.strip()
         if not text:
@@ -299,7 +317,7 @@ class TuiController:
         updated = value[:cursor] + text + value[cursor:]
         palette = self._view.palette
         if updated.startswith("/") and not self._pending_interaction and self._view.focus == TuiFocus.CHAT.value:
-            completions = self._registry.completions(updated)
+            completions = self._registry.completions(updated[:cursor + len(text)])
             palette = tuple(f"{item.text}  {item.description}" for item in completions[:8])
         elif palette:
             palette = ()

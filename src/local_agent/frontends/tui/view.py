@@ -29,6 +29,18 @@ class TuiFrame:
     lines: tuple[str, ...]
     cursor_y: int
     cursor_x: int
+    accent_rows: tuple[int, ...] = ()
+
+
+_LCA_LOGO = (
+    " _        ____      _    ",
+    "| |      / ___|    / \\   ",
+    "| |     | |       / _ \\  ",
+    "| |___  | |___   / ___ \\ ",
+    "|_____|  \\____| /_/   \\_\\",
+)
+_LCA_WORDMARK = "LOCAL CODING AGENT"
+_LCA_ACCENTS = frozenset(line.strip() for line in (*_LCA_LOGO, "LCA", _LCA_WORDMARK))
 
 
 def render_frame(state: TuiState, view: TuiView, width: int, height: int) -> TuiFrame:
@@ -51,7 +63,8 @@ def render_frame(state: TuiState, view: TuiView, width: int, height: int) -> Tui
     while len(lines) < height:
         lines.insert(-1, " " * width)
     cursor_y = min(len(lines) - 2, height - 2)
-    return TuiFrame(tuple(lines), cursor_y, min(cursor_x, width - 1))
+    accent_rows = tuple(index for index, line in enumerate(lines) if line.strip() in _LCA_ACCENTS)
+    return TuiFrame(tuple(lines), cursor_y, min(cursor_x, width - 1), accent_rows)
 
 
 def _header(state: TuiState, width: int) -> str:
@@ -70,12 +83,15 @@ def _body(state: TuiState, width: int, height: int, scroll_offset: int, search_q
     if search_query:
         query = search_query.casefold()
         entries = tuple(entry for entry in entries if query in entry.text.casefold())
-    transcript = _transcript_lines(entries, transcript_width)
-    offset = max(scroll_offset, 0)
-    end = max(len(transcript) - offset, 0)
-    start = max(end - height, 0)
-    visible = list(transcript[start:end])
-    visible = [""] * max(height - len(visible), 0) + visible
+    if not state.transcript and not search_query:
+        visible = list(_welcome_lines(transcript_width, height))
+    else:
+        transcript = _transcript_lines(entries, transcript_width)
+        offset = max(scroll_offset, 0)
+        end = max(len(transcript) - offset, 0)
+        start = max(end - height, 0)
+        visible = list(transcript[start:end])
+        visible = [""] * max(height - len(visible), 0) + visible
     if not side_width:
         return tuple(pad_cells(line, width) for line in visible)
     side = _side_lines(state, side_width, height)
@@ -83,6 +99,18 @@ def _body(state: TuiState, width: int, height: int, scroll_offset: int, search_q
         pad_cells(left, transcript_width) + " " + pad_cells(right, side_width)
         for left, right in zip(visible, side, strict=True)
     )
+
+
+def _welcome_lines(width: int, height: int) -> tuple[str, ...]:
+    content = (*_LCA_LOGO, "", _LCA_WORDMARK) if width >= 32 and height >= 7 else ("LCA", _LCA_WORDMARK)
+    top = max((height - len(content)) // 2, 0)
+    lines = [""] * top
+    for line in content[:height]:
+        clipped = clip_cells(line, width)
+        left = max((width - cell_width(clipped)) // 2, 0)
+        lines.append(" " * left + clipped)
+    lines.extend([""] * max(height - len(lines), 0))
+    return tuple(pad_cells(line, width) for line in lines[:height])
 
 
 def _transcript_lines(entries: tuple[TranscriptEntry, ...], width: int) -> tuple[str, ...]:

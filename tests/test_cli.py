@@ -177,6 +177,36 @@ class CliTests(unittest.TestCase):
         self.assertEqual(run_tui.call_count, 1)
         self.assertEqual(type(run_tui.call_args.args[1]).__name__, "TuiMailbox")
 
+    def test_no_args_prefers_tui_when_supported(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = SimpleNamespace(workspace=Path(tmp), state_dir=Path(tmp) / "state")
+            with (
+                patch("local_agent.cli.load_config", return_value=config),
+                patch("local_agent.cli.AgentRuntime", _FakeAgentRuntime),
+                patch("local_agent.cli.tui_is_supported", return_value=True),
+                patch("local_agent.cli.run_tui", return_value=0) as run_tui,
+                patch("local_agent.cli.run_terminal_chat") as run_chat,
+            ):
+                code = main([])
+
+        self.assertEqual(code, 0)
+        self.assertEqual(run_tui.call_count, 1)
+        self.assertEqual(run_chat.call_count, 0)
+
+    def test_no_args_falls_back_to_chat_when_tui_is_unavailable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = SimpleNamespace(workspace=Path(tmp), state_dir=Path(tmp) / "state")
+            with (
+                patch("local_agent.cli.load_config", return_value=config),
+                patch("local_agent.cli.AgentRuntime", _FakeAgentRuntime),
+                patch("local_agent.cli.tui_is_supported", return_value=False),
+                patch("local_agent.cli.run_terminal_chat", return_value=0) as run_chat,
+            ):
+                code = main([])
+
+        self.assertEqual(code, 0)
+        self.assertEqual(run_chat.call_count, 1)
+
 
 if __name__ == "__main__":
     unittest.main()

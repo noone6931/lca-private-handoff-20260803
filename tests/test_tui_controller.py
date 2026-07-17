@@ -84,6 +84,33 @@ class TuiControllerTests(unittest.TestCase):
         self.assertEqual(command.type, "GetStatus")
         self.assertEqual(controller.state.transcript[-1].text, "workspace status")
 
+    def test_complete_workspace_command_dispatches_on_first_enter(self) -> None:
+        mailbox = TuiMailbox(capacity=8)
+        worker = _FakeWorker()
+        controller = TuiController(mailbox, TuiProjector(), worker)  # type: ignore[arg-type]
+
+        for character in "/workspace list":
+            controller.handle_key(character)
+        controller.handle_key("ENTER")
+
+        self.assertEqual([command.type for command in worker.submitted], ["ListWorkspaceRoots"])
+        self.assertEqual(controller.view.input_text, "")
+
+    def test_workspace_subcommand_completion_preserves_parent_command(self) -> None:
+        mailbox = TuiMailbox(capacity=8)
+        worker = _FakeWorker()
+        controller = TuiController(mailbox, TuiProjector(), worker)  # type: ignore[arg-type]
+
+        for character in "/workspace l":
+            controller.handle_key(character)
+        controller.handle_key("ENTER")
+
+        self.assertEqual(controller.view.input_text, "/workspace list")
+        self.assertEqual(worker.submitted, [])
+
+        controller.handle_key("ENTER")
+        self.assertEqual([command.type for command in worker.submitted], ["ListWorkspaceRoots"])
+
     def test_interaction_focus_prevents_slash_command_dispatch(self) -> None:
         mailbox = TuiMailbox(capacity=8)
         worker = _FakeWorker()

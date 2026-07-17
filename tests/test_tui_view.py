@@ -55,6 +55,23 @@ class TuiViewTests(unittest.TestCase):
         self.assertTrue(all(cell_width(line) == 30 for line in frame.lines))
         self.assertFalse(any("TOOLS" in line for line in frame.lines))
 
+    def test_empty_transcript_renders_responsive_lca_home_logo(self) -> None:
+        wide = render_frame(TuiState(), TuiView(), 80, 14)
+        narrow = render_frame(TuiState(), TuiView(), 24, 8)
+
+        self.assertTrue(any("/ ___|" in line for line in wide.lines))
+        self.assertTrue(any("LOCAL CODING AGENT" in line for line in wide.lines))
+        self.assertTrue(wide.accent_rows)
+        self.assertTrue(any(line.strip() == "LCA" for line in narrow.lines))
+        self.assertTrue(all(cell_width(line) == 24 for line in narrow.lines))
+
+    def test_home_logo_yields_to_transcript_content(self) -> None:
+        state = TuiState(transcript=(TranscriptEntry("a1", "assistant", "ready"),))
+        frame = render_frame(state, TuiView(), 80, 14)
+
+        self.assertTrue(any("assistant> ready" in line for line in frame.lines))
+        self.assertFalse(any("LOCAL CODING AGENT" in line for line in frame.lines))
+
     def test_reference_viewport_widths_are_exact(self) -> None:
         state = TuiState(transcript=(TranscriptEntry("a1", "assistant", "Unicode 中文 output"),))
 

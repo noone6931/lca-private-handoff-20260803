@@ -63,6 +63,8 @@ def _draw_frame(stdscr, frame, width: int, curses_module: Any) -> None:
         attributes = 0
         if row == 0:
             attributes = curses_module.A_BOLD | _color_pair(curses_module, 1)
+        elif row in frame.accent_rows:
+            attributes = curses_module.A_BOLD | _color_pair(curses_module, 1)
         elif row == len(frame.lines) - 1:
             attributes = curses_module.A_REVERSE
         try:

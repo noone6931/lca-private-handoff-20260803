@@ -5,6 +5,7 @@ import time
 from local_agent.cancellation import RunCancellation
 from local_agent.frontends.tui.app import run_tui
 from local_agent.frontends.tui.mailbox import TuiMailbox
+from local_agent.protocol.commands import CommandResult
 
 
 class _Commands:
@@ -12,6 +13,14 @@ class _Commands:
         self.cancellation = RunCancellation()
 
     def dispatch(self, command):
+        if command.type == "ListWorkspaceRoots":
+            return CommandResult(
+                command.command_id,
+                "fixture-session",
+                None,
+                "ok",
+                {"text": "Workspace roots (revision 0):\n- primary: /tmp/lca-tui-fixture"},
+            )
         if command.type == "SubmitPrompt":
             self.cancellation.begin()
             try:

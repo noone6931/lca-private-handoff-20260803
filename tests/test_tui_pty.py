@@ -18,6 +18,41 @@ FIXTURE = ROOT / "tests/fixtures/tui_pty_app.py"
 
 @unittest.skipUnless(os.name == "posix", "PTY smoke requires a POSIX terminal")
 class TuiPtyTests(unittest.TestCase):
+    def test_workspace_list_dispatches_from_completed_subcommand(self) -> None:
+        master, slave = os.openpty()
+        before = termios.tcgetattr(slave)
+        self._set_size(slave, 24, 80)
+        process = subprocess.Popen(
+            [sys.executable, str(FIXTURE)],
+            stdin=slave,
+            stdout=slave,
+            stderr=slave,
+            env={**os.environ, "PYTHONPATH": str(ROOT / "src"), "TERM": "xterm-256color"},
+            close_fds=True,
+        )
+        output = bytearray()
+        try:
+            output.extend(self._read_until(master, b"LOCAL CODING AGENT", timeout=3))
+            os.write(master, b"/workspace list\n")
+            output.extend(self._read_until(master, b"/tmp/lca-tui-fixture", timeout=3))
+            os.write(master, b"/exit\n")
+            output.extend(self._drain_until_exit(master, process, timeout=3))
+            process.wait(timeout=1)
+            after = termios.tcgetattr(slave)
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait(timeout=2)
+            os.close(master)
+            os.close(slave)
+
+        mask = termios.ECHO | termios.ICANON
+        rendered = output.decode("utf-8", errors="replace")
+        self.assertEqual(process.returncode, 0, rendered)
+        self.assertIn("/tmp/lca-tui-fixture", rendered)
+        self.assertNotIn("you> list", rendered)
+        self.assertEqual(after[3] & mask, before[3] & mask)
+
     def test_normal_exit_restores_canonical_input_and_echo(self) -> None:
         master, slave = os.openpty()
         before = termios.tcgetattr(slave)

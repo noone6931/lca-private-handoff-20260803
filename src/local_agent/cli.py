@@ -26,7 +26,7 @@ _TERMINAL_COMMANDS = TerminalCommandRegistry()
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="local-agent")
-    parser.add_argument("prompt", nargs="*", help="Task prompt. If omitted, starts a simple REPL.")
+    parser.add_argument("prompt", nargs="*", help="Task prompt. If omitted, starts the full-screen TUI.")
     parser.add_argument("--cwd", help="Workspace directory.")
     parser.add_argument(
         "--state-dir",
@@ -178,7 +178,7 @@ def main(argv: list[str] | None = None) -> int:
             subagent_budget_seconds=args.subagent_budget_seconds,
         )
         chat_requested = args.chat or _is_chat_prompt(args.prompt)
-        tui_requested = bool(args.tui)
+        tui_requested = bool(args.tui or (not args.prompt and not chat_requested))
         tui_active = tui_requested and tui_is_supported()
         tui_mailbox = TuiMailbox() if tui_active else None
         if tui_active:
