@@ -24,24 +24,50 @@ LCA 的路线没有错，也不应该直接搬 OMP 或 Codex 的代码。当前�
 2. LCA 对弱 provider 的只读证据质量投入过重。`task_contract.py`、CompletionAudit、read-only explore/reviewer、document consistency、safe partial 等已经形成一套约一万行的确定性语义流水线，并被默认主循环直接编排。
 3. OMP 和 Codex 的核心 loop 复杂，但复杂度主要属于 turn/protocol/tool lifecycle；它们不会在每个普通任务上用大量中文/英文关键词判断业务语义并认证最终答案。
 4. LCA 当前是“核心平台能力尚未完全打通，交付审查层已经很厚”。这解释了为什么测试很多、只读报告很稳，但第一个真实 S5 写交付仍然失败。
-5. 正确目标不是“复制或完整追平 OMP”，而是：**OMP/Codex 级核心执行底座 + LCA 自己的封闭 VM/企业证据工作流**。
+5. 正确目标不是“复制或完整追平 OMP”，而是：**Codex-first 核心骨架 + OMP-informed coding 能力 + LCA 自己的封闭 VM/企业证据工作流**。
 
-当前阶段判断：**P12 只读分析能力可用；普通读改测 diff 可用；真实 1 到 N 需求交付尚未通过首个企业写路径验收，因此还不是可放心交给他人自主开发的版本。**
+当前阶段判断：**P12 只读分析能力可用；P13 Runtime/Command/Event/Streaming 阶段性收口；P14 只读 Explore 保留 Phase 1 但扩展暂停；P15 已发布 semantic rename 和 Code Action 只读 preview。普通读改测 diff 可用，但真实 1 到 N 需求交付尚未通过首个企业写路径验收，因此还不是可放心交给他人自主开发的版本。**
+
+## 正式参考路线
+
+如果必须选择一个总体架构母版，LCA 选择 **Codex CLI**。Codex 的 `Op/EventMsg`、Session/Turn/Step、Tool Router、ExecutionPolicy/Sandbox、state/worktree 与多前端边界更适合作为长期产品骨架，也更能约束当前 Runtime 和语义流水线继续膨胀。
+
+OMP 不降级为普通资料，而是作为 **coding-agent 能力的第一参考**：agent loop/directive、弱 provider 适配、hashline/edit、compaction、memory/skills、task/advisor 与终端交互仍优先源码对照 OMP。LCA 不复制 Rust 或 TypeScript 实现；采用的是 Owner、生命周期和安全不变量。
+
+| 领域 | 第一参考 |
+|---|---|
+| Runtime 生命周期、Command/Event、执行与前端解耦 | Codex |
+| Approval action、ExecutionPolicy、Sandbox、State/Worktree | Codex |
+| Agent loop 行为、Provider 兼容、ToolChoice directive | OMP |
+| Edit、Compaction、Memory/Skills、Task/Advisor 体验 | OMP |
+| LCA 产品约束 | Python、本地优先、封闭 VM、单 API、渐进迁移 |
+
+迁移采用渐进方式：冻结新的默认语义 gate，先稳定协议与 Session/Turn/Step Owner，再让 CLI/TUI/Remote 共用事件边界；现有工具和已验证能力保留，不以架构调整为理由削减功能或整体重写。
+
+### T-218 反例：不要用确定性正则理解开放用户语义
+
+T-216 的真实失败是 `Do not rewrite tests` 被裸子串 `write test` 误判。首轮修复继续沿着确定性解析扩充中英文 action、negative grammar 和局部作用域；虽然 packaged tests 全绿，小牙的独立改写样本“无需修改或新增测试”仍触发 `requested_test_missing`。这证明问题不在词表覆盖率，而在职责边界。
+
+- OMP 的 reviewer prompt 接收 diff/context，由模型输出 structured findings；没有多语言 test-intent parser。
+- Codex 的 base instructions 让模型判断何时运行或添加测试，review rubric 检查具体可证明缺陷；没有从 raw prompt 生成“必须改测试文件”的 deterministic gate。
+- LCA 因此拒绝 T-218 regex candidate，并在 R2 删除错误的语义裁判。真实 `run_tests` 退出码、post-write diff、VerificationPlan、CompletionAudit 和事实型 reviewer 继续保留；原 C1 immutable live 自然 DELIVERED 后发布 stable `20260716T075910Z-e710a783c2d9-846af66e44ab`。
+
+以后若需要强制“必须修改测试文件”，来源必须是上游显式结构化 command/contract，或者由模型 reviewer 基于原始请求、diff 和测试结果给出 typed finding；不得由下游重新猜测自然语言。
 
 ## 粗粒度对照
 
 | 维度 | LCA | OMP | Codex | 判断 |
 |---|---|---|---|---|
 | 核心 loop | 单类 Runtime 编排模型、工具、证据、reviewer、finalization | agent-loop 主要拥有 turn、tool result pairing、queue、deadline、steering | `run_turn` 主要拥有 sampling、tool follow-up、input queue、hooks、compaction | LCA loop 承担了过多语义策略 |
-| Provider | OpenAI-compatible chat completions，百炼优先 | 多 provider、native/in-band tool dialect、流式 | OpenAI/Responses 为核心，也有本地 provider 与连接层 | LCA 轻量但缺 streaming、能力描述和稳健重试 |
-| 工具系统 | 26 个本地工具，Python schema/tier/registry | 大量内置工具、task/job/browser/LSP/DAP/memory/skills | typed router/runtime、MCP/apps/plugins、exec/apply patch | LCA MVP 覆盖不错，平台扩展能力不足 |
+| Provider | OpenAI-compatible chat completions + tool-call-safe streaming，百炼优先 | 多 provider、native/in-band tool dialect、流式 | OpenAI/Responses 为核心，也有本地 provider 与连接层 | LCA 已有 streaming MVP，但 provider 广度、能力描述和稳健重试仍弱 |
+| 工具系统 | 28 个本地工具，Python schema/tier/registry | 大量内置工具、task/job/browser/LSP/DAP/memory/skills | typed router/runtime、MCP/apps/plugins、exec/apply patch | LCA MVP 覆盖不错，平台扩展能力不足 |
 | Approval | mode + per-tool + session allow/reject | tier + dynamic approval + wrapper 单边界 | typed action + approval + execpolicy + sandbox + hooks/guardian | LCA 只有审批，没有真正执行隔离 |
 | 编辑 | hash + line + old_text anchored patch，dry-run/rollback | hashline/edit/ast edit/write/checkpoint | apply_patch + diff tracker + sandbox | LCA 的 MVP 设计正确，应保留 |
 | 上下文 | token 近似 + reserve + local/LLM summary | 成熟 compaction、provider/model 适配 | token window、local/remote compact、mid-turn rollover | LCA 已达到可用 MVP |
 | Memory/Skills | Markdown memory、可选 consolidation、项目 skill discovery | Mnemopi/Hindsight、多 backend、managed skills | SQLite memory pipeline、AGENTS、skills/plugins | LCA 当前取舍适合封闭 VM，不应急着上向量库 |
 | Reviewer | 默认 read-only 高风险场景使用独立 reviewer + schema repair | task/reviewer/advisor 是可组合角色 | hooks、roles、subagents，可按任务使用 | LCA 能力有价值，但不应成为默认核心路径 |
-| Event/Frontend | dataclass event/command；terminal 直接调用 Runtime | Runtime/session 与成熟 TUI/ACP/扩展层 | `Op`/`EventMsg` 协议、TUI、App Server | LCA command bus 目前只是数据结构，尚未真正解耦 |
-| LSP | 外部 LSP + lightweight fallback，暂无 rename/code action | 完整 LSP/DAP/AST 工具 | 当前 core 没有原生 LSP 工具体系 | LCA 此处有自己的优势，但写入能力仍待补 |
+| Event/Frontend | dataclass Command/Event + 单一 CommandDispatcher；terminal/CLI 走同一提交边界 | Runtime/session 与成熟 TUI/ACP/扩展层 | `Op`/`EventMsg` 协议、TUI、App Server | LCA 已完成同步解耦 MVP，async/cancel/remote 仍未实现 |
+| LSP | 外部 LSP + lightweight fallback；已有 rename 和 Code Action 只读 preview | 完整 LSP/DAP/AST 工具，rename/code action 可 apply | 当前 core 没有原生 LSP 工具体系 | LCA 已有 semantic preview 优势，auto-apply/事务型 writer 仍待真实收益支持 |
 | Sandbox | 无；依赖审批、workspace 和封闭 VM | bash 主要依赖 approval，非 Codex 级 OS sandbox | macOS/Linux/Windows sandbox、network policy、exec policy | 若要给别人使用，LCA 必须补安全边界 |
 | 离线/封闭 VM | 最强：标准库零必选依赖，单 API | 可裁剪但 Bun/native/平台依赖重 | 可分发原生 binary，但构建和平台依赖重 | LCA 的差异化方向正确 |
 
@@ -63,7 +89,7 @@ LCA 的路线没有错，也不应该直接搬 OMP 或 Codex 的代码。当前�
 - patch review、重复/无效探索 guard；
 - finalization 和 memory consolidation。
 
-文件已经从历史峰值降到 1,873 行/71 methods，但行数下降不等于 loop 已经薄。`_run_prompt()` 仍然知道太多产品语义阶段。
+T-215 后文件已经从历史峰值降到 1,808 行/71 methods，但行数下降不等于 loop 已经薄。`_run_prompt()` 仍然知道较多产品语义阶段，后续继续按生命周期 Owner 收敛，不以机械搬运为目标。
 
 ### OMP 源码事实
 
@@ -213,7 +239,7 @@ T-207 R1 `3d792ec` 已按这一边界完成并发布 stable：拒绝 runner path
 
 - LCA shell 不是 sandbox；
 - test planner 仍容易受多模块/私有构建环境影响；
-- LSP 以导航为主，暂无 rename/code action；
+- LSP 已支持 rename 和 Code Action 只读 preview，但尚无 auto-apply/事务型多文件 writer；
 - 无 AST edit；
 - 无长进程统一 session/PTY owner；
 - 无 MCP/browser/debug/task agent。
@@ -223,7 +249,7 @@ T-207 R1 `3d792ec` 已按这一边界完成并发布 stable：拒绝 runner path
 先让一个真实业务切片完成 read -> patch -> test -> diff -> delivery。之后的工具优先级为：
 
 1. unified exec session + sandbox/policy；
-2. LSP rename/code action；
+2. 真实 LSP Code Action 收益验证，再决定 rename/code-action apply；
 3. task/subagent explore/reviewer；
 4. MCP；
 5. browser；
@@ -233,23 +259,23 @@ T-207 R1 `3d792ec` 已按这一边界完成并发布 stable：拒绝 runner path
 
 ### LCA 源码事实
 
-`protocol/events.py` 和 `commands.py` 已定义 dataclass shape，Runtime 也能发事件。但 `frontends/terminal/app.py` 仍直接持有并调用 `AgentRuntime`；slash command 也直接 dispatch Runtime 方法。当前并不存在真正的 async Command Bus，也没有 streaming delta 主链路。
+T-219 已让 `CommandDispatcher` 成为 prompt/status/workspace/approval 的单一消费入口，`AgentRuntime.run()` 只保留同路径兼容 facade；事件具备 `command_id`/`run_id` correlation，并用 TurnStarted/RunSummary/TurnFinished 表达每轮生命周期。T-220 又增加单一 Provider Stream Owner：OpenAI-compatible SSE/JSON 在同一次请求内解析，text/tool delta 分离，完整 tool call 才能进入 ToolRegistry；`AssistantDelta` 与最终消息共享 identity，terminal 可增量显示且不重复 final。
 
-因此“Frontend 只发 Command、Runtime 只产 Event”目前是目标架构，不是已完成事实。
+因此“Frontend 只发 Command、Runtime 只产 Event”已经达到同步 MVP；尚未完成的是 async queue、cancel/interrupt command、worker/runtime 隔离、event replay 恢复和多前端并发，不应宣称完全追平 Codex。
 
 ### OMP/Codex 对照
 
-- OMP 已有成熟 TUI/session/ACP/扩展事件链。
-- Codex 的 `codex-rs/protocol/src/protocol.rs` 用 `Op` 和 `EventMsg` 作为客户端/Runtime 协议，TUI、App Server 和其他客户端共享核心协议。
+- OMP 的 `packages/agent/src/types.ts` 定义 agent/turn/message/tool 生命周期，`agent-loop.ts` 在 provider stream 消费点产出 `message_update`，coding session 订阅并转发 core events。
+- Codex 的 `codex-rs/protocol/src/protocol.rs` 用 `Op` 和 `EventMsg` 作为客户端/Runtime 协议；`CodexThread.submit()` 与 `next_event()` 通过唯一 submission loop 形成双向 conduit，TUI、App Server 和其他客户端共享该核心边界。
 
 ### 建议
 
-此前选择 `prompt_toolkit + rich` 是正确的，但完整 TUI 不应抢在写路径之前。TUI 前置条件：
+此前选择 `prompt_toolkit + rich` 是正确的，但完整 TUI 不应抢在协议生命周期之前。T-219/T-220 已完成同步 command dispatcher、command correlation、Turn lifecycle 和 tool-call-safe provider streaming。TUI 仍需补齐：
 
-1. provider streaming/AssistantDelta 真正可用；
-2. submit/cancel/approval/tool interaction 通过统一 command dispatcher；
-3. Runtime 可在独立 worker 中运行，前端不直接调用内部方法；
-4. event replay 和 session restore 语义稳定。
+1. cancel/interrupt/approval interaction 通过显式 typed command 支持，而不是伪装已有；
+2. Runtime 可在独立 worker 中运行，前端不直接调用内部方法；
+3. event replay 和 session restore 语义稳定；
+4. S6-S10 证明失败恢复、连续性和权限状态在真实多轮任务中可靠。T-221 已完成该项 hard safety 验收；S6B 的“测试失败后再恢复”因首改直接通过而保留为 INCONCLUSIVE。
 
 满足后再实现 fullscreen TUI，不需要切 Go/Rust，也不需要复制 OMP renderer。
 
@@ -299,15 +325,24 @@ CLI / Terminal / Future TUI / Remote
 
 | 优先级 | 工作 | 验收 |
 |---|---|---|
-| 已完成 | T-207 immutable 黑盒回归并发布 stable | stable `20260716T014653Z-3d792ecb992d-5e1883ffdcdb` |
-| P0 | fresh T-208 重跑 S5-1 | 真正完成 DTO + persistence + API + DDL + tests + diff + delivery，或给出可信 blocker |
+| 已完成 | T-215 Workflow Profiles Phase 1 并发布 stable | stable `20260716T062420Z-b3838a315d0b-9e078342994d`；普通 coding 与企业证据/readiness 重链分离，能力保留 |
+| 已完成 | T-208~T-214 S5-1 验证与隔离参考交付 | LCA/Bailian 模型执行失败与业务实现分账；不再为单一样本追加 Harness gate |
+| 已完成 | T-217 Typed ExecutionPolicy Observability Phase 1 | stable `20260716T070613Z-b38d28d87a1c-ce35b66fc179`；execute/preapproved 单一 policy Owner、脱敏 telemetry、真实 unsandboxed 状态，未冒充 OS sandbox |
 | P0 | 冻结新的 read-only gate/taxonomy | 除安全漏洞或两个独立跨场景复现外，不扩 Harness |
-| P1 | 将重型只读流水线变成 workflow profile | 保留能力；默认 coding 不支付 reviewer/repair 成本 |
-| P1 | ExecutionPolicy/Sandbox 设计与 MVP | approval 显示 action；workspace-write/full-exec 权限可区分 |
-| P1 | Provider streaming + command dispatcher | AssistantDelta 可用；前端不直接调用 Runtime 内部命令 |
-| P1 | S6-S10 真实回归 | 失败恢复、连续性、权限、需求变更、最终审计通过 |
-| P2 | task/subagent explore + reviewer | 独立上下文、预算、typed yield、冲突处理明确 |
-| P2 | LSP rename/code action、MCP、Browser | 每项由真实任务收益驱动 |
+| 已完成 | 将重型只读流水线变成 workflow profile | `auto/coding/enterprise-evidence/readiness-audit` typed lifecycle；缺 contract fail closed |
+| 已完成 | T-218 移除 raw-language test-intent hard gate | regex candidate 未发布；R2 移除 parser/`requested_test_missing`，原 C1 自然 DELIVERED，真实 post-write 测试与事实型 reviewer 保持；stable `20260716T075910Z-e710a783c2d9-846af66e44ab` |
+| P1 | ExecutionPolicy Phase 2 / Sandbox 设计 | 在 Phase 1 typed observability 上定义 read-only/workspace-write/full-exec；实现前明确 OS 隔离边界 |
+| 已完成 | T-219 Runtime Command/Event Boundary Phase 1 | commit `a92af68`；同步 CommandDispatcher 成为 prompt/status/workspace/approval 单一入口，run 仅为兼容 facade；事件有 command correlation 和正确 Turn lifecycle，前端不直接修改 Runtime；1003/62/16 与 ordinary coding live 通过，stable `20260716T090437Z-a92af683944e-1e2171155546` |
+| 已完成 | T-220 Provider streaming | commit `cee3ece`；OpenAI-compatible SSE/JSON 对 content/tool-call delta 安全聚合，partial/malformed/incomplete/timeout 为 0 execution；AssistantDelta/final identity、Bailian XML 抑制和 terminal final 通过 1031/62/17、immutable matrix 与真实 live；stable `20260716T095838Z-cee3eceba38d-14a0a50a6634` |
+| 已完成 | T-221 S6-S10 真实回归 | stale patch、approval reject、session resume、always-ask/write/yolo+deny、需求变更和最终审计 hard safety 通过；无 P0/P1；S6B 失败后恢复未自然触发，记 INCONCLUSIVE |
+| 已完成 | T-222 Explicit Read-only Explore Subagent Phase 1 | commits `ee01ce2` + `d838e45`；default-off、同步单 child、独立上下文/预算、同 roots、read-only whitelist、禁止递归、bounded typed yield 和父子 correlation 已落地。1056/62/18 与 deterministic matrix 通过；live 安全 fail-closed 和 parent direct verification 通过，成功 typed handoff live 仍 INCONCLUSIVE；stable `20260717T024300Z-d838e4527425-44487380458f` |
+| 已完成 | T-223 Explore Subagent 真实收益验证 | 小 fixture 成功 handoff；真实三仓 enabled 时 delegate 从第 4 turn 起已暴露但模型未选择，21 LLM/49 tools/9 compactions 且覆盖不足；default-off 同样覆盖不足。无 Runtime/权限/证据 lifecycle 缺陷，不加 Queue gate，P14 扩展暂停 |
+| 已完成 | T-224 LSP Semantic Rename Preview Phase 1 | commit `dee9a09`；对照 OMP symbol-aware rename/WorkspaceEdit 全量校验，提供零写盘 bounded preview，parent direct read 后复用现有 `apply_patch`、test、diff。1078/62/19 与真实 jdtls 流程通过；stable `20260717T050233Z-dee9a09c5ce9-d94382225258` |
+| 已完成 | T-225 Semantic Tool Cross-language Benefit Gate | Java/jdtls 真实跨文件 preview 与现有 patch/test/diff 闭环 PASS；TypeScript/Vue 因无 external server 记 `ENVIRONMENT_BLOCKED / INCONCLUSIVE`。不联网安装、不归因 Runtime、不增加 Queue gate |
+| 已完 | T-226 LSP Code Action Preview Phase 1 | commit `e70f20a`；只 list/preview text-only WorkspaceEdit，command/resource operation/server applyEdit/auto-apply 全部 fail closed。独立 OMP 对照发现并修正缺失 `codeActionLiteralSupport`；1095/62/20，stable `20260717T054823Z-e70f20a948d4-d8ee2a1faf0d` |
+| P0 | T-227 真实 jdtls Code Action Benefit Gate | 用 immutable T-226 stable 走 list -> preview -> parent reread -> existing patch/test/diff；未自然产生 action 只记 capability/reliability，不新增 Queue gate 或 Harness 补丁 |
+| P2 | reviewer/implement subagent 扩展 | 仅在后续多个真实任务证明 Explore 有稳定收益后重启；写入隔离、冲突处理和审批路由必须先明确 |
+| P2 | LSP rename apply/code action、MCP、Browser | rename apply 需先有事务型多文件 writer；其余每项由真实任务收益驱动 |
 | P3 | fullscreen TUI / Remote | 协议和 streaming 稳定后实现 |
 
 ## 最终原则

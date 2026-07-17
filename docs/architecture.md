@@ -1,6 +1,6 @@
 # Local Coding Agent 架构设计
 
-更新时间：2026-07-16
+更新时间：2026-07-17
 
 本文档描述 `local-coding-agent` 当前架构基线，以及按技术成熟度划分的待加入能力。它是给后续实现者和协作 Agent 读取的架构视图；项目进度事实源仍以 `docs/project-status.md` 和 `docs/project-management.md` 为准。
 
@@ -30,6 +30,17 @@
 - 能沉淀可审计的项目记忆。
 - 默认不联网搜索、不自动下载依赖、不做远程控制、不做多 Agent。
 
+### 产品北极星
+
+LCA 的产品目标始终是**通用 Coding Agent**，不是需求审计器、代码证据报告器，也不是“拓展服务费结算”专用开发器。目标体验是：用户给出任意合理的软件需求后，Agent 能自主完成理解、探索、计划、编辑、测试、审查、交付和失败恢复，并在本地或封闭 VM 中保持权限可控、过程可审计。
+
+- Codex 是 LCA **总体骨架的第一参考**：command/event protocol、Session/Turn/Step 生命周期、tool router、exec policy、sandbox、state/worktree、streaming 与多前端边界优先按 Codex 的 Owner 划分理解和演进。
+- OMP 是 LCA **coding-agent 能力的第一参考**：agent loop/directive、provider 适配、hashline/edit、context compaction、approval 体验、memory/skills、task/advisor 和终端交互优先参考 OMP 的成熟实现。
+- LCA 不照搬两者代码；保留 Python、本地优先、单 API、封闭 VM 友好和轻量部署的自身约束。
+- 真实企业需求只作为验收样本和通用能力缺口探针，不得成为 Runtime 业务规则、关键词或专用 gate 的来源。
+- 单个模型偶发失败不触发 Harness 增长；只有安全问题，或能在通用最小 fixture 中稳定复现的 Owner/lifecycle 缺陷，才允许修改核心能力。
+- 若真实任务因工作量过大失败，优先拆成交付切片；若因业务证据或依赖不足失败，补输入或诚实 blocked，不用 Harness 猜业务事实。
+
 核心约束：
 
 - 本地优先：workspace 是默认安全边界。
@@ -41,7 +52,7 @@
 
 当前目标不再表述为“尽可能追平 OMP 的全部功能”，而是：
 
-> OMP/Codex 级通用执行底座 + LCA 自己的本地、封闭 VM、企业证据工作流。
+> Codex-first 核心骨架 + OMP-informed coding 能力 + LCA 自己的本地、封闭 VM、企业证据工作流。
 
 建议目标分层：
 
@@ -67,7 +78,31 @@ CLI / Terminal / Future TUI / Remote
 - 安全/协议/工具结果配对可以 hard gate；语义质量默认 advisory，只有显式 profile 才成为 hard gate。
 - 当前 LOC/method ceiling 继续作为只降不升的复杂度 ratchet，但不再把“文件低于某行数”当作 Owner 正确的充分证明。
 - `run_tests` 是 exec-tier：无 shell 拼接和真实 exit code属于验证完整性，测试代码无副作用不属于其保证；真正隔离由未来 ExecutionPolicy/Sandbox Owner 提供。
-- Frontend/Event 已完成事件数据形状和同步 terminal MVP；Command Bus、provider streaming、worker/runtime 隔离仍是待加入能力，不能写成已经完全解耦。
+
+### 参考实现决策
+
+| 架构面 | 第一参考 | LCA 取舍 |
+|---|---|---|
+| Runtime、Session/Turn/Step、Command/Event | Codex | 逐步从当前 Runtime 抽出稳定生命周期与协议，不切换 Rust、不整体重写。 |
+| Approval、ExecutionPolicy、Sandbox、State | Codex | 保留现有轻量审批，后续按独立 Owner 补执行隔离和可审计 action。 |
+| Agent loop、ToolChoice directive、Provider 兼容 | OMP | 保留 OMP 的有界 continuation 和弱 provider 适配，不把 provider 特例散入 Runtime。 |
+| Edit、Compaction、Memory/Skills、Task UX | OMP | 继续做适合 Python MVP 的裁剪实现；T-211 exact unique anchor recovery 是这一原则的实例。 |
+| CLI/TUI/Remote | Codex 的协议分层 + OMP 的终端体验 | 前端只发 Command、消费 Event；完整 TUI 等 streaming 和 dispatcher 稳定后再做。 |
+
+新能力进入排期前必须回答两个问题：它在 Codex 风格骨架中属于哪个生命周期/Owner，以及 OMP 是否已有可复用的 coding-agent 行为设计。两者都找不到依据时，先证明是通用需求，不能由单个 live 失败样本直接推动 Harness 增长。
+- Frontend/Event 已完成事件数据形状、同步 CommandDispatcher、Turn correlation、provider streaming 和 terminal 增量渲染 MVP；worker/runtime 隔离、异步队列、取消和完整 TUI 仍是待加入能力，不能写成已经完全解耦。
+
+### 模型语义与确定性边界
+
+Codex 和 OMP 都把开放式用户语义交给模型、reviewer role 或显式结构化输入理解；确定性代码负责协议、权限、工具结果、diff、测试退出码和生命周期不变量。LCA 必须遵守同一边界：
+
+- 不得用不断增长的中英文关键词、否定词表或正则，把“用户是否要求测试、实现、只读、证据”等开放自然语言直接提升为 hard gate。
+- 确定性 gate 只消费可证明事实，例如工具调用及真实退出码、当前 diff、workspace/path、typed policy decision、结构化 reviewer finding。
+- 用户语义需要跨组件传递时，优先原文保真交给模型；只有在上游已经产生显式 typed command/contract 时，下游才可做确定性消费，不能把同一套自然语言猜测换成 dataclass 后继续使用。
+- 单个误判先归因 model/provider/tool/runtime/owner；与 Codex/OMP 对照后再决定是否修改 Harness。开放词汇问题即使出现多个例句，也不能靠枚举句式宣称闭合。
+- 删除错误 hard gate 不等于削减能力。测试完整性继续由写后 `run_tests` 真实结果、`git_diff`、VerificationPlan、CompletionAudit 和结构化 reviewer 证明。
+
+T-218 是这一规则的反例与纠偏记录：`requested_test_missing` 曾从 raw prompt 推断用户是否要求改测试；从裸子串扩展为中英文否定 grammar 后仍被“无需修改或新增测试”击穿。regex candidate 被拒绝且未进入 stable；R2 删除该自然语言硬门，同时保留真实写后测试与事实型 PatchReviewer，并已通过 immutable/live 回归发布。
 
 ## 总体分层
 
@@ -75,8 +110,8 @@ CLI / Terminal / Future TUI / Remote
 |---|---|---|---|
 | 用户入口层 | `[CORE-已落地]` | CLI、REPL、一次性 prompt、继续会话。 | `./agent`、`src/local_agent/cli.py`。 |
 | 配置层 | `[CORE-已落地]` | 合并 CLI、环境变量、JSON config、provider preset、approval、summary、memory consolidation、预算、allowed dirs。 | `src/local_agent/config.py`。 |
-| Agent Runtime | `[CORE-已落地]` | 模型循环、工具分发、deadline、synthetic tool result 与阶段编排；不再持有 prompt 投影、workspace roots、memory 归档、tool metadata、证据/verification/session-cache 或 session guard 窗口的具体实现。 | `src/local_agent/agent.py` 当前为 1,873 行、71 个方法的 orchestration facade；`provider_context.py`、`runtime_workspace.py`、`runtime_evidence.py`、`runtime_memory.py`、`runtime_prompt.py`、`tool_gateway.py`、`evidence.py`、`run_context.py`、`runtime_read_only_explore.py` 分担阶段职责。phase 通过显式 Protocol ports 协作，禁止 `__getattr__` service-locator 转发。 |
-| Provider 层 | `[CORE-已落地]` | OpenAI-compatible chat completions，对接百炼和通用 endpoint。 | `src/local_agent/llm.py`。 |
+| Agent Runtime | `[CORE-已落地]` | 模型循环、工具分发、deadline、synthetic tool result 与阶段编排；不再持有 prompt 投影、workspace roots、memory 归档、tool metadata、证据/verification/session-cache 或 session guard 窗口的具体实现。 | `src/local_agent/agent.py` 当前为 1,792 行、71 个方法的 orchestration facade；`workflow_profile.py` / `runtime_workflow_profile.py` 拥有 typed profile 解析与生命周期，其他 phase 通过显式 Protocol ports 协作，禁止 `__getattr__` service-locator 转发。 |
+| Provider 层 | `[CORE-已落地]` | OpenAI-compatible chat completions 与 tool-call-safe streaming，对接百炼和通用 endpoint。 | `src/local_agent/llm.py` 负责请求适配，`src/local_agent/provider_stream.py` 单独拥有 SSE/JSON 解析、text/tool delta 分离和完整 tool-call 聚合。 |
 | 工具系统 | `[CORE-已落地]` | 工具注册、schema、tier、approval policy、参数校验、错误包装。 | `src/local_agent/tools/base.py`。 |
 | 本地工具层 | `[CORE-已落地]` | 文件、搜索、shell/test、git、patch、rollback、memory、learn、todo、ask_user。 | `src/local_agent/tools/`。 |
 | 上下文治理 | `[MVP-已落地]` | OMP 风格 reserve、auto/local/llm summary、recent 保留、tool 输出截断、单 system message。 | `AgentRuntime._messages_for_model()` 编排，`src/local_agent/compaction.py` 承载纯函数。 |
@@ -150,10 +185,13 @@ flowchart TD
 | Frontend boundary | `[MVP-已落地]` | CLI、Terminal Frontend 和未来 Remote/Web 通过 Command/Event 协议接入 Runtime。 | Runtime 已开始产出 typed events；现有 CLI 输出由 `StderrEventSink` 渲染，Terminal Frontend 复用同一事件流。 |
 | Run summary / coverage | `[MVP-已落地]` | 每轮结束写入 `run_summary` session 事件，并产出 `RunSummary` typed event。 | 记录 termination reason、耗时、LLM 请求数、工具调用/错误/无效结果、synthetic tool result、compaction、tool counts、guard hits 和 steering counts；`/status` 可查看最近一轮摘要。T-141/T-146 后还会单列 `provider_schema_violations`、`finalization_attempts`、forced-final protocol violation、markup artifact 与 suppressed execution；T-155 增加 `pre_review_audit` 的 rounds/categories/exhausted，T-156 增加安全部分交付的 emitted/observations/missing/rejected categories，方便区分安全终态与候选草稿。 |
 | Verification Plan / Test Planner / Delivery Audit | `[MVP-已落地]` | `verification_plan.py`、`test_planner.py`、`verification_timeline.py`、`delivery_report.py`、CompletionAudit。 | 对齐 OMP queue/turn ownership：业务 contract 不能被任意工具代理事实自动标记完成；只有 path-related evidence、last effective write 的当前净 diff、post-write test、post-diff reviewer 可推进 delivery checks。未闭环写入以 `incomplete_delivery` 终止；每个有效写入的终态由 Runtime 追加变更路径、实际测试命令、diff/reviewer 和未闭环项，测试候选不直接执行、不绕过 approval。 |
-| Session Evidence Continuity / User Facts | `[MVP-已落地]` | `session_evidence.py`、`runtime_evidence.py`、`user_facts.py`、`evidence.py`、RunSummary。 | 对齐 OMP session tool-result continuity：同一 Runtime 仅复用 fresh positive concrete-path read/search/LSP evidence，投影前逐路径 hash；negative/incomplete/global evidence 不跨轮复用。重复观测按 canonical path + query/range 替换。命名 session 跨进程恢复只接受重新从磁盘校验并重建的正向 `read_file` 证据；JSONL 中的 content/search/LSP payload 不被信任，且后台恢复只在当前 read policy 已预授权时执行，绝不打开审批 prompt。缓存命中后 ToolChoiceQueue 只发一次 soft directive，不移除 `read_file` schema；模型复读仍正常执行并单列 telemetry。 | write/rollback、workspace revision/root change、`/move` 或外部内容变化会失效；summary 以 `role=user` + `attribution=runtime` 发送，不能把混合摘要提升为 system。T-156 后成功 compaction 会把 summary + 有界最近消息安装为 active checkpoint，并在命名 session 恢复；同一未变化、仍超预算前缀只记 skip，不重复压缩。当前 Runtime facade 为 1,873 行、71 个方法，final-answer facade 为 59 行；architecture checks 锁定 `<=2,100` 行、`<=75` methods 与禁止领域 helper 回流。 |
+| Session Evidence Continuity / User Facts | `[MVP-已落地]` | `session_evidence.py`、`runtime_evidence.py`、`user_facts.py`、`evidence.py`、RunSummary。 | 对齐 OMP session tool-result continuity：同一 Runtime 仅复用 fresh positive concrete-path read/search/LSP evidence，投影前逐路径 hash；negative/incomplete/global evidence 不跨轮复用。重复观测按 canonical path + query/range 替换。命名 session 跨进程恢复只接受重新从磁盘校验并重建的正向 `read_file` 证据；JSONL 中的 content/search/LSP payload 不被信任，且后台恢复只在当前 read policy 已预授权时执行，绝不打开审批 prompt。缓存命中后 ToolChoiceQueue 只发一次 soft directive，不移除 `read_file` schema；模型复读仍正常执行并单列 telemetry。 | write/rollback、workspace revision/root change、`/move` 或外部内容变化会失效；summary 以 `role=user` + `attribution=runtime` 发送，不能把混合摘要提升为 system。T-156 后成功 compaction 会把 summary + 有界最近消息安装为 active checkpoint，并在命名 session 恢复；同一未变化、仍超预算前缀只记 skip，不重复压缩。当前 Runtime facade 为 1,792 行、71 个方法，final-answer facade 为 59 行；architecture checks 锁定 Runtime 当前行数和方法数，并禁止领域 helper 回流。 |
 | Epistemic negative-evidence taxonomy | `[MVP-已落地]` | `negative_evidence.py`、`steering/final_answer.py`、CompletionAudit、RunSummary。 | 对齐 OMP tool-result provenance 和 bounded continuation：一个 deterministic clause-local parser 产生 `asserted_absence`、`observed_no_match`、`epistemically_qualified`、`quoted_or_hypothetical`，消费者不再各自关键词扫描。绝对缺失需完整、未截断、同 scope 的 path/Git evidence；`observed_no_match` 也必须有本轮、同 root、匹配的真实观察，但不因此证明全局不存在；qualified/quoted 不补搜。root-local scope 不外推，multi-root 需覆盖多个 root。 | OMP `agent-loop.ts` / `tool-choice-queue.ts` 的终态 owner 与 active-tool 边界提供方向，不复制平台代码。session/RunSummary 记录 stance、blocked assertion/observation、qualified skip；live provider 的额外探索或文本质量仍作为 provider reliability 观察项。 |
 | Read-only convergence | `[MVP-已落地]` | `temporary_tool_directive.py`、`runtime_tool_directive.py`、`task_contract.py`、`tool_choice_queue.py`、CompletionAudit。 | 临时 active-tool restriction 是 run-scoped directive，不是 raw allowlist：source 级 attempt/turn/outcome 显式 resolve/reject/exhaust，最终一次允许的发现工具执行后才可转入 `tools=[]` truthful final。`requirement_documents` domain 与 repository-code investigation 分离，持续只投影文档浏览、读取和澄清工具。 | 对齐 OMP `tool-choice-queue.ts` 的 in-flight/resolve/reject 以及 `agent-loop.ts` 的 per-turn active tools；LCA 的 document domain/audit 是本地增强，不宣称 OMP 有同名 contract。 |
 | Isolated read-only reviewer / ExploreHandoff | `[MVP-已落地]` | `explore_handoff.py`、`read_only_reviewer.py`、`runtime_read_only_review.py`、`read_only_explore.py`、`runtime_read_only_explore.py`、`root_coverage.py`、`design_evidence.py`、`task_contract.py`、RunSummary。 | 高风险 read-only owner/impact/design contract 先产生 typed profile；reviewer 只通过 isolated output-only `submit_read_only_review` 提交结构化结论，不进入 ToolRegistry、approval 或工作区执行。T-192 收束 role/transport ownership，T-193 将 rewrite 后 fresh second reviewer 改为 deterministic advisory closure，T-194/T-195 将 targeted explore directive 与 semantic source candidate commit 收回 Queue/Explore Owner，T-196 通过 workspace evidence-root projection 区分授权根与代码证据根。 | 借鉴 OMP `tool-choice-queue.ts` 的 directive 生命周期、`agent-loop.ts` 的 turn boundary、`prompts/agents/explore.md` 的 alternate strategy、`tools/glob.ts` 的 bounded inventory 与 `yield.ts` 的结构化输出；LCA 的 document stance、isolated reviewer 和 multi-root evidence projection 是本地证据增强，不宣称 OMP 有同名 taxonomy 或 projection 类。 |
+| Explicit read-only Explore Subagent | `[Phase 1-已落地，默认关闭；扩展暂停]` | `explore_subagent.py`、`config.py`、`runtime_prompt.py`、`tools/base.py`、`protocol/events.py`、`run_collector.py`。 | 显式 typed 配置才暴露每父 turn 最多一次同步 `delegate_explore`；child 使用独立 context/预算、同 canonical roots、精确只读工具白名单、禁止递归和 bounded typed yield。异常、timeout、malformed yield 与 interrupt 都闭合 SubagentStarted/Finished；child transcript、raw exception 和父 request/session/git/patch 字段不外泄。handoff 标记 `evidence_eligible=false`，父 Agent 必须直接复核关键事实。T-223 小 fixture 成功 handoff，但真实三仓场景中模型未选择已经暴露的 delegate，未证明收益。 | 对齐 OMP task/explore/yield 的 spawn-policy、tool boundary 与 typed handoff，以及 Codex AgentControl 的 lineage/权限继承；LCA Phase 1 保持同步、单 child、default-off。无收益证据前不实现 reviewer/implement、并发、写 Agent、worktree、resume、advisor 或完整多 Agent 调度，也不为模型选择概率增加 Queue gate。 |
+| LSP semantic rename preview | `[T-224-已落地]` | 独立 `lsp/workspace_edit.py` 与 `tools/lsp_rename.py` Owner；复用 external LSP client、ToolRegistry、workspace roots 与 `apply_patch`。 | 外部 LSP 负责 `textDocument/rename`；Phase 1 只接受 text-only WorkspaceEdit，先全量校验 URI、authorized/project roots、UTF-16 range、重叠及文件/编辑/累计输入/输出预算，再在内存生成 bounded diff。preview 零写盘、零 patch log、`evidence_eligible=false`；parent 必须 read 候选文件，再用现有 patch/test/diff 闭环。真实 jdtls 样本已完成该生命周期。 | OMP rename 默认可 apply，并在 edits owner 中先验证全部 batch；LCA 暂无独立事务型多文件 writer，因此有意拆成 read-only preview + 既有 stale-safe patch。Codex 的 Tool Router/ExecutionPolicy/approval 用作边界参考。Phase 1 不支持 prepareRename、workspace/applyEdit、resource operation、自动应用或第二套 rollback。 |
+| LSP Code Action preview | `[T-226-已落地]` | 独立 `tools/lsp_code_action.py` Owner；复用 `lsp/client.py`、`lsp/workspace_edit.py`、ToolRegistry 和 ExecutionPolicy。 | `textDocument/codeAction` 只返回最多 20 个脱敏 metadata；指定 index 时允许一次 `codeAction/resolve`，仅对 text-only WorkspaceEdit 生成 bounded preview。Command、disabled、edit+command、resource operation、非 file URI、路径逃逸和非法 range 均 fail closed。preview 不写盘、不进 patch log、`evidence_eligible=false`。 | 对齐 OMP codeAction literal/resolve 协议，但有意不复制 OMP 的 apply/executeCommand 路径。R1 补齐 `dynamicRegistration=false`、`codeActionLiteralSupport` 8 个标准 kind、`dataSupport` 和只 resolve `edit`；server 在 resolve 期间主动 `workspace/applyEdit` 会收到 `applied=false`。 |
 | Requirement artifacts / safe partial delivery | `[MVP-已落地，live provider 待复测]` | `document_artifacts.py`、`tools/files.py`、`provider_context.py`、`requirement_evidence.py`、`safe_partial_report.py`、`runtime_read_only_review.py`。 | `RequirementContract` 为显式请求的 Markdown/HTML/image 建立 typed coverage：只接受成功 `read_file`/`inspect_image` 或 artifact-bound unavailable 边界；提及“未读图片”不会反向要求视觉读取。`read_file` 以有界 MIME header 返回图片 metadata；经 read-tier approval 的 `inspect_image` 仅在显式 `AI_VISION_MODEL` 和 8MB 限制内发起一次 vision 观察，base64 不进入 Evidence/session JSONL。需求引用接受路径加行号、页码或章节定位。第二次 reviewer non-pass、bounded explore hard-stop 或非 final terminal 都可由 Runtime 只用 typed handoff 生成安全部分交付：保留成功观察、未覆盖 root/范围与检查限制，绝不泄漏候选中的表、字段、接口、Owner 或数值推断。 | 对齐 OMP `tools/read.ts` 的 metadata handoff 和 `inspect-image.ts` 的独立 read/vision one-shot；LCA 不做 PDF/Word/browser，未配置 vision 能力时明确 `image_inspection_unavailable`。探索 attempts 与 successful observations 分开，synthetic suppressed call 保持 error 语义、不作为覆盖证据；安全部分交付是 LCA finalization owner 的本地增强，不是 OMP 同名能力。 |
 | Provider terminal response recovery | `[MVP-已落地]` | `provider_terminal.py`、`runtime_provider_terminal.py`、`finalization.py`、RunSummary。 | 对齐 OMP `agent-session.ts` 对 empty assistant stop 的有界 retry 思路：普通或 forced-final turn 收到空、展示性或 detached placeholder 内容时，不持久化为 assistant final；最多三次 recovery 后明确 `provider_non_substantive_response`。正常 `null` 讨论、代码围栏和请求中出现的原词保持原样。 | 这是 provider-agnostic shape policy，不针对某个占位字符串；forced-final retry 仍保持 `tools=[]`，RunSummary 只记录 retry/exhausted 计数，不保存原始占位内容。 |
 
@@ -165,7 +203,15 @@ flowchart TD
 
 T-158~T-187 不在 `agent.py` 叠加新的领域判断，而是让 document/reviewer 各阶段状态由其 Owner 记录和消费：claim/finding 有稳定 ID，重复 replay 幂等；rewrite 只有已排队且尚未消费的 transport recovery；final-submit 之外不能借 recovery 重开流程；unresolved/conditional/asserted reconciliation 按 clause-local 语义区分。T-188 则直接对齐 OMP 工具边界：`search_code` 在 `tools/search.py` 控制 512 列、每文件 20 个匹配和 typed truncation，`read_file` 在 `tools/files.py` 控制 768 列展示并保留完整 hash。两者都属于 tool-result shaping，不进入 Runtime guard。
 
-当前 deterministic gate 为 908/908 tests、57/57 benchmark、7/7 architecture checks；T-196 stable release 为 `20260714T232335Z-1a9d3bf23544-d5388ba3386a`，revision `1a9d3bf23544d6f88a588dc70f140270ed3a11cb`，digest `d5388ba3386ab5b4f41b10aad2961eeafe9e5789fe9fe600ba999503ef292f04`。publish gate 再次通过 unittest、compileall 和 diff-check。小红独立 live S2 `20260714T231342759912Z` / `64081ebafc604049a4155cab50739e70` 为 8 tools、1 bounded candidate-read error、0 schema/protocol，reviewer revise、8 findings、2 rewrites、closure accepted；需求根可读但不进入 code evidence roots。S3 `20260714T231517222450Z` / `828d162bd79b42c6a539ea472a738559` 为 5 tools、0 error/schema/protocol，reviewer pass、typed submit 1、transport projection pruned 2。小牙 delegated candidate 未产生执行输出，不作为发布证据。P12 的架构结论是完成 read-only convergence MVP 并发布阶段性 stable，但不声称完整追平 OMP。
+当前 deterministic gate 为 1095/1095 tests、62/62 benchmark、20/20 architecture checks；T-226 stable release 为 `20260717T054823Z-e70f20a948d4-d8ee2a1faf0d`，revision `e70f20a948d43f6259c906c5dc92d7be0a94355f`，digest `d8ee2a1faf0d5f6c19ed2591e320876b6d3b8acea2e43690a469b42ff928143a`。publish gate 在 clean detached candidate 中用 Python 3.14 再次通过 unittest、compileall 和 diff-check。该版本继承 T-222 default-off Explore Subagent 和 T-224 只读 LSP rename preview，并增加 Code Action list/preview；command、server applyEdit、resource operation、非授权路径和 partial invalid preview 仍全部拒绝。async queue、取消、OS sandbox、并发/写入 subagent、worker/runtime 隔离与完整 TUI 仍未实现，不冒充追平 Codex/OMP。
+
+T-221 用该 immutable stable 完成 S6-S10 产品黑盒验收：stale read 后会重读当前 tag 并保留外部变更；approval reject 和 per-tool deny 无越权；跨进程 session 恢复保留目标/todo；需求变更后的实现、测试和 final 以最新条件为准。`TurnFinished.delivered` 表示 final transport 是否成功送达，不等同业务验收完成；S8C 虽为 `delivered=true`，RunSummary 仍记录 7 项 business acceptance 未验证、test plan blocked，正文明确未修改/未测试。该分层对齐 Codex 的 turn completion 与 task outcome 分离，不增加自然语言状态解析器。
+
+T-222 已按最小共同不变量完成显式 Read-only Explore Subagent Phase 1。T-223 随后证明小 fixture 的成功 typed handoff 可用，但真实三仓 enabled 样本没有选择已暴露的 delegate，且与 default-off 一样未形成完整三仓直接证据；因此当前结论是安全机制成立、真实收益未证实。P14 保留 Phase 1 并暂停角色扩展，不通过 Queue 强迫 delegate，也不增加 reviewer/implement、并发、写入、worktree、resume 或 advisor。
+
+T-224 已完成 LSP Semantic Rename Preview Phase 1。它不是第二套写工具：LSP 只负责语义定位和生成候选 WorkspaceEdit，新 Owner 先完整校验再返回 bounded preview；磁盘写入、审批、stale detection、rollback、测试和 diff 继续由现有 ToolRegistry/`apply_patch` 链路拥有。这样吸收 OMP 的 symbol-aware rename 价值，同时保持 Codex-first 的 Router/Policy 边界和 LCA 当前可审计写路径。
+
+T-226 已完成 LSP Code Action Preview Phase 1。它复用 T-224 WorkspaceEdit Owner，不复制 parser、writer 或 rollback。初版虽然测试全绿，独立 OMP 对照仍发现 initialize 缺失 `codeActionLiteralSupport`，会让部分真实 server 只返回被 LCA 拒绝的 Command。R1 在 LSP client 协议 Owner 内补齐 capability，并用 in-flight server request 证明 resolve 期间不会被 `workspace/applyEdit` 绕过只读边界；没有增加 Queue gate、自然语言规则或新的执行生命周期。
 
 ### T-192：Reviewer Role / Transport Ownership
 
@@ -207,7 +253,7 @@ T-196 明确三类 root：
 | Command Protocol v1 | `[MVP-已落地]` | `src/local_agent/protocol/commands.py`。 | 定义 `SubmitPrompt`、`ApproveTool`、`RejectTool`、`SetApprovalMode`、`SetToolApproval`、`CancelRun`、`InterruptTool`、`ContinueSession` 的 dataclass command shape。 | 命令对象和 `to_dict()` 已可测试复用；完整 runtime command handler 留给 Terminal Frontend 接入时补齐。 |
 | Terminal Frontend MVP | `[MVP-已落地]` | `src/local_agent/frontends/terminal/`、`src/local_agent/terminal_io.py`。 | 第一版选型为可选 `prompt_toolkit` + `rich`；定位是 terminal-native interactive frontend，不是 fullscreen TUI；保留原生 terminal scrollback，不做 OMP 级自研 renderer。 | `./agent`、`./agent --chat`、`./agent chat` 可进入同一套事件驱动交互入口；一次性 prompt / chat run 期间会静默 TTY echo，approval / ask_user 时恢复输入。 |
 | Managed skills / autolearn | `[LATER-后续候选]` | Skills 子系统。 | 默认关闭；generated skills 与 authored skills 隔离，优先级最低，需审计。 | 不影响 authored skills，且能清楚区分人工与自动生成来源。 |
-| LSP rename / code action | `[LATER-后续候选]` | LSP adapter 增强。 | 当前只读导航已支持外部 server；写入类重构能力仍后置。 | 支持 rename、code action 时必须接入 preview、approval、diff 和 rollback。 |
+| LSP rename / code action | `[PHASE 1-已落地]` | LSP adapter 增强。 | 外部 server 已支持 rename 和 Code Action 的只读 preview；语义结果不写盘、不冒充 evidence，parent 继续走现有 patch/test/diff。 | auto-apply、executeCommand 和事务型多文件 writer 仍后置；先用真实语言服务器验证收益。 |
 | AST edit / refactor | `[LATER-后续候选]` | Patch 层增强。 | 先保留 anchored patch 主路径，再评估 Python/TS 局部 AST 修改。 | 能降低大规模重构误改率，同时保留 diff 和回滚。 |
 | Reviewer / planner 角色 | `[MVP-已落地]` | `planner.py`、`tool_choice_queue.py`、`completion_audit.py`、`patch_reviewer.py` 和 final steerers。 | 单 Agent 内部阶段化：先 explore，再写入；自主极小改动在读到源码+测试候选后进入 `candidate_committed`，收束为 preview/write/test/diff；写后以实际 diff/工具证据独立审查测试、调用方与实现质量，最后 CompletionAudit 收口；不引入多 Agent 并发。 | 高风险写入前后都有可审计的证据约束，真实小改持续复测。 |
 | Remote/Web frontend | `[LATER-后续候选]` | `src/local_agent/frontends/remote/`。 | 等 Event/Command 协议稳定后再通过 JSONL replay 或 WebSocket 暴露；不进入第一版。 | CLI/Terminal Frontend 已证明协议可复用后，再接 remote/web。 |
