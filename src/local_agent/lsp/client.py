@@ -132,6 +132,25 @@ class StdioLspClient:
         )
         return _parse_locations(result)
 
+    def rename(
+        self,
+        path: Path,
+        position: dict[str, int],
+        new_name: str,
+        *,
+        timeout: float = DEFAULT_LSP_TIMEOUT_SECONDS,
+    ) -> Any:
+        self.ensure_open(path)
+        return self.request(
+            "textDocument/rename",
+            {
+                "textDocument": {"uri": path.as_uri()},
+                "position": position,
+                "newName": new_name,
+            },
+            timeout=timeout,
+        )
+
     def diagnostics(self, path: Path, *, timeout: float = DEFAULT_LSP_TIMEOUT_SECONDS) -> list[LspDiagnostic]:
         uri = path.as_uri()
         self.ensure_open(path)

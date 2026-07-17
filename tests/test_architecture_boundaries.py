@@ -44,6 +44,8 @@ OWNER_COMPLEXITY_CEILINGS = {
     "src/local_agent/runtime_prompt.py": 490,
     "src/local_agent/run_collector.py": 668,
     "src/local_agent/explore_subagent.py": 560,
+    "src/local_agent/lsp/workspace_edit.py": 380,
+    "src/local_agent/tools/lsp_rename.py": 187,
 }
 LEGACY_COMPLEXITY_DEBT_CEILINGS = {
     "src/local_agent/agent.py": 1792,
@@ -314,6 +316,26 @@ class ArchitectureBoundaryTests(unittest.TestCase):
         self.assertNotIn("delegate_explore", tools.create_default_registry().tool_names())
         enabled = tools.create_runtime_registry(object(), True, 60)
         self.assertEqual(enabled.tool_names().count("delegate_explore"), 1)
+
+    def test_lsp_rename_preview_has_one_readonly_owner_and_no_evidence_or_write_bypass(self) -> None:
+        tools = importlib.import_module("local_agent.tools")
+        workspace_edit = (ROOT / "src/local_agent/lsp/workspace_edit.py").read_text(encoding="utf-8")
+        rename_tool = (ROOT / "src/local_agent/tools/lsp_rename.py").read_text(encoding="utf-8")
+        legacy_lsp = (ROOT / "src/local_agent/tools/lsp.py").read_text(encoding="utf-8")
+        verification = (ROOT / "src/local_agent/verification_plan.py").read_text(encoding="utf-8")
+        runtime = (ROOT / "src/local_agent/agent.py").read_text(encoding="utf-8")
+
+        registered = tools.create_default_registry()
+        schema = next(item for item in registered.schemas() if item["function"]["name"] == "lsp_rename_preview")
+        self.assertFalse(schema["function"]["parameters"]["additionalProperties"])
+        self.assertNotIn("apply", schema["function"]["parameters"]["properties"])
+        self.assertNotIn("lsp_rename_preview", verification)
+        self.assertNotIn("lsp_rename_preview", legacy_lsp)
+        self.assertNotIn("lsp_rename_preview", runtime)
+        self.assertNotIn("write_bytes", workspace_edit)
+        self.assertNotIn("write_text", workspace_edit)
+        self.assertNotIn("apply_patch", rename_tool.split("description=", 1)[0])
+        self.assertNotIn("ToolChoice", rename_tool)
 
     def test_runtime_strategy_owners_do_not_reintroduce_business_keyword_guards(self) -> None:
         strategy_files = (

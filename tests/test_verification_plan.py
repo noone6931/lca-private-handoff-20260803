@@ -69,6 +69,36 @@ class VerificationPlanTests(unittest.TestCase):
 
         self.assertEqual(_item(plan, "runtime-code-evidence").status, "passed")
 
+    def test_semantic_rename_preview_does_not_replace_parent_evidence_or_write_verification(self) -> None:
+        plan = self._plan()
+        preview_only = [
+            ToolResultSummary(
+                "lsp_rename_preview",
+                "read-only semantic preview",
+                path="src/App.py",
+                metadata={"preview": True, "read_only": True, "evidence_eligible": False},
+            )
+        ]
+        plan.observe(preview_only, test_plan=TestPlan("python -m unittest", "project fallback", "project"))
+        self.assertEqual(_item(plan, "runtime-code-evidence").status, "pending")
+        self.assertEqual(_item(plan, "runtime-current-diff").status, "pending")
+        self.assertEqual(_item(plan, "runtime-post-write-test").status, "pending")
+        self.assertEqual(_item(plan, "runtime-code-evidence").attempts, 0)
+
+        parent_flow = [
+            ToolResultSummary("read_file", "def old(): pass", path="src/App.py"),
+            *preview_only,
+            ToolResultSummary("read_file", "old()", path="tests/test_app.py"),
+            ToolResultSummary("apply_patch", "Applied patch", changed=True, path="src/App.py"),
+            ToolResultSummary("run_tests", "OK"),
+            ToolResultSummary("git_diff", "diff --git a/src/App.py b/src/App.py"),
+        ]
+        plan = self._plan()
+        plan.observe(parent_flow, test_plan=TestPlan("python -m unittest", "project fallback", "project"))
+        plan.record_patch_review(passed=True, reason="review passed", refs=["git_diff:post-write"])
+        self.assertEqual(plan.coverage(delivery_only=True)["passed"], 4)
+        self.assertEqual(_item(plan, "runtime-code-evidence").attempts, 2)
+
     def test_dirty_diff_after_rollback_does_not_prove_runtime_current_diff(self) -> None:
         plan = self._plan()
         results = [
