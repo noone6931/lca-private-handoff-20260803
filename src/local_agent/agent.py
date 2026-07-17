@@ -354,6 +354,7 @@ class AgentRuntime:
         self._tool_context = replace(self._tool_context, interaction_handler=handler)
 
     def _run_prompt(self, prompt: str) -> str:
+        self.commands.cancellation.raise_if_requested()
         run_id = self._events.run_id
         started_monotonic = time.monotonic()
         deadline = (
@@ -436,9 +437,8 @@ class AgentRuntime:
             git_baseline=git_baseline,
             current_user_request=prompt,
             patch_relevance_checker=self._evidence_phase.patch_relevance_denial_reason,
-            patch_preview_checker=self._evidence_phase.patch_preview_denial_reason,
+            patch_preview_checker=self._evidence_phase.patch_preview_denial_reason, cancel_event=self.commands.cancellation.event,
         )
-
         step = 1
         while self._config.max_steps == 0 or step <= self._config.max_steps:
             if self._deadline_exceeded(deadline):
@@ -494,11 +494,11 @@ class AgentRuntime:
                     timeout=self._provider_context_phase.remaining_timeout(deadline),
                     tool_choice=tool_choice_turn.tool_choice,
                     use_stream=True,
-                    on_text_delta=self._events.assistant_delta_callback(
-                        message_id, enabled=provider_allows_provisional_text(self._config.provider)
-                    ),
+                    on_text_delta=self._events.assistant_delta_callback(message_id, enabled=provider_allows_provisional_text(self._config.provider)),
+                    cancel_event=self.commands.cancellation.event,
                 )
             except LlmError as exc:
+                if self._deadline_exceeded(deadline): return self._stop_for_budget(deadline, run_start_index)
                 fallback = self._forced_final_timeout_fallback(
                     force_final_answer,
                     exc,

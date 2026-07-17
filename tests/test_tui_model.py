@@ -1,0 +1,183 @@
+from __future__ import annotations
+
+import unittest
+
+from local_agent.frontends.tui.mailbox import TuiMailbox
+from local_agent.frontends.tui.messages import TuiEvent
+from local_agent.frontends.tui.model import TuiEventSink
+from local_agent.frontends.tui.model import TuiProjector
+from local_agent.protocol.events import AgentEvent
+
+
+class TuiModelTests(unittest.TestCase):
+    def test_sink_removes_tool_arguments_before_cross_thread_queue(self) -> None:
+        mailbox = TuiMailbox(capacity=8)
+        sink = TuiEventSink(mailbox)
+
+        sink.emit(_event("ToolStarted", {"name": "shell", "arguments": {"secret": "do-not-leak"}}))
+
+        projected = mailbox.get(timeout=0)
+        self.assertIsInstance(projected, TuiEvent)
+        assert isinstance(projected, TuiEvent)
+        self.assertEqual(projected.get("name"), "shell")
+        self.assertNotIn("do-not-leak", repr(projected))
+        self.assertNotIn("arguments", repr(projected))
+
+    def test_control_sequences_are_removed_at_projection_ingress(self) -> None:
+        mailbox = TuiMailbox(capacity=8)
+        sink = TuiEventSink(mailbox)
+
+        sink.emit(_event("ErrorEvent", {"message": "safe\x1b[31m\x9bunsafe"}))
+
+        projected = mailbox.get(timeout=0)
+        self.assertIsInstance(projected, TuiEvent)
+        assert isinstance(projected, TuiEvent)
+        self.assertEqual(projected.get("message"), "safe[31munsafe")
+
+    def test_hidden_tools_are_filtered_before_crossing_threads(self) -> None:
+        mailbox = TuiMailbox(capacity=8)
+        sink = TuiEventSink(mailbox, show_tools=False)
+
+        sink.emit(_event("ToolStarted", {"name": "shell", "arguments": {"secret": "hidden"}}))
+
+        self.assertIsNone(mailbox.get(timeout=0))
+
+    def test_streaming_final_is_not_duplicated(self) -> None:
+        projector = TuiProjector()
+        projector.apply(_tui_event("TurnStarted"))
+        projector.apply(
+            _tui_event(
+                "AssistantDelta",
+                fields=(("message_id", "m1"), ("delta", "hello"), ("delta_index", 0), ("delta_span", 1)),
+            )
+        )
+        state = projector.apply(_tui_event("TurnFinished", fields=(("content", "hello"), ("reason", "final"))))
+
+        self.assertEqual([entry.text for entry in state.transcript], ["hello"])
+        self.assertFalse(state.transcript[0].provisional)
+        self.assertFalse(state.transcript[0].authoritative)
+        self.assertFalse(state.busy)
+
+    def test_session_metadata_projects_without_runtime_access(self) -> None:
+        projector = TuiProjector()
+
+        state = projector.apply(
+            _tui_event(
+                "SessionStarted",
+                fields=(("provider", "bailian"), ("workspace", "/tmp/project"), ("continued", True)),
+            )
+        )
+
+        self.assertEqual(state.provider, "bailian")
+        self.assertEqual(state.workspace, "/tmp/project")
+        self.assertTrue(state.continued)
+        self.assertEqual(state.status, "resumed")
+
+    def test_different_final_is_marked_authoritative(self) -> None:
+        projector = TuiProjector()
+        projector.apply(_tui_event("TurnStarted"))
+        projector.apply(
+            _tui_event(
+                "AssistantDelta",
+                fields=(("message_id", "m1"), ("delta", "draft"), ("delta_index", 0), ("delta_span", 1)),
+            )
+        )
+        state = projector.apply(
+            _tui_event("TurnFinished", fields=(("content", "safe final"), ("reason", "final")))
+        )
+
+        self.assertEqual([entry.text for entry in state.transcript], ["draft", "safe final"])
+        self.assertTrue(state.transcript[-1].authoritative)
+
+    def test_late_delta_and_duplicate_terminal_do_not_reopen_closed_turn(self) -> None:
+        projector = TuiProjector()
+        projector.apply(_tui_event("TurnStarted", seq=1))
+        projector.apply(
+            _tui_event(
+                "AssistantDelta",
+                seq=2,
+                fields=(("message_id", "m1"), ("delta", "done"), ("delta_index", 0), ("delta_span", 1)),
+            )
+        )
+        projector.apply(_tui_event("TurnFinished", seq=3, fields=(("content", "done"), ("reason", "final"))))
+
+        projector.apply(
+            _tui_event(
+                "AssistantDelta",
+                seq=4,
+                fields=(("message_id", "m1"), ("delta", "late"), ("delta_index", 1), ("delta_span", 1)),
+            )
+        )
+        state = projector.apply(
+            _tui_event("TurnFinished", seq=5, fields=(("content", "duplicate"), ("reason", "final")))
+        )
+
+        self.assertEqual([entry.text for entry in state.transcript], ["done"])
+
+    def test_mailbox_coalesces_contiguous_deltas(self) -> None:
+        mailbox = TuiMailbox(capacity=8)
+        mailbox.put(
+            _tui_event(
+                "AssistantDelta",
+                fields=(("message_id", "m1"), ("delta", "a"), ("delta_index", 0), ("delta_span", 1)),
+            )
+        )
+        mailbox.put(
+            _tui_event(
+                "AssistantDelta",
+                seq=2,
+                fields=(("message_id", "m1"), ("delta", "b"), ("delta_index", 1), ("delta_span", 1)),
+            )
+        )
+
+        event = mailbox.get(timeout=0)
+        self.assertIsInstance(event, TuiEvent)
+        assert isinstance(event, TuiEvent)
+        self.assertEqual(event.get("delta"), "ab")
+        self.assertEqual(event.get("delta_span"), 2)
+        self.assertIsNone(mailbox.get(timeout=0))
+
+    def test_mailbox_evicts_low_priority_event_for_terminal_lifecycle(self) -> None:
+        mailbox = TuiMailbox(capacity=8)
+        for seq in range(8):
+            event_type = "ContextUpdated" if seq == 0 else "TurnStarted"
+            mailbox.put(_tui_event(event_type, seq=seq))
+
+        accepted = mailbox.put(_tui_event("TurnFinished", seq=9))
+        drained = mailbox.drain()
+
+        self.assertTrue(accepted)
+        self.assertEqual(len(drained), 8)
+        self.assertIn("TurnFinished", [message.type for message in drained if isinstance(message, TuiEvent)])
+        self.assertEqual(mailbox.dropped_count, 1)
+
+    def test_tool_lifecycle_is_one_row_with_safe_error_preview(self) -> None:
+        projector = TuiProjector()
+        projector.apply(_tui_event("ToolStarted", seq=1, fields=(("name", "shell"),)))
+        projector.apply(
+            _tui_event("ToolFailed", seq=2, fields=(("name", "shell"), ("detail", "12 chars")))
+        )
+        state = projector.apply(
+            _tui_event("ToolOutput", seq=3, fields=(("name", "shell"), ("detail", "denied")))
+        )
+
+        self.assertEqual(len(state.tools), 1)
+        self.assertEqual(state.tools[0].status, "failed")
+        self.assertEqual(state.tools[0].detail, "denied")
+
+
+def _event(event_type: str, payload: dict) -> AgentEvent:
+    return AgentEvent("e1", "s1", "r1", 1, 0.0, event_type, payload, "c1")
+
+
+def _tui_event(
+    event_type: str,
+    *,
+    seq: int = 1,
+    fields: tuple[tuple[str, str | int | float | bool | None], ...] = (),
+) -> TuiEvent:
+    return TuiEvent(event_type, seq, "s1", "r1", "c1", fields)
+
+
+if __name__ == "__main__":
+    unittest.main()

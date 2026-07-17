@@ -6,6 +6,7 @@ import time
 from collections.abc import Callable, Iterator
 from typing import Any
 
+from .cancellation import RunCancelled
 from .llm import LlmError
 from .llm import LlmTimeoutError
 from .provider_stream import ProviderTextDelta
@@ -21,6 +22,7 @@ def call_chat_with_timeout(
     tool_choice: dict[str, Any] | str | None = None,
     use_stream: bool = False,
     on_text_delta: Callable[[str, int], None] | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> Any:
     """Enforce an outer timeout even when the client ignores its own timeout arg."""
 
@@ -35,8 +37,9 @@ def call_chat_with_timeout(
             lambda: stream_method(messages, tools, **kwargs),
             timeout=timeout,
             on_text_delta=on_text_delta,
+            cancel_event=cancel_event,
         )
-    if timeout is None:
+    if timeout is None and cancel_event is None:
         return client.chat(messages, tools, **kwargs)
     result_queue: queue.Queue[tuple[str, Any]] = queue.Queue(maxsize=1)
 
@@ -50,13 +53,19 @@ def call_chat_with_timeout(
 
     thread = threading.Thread(target=worker, daemon=True)
     thread.start()
-    thread.join(timeout)
-    if thread.is_alive():
-        raise LlmTimeoutError(f"LLM API request timed out after {timeout} seconds.")
-    try:
-        status, payload = result_queue.get_nowait()
-    except queue.Empty as exc:
-        raise LlmError("LLM API request ended without returning a response.") from exc
+    deadline = None if timeout is None else time.perf_counter() + timeout
+    while True:
+        if cancel_event is not None and cancel_event.is_set():
+            raise RunCancelled("Run cancelled while waiting for the provider.")
+        remaining = None if deadline is None else deadline - time.perf_counter()
+        if remaining is not None and remaining <= 0:
+            raise LlmTimeoutError(f"LLM API request timed out after {timeout} seconds.")
+        wait = 0.05 if remaining is None else min(remaining, 0.05)
+        try:
+            status, payload = result_queue.get(timeout=wait)
+            break
+        except queue.Empty:
+            continue
     if status == "ok":
         return payload
     _raise_client_error(payload)
@@ -67,15 +76,16 @@ def _call_stream_with_timeout(
     *,
     timeout: float | None,
     on_text_delta: Callable[[str, int], None] | None,
+    cancel_event: threading.Event | None,
 ) -> Any:
-    if timeout is None:
+    if timeout is None and cancel_event is None:
         return _consume_stream(stream_factory(), on_text_delta=on_text_delta)
 
     result_queue: queue.Queue[tuple[str, Any]] = queue.Queue(maxsize=256)
     cancelled = threading.Event()
 
     def publish(kind: str, payload: Any) -> bool:
-        while not cancelled.is_set():
+        while not cancelled.is_set() and not (cancel_event is not None and cancel_event.is_set()):
             try:
                 result_queue.put((kind, payload), timeout=0.05)
                 return True
@@ -87,7 +97,7 @@ def _call_stream_with_timeout(
         stream: Iterator[ProviderTextDelta] | None = None
         try:
             stream = stream_factory()
-            while not cancelled.is_set():
+            while not cancelled.is_set() and not (cancel_event is not None and cancel_event.is_set()):
                 try:
                     event = next(stream)
                 except StopIteration as complete:
@@ -100,25 +110,32 @@ def _call_stream_with_timeout(
         except BaseException as exc:  # noqa: BLE001 - normalized on the calling thread.
             publish("error", exc)
         finally:
-            if cancelled.is_set() and stream is not None:
+            if (cancelled.is_set() or (cancel_event is not None and cancel_event.is_set())) and stream is not None:
                 close = getattr(stream, "close", None)
                 if callable(close):
                     close()
 
     thread = threading.Thread(target=worker, daemon=True)
     thread.start()
-    deadline = time.monotonic() + timeout
+    deadline = None if timeout is None else time.perf_counter() + timeout
     delta_index = 0
     try:
         while True:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
+            if cancel_event is not None and cancel_event.is_set():
+                raise RunCancelled("Run cancelled while consuming provider output.")
+            remaining = None if deadline is None else deadline - time.perf_counter()
+            if remaining is not None and remaining <= 0:
                 raise LlmTimeoutError(f"LLM API request timed out after {timeout} seconds.")
+            wait = 0.05 if remaining is None else min(remaining, 0.05)
             try:
-                kind, payload = result_queue.get(timeout=remaining)
+                kind, payload = result_queue.get(timeout=wait)
             except queue.Empty as exc:
-                raise LlmTimeoutError(f"LLM API request timed out after {timeout} seconds.") from exc
+                if deadline is not None and time.perf_counter() >= deadline:
+                    raise LlmTimeoutError(f"LLM API request timed out after {timeout} seconds.") from exc
+                continue
             if kind == "delta":
+                if cancel_event is not None and cancel_event.is_set():
+                    raise RunCancelled("Run cancelled before a provider delta was published.")
                 if on_text_delta is not None:
                     on_text_delta(payload, delta_index)
                 delta_index += 1

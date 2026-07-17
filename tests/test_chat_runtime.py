@@ -5,6 +5,7 @@ import time
 import unittest
 
 from local_agent.chat_runtime import call_chat_with_timeout
+from local_agent.cancellation import RunCancelled
 from local_agent.llm import ChatResponse, LlmError, LlmTimeoutError
 from local_agent.provider_stream import ProviderTextDelta
 
@@ -115,6 +116,41 @@ class ChatRuntimeTests(unittest.TestCase):
 
         with self.assertRaisesRegex(LlmError, "without returning a response"):
             call_chat_with_timeout(_NoTerminalClient(), [], [], timeout=None, use_stream=True)
+
+    def test_cancel_stops_callbacks_and_returns_without_waiting_for_provider(self) -> None:
+        cancel = threading.Event()
+        release = threading.Event()
+        callbacks: list[str] = []
+
+        class _BlockedClient:
+            def chat_stream(self, messages, tools, *, timeout=None):
+                del messages, tools, timeout
+                yield ProviderTextDelta("early")
+                release.wait(2)
+                yield ProviderTextDelta("late")
+                return ChatResponse(message={"role": "assistant", "content": "earlylate"}, finish_reason="stop")
+
+        timer = threading.Timer(0.03, cancel.set)
+        timer.start()
+        started = time.monotonic()
+        try:
+            with self.assertRaises(RunCancelled):
+                call_chat_with_timeout(
+                    _BlockedClient(),
+                    [],
+                    [],
+                    timeout=None,
+                    use_stream=True,
+                    on_text_delta=lambda delta, _index: callbacks.append(delta),
+                    cancel_event=cancel,
+                )
+        finally:
+            release.set()
+            timer.cancel()
+
+        self.assertLess(time.monotonic() - started, 0.5)
+        time.sleep(0.03)
+        self.assertEqual(callbacks, ["early"])
 
 
 if __name__ == "__main__":

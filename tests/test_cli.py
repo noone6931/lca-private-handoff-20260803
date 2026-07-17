@@ -162,6 +162,21 @@ class CliTests(unittest.TestCase):
         self.assertEqual(_FakeAgentRuntime.prompts, ["hello world"])
         self.assertEqual(calls, ["enter", "exit"])
 
+    def test_explicit_tui_uses_independent_frontend_when_supported(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = SimpleNamespace(workspace=Path(tmp), state_dir=Path(tmp) / "state")
+            with (
+                patch("local_agent.cli.load_config", return_value=config),
+                patch("local_agent.cli.AgentRuntime", _FakeAgentRuntime),
+                patch("local_agent.cli.tui_is_supported", return_value=True),
+                patch("local_agent.cli.run_tui", return_value=0) as run_tui,
+            ):
+                code = main(["--tui"])
+
+        self.assertEqual(code, 0)
+        self.assertEqual(run_tui.call_count, 1)
+        self.assertEqual(type(run_tui.call_args.args[1]).__name__, "TuiMailbox")
+
 
 if __name__ == "__main__":
     unittest.main()

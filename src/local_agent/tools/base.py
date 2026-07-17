@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
+from ..cancellation import CancellationSignal, raise_if_cancelled
 from ..execution_policy import ExecutionPolicyDecision
 from ..execution_policy import evaluate_execution_policy
 from ..execution_policy import execution_action
@@ -51,6 +52,7 @@ class ToolContext:
     runtime_read_file_paths: frozenset[str] | None = None
     runtime_read_file_remaining: int | None = None
     vision_inspector: Callable[[Path, str, bytes, str], str] | None = None
+    cancel_event: CancellationSignal | None = None
 
 
 def tool_state_dir(context: ToolContext) -> Path:
@@ -140,6 +142,7 @@ class ToolRegistry:
         return tool is not None and tool_is_preapproved(tool, context)
 
     def execute(self, name: str, raw_arguments: str | dict[str, Any], context: ToolContext) -> ToolResult:
+        raise_if_cancelled(context.cancel_event)
         tool = self._tools.get(name)
         if tool is None:
             suggested = tuple(difflib.get_close_matches(name, self._exposed_tool_names(context), n=3, cutoff=0.55))
@@ -191,6 +194,7 @@ class ToolRegistry:
             scope_denial = _runtime_read_file_scope_denial_reason(name, arguments, context)
             if scope_denial:
                 return ToolResult(scope_denial, is_error=True)
+            raise_if_cancelled(context.cancel_event)
             result = tool.handler(arguments, context)
             if compatibility_notes:
                 metadata = {**dict(result.metadata), "compatibility_normalized": list(compatibility_notes)}

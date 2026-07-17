@@ -37,6 +37,7 @@ class ReviewRoundPort:
     collector: Any
     session: Any
     events: Any
+    cancel_event: Any = None
 
 
 @dataclass(frozen=True)
@@ -132,6 +133,7 @@ def run_review_round(
                 output_schemas,
                 timeout=timeout,
                 model=port.model,
+                cancel_event=port.cancel_event,
             )
         except LlmError as exc:
             return _failure(

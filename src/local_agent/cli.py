@@ -10,6 +10,10 @@ from .frontends.terminal import TerminalEventSink
 from .frontends.terminal import run_terminal_chat
 from .frontends.terminal.command_registry import TerminalCommandDispatch
 from .frontends.terminal.command_registry import TerminalCommandRegistry
+from .frontends.tui import TuiEventSink
+from .frontends.tui import TuiMailbox
+from .frontends.tui import run_tui
+from .frontends.tui import tui_is_supported
 from .llm import LlmError
 from .protocol.commands import CommandResult
 from .protocol.commands import new_command
@@ -140,7 +144,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--continue", dest="continue_session", action="store_true", help="Continue the latest session.")
     parser.add_argument("--session", help="Continue a specific session id from .local-agent/sessions.")
-    parser.add_argument("--chat", action="store_true", help="Start the terminal-native interactive frontend.")
+    frontend = parser.add_mutually_exclusive_group()
+    frontend.add_argument("--chat", action="store_true", help="Start the terminal-native interactive frontend.")
+    frontend.add_argument("--tui", action="store_true", help="Start the full-screen terminal frontend.")
     parser.add_argument("--hide-tools", action="store_true", help="Hide tool call logs from stderr.")
     args = parser.parse_args(argv)
 
@@ -172,11 +178,15 @@ def main(argv: list[str] | None = None) -> int:
             subagent_budget_seconds=args.subagent_budget_seconds,
         )
         chat_requested = args.chat or _is_chat_prompt(args.prompt)
-        event_sink = (
-            TerminalEventSink(show_tools=not args.hide_tools)
-            if chat_requested or not args.prompt
-            else None
-        )
+        tui_requested = bool(args.tui)
+        tui_active = tui_requested and tui_is_supported()
+        tui_mailbox = TuiMailbox() if tui_active else None
+        if tui_active:
+            event_sink = TuiEventSink(tui_mailbox, show_tools=not args.hide_tools)
+        elif chat_requested or not args.prompt or tui_requested:
+            event_sink = TerminalEventSink(show_tools=not args.hide_tools)
+        else:
+            event_sink = None
         runtime = AgentRuntime(
             config,
             show_tool_logs=not args.hide_tools,
@@ -184,7 +194,12 @@ def main(argv: list[str] | None = None) -> int:
             continue_session=args.continue_session,
             event_sink=event_sink,
         )
-        if chat_requested or not args.prompt:
+        if tui_active:
+            assert tui_mailbox is not None
+            return run_tui(runtime, tui_mailbox)
+        if chat_requested or not args.prompt or tui_requested:
+            if tui_requested:
+                print("Full-screen TUI unavailable; using terminal chat.", file=sys.stderr)
             return run_terminal_chat(
                 runtime,
                 history_path=(config.state_dir or config.workspace / ".local-agent") / "terminal_history",

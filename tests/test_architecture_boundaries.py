@@ -23,8 +23,8 @@ OWNER_COMPLEXITY_CEILINGS = {
     "src/local_agent/read_only_reviewer_validation.py": 419,
     "src/local_agent/reviewer_correction_contract.py": 148,
     "src/local_agent/reviewer_output_lifecycle.py": 418,
-    "src/local_agent/runtime_read_only_review.py": 641,
-    "src/local_agent/runtime_read_only_review_round.py": 450,
+    "src/local_agent/runtime_read_only_review.py": 643,
+    "src/local_agent/runtime_read_only_review_round.py": 452,
     "src/local_agent/safe_partial_report.py": 446,
     "src/local_agent/tools/shell.py": 357,
     "src/local_agent/tools/test_runner_policy.py": 217,
@@ -33,17 +33,17 @@ OWNER_COMPLEXITY_CEILINGS = {
     "src/local_agent/workflow_profile.py": 165,
     "src/local_agent/runtime_workflow_profile.py": 44,
     "src/local_agent/execution_policy.py": 170,
-    "src/local_agent/tools/base.py": 603,
-    "src/local_agent/command_dispatcher.py": 219,
+    "src/local_agent/tools/base.py": 607,
+    "src/local_agent/command_dispatcher.py": 221,
     "src/local_agent/provider_stream.py": 340,
-    "src/local_agent/chat_runtime.py": 162,
+    "src/local_agent/chat_runtime.py": 179,
     "src/local_agent/llm.py": 226,
     "src/local_agent/protocol/events.py": 228,
     "src/local_agent/frontends/terminal/renderer.py": 165,
     "src/local_agent/provider_protocol.py": 379,
     "src/local_agent/runtime_prompt.py": 490,
     "src/local_agent/run_collector.py": 668,
-    "src/local_agent/explore_subagent.py": 560,
+    "src/local_agent/explore_subagent.py": 561,
     "src/local_agent/lsp/workspace_edit.py": 380,
     "src/local_agent/tools/lsp_rename.py": 187,
     "src/local_agent/tools/lsp_code_action.py": 430,
@@ -281,6 +281,69 @@ class ArchitectureBoundaryTests(unittest.TestCase):
         self.assertNotIn("from .agent import", dispatcher)
         self.assertNotIn("tool_choice", dispatcher)
         self.assertNotIn('"SessionFinished"', production)
+
+    def test_tui_is_an_independent_single_writer_frontend(self) -> None:
+        tui_root = ROOT / "src/local_agent/frontends/tui"
+        production = {
+            path.name: path.read_text(encoding="utf-8")
+            for path in tui_root.glob("*.py")
+        }
+        controller = production["controller.py"]
+        model = production["model.py"]
+        worker = production["worker.py"]
+        screen = production["screen.py"]
+        cli = (ROOT / "src/local_agent/cli.py").read_text(encoding="utf-8")
+        runtime = (ROOT / "src/local_agent/agent.py").read_text(encoding="utf-8")
+
+        forbidden = (
+            "AgentRuntime",
+            "ToolRegistry",
+            "ExecutionPolicy",
+            "EvidenceLedger",
+            "Finalization",
+            "tool_choice_queue",
+            "provider_protocol",
+        )
+        for filename, content in production.items():
+            for owner in forbidden:
+                self.assertNotIn(owner, content, f"{filename} duplicates Runtime owner {owner}")
+        self.assertNotIn("runtime.commands.dispatch", controller)
+        self.assertIn("self._runtime.commands.dispatch(command)", worker)
+        self.assertNotIn("AgentRuntime", model)
+        self.assertNotIn("AgentRuntime", screen)
+        self.assertNotIn("arguments", model.split("def project_agent_event", 1)[1].split("def _todo_text", 1)[0])
+        self.assertIn('frontend.add_argument("--tui"', cli)
+        self.assertIn("TuiEventSink(tui_mailbox, show_tools=not args.hide_tools)", cli)
+        self.assertEqual(len(re.findall(r"^    def ", runtime, flags=re.MULTILINE)), 71)
+        self.assertEqual(len(runtime.splitlines()), 1792)
+
+    def test_tui_cross_thread_messages_are_typed_and_bounded(self) -> None:
+        messages = (ROOT / "src/local_agent/frontends/tui/messages.py").read_text(encoding="utf-8")
+        mailbox = (ROOT / "src/local_agent/frontends/tui/mailbox.py").read_text(encoding="utf-8")
+        worker = (ROOT / "src/local_agent/frontends/tui/worker.py").read_text(encoding="utf-8")
+
+        self.assertIn("@dataclass(frozen=True)", messages)
+        self.assertIn("class TuiMailbox:", mailbox)
+        self.assertIn("self._capacity = capacity", mailbox)
+        self.assertIn("_coalesce_delta", mailbox)
+        self.assertNotIn("Queue()", worker)
+        self.assertIn("Queue(maxsize=command_capacity)", worker)
+        self.assertIn("class TuiInteractionBridge:", worker)
+
+    def test_all_runtime_provider_waits_receive_the_shared_cancel_signal(self) -> None:
+        missing: list[str] = []
+        for path in (ROOT / "src/local_agent").rglob("*.py"):
+            if path.name in {"benchmark.py", "chat_runtime.py"}:
+                continue
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
+                    continue
+                if node.func.id != "call_chat_with_timeout":
+                    continue
+                if not any(keyword.arg == "cancel_event" for keyword in node.keywords):
+                    missing.append(f"{path.relative_to(ROOT)}:{node.lineno}")
+        self.assertEqual(missing, [])
 
     def test_provider_streaming_has_one_parser_owner_and_redacted_delta_boundary(self) -> None:
         production = list((ROOT / "src/local_agent").rglob("*.py"))

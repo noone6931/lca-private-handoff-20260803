@@ -37,6 +37,7 @@ class ReadOnlyReviewRuntimePort(Protocol):
     _events: Any
     _run: Any
     _session: Any
+    _tool_context: Any
     _workspace_context: Any
     _provider_context_phase: Any
 
@@ -525,6 +526,7 @@ class ReadOnlyReviewPhase:
             collector=runtime._run.collector,
             session=runtime._session,
             events=runtime._events,
+            cancel_event=runtime._tool_context.cancel_event,
         )
 
     def _review_timeout(self) -> float | None:

@@ -221,6 +221,7 @@ class ExploreSubagentRunner:
                     messages,
                     schemas,
                     timeout=max(0.001, deadline - time.monotonic()),
+                    cancel_event=child_context.cancel_event,
                 )
                 if getattr(response, "protocol_artifact", None) is not None:
                     raise ExploreYieldError("Provider protocol artifact is not a typed yield.")

@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any, Literal, Protocol
 
 from .config import ConfigError
+from .cancellation import RunCancellation
 from .protocol.commands import AgentCommand
 from .protocol.commands import CommandResult
 from .protocol.commands import UNSUPPORTED_COMMAND_TYPES
@@ -21,7 +22,6 @@ class RuntimeCommandPort(Protocol):
     _is_running: bool
     _last_run_summary: dict[str, Any] | None
     _session: _SessionWriter
-
     def _run_prompt(self, prompt: str) -> str: ...
     def _finish_run_summary(self, reason: str) -> dict[str, Any]: ...
     def approval_summary(self) -> str: ...
@@ -44,6 +44,7 @@ class CommandDispatcher:
         self._runtime = runtime
         self._events = events
         self._session_id = session_id
+        self.cancellation = RunCancellation()
 
     @property
     def is_running(self) -> bool:
@@ -88,6 +89,7 @@ class CommandDispatcher:
         runtime = self._runtime
         if runtime._is_running:
             return self._error(command, "run_active", "Cannot start a new run while the current run is still active.")
+        self.cancellation.begin()
         runtime._is_running = True
         run_id = self._events.start_run()
         self._events.emit("TurnStarted", {"command_type": command.type})
@@ -117,6 +119,7 @@ class CommandDispatcher:
             )
         finally:
             runtime._is_running = False
+            self.cancellation.finish()
         if self._events.turn_finished_payload is None:
             message = "Runtime returned without a terminal turn event."
             self._events.emit("ErrorEvent", {"kind": "missing_turn_terminal", "message": message})

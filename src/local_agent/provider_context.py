@@ -358,7 +358,13 @@ class ProviderContextPhase:
             },
         ]
         try:
-            response = call_chat_with_timeout(runtime._client, messages, [], timeout=timeout)
+            response = call_chat_with_timeout(
+                runtime._client,
+                messages,
+                [],
+                timeout=timeout,
+                cancel_event=runtime._tool_context.cancel_event,
+            )
         except LlmError as exc:
             runtime._session.append("context_summary_error", {"mode": "llm", "error": str(exc)})
             return None

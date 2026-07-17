@@ -19,6 +19,7 @@ class MemoryRuntimePort(Protocol):
     _config: Any
     _session: Any
     _state_dir: Any
+    _tool_context: Any
     _workspace_context: Any
 
     def _deadline_exceeded(self, deadline: float | None) -> bool: ...
@@ -112,7 +113,13 @@ class MemoryConsolidationLifecycle:
             },
         ]
         try:
-            response = call_chat_with_timeout(runtime._client, messages, [], timeout=timeout)
+            response = call_chat_with_timeout(
+                runtime._client,
+                messages,
+                [],
+                timeout=timeout,
+                cancel_event=runtime._tool_context.cancel_event,
+            )
         except LlmError as exc:
             runtime._session.append("memory_consolidation_error", {"mode": "llm", "error": str(exc)})
             return None

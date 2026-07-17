@@ -11,6 +11,7 @@ from typing import Any
 from local_agent.patch.anchored import PatchError, resolve_workspace_path
 
 from .base import Tool, ToolContext, ToolResult
+from .process_runtime import run_process as _run_process
 from .test_runner_policy import resolve_test_runner, test_environment_denial_reason
 from .test_runner_policy import test_runner_denial_reason as _test_runner_denial_reason
 
@@ -216,15 +217,13 @@ def _run_test_process(
     if timeout < 1:
         return ToolResult("Test command was not run because budget_seconds is exhausted.", is_error=True, metadata=metadata)
     try:
-        completed = subprocess.run(
+        completed = _run_process(
             list(argv),
             cwd=working_directory,
             env={**os.environ, **environment},
             shell=False,
-            text=True,
-            capture_output=True,
             timeout=timeout,
-            check=False,
+            cancel_event=context.cancel_event,
         )
     except subprocess.TimeoutExpired as exc:
         output = f"Test command timed out after {timeout} seconds."
@@ -312,14 +311,12 @@ def _run_command(command: str, args: dict[str, Any], context: ToolContext, *, de
     if timeout < 1:
         return ToolResult("Command was not run because budget_seconds is exhausted.", is_error=True)
     try:
-        completed = subprocess.run(
+        completed = _run_process(
             command,
             cwd=context.workspace,
             shell=True,
-            text=True,
-            capture_output=True,
             timeout=timeout,
-            check=False,
+            cancel_event=context.cancel_event,
         )
     except subprocess.TimeoutExpired as exc:
         output = f"Command timed out after {timeout} seconds."
