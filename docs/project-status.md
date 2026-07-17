@@ -34,7 +34,7 @@ LCA、OMP 与 Codex 的当前源码级对照和路线校正见 `docs/lca-omp-cod
 
 ## 当前进度
 
-当前 stable 为 T-226：release `20260717T054823Z-e70f20a948d4-d8ee2a1faf0d`，revision `e70f20a948d43f6259c906c5dc92d7be0a94355f`，digest `d8ee2a1faf0d5f6c19ed2591e320876b6d3b8acea2e43690a469b42ff928143a`；release gate 在 Python 3.14 下通过 1095/1095 unittest、compileall 和 diff-check，独立门禁另通过 62/62 deterministic benchmark 与 20/20 architecture checks。该版本继承 T-224 的只读 semantic rename preview，并新增外部 LSP 驱动的 Code Action 列表/预览；command、resource operation、`workspace/applyEdit` 和自动写盘仍 fail closed，真实修改继续由现有 `apply_patch`、approval、rollback、test 和 diff 链路负责。
+当前 stable 为 T-228：release `20260717T081918Z-24d6daa4f827-c67e5ebe043c`，revision `24d6daa4f827e777dcb0b249ab3c066b0e9facb3`，digest `c67e5ebe043c8a52fa50c38fabb1b0cec82c55f6556b5b0361b014ce1c65524c`；release gate 在 Python 3.14 下通过 1100/1100 unittest、compileall 和 diff-check，独立门禁另通过 62/62 deterministic benchmark、21/21 architecture checks 与 14/14 process matrix。该版本继承 T-226 的 LSP Code Action preview，并把 jdtls 的 Eclipse metadata 生成开关作为 child-only typed process environment 固定为 false；command、resource operation、`workspace/applyEdit` 和自动应用仍 fail closed，真实修改继续由现有 `apply_patch`、approval、rollback、test 和 diff 链路负责。
 
 T-219/T-220 已完成并发布。Codex 以 `CodexThread.submit(Op)`、唯一 submission loop、`next_event()` 和 response stream 建立双向 Runtime 边界，OMP 由 agent loop 消费 provider stream 并产出 turn/message/tool 生命周期；LCA 采用 Python 同步渐进路径：CommandDispatcher 统一消费 prompt/status/workspace/approval，Provider Stream Owner 解析同一次 OpenAI-compatible SSE/JSON 响应，text delta 与 tool argument delta 分离，只有完整合法 tool call 才能进入 ToolRegistry。`AssistantDelta` 与最终 `AssistantMessage` 共享 message/command/run identity；百炼 in-band XML 不泄漏、不执行。异步队列、取消、OS sandbox 和完整 TUI 仍未冒充实现。
 
@@ -49,6 +49,8 @@ T-224 已完成并发布。实现参考 OMP 的 symbol-aware rename 与 Workspac
 T-225 已完成跨语言收益门槛评估。Java 路径在本机预置 jdtls 上 PASS，证明 semantic preview 能发现跨文件调用点并接入现有写入闭环；本机没有 `typescript-language-server` 或 `vue-language-server`，工作区也没有可复用的项目级二进制，因此 TypeScript/Vue 记为 `ENVIRONMENT_BLOCKED / INCONCLUSIVE`。这不是 Runtime 缺陷，不自动联网安装，也不为模型是否选择工具增加 Queue gate。
 
 T-226 已完成并发布。新工具 `lsp_code_action_preview` 只列出有界元数据，或对指定 action 的 text-only WorkspaceEdit 生成内存 diff；它不执行 command、不接受 resource operation、不调用第二套 writer，且 `evidence_eligible=false`。独立 OMP 对照发现初版少了 `codeActionLiteralSupport`，已在 R1 按 OMP 的 8 个标准 kind 补齐，并增加 resolve 期间服务端 `workspace/applyEdit` 被 `applied=false` 拒绝且零写盘的回归。下一步先用真实 jdtls 验证 Code Action 列表/预览是否带来收益，不直接扩 auto-apply。
+
+T-227/T-228 已完成。真实 jdtls 在缺 `java.util.List` import 的 Java fixture 上完成 diagnostics、bounded Code Action list、text-only preview、parent reread、`apply_patch`、Maven test exit 0 与 `git_diff`，证明收益链路成立；同时发现 jdtls 默认会在源码根生成 `.classpath`、`.project` 与 `.settings`。T-228 只在 LSP process/config Owner 内为 jdtls child 追加 `-Djava.import.generatesMetadataFilesAtProjectRoot=false`，保留 parent `JAVA_TOOL_OPTIONS` 且最终 false 生效，并让完整 `LspServerConfig` 成为 client cache identity。独立真实 jdtls micro 证明 Eclipse metadata 不再落源码根，14/14 process matrix 验证 default/override、non-jdtls、cache、redaction 与 `workspace/applyEdit=false`；小牙真实 provider 复放因外部网络授权未执行，诚实记 `INCONCLUSIVE`，不阻断已通过的协议、真实 server 与发布门禁。外部 LSP 仍不是 OS sandbox，可能生成 `target/classes` 等构建缓存；不为此增加 watcher、cleanup、设置词表或第二套 writer。
 
 T-204 已完成 S5 readiness closure，结论为 typed `BLOCKED`，未选择实施切片、未进入阶段 B。新增 `zqylfinancebasemasterfccb090b` 与 `zqylcrclfinancemaster7b875cd3c` 后已证实：直接保理底层值为 `FACTOR_TYPE=4`，`104` 是云信融资 10 与直接保理 4 的组合码；放款完成是 `T_FINANCE_PROJECT.APPLY_STATUS=60`；云信 `XF0003` 显示为“拓展服务费”，计划费用经 `findDetailList` 映射到旧名 `expectApplySponsorTaxFee`，而 `YJ0001` 保荐商佣金是独立费用项。放款完成链路会向 payment 推送实际费用和部分主体/日期，但 payment 现有结构化字段与 JSON 参数仍不能形成完整待制单数据源，`BusinessPayer.finalAmount` 还是多费用合计而非 `XF0003` 单项。五个候选均缺至少一项 Owner、完整 data contract、write target、test entry 或 rollback boundary，因此未修改业务原目录。下一步不再扩展 LCA gate，而是补齐目标业务契约后重新进入 S5。项目状态暂只维护 Markdown，不同步 Excel。
 
@@ -191,7 +193,7 @@ T-213/T-214 已完成 S5-1 的 Codex 直接隔离交付。T-213 在上述 clean 
 | P12 | Read-only Convergence Closure | 已完成并发布 T-203 stable | T-201 完成 Owner 拆分和全 production complexity ratchet，T-202 合并重复控制生命周期，T-203 用 typed terminal assembly 产品化安全失败；950/61/13 与三次 S4 hard/usability 验收通过。 |
 | P13 | Codex-first Product Runtime | 已完成阶段性 MVP | T-215 profile、T-217 ExecutionPolicy、T-218 semantic-boundary correction、T-219 Command/Event/Turn、T-220 provider streaming 与 T-221 S6-S10 黑盒验收均已完成；hard safety、连续性、权限、需求变更和交付审计通过。 |
 | P14 | Explicit Subagent Capability | Phase 1 已完成，扩展暂停 | T-223 证明小 fixture 的 typed handoff 可用，但真实三仓单样本没有收益且模型未选择 delegate；保留 default-off Explore，不扩 reviewer/implement、并发、写入、worktree、advisor 或默认自动调度。 |
-| P15 | Semantic Coding Tools | Phase 1 已完成并发布 T-226 stable | T-224/T-226 完成 external LSP rename 与 Code Action 的只读 preview，复用同一 WorkspaceEdit 校验 Owner 和现有 patch/test/diff 写入闭环；不执行 command、server applyEdit 或 auto-apply。T-225 证明 Java rename 收益，TS/Vue 因无外部 server 保持 INCONCLUSIVE。 |
+| P15 | Semantic Coding Tools | Phase 1 已完成并发布 T-228 stable | T-224/T-226 完成 external LSP rename 与 Code Action 的只读 preview，T-227 证明真实 Java Code Action 收益，T-228 收住 jdtls Eclipse metadata 副作用；复用同一 WorkspaceEdit 校验 Owner 和现有 patch/test/diff 写入闭环，不执行 command、server applyEdit 或 auto-apply。TS/Vue 因无 external server 保持 INCONCLUSIVE。 |
 
 ## 已完成功能
 
@@ -448,6 +450,8 @@ T-213/T-214 已完成 S5-1 的 Codex 直接隔离交付。T-213 在上述 clean 
 | T-224 | LSP Semantic Rename Preview Phase 1 | 已完成并发布 stable | P15/Coding Tools | 用语言服务器发现 symbol-aware rename edit，同时保持现有 patch/approval/rollback 写入边界。 | commit `dee9a09` 新增独立 `workspace_edit.py` / `lsp_rename.py` Owner；外部 LSP 必需，只接受 text edits，完整校验 WorkspaceEdit、authorized/project roots、UTF-16 range、重叠和 50 files/500 edits/2 MiB per file/16 MiB cumulative/96 KiB output 预算后返回有界 diff。preview 零写盘、零 patch log、`evidence_eligible=false`；parent direct read 后仍走现有 `apply_patch`、test、diff。独立 1078/62/19 与真实 jdtls 流程通过；live 最终因模型生成缺 command 的测试调用诚实未交付，不属于 rename Runtime 缺陷。stable `20260717T050233Z-dee9a09c5ce9-d94382225258`。 |
 | T-225 | Semantic Tool Cross-language Benefit Gate | 已完成；Java PASS，TypeScript/Vue 环境阻塞 | P15/Product Validation | 先证明 T-224 在真实语言服务器上的价值，再决定是否扩 code action；不以工具存在代替收益证据。 | Java 使用本机 jdtls 完成跨文件 rename preview、parent reread、patch、Maven test/verify 和 diff。TypeScript/Vue 因本机及工作区均无 external server，记 `ENVIRONMENT_BLOCKED / INCONCLUSIVE`；不联网安装、不改 Harness。该结论支持继续做只读 code-action preview，但不支持 rename auto-apply 或第二套 writer。 |
 | T-226 | LSP Code Action Preview Phase 1 | 已完成并发布 stable | P15/Coding Tools | 对照 OMP `textDocument/codeAction` / `codeAction/resolve`，增加只读 list/preview，复用 T-224 WorkspaceEdit Owner，不引入第二套 writer。 | commit `e70f20a`；列表最多 20 个脱敏 action，指定 index 时仅预览 text-only edit，command/disabled/edit+command/resource op/path escape/invalid range 均 fail closed。R1 按 OMP 补齐 `codeActionLiteralSupport` 8 个标准 kind，resolve 期间 server `workspace/applyEdit` 明确 `applied=false` 且零写盘。1095/62/20 与 clean detached publish gate 通过；stable `20260717T054823Z-e70f20a948d4-d8ee2a1faf0d`。 |
+| T-227 | 真实 jdtls Code Action Benefit Gate | 已完成；收益 PASS，发现外部 metadata 副作用 | P15/Product Validation | 用 immutable T-226 stable 验证真实 Java Code Action 是否能接入现有 patch/test/diff，而不是继续扩 semantic tool。 | 缺 `java.util.List` import 样本完成 diagnostics、list/preview、parent reread、apply_patch、Maven test exit 0 与 diff；同时 jdtls 默认在源码根生成 `.classpath/.project/.settings`。无 command 或 `workspace/applyEdit` 执行，问题归于外部 server process 配置。 |
+| T-228 | JDTLS Read-tier Metadata Containment | 已完成并发布 stable | P15/LSP Process Boundary | 在不伪装 OS sandbox、不清理外部文件、不增加 watcher/gate 的前提下，阻止 jdtls 把 Eclipse metadata 写进源码根。 | commit `24d6daa`；jdtls default/override 都通过 child-only typed `JAVA_TOOL_OPTIONS` 追加 metadata property=false，parent env 不变，non-jdtls 不变，完整 config 参与 client cache identity。1100/62/21、14/14 process matrix、真实 jdtls micro 与 clean detached publish gate 通过；stable `20260717T081918Z-24d6daa4f827-c67e5ebe043c`。小牙 provider 复放因授权未执行记 INCONCLUSIVE。 |
 
 ## 风险清单
 
@@ -608,10 +612,10 @@ T-213/T-214 已完成 S5-1 的 Codex 直接隔离交付。T-213 在上述 clean 
 | 项目 | 结论 | 依据 |
 |---|---|---|
 | 主链路 | 通过 | 百炼真实小改复测已跑通 todo、dry_run、apply_patch、session allow、rollback、run_tests、git_diff。 |
-| 测试 | 分层通过 | P5 收口时 90 个 unittest；当前 T-224 stable 为 1078/62/19；fresh S4 hard invariant 3/3、typed BLOCKED usability 3/3，T-215 profile、T-217 execution-policy、T-218 architecture boundary、T-219 command/event lifecycle、T-220 streaming、T-221 S6-S10、T-222 Explore Subagent 与 T-224 LSP rename preview deterministic 回归通过。T-223 证明小 fixture 成功 handoff但真实三仓收益未证实；T-224 真实 jdtls 样本完成 preview、parent reread、patch、Maven test/verify 和 diff。 |
+| 测试 | 分层通过 | P5 收口时 90 个 unittest；当前 T-228 stable 为 1100/62/21，另有 14/14 process matrix；fresh S4 hard invariant、T-215 profile、T-217 execution-policy、T-218 architecture boundary、T-219 command/event lifecycle、T-220 streaming、T-221 S6-S10、T-222 Explore Subagent 与 T-224/T-226 semantic preview 回归通过。T-227 证明真实 jdtls Code Action 收益，T-228 真实 server micro 证明 Eclipse metadata containment。 |
 | 日用入口 | 通过 | README 已补只读分析和小改任务命令模板。 |
 | 开放风险 | 可接受 | shell 仍非沙箱、prompt injection 仍需靠审批和封闭 VM；provider/model 专用 tokenizer、输出 reserve、managed skills、完整 reviewer 和完整 OMP ToolChoiceQueue 继续后置评估。 |
-| 下一阶段 | P15 Semantic Coding Tools | T-225 已收口；下一批实现 T-226 LSP Code Action Preview Phase 1。只允许 list/resolve/text-edit preview，拒绝 command 执行和自动 apply，复用 T-224 WorkspaceEdit Owner。 |
+| 下一阶段 | 回到通用 Coding Agent 主线 | P15 Phase 1 已由 T-228 收口；没有新的真实收益证据前不扩 auto-apply、第二 writer 或更多 LSP 特例。下一批优先评估 Codex-first interrupt/cancel 与 State/Worktree 生命周期，先做源码对照和用户价值门槛再实现。 |
 
 ## 推荐工作流
 
@@ -646,7 +650,7 @@ T-213/T-214 已完成 S5-1 的 Codex 直接隔离交付。T-213 在上述 clean 
 
 用户确认本文件后，建议按以下顺序继续：
 
-1. 实现 T-226 LSP Code Action Preview Phase 1：外部 LSP 必需；list 默认返回有界 metadata，显式唯一选择后只预览 text-only WorkspaceEdit；command-only、disabled、ambiguous、resource operation 和 `workspace/applyEdit` 全部 fail closed。
+1. P15 semantic tools Phase 1 已收口；冻结 auto-apply、第二 writer 和新的 LSP 特例，回到通用 Coding Agent 主线。
 2. 保留 T-214 隔离 workspace 和完整 diff，是否写回原 finance-base/payment 由用户单独确认；不得把隔离交付描述成生产已上线。
 3. 若进入生产集成，先在 Oracle JDK 8u121 和真实 Oracle/MyBatis 环境验证 DDL、事务、唯一键并发与现有 MQ 回放，再应用到目标分支。
-4. P14 保留 Phase 1 default-off Explore，只有后续多个真实任务出现稳定收益时才重启 reviewer/implement 评估；并发、worktree、advisor、完整 TUI、MCP 和 Browser 不与 T-226 混做。
+4. P14 保留 Phase 1 default-off Explore，只有后续多个真实任务出现稳定收益时才重启 reviewer/implement 评估；下一批先对照 Codex/OMP 评估 interrupt/cancel 与 State/Worktree 的最小产品切片，不与完整 TUI、MCP 或 Browser 混做。

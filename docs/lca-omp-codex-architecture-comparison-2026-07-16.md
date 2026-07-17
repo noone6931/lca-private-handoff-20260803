@@ -339,8 +339,9 @@ CLI / Terminal / Future TUI / Remote
 | 已完成 | T-223 Explore Subagent 真实收益验证 | 小 fixture 成功 handoff；真实三仓 enabled 时 delegate 从第 4 turn 起已暴露但模型未选择，21 LLM/49 tools/9 compactions 且覆盖不足；default-off 同样覆盖不足。无 Runtime/权限/证据 lifecycle 缺陷，不加 Queue gate，P14 扩展暂停 |
 | 已完成 | T-224 LSP Semantic Rename Preview Phase 1 | commit `dee9a09`；对照 OMP symbol-aware rename/WorkspaceEdit 全量校验，提供零写盘 bounded preview，parent direct read 后复用现有 `apply_patch`、test、diff。1078/62/19 与真实 jdtls 流程通过；stable `20260717T050233Z-dee9a09c5ce9-d94382225258` |
 | 已完成 | T-225 Semantic Tool Cross-language Benefit Gate | Java/jdtls 真实跨文件 preview 与现有 patch/test/diff 闭环 PASS；TypeScript/Vue 因无 external server 记 `ENVIRONMENT_BLOCKED / INCONCLUSIVE`。不联网安装、不归因 Runtime、不增加 Queue gate |
-| 已完 | T-226 LSP Code Action Preview Phase 1 | commit `e70f20a`；只 list/preview text-only WorkspaceEdit，command/resource operation/server applyEdit/auto-apply 全部 fail closed。独立 OMP 对照发现并修正缺失 `codeActionLiteralSupport`；1095/62/20，stable `20260717T054823Z-e70f20a948d4-d8ee2a1faf0d` |
-| P0 | T-227 真实 jdtls Code Action Benefit Gate | 用 immutable T-226 stable 走 list -> preview -> parent reread -> existing patch/test/diff；未自然产生 action 只记 capability/reliability，不新增 Queue gate 或 Harness 补丁 |
+| 已完成 | T-226 LSP Code Action Preview Phase 1 | commit `e70f20a`；只 list/preview text-only WorkspaceEdit，command/resource operation/server applyEdit/auto-apply 全部 fail closed。独立 OMP 对照发现并修正缺失 `codeActionLiteralSupport`；1095/62/20，stable `20260717T054823Z-e70f20a948d4-d8ee2a1faf0d` |
+| 已完成 | T-227 真实 jdtls Code Action Benefit Gate | 缺 List import 的 Java fixture 完成 list -> preview -> parent reread -> existing patch -> Maven exit 0 -> diff；同时发现 jdtls 默认生成 Eclipse metadata，未误归因为 WorkspaceEdit/command |
+| 已完成 | T-228 JDTLS Read-tier Metadata Containment | commit `24d6daa`；LSP process/config Owner 通过 child-only property=false 收住 `.classpath/.project/.settings`，完整 server config 参与 client cache identity。1100/62/21、14/14 matrix 与真实 jdtls micro 通过；不声称 OS sandbox、不清理构建缓存、不削减 LSP。stable `20260717T081918Z-24d6daa4f827-c67e5ebe043c` |
 | P2 | reviewer/implement subagent 扩展 | 仅在后续多个真实任务证明 Explore 有稳定收益后重启；写入隔离、冲突处理和审批路由必须先明确 |
 | P2 | LSP rename apply/code action、MCP、Browser | rename apply 需先有事务型多文件 writer；其余每项由真实任务收益驱动 |
 | P3 | fullscreen TUI / Remote | 协议和 streaming 稳定后实现 |

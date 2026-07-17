@@ -17,10 +17,10 @@ python3 scripts/sync_project_excel.py
 | 字段 | 当前值 | 说明 |
 |---|---|---|
 | 最终目标 | 个人本地编程助手 Agent | 本地优先、封闭 VM 可用、只访问指定 AI API，能读代码、搜代码、改代码、跑测试、生成 diff、沉淀项目记忆。 |
-| 当前阶段 | P14 Phase 1 保留并暂停扩展；P15 semantic coding tools 进行中 | 当前 stable 为 T-224 `20260717T050233Z-dee9a09c5ce9-d94382225258`。T-225 已确认 Java/jdtls 真实收益，TypeScript/Vue 因 external server 缺失环境阻塞；下一批为 T-226 只读 LSP Code Action Preview。 |
+| 当前阶段 | P14 Phase 1 保留并暂停扩展；P15 Phase 1 已收口 | 当前 stable 为 T-228 `20260717T081918Z-24d6daa4f827-c67e5ebe043c`。T-227 已确认真实 jdtls Code Action 收益，T-228 收住 Eclipse metadata 副作用；semantic auto-apply 与第二 writer 继续冻结，回到通用 Coding Agent 主线。 |
 | 推荐入口 | `./agent "阅读当前项目"` | 自动设置 `PYTHONPATH=src`，默认当前目录为 workspace。 |
 | Token 配置 | 环境变量 / `--env-file` / `.env` | 优先级为真实环境变量、显式 env-file、用户级 `${AGENT_CONFIG_DIR:-~/.config/local-coding-agent}/.env`、workspace `.env`；stable snapshot 不携带密钥。 |
-| 测试数 | T-224 stable 1078/62/19 | release gate 在 Python 3.14 下通过 1078 unittest、compileall、diff-check；62 benchmark、19 architecture 与 LSP rename matrix 通过。真实 jdtls 样本完成 preview/reread/patch/test/diff；最终 malformed test call 被 Runtime 诚实拒绝，不新增 Harness 修复。Excel 按用户要求不生成。 |
+| 测试数 | T-228 stable 1100/62/21 | release gate 在 Python 3.14 下通过 1100 unittest、compileall、diff-check；62 benchmark、21 architecture 与 14/14 process matrix 通过。真实 jdtls micro 证明 Eclipse metadata containment；provider 复放因授权未执行记 INCONCLUSIVE。Excel 按用户要求不生成。 |
 | 三方架构对照 | 已完成 2026-07-16 基线 | 见 `docs/lca-omp-codex-architecture-comparison-2026-07-16.md`；目标修正为 OMP/Codex 级通用底座 + LCA 企业工作流，不以完整复制 OMP platform 为 KPI。 |
 | 默认 budget_seconds | 600 | 单次任务默认 10 分钟墙钟预算；`--budget-seconds 0` 可关闭。 |
 | 默认 max_steps | 0 | 表示不限步；仅在用户显式设置时作为防失控保险丝。 |
@@ -35,7 +35,7 @@ python3 scripts/sync_project_excel.py
 | 默认工作流落地 | 已完成 MVP 版 | system prompt + tool descriptions + runtime workflow reminder 已落地，用户不需要每次手写工具顺序。 |
 | LSP / Light fallback | 已完成 MVP 版 | `lsp_symbols` / `lsp_workspace_symbols` / `lsp_document_symbols` / `lsp_definition` / `lsp_references` / `lsp_diagnostics` / `lsp_status`，覆盖 Python、Java、JavaScript、TypeScript、Vue；默认可用则外部 LSP，不可用则 light fallback。 |
 | Multi-root workspace | 已完成 MVP 版 | `--allow-dir` / `AGENT_ALLOWED_DIRS` 支持显式授权额外目录给文件、搜索、LSP、patch 工具；system prompt 和 `list_files`/path-not-found 等工具观察会列出 primary workspace 和 allowed dirs；需求/文档类任务会先用 soft tool requirement 要求读取 allowed-dir 文档；shell/git/显式项目 memory/skills 仍锚定 `--cwd`，session/todo/patch logs 和默认 consolidation memory 走 state dir。 |
-| Stable / Dev release channels | 已完成 MVP 版 | `lca` 指向已验证的不可变 source snapshot，`lca-dev` 指向当前源码；当前 stable 为 T-224 `20260717T050233Z-dee9a09c5ce9-d94382225258`，revision `dee9a09c5ce9128b8fd2b43c2f914f00cbeb78aa`，digest `d94382225258fa3e89c39c325e53df5b68a7480c2e0d321c8035c90841f24b20`。`lca-release publish` 先跑离线 gate 再原子 promote，失败保留旧 stable。 |
+| Stable / Dev release channels | 已完成 MVP 版 | `lca` 指向已验证的不可变 source snapshot，`lca-dev` 指向当前源码；当前 stable 为 T-228 `20260717T081918Z-24d6daa4f827-c67e5ebe043c`，revision `24d6daa4f827e777dcb0b249ab3c066b0e9facb3`，digest `c67e5ebe043c8a52fa50c38fabb1b0cec82c55f6556b5b0361b014ce1c65524c`。`lca-release publish` 先跑离线 gate 再原子 promote，失败保留旧 stable。 |
 | Workflow Profiles | 已完成 Phase 1 | `auto` 依据 typed `RequirementContract` 解析 `coding`、`enterprise-evidence`、`readiness-audit`；缺 contract 时 optional heavy hooks 全关闭。 | profile 不改变 task kind、tool schema、approval 或 workspace；不强制 `apply_patch`，通过 Session、`ContextUpdated`、RunSummary 和 `/status` 审计。 |
 | Path-scoped rules | 已完成 MVP 版 | 每个 canonical workspace root 可定义 `.local-agent/rules/*.md`；每轮只注入轻量 metadata，用户或工具路径命中时才注入对应规则正文，规则不改变工具权限。 |
 | Offline benchmark / eval | 已完成 MVP 版 | `benchmarks/tasks` 的隔离 fixture 默认使用 deterministic fake provider 跑真实 Runtime，并输出 JSON/Markdown 结果；`--live` 才显式使用外部 provider。 |
@@ -342,6 +342,8 @@ python3 scripts/sync_project_excel.py
 | T-224 | P0 | P15 | LSP Semantic Rename Preview Phase 1 | 已完成并发布 stable | 大猛实现，小红独立 review/发布，小牙 immutable gate 部分完成后停滞，由小红补真实 jdtls 收口 | 提升真实重构能力，避免继续围绕单一 provider 样本加 guard。 | commit `dee9a09` 对照 OMP rename/WorkspaceEdit，新增独立只读 preview Owner；拒绝 resource ops/path escape/invalid overlap，支持 UTF-16、多文件和累计预算。1078/62/19、真实 jdtls preview/reread/patch/Maven test/diff 通过；stable `20260717T050233Z-dee9a09c5ce9-d94382225258`。 |
 | T-225 | P0 | P15 | Semantic Tool Cross-language Benefit Gate | 已完成；Java PASS，TypeScript/Vue 环境阻塞 | 小红独立环境/真实链路核对 | 在继续扩 semantic tools 前验证真实收益，避免只因 OMP 有能力就照搬。 | Java/jdtls 已证明跨文件 preview 与现有 patch/test/diff 闭环；TypeScript/Vue 无预置或项目级 external server，记 `ENVIRONMENT_BLOCKED / INCONCLUSIVE`，不联网安装、不归因 Runtime。下一批仅推进复用现有 WorkspaceEdit Owner 的只读 code-action preview。 |
 | T-226 | P0 | P15 | LSP Code Action Preview Phase 1 | 已完成并发布 stable | 大猛实现/R1，小红 OMP 对照、独立 review/门禁/发布 | 只列出或预览 LSP CodeAction 的 text-only WorkspaceEdit，不执行 command、server applyEdit 或自动写入。 | commit `e70f20a`；复用 T-224 WorkspaceEdit Owner，20 项脱敏 list 与单次 resolve 有界，非 text edit 全部 fail closed。独立 review 发现并修正初版缺少 OMP `codeActionLiteralSupport` 的真实协议偏差，同时用 in-flight 回归证明 `workspace/applyEdit` 返回 `applied=false` 且零写盘。1095/62/20 与 clean detached publish gate 通过；stable `20260717T054823Z-e70f20a948d4-d8ee2a1faf0d`。 |
+| T-227 | P0 | P15 | 真实 jdtls Code Action Benefit Gate | 已完成；收益 PASS，发现 metadata 副作用 | 小牙黑盒，小红归因 | 真实 Java fixture 验证 list/preview 能否接入现有 patch/test/diff。 | 缺 List import 样本完整闭环并 Maven exit 0；jdtls 默认生成 `.classpath/.project/.settings`，无 command/applyEdit 执行，归入 process configuration。 |
+| T-228 | P0 | P15 | JDTLS Read-tier Metadata Containment | 已完成并发布 stable | 大猛实现/R1，小红独立 review/门禁/发布 | 收住已证实的外部 server metadata 副作用，不引入 watcher、cleanup、sandbox 假声明或能力削减。 | commit `24d6daa`；child-only property=false、完整 config cache identity、truthful preview 文案。1100/62/21、14/14 matrix、真实 jdtls micro 与 clean publish gate 通过；stable `20260717T081918Z-24d6daa4f827-c67e5ebe043c`。 |
 
 ## 风险与决策
 
@@ -486,12 +488,12 @@ python3 scripts/sync_project_excel.py
 
 | 项目 | 结论 | 依据 | 后续 |
 |---|---|---|---|
-| 阶段判断 | P13 已阶段性收口；P14 Phase 1 保留、扩展暂停；P15 Phase 1 已收口 | T-223 证明小 fixture handoff 可用但真实三仓单样本没有收益；T-224/T-226 已完成 external LSP rename 与 Code Action 只读 preview；T-225 确认 Java rename 收益并记录 TypeScript/Vue 环境阻塞。 | 先做 T-227 真实 jdtls Code Action 收益验证，再决定是否继续 semantic tools；业务生产集成继续分账。 |
+| 阶段判断 | P13 已阶段性收口；P14 Phase 1 保留、扩展暂停；P15 Phase 1 已收口 | T-223 证明小 fixture handoff 可用但真实三仓单样本没有收益；T-224/T-226 完成 external LSP rename 与 Code Action 只读 preview；T-227/T-228 证明真实 Java 收益并收住 jdtls Eclipse metadata 副作用。 | 冻结 semantic auto-apply、第二 writer 与更多 LSP 特例；回到 Codex-first 通用 Runtime/State 路线，业务生产集成继续分账。 |
 | 与 OMP 的主要差距 | P12 MVP 可用，但不等于完整追平 OMP | OMP 的完整 task/explore/advisor/subagent、AST/LSP write、MCP/Browser、完整 TUI 仍未搬入；LCA 的 document reviewer 与 WorkspaceEvidenceRootProjection 是本地增强。 | Subagent/Advisor、AST/LSP write、MCP、Browser、完整 TUI 继续按收益后置。 |
 | 已关闭风险 | T-203 已关闭 S4 安全失败不可行动风险 | T-192~T-196 live 不再释放不可靠 owner/资料结论；T-202 合并重复控制生命周期；T-203 将被拒候选转为完整 typed BLOCKED，三次 S4 hard/usability 均通过。 | 保留现有 gate，不新增 transport/repair 层；run 1 的 provider schema/error 只记残余 telemetry，避免再次陷入局部补丁。 |
 | reviewer 决策 | 首次 isolated review + deterministic closure | T-193 后不再以 fresh second reviewer pass 作为终止条件；S2 reviewer revise 后 closure accepted，S3 reviewer pass。 | 真实 patch 质量仍由 implementation/delivery reviewer 链路处理；Advisor/Subagent 后置。 |
 | ToolChoiceQueue 决策 | 已做裁剪版 MiniToolChoiceQueue | 当前覆盖只读证据、需求文档前置读取、写后测试/diff hygiene；不做完整多队列/并发/子任务调度 | 后续若仍出现关键工具不用/乱用，再扩展 queue 规则；若出现 patch/总结质量不稳，补 reviewer。 |
-| 下一步 | T-227 真实 jdtls Code Action Benefit Gate | 用已发布 T-226 stable 在 fresh Java fixture 上触发一个可预览 text edit 的 action，验证 list -> preview -> parent reread -> existing patch/test/diff。 | 单次真实收益验证，不刷成功率；未产生 action 记 capability/reliability，不改 Harness；仅有权限、隐藏写入、partial preview 或证据越界才是 Runtime blocker。 |
+| 下一步 | 通用 Coding Agent 主线选择门槛 | 先做 Codex/OMP 源码对照，评估 interrupt/cancel 与 State/Worktree 生命周期中最小、用户可感知的一项。 | 不先写大重构；明确 Owner、能力边界、默认行为和真实验收后再下发实现，不扩自然语言 gate 或样本特判。 |
 
 ## P7 综合压测问题
 
@@ -537,10 +539,10 @@ python3 scripts/sync_project_excel.py
 | 项目 | 结论 | 依据 |
 |---|---|---|
 | 主链路 | 通过 | 百炼真实小改复测已跑通 todo、dry_run、apply_patch、session allow、rollback、run_tests、git_diff。 |
-| 测试 | 分层通过 | P5 收口时 90 个 unittest；当前 T-226 stable 为 1095/62/20，profile/execution-policy、语义边界、command/event lifecycle、streaming、S6-S10、Explore Subagent、LSP rename 与 Code Action preview deterministic 回归通过；T-214 业务 compile 983/667、focused JUnit 4/17。 |
+| 测试 | 分层通过 | P5 收口时 90 个 unittest；当前 T-228 stable 为 1100/62/21，另有 14/14 process matrix；profile/execution-policy、语义边界、command/event lifecycle、streaming、S6-S10、Explore Subagent、LSP rename/Code Action preview 与 jdtls metadata containment 回归通过；T-214 业务 compile 983/667、focused JUnit 4/17。 |
 | 日用入口 | 通过 | README 已补只读分析和小改任务命令模板。 |
 | 开放风险 | 可接受 | shell 仍非沙箱、prompt injection 仍需靠审批和封闭 VM；provider/model 专用 tokenizer、输出 reserve、managed skills、完整 reviewer 和完整 OMP ToolChoiceQueue 继续后置评估。 |
-| 下一阶段 | P15 Semantic Coding Tools 真实收益收口 | P14 Phase 1 保留但不扩角色。T-226 已发布；下一批 T-227 只用真实 jdtls 验证 Code Action list/preview 与现有 patch/test/diff 闭环，不自动 apply。生产应用仍单独走 Oracle/VM 门禁。 |
+| 下一阶段 | 通用 Coding Agent Runtime/State | P14/P15 均停止横向扩张。先对照 Codex/OMP 选择 interrupt/cancel 或 State/Worktree 的最小产品切片，保留 Python、本地优先和封闭 VM 约束；生产应用仍单独走 Oracle/VM 门禁。 |
 
 ## 推荐工作流
 
