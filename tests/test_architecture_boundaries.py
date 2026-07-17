@@ -38,7 +38,7 @@ OWNER_COMPLEXITY_CEILINGS = {
     "src/local_agent/provider_stream.py": 340,
     "src/local_agent/chat_runtime.py": 162,
     "src/local_agent/llm.py": 226,
-    "src/local_agent/protocol/events.py": 224,
+    "src/local_agent/protocol/events.py": 228,
     "src/local_agent/frontends/terminal/renderer.py": 165,
     "src/local_agent/provider_protocol.py": 379,
     "src/local_agent/runtime_prompt.py": 490,
@@ -82,9 +82,12 @@ class ArchitectureBoundaryTests(unittest.TestCase):
         self.assertIn("current_contract.task_kind != \"unclear\"", owner)
         self.assertNotIn("import re", owner)
         self.assertNotIn("generate_requirement_contract", owner)
+        self.assertNotIn("UNFINISHED_TERMINATIONS", owner)
+        self.assertIn("and not delivered", owner)
         self.assertNotIn("tool_choice_queue", owner)
         self.assertNotIn("PatchReviewer", owner)
         self.assertNotIn("def _resolve_session_task_continuity", runtime)
+        self.assertIn("turn_is_delivered(reason)", runtime)
         self.assertEqual(runtime.count("self._task_continuity."), 3)
 
     def test_runtime_orchestrator_stays_within_line_budget(self) -> None:

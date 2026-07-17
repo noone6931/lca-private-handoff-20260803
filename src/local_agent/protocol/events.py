@@ -38,6 +38,10 @@ EVENT_TYPES = {
 }
 
 
+def turn_is_delivered(reason: str) -> bool:
+    return reason == "final"
+
+
 @dataclass(frozen=True)
 class AgentEvent:
     event_id: str
@@ -144,7 +148,7 @@ class EventEmitter:
         return dict(self._turn_finished_payload) if self._turn_finished_payload is not None else None
 
     def finish_turn(self, *, content: str, reason: str, run_summary: dict[str, Any]) -> AgentEvent:
-        if reason == "final":
+        if turn_is_delivered(reason):
             status = "completed"
         elif reason == "interrupt":
             status = "interrupted"
@@ -158,7 +162,7 @@ class EventEmitter:
                 "content": content,
                 "reason": reason,
                 "status": status,
-                "delivered": reason == "final",
+                "delivered": turn_is_delivered(reason),
                 "run_summary": run_summary,
             },
         )

@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 CONTINUITY_EVENT = "session_task_continuity"
 CONTINUITY_VERSION = 1
 MAX_PENDING_WRITES = 32
-UNFINISHED_TERMINATIONS = frozenset({"interrupt", "budget", "length", "incomplete_delivery"})
+MAX_ORIGIN_TERMINATION_CHARS = 128
 
 
 @dataclass(frozen=True)
@@ -88,7 +88,7 @@ class SessionTaskContinuityLifecycle:
         )
         return False
 
-    def finish(self, termination_reason: str) -> dict[str, object]:
+    def finish(self, termination_reason: str, *, delivered: bool) -> dict[str, object]:
         runtime = self._runtime
         plan = runtime._run.verification_plan
         contract = runtime._run.requirement_contract
@@ -102,7 +102,7 @@ class SessionTaskContinuityLifecycle:
         if (
             contract is not None
             and contract.task_kind == "code-implementation"
-            and termination_reason in UNFINISHED_TERMINATIONS
+            and not delivered
             and not plan.continuation_invalid_reason
         ):
             writes = self._validated_pending_writes(plan)
@@ -185,7 +185,7 @@ def _parse_pending(payload: dict[str, Any] | None) -> PendingTaskContinuation | 
     termination = payload.get("termination_reason")
     head_revision = payload.get("head_revision")
     raw_writes = payload.get("writes")
-    if not isinstance(run_id, str) or not run_id or termination not in UNFINISHED_TERMINATIONS:
+    if not isinstance(run_id, str) or not run_id or not isinstance(termination, str) or not termination or len(termination) > MAX_ORIGIN_TERMINATION_CHARS:
         return None
     if head_revision is not None and not isinstance(head_revision, str):
         return None

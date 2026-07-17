@@ -14,6 +14,7 @@ from .protocol.events import EventEmitter
 
 class _SessionWriter(Protocol):
     def append(self, event: str, payload: dict[str, Any]) -> None: ...
+    def load_event_payloads(self, event: str, *, max_events: int = 0) -> list[dict[str, Any]]: ...
 
 
 class RuntimeCommandPort(Protocol):
@@ -22,6 +23,7 @@ class RuntimeCommandPort(Protocol):
     _session: _SessionWriter
 
     def _run_prompt(self, prompt: str) -> str: ...
+    def _finish_run_summary(self, reason: str) -> dict[str, Any]: ...
     def approval_summary(self) -> str: ...
     def status_summary(self) -> str: ...
     def tool_summary(self) -> str: ...
@@ -48,8 +50,6 @@ class CommandDispatcher:
         return self._runtime._is_running
 
     def run(self, prompt: str) -> str:
-        """Compatibility facade used by AgentRuntime.run()."""
-
         result = self.dispatch(new_command("SubmitPrompt", {"prompt": prompt}, session_id=self._session_id))
         if result.error_code == "interrupted":
             raise KeyboardInterrupt
@@ -68,10 +68,7 @@ class CommandDispatcher:
         self._events.begin_command(command.command_id)
         try:
             if command.type in UNSUPPORTED_COMMAND_TYPES:
-                self._events.emit(
-                    "ErrorEvent",
-                    {"kind": "unsupported_command", "command_type": command.type},
-                )
+                self._events.emit("ErrorEvent", {"kind": "unsupported_command", "command_type": command.type})
                 return self._error(
                     command,
                     "unsupported_command",
@@ -179,23 +176,30 @@ class CommandDispatcher:
     def _ensure_failed_turn(self, reason: str, content: str) -> None:
         if self._events.turn_finished_payload is not None:
             return
+        summary = self._runtime._last_run_summary
+        if self._events.run_summary_emitted and summary is not None:
+            finals = self._runtime._session.load_event_payloads("final", max_events=1)
+            reason = str(summary.get("termination_reason") or reason)
+            content = str(finals[-1]["content"]) if finals and "content" in finals[-1] else content
+            self._events.finish_turn(content=content, reason=reason, run_summary=summary)
+            return
         if reason == "interrupt":
             self._events.emit("ErrorEvent", {"kind": "interrupt", "message": content})
         self._ensure_terminal_turn(content, reason)
 
     def _ensure_terminal_turn(self, content: str, reason: str) -> None:
-        run_id = self._events.run_id
-        summary = {
-            "run_id": run_id,
-            "command_id": self._events.command_id,
-            "termination_reason": reason,
-        }
-        runtime = self._runtime
-        runtime._last_run_summary = summary
+        run_id, runtime = self._events.run_id, self._runtime
         runtime._session.append("final", {"content": content})
-        runtime._session.append("run_summary", summary)
-        if not self._events.run_summary_emitted:
-            self._events.emit("RunSummary", summary)
+        try:
+            summary = runtime._finish_run_summary(reason)
+        except Exception:  # noqa: BLE001 - terminal closure must survive a damaged Runtime summary path.
+            summary = runtime._last_run_summary
+            if not isinstance(summary, dict) or summary.get("run_id") != run_id:
+                summary = {"run_id": run_id, "command_id": self._events.command_id, "termination_reason": reason}
+                runtime._last_run_summary = summary
+            if not self._events.run_summary_emitted:
+                runtime._session.append("run_summary", summary)
+                self._events.emit("RunSummary", summary)
         self._events.finish_turn(content=content, reason=reason, run_summary=summary)
 
     def _error(
@@ -209,11 +213,6 @@ class CommandDispatcher:
         payload: dict[str, Any] | None = None,
     ) -> CommandResult:
         return CommandResult(
-            command_id=command.command_id,
-            session_id=self._session_id,
-            run_id=run_id,
-            status=status,
-            payload=payload or {},
-            error_code=code,
-            error_message=message,
+            command_id=command.command_id, session_id=self._session_id, run_id=run_id,
+            status=status, payload=payload or {}, error_code=code, error_message=message,
         )

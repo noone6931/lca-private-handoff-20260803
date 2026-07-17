@@ -72,6 +72,7 @@ from .protocol.events import EventEmitter
 from .protocol.events import EventSink
 from .protocol.events import NullEventSink
 from .protocol.events import StderrEventSink
+from .protocol.events import turn_is_delivered
 from .protocol.interactions import InteractionHandler
 from .session.jsonl_store import JsonlSessionStore
 from .session_task_continuity import SessionTaskContinuityLifecycle
@@ -1055,7 +1056,7 @@ class AgentRuntime:
             payload["business_acceptance"] = self._run.verification_plan.business_acceptance_summary()
             if self._run.verification_test_plan is not None:
                 payload["test_plan"] = self._run.verification_test_plan.snapshot()
-        payload["task_continuity"] = self._task_continuity.finish(reason)
+        payload["task_continuity"] = self._task_continuity.finish(reason, delivered=turn_is_delivered(reason))
         payload["session_evidence"] = {
             **dict(payload.get("session_evidence") or {}),
             "cache_entries": self._session_evidence.snapshot().get("entries", 0),

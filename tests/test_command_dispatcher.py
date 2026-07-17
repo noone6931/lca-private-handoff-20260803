@@ -17,6 +17,17 @@ class _Session:
     def append(self, event: str, payload: dict) -> None:
         self.records.append((event, payload))
 
+    def load_event_payloads(self, event: str, *, max_events: int = 0) -> list[dict]:
+        payloads = [payload for name, payload in self.records if name == event]
+        return payloads[-max_events:] if max_events > 0 else payloads
+
+
+class _FailFirstRunSummarySink(ListEventSink):
+    def emit(self, event) -> None:
+        self.events.append(event)
+        if event.type == "RunSummary" and sum(item.type == "RunSummary" for item in self.events) == 1:
+            raise OSError("simulated RunSummary sink failure after observe")
+
 
 class _Runtime:
     def __init__(self, events: EventEmitter, mode: str = "final") -> None:
@@ -169,6 +180,23 @@ class CommandDispatcherTests(unittest.TestCase):
         self.assertEqual(result.error_code, "command_execution_error")
         self.assertEqual(result.payload["status"], "error")
         self.assertTrue(all(event.command_id == command.command_id for event in sink.events))
+        self.assertEqual([event.type for event in sink.events].count("TurnFinished"), 1)
+
+    def test_run_summary_sink_failure_reuses_committed_terminal_state_once(self) -> None:
+        sink = _FailFirstRunSummarySink()
+        events = EventEmitter(session_id="session-1", sink=sink)
+        runtime = _Runtime(events)
+        dispatcher = CommandDispatcher(runtime, events, "session-1")
+
+        result = dispatcher.dispatch(new_command("SubmitPrompt", {"prompt": "hello"}))
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.error_code, "command_execution_error")
+        self.assertEqual(result.payload["reason"], "final")
+        self.assertTrue(result.payload["delivered"])
+        self.assertEqual([name for name, _ in runtime._session.records].count("final"), 1)
+        self.assertEqual([name for name, _ in runtime._session.records].count("run_summary"), 1)
+        self.assertEqual([event.type for event in sink.events].count("RunSummary"), 1)
         self.assertEqual([event.type for event in sink.events].count("TurnFinished"), 1)
 
     def test_return_without_terminal_event_fails_closed(self) -> None:
