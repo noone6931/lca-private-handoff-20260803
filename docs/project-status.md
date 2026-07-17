@@ -54,6 +54,8 @@ T-227/T-228 已完成。真实 jdtls 在缺 `java.util.List` import 的 Java fix
 
 T-229 已完成 T-228 stable 的普通 Coding 黑盒批次，未修改 LCA。Python 单文件边界修复自然完成 read/patch/unittest/diff，7 次 LLM、10 次工具调用、零错误；Java/Maven 多文件行为与测试变更完成 8/8 tests，3 次 provider schema violation 均在执行前被抑制；Node 同一 session 两轮先实现 `LAST, First`，再按最新要求改为 `First LAST`，最终测试和 diff 只反映第二轮条件。三例均为 `coding`、subagent/heavy reviewer/finalization hooks 为零，独立测试 exit 0，Turn/RunSummary correlation 正确。Node 两轮存在冗余或错误 todo 调用，Java 有轻微超范围防御性改动，均归入 provider/model 可靠性观察，不据孤立样本修改 Harness。delivery report 中 `business_acceptance_unverified: 7/7` 来自固定的 3 项 acceptance、2 项 evidence、2 项 verification contract；它有意与 4 项机器 delivery checks 分账，不是假失败，也不应被工具代理事实改写为已验收。
 
+T-230 已完成 T-228 stable 的 dirty-worktree/State 黑盒价值门槛，未修改 LCA。Case A 预置 unrelated tracked WIP、untracked note 和 Python 目标 bug；Agent 只 patch 目标文件，`git_diff` 正确列出 pre-existing `settings.py`/untracked 与 this-session `pricing.py`，旧改动全部保留。模型随后 8 次误用受限 `run_tests` 命令，Runtime 以 `incomplete_delivery`/`delivered=false` 诚实停止；独立 unittest exit 0，因此归为 model execution INCONCLUSIVE，不是 State 缺陷。Case B 同一文件同时含用户既有 `DEFAULT_PREFIX="Mx"` 和本轮函数修复，mixed attribution 正确，focused test 与独立 test 均通过。Case C 在 Agent read 后由外部进程修改并提交同一文件；旧 patch 以 expected/current tag 不同 fail closed，Agent 重读新 tag 后只改目标函数，外部 `MIN_VALUE` commit 保留，两个 test 命令和独立 test 均通过。未发现 WIP 覆盖、错误归属、stale write 越界、假交付或 session identity 缺陷；不预设需要完整 Codex worktree manager。
+
 T-204 已完成 S5 readiness closure，结论为 typed `BLOCKED`，未选择实施切片、未进入阶段 B。新增 `zqylfinancebasemasterfccb090b` 与 `zqylcrclfinancemaster7b875cd3c` 后已证实：直接保理底层值为 `FACTOR_TYPE=4`，`104` 是云信融资 10 与直接保理 4 的组合码；放款完成是 `T_FINANCE_PROJECT.APPLY_STATUS=60`；云信 `XF0003` 显示为“拓展服务费”，计划费用经 `findDetailList` 映射到旧名 `expectApplySponsorTaxFee`，而 `YJ0001` 保荐商佣金是独立费用项。放款完成链路会向 payment 推送实际费用和部分主体/日期，但 payment 现有结构化字段与 JSON 参数仍不能形成完整待制单数据源，`BusinessPayer.finalAmount` 还是多费用合计而非 `XF0003` 单项。五个候选均缺至少一项 Owner、完整 data contract、write target、test entry 或 rollback boundary，因此未修改业务原目录。下一步不再扩展 LCA gate，而是补齐目标业务契约后重新进入 S5。项目状态暂只维护 Markdown，不同步 Excel。
 
 T-205 已完成最小业务架构契约，见 `docs/extension-service-fee-s5-contract.md`。首个公平写路径固定为 `S5-1：放款后拓展服务费候选快照 + 待制单后端列表`：finance-base 在既有状态消息中增加通用单项费用与缺失订单字段，zqylpayment 以 `XF0003.chargeRealValue` 幂等写入本地候选快照并提供分页查询；预计值和 payer 多费用汇总均禁止回退使用。mpspay、制单事务、Word、回退和导出后置。该契约关闭 Owner、data contract、write target 与 rollback 设计缺口；实际测试依赖公司私有 `com.yljr:parent:0.0.5-SNAPSHOT`，对应离线制品已在 T-206 补齐并进入隔离 Maven preflight。
@@ -455,6 +457,7 @@ T-213/T-214 已完成 S5-1 的 Codex 直接隔离交付。T-213 在上述 clean 
 | T-227 | 真实 jdtls Code Action Benefit Gate | 已完成；收益 PASS，发现外部 metadata 副作用 | P15/Product Validation | 用 immutable T-226 stable 验证真实 Java Code Action 是否能接入现有 patch/test/diff，而不是继续扩 semantic tool。 | 缺 `java.util.List` import 样本完成 diagnostics、list/preview、parent reread、apply_patch、Maven test exit 0 与 diff；同时 jdtls 默认在源码根生成 `.classpath/.project/.settings`。无 command 或 `workspace/applyEdit` 执行，问题归于外部 server process 配置。 |
 | T-228 | JDTLS Read-tier Metadata Containment | 已完成并发布 stable | P15/LSP Process Boundary | 在不伪装 OS sandbox、不清理外部文件、不增加 watcher/gate 的前提下，阻止 jdtls 把 Eclipse metadata 写进源码根。 | commit `24d6daa`；jdtls default/override 都通过 child-only typed `JAVA_TOOL_OPTIONS` 追加 metadata property=false，parent env 不变，non-jdtls 不变，完整 config 参与 client cache identity。1100/62/21、14/14 process matrix、真实 jdtls micro 与 clean detached publish gate 通过；stable `20260717T081918Z-24d6daa4f827-c67e5ebe043c`。小牙 provider 复放因授权未执行记 INCONCLUSIVE。 |
 | T-229 | Ordinary Coding Cross-language Stable Batch | 已完成；3/3 PASS，无 Harness 修改 | P16/Product Validation | P15 收口后先验证普通 coding 是否能稳定完成自然读改测 diff、跨文件测试更新和同 session 最新需求覆盖，不因缺少新功能就直接扩 Runtime。 | Python 7 LLM/10 tools/0 errors；Java 8/8 tests，3 次 malformed schema 均安全抑制；Node 两轮同 session 最终按 `First LAST` 交付并测试通过。三例独立 test/diff、Turn correlation 与 stable identity 通过；todo 噪声和轻微 scope expansion 只记 provider/model 观察。`7/7 unverified` 是业务 contract 与机器 delivery checks 的既有分账，不新增 gate。 |
+| T-230 | Dirty Worktree / State Benefit Gate | 已完成；State hard invariants 3/3 PASS | P16/Product Validation | 在实现完整 worktree manager 前，验证现有 run-start baseline、diff attribution、content tag 和 session state 是否已覆盖真实 WIP 风险。 | unrelated tracked/untracked WIP 保留且 attribution 分离；同文件用户改动与本轮 patch 标记 mixed；外部 commit 使旧 tag fail closed，重读后只写新 baseline。Case A 模型未形成合法 test command，Runtime 诚实未交付，独立 test 通过；不改 Harness。 |
 
 ## 风险清单
 
@@ -618,7 +621,7 @@ T-213/T-214 已完成 S5-1 的 Codex 直接隔离交付。T-213 在上述 clean 
 | 测试 | 分层通过 | P5 收口时 90 个 unittest；当前 T-228 stable 为 1100/62/21，另有 14/14 process matrix；fresh S4 hard invariant、T-215 profile、T-217 execution-policy、T-218 architecture boundary、T-219 command/event lifecycle、T-220 streaming、T-221 S6-S10、T-222 Explore Subagent 与 T-224/T-226 semantic preview 回归通过。T-227 证明真实 jdtls Code Action 收益，T-228 真实 server micro 证明 Eclipse metadata containment；T-229 的 Python/Java/Node 普通 coding 3/3 独立 test/diff 通过。 |
 | 日用入口 | 通过 | README 已补只读分析和小改任务命令模板。 |
 | 开放风险 | 可接受 | shell 仍非沙箱、prompt injection 仍需靠审批和封闭 VM；provider/model 专用 tokenizer、输出 reserve、managed skills、完整 reviewer 和完整 OMP ToolChoiceQueue 继续后置评估。 |
-| 下一阶段 | P16 通用 Coding 稳定性与 Runtime/State 价值门槛 | T-229 已证明 clean fixture 的跨语言普通 coding 主链可用。下一批先用临时 dirty worktree 验证 pre-existing/mixed diff attribution、外部并发变更和最新 session state；只有跨场景 Runtime 缺陷才开发。interrupt/cancel 继续受 R-036 约束，未出现真实用户需求前不搬完整 async bus。 |
+| 下一阶段 | P16 同步 Interrupt 恢复价值门槛 | T-229/T-230 已证明 clean/dirty ordinary coding、mixed attribution 和 stale-safe patch 可用。下一批先黑盒验证 approval 等待和长测试期间的 Ctrl-C、子进程回收、单一 Turn 终态与 session continue；只有现有同步边界失败才评估最小修复，不预设完整 async bus。 |
 
 ## 推荐工作流
 
@@ -653,7 +656,7 @@ T-213/T-214 已完成 S5-1 的 Codex 直接隔离交付。T-213 在上述 clean 
 
 用户确认本文件后，建议按以下顺序继续：
 
-1. P15 semantic tools Phase 1 已收口，T-229 普通 coding 3/3 通过；冻结 auto-apply、第二 writer 和新的 LSP 特例，进入 P16 dirty-worktree/State 真实价值门槛。
+1. P15 semantic tools Phase 1 已收口，T-229/T-230 已证明普通 clean/dirty coding、mixed attribution 和 stale-safe patch；冻结 auto-apply、第二 writer 和新的 LSP 特例，继续 P16 同步 interrupt 恢复价值门槛。
 2. 保留 T-214 隔离 workspace 和完整 diff，是否写回原 finance-base/payment 由用户单独确认；不得把隔离交付描述成生产已上线。
 3. 若进入生产集成，先在 Oracle JDK 8u121 和真实 Oracle/MyBatis 环境验证 DDL、事务、唯一键并发与现有 MQ 回放，再应用到目标分支。
-4. P14 保留 Phase 1 default-off Explore，只有后续多个真实任务出现稳定收益时才重启 reviewer/implement 评估；下一批先黑盒验证 dirty worktree 的现有 baseline/attribution/stale-read 能力，再决定是否需要 State/Worktree 代码切片，不与完整 async bus、TUI、MCP 或 Browser 混做。
+4. P14 保留 Phase 1 default-off Explore，只有后续多个真实任务出现稳定收益时才重启 reviewer/implement 评估；下一批只验证现有同步 interrupt/child-process/session recovery，不与完整 async bus、TUI、MCP 或 Browser 混做。

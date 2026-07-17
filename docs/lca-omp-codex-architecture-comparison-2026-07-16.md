@@ -343,7 +343,8 @@ CLI / Terminal / Future TUI / Remote
 | 已完成 | T-227 真实 jdtls Code Action Benefit Gate | 缺 List import 的 Java fixture 完成 list -> preview -> parent reread -> existing patch -> Maven exit 0 -> diff；同时发现 jdtls 默认生成 Eclipse metadata，未误归因为 WorkspaceEdit/command |
 | 已完成 | T-228 JDTLS Read-tier Metadata Containment | commit `24d6daa`；LSP process/config Owner 通过 child-only property=false 收住 `.classpath/.project/.settings`，完整 server config 参与 client cache identity。1100/62/21、14/14 matrix 与真实 jdtls micro 通过；不声称 OS sandbox、不清理构建缓存、不削减 LSP。stable `20260717T081918Z-24d6daa4f827-c67e5ebe043c` |
 | 已完成 | T-229 Ordinary Coding Cross-language Stable Batch | T-228 stable 在 Python、Java/Maven、Node 同 session 需求变更三类 clean fixture 上 3/3 完成自然 read/patch/test/diff；独立测试与 lifecycle 通过。provider schema/todo 噪声安全失败或恢复，不据孤立样本新增 Queue/gate。`7/7 unverified` 保留为业务 contract 与机器 delivery checks 的有意分账 |
-| P1 | T-230 Dirty Worktree / State Benefit Gate | 先用临时 fixture 验证 pre-existing、mixed same-file、untracked 和外部并发变更的归属与 stale-safe 行为；只在跨场景 Runtime 缺陷成立时实现，不预设需要完整 Codex worktree manager |
+| 已完成 | T-230 Dirty Worktree / State Benefit Gate | unrelated tracked/untracked WIP 保留并与本轮 patch 分账；same-file mixed attribution 正确；外部 commit 使旧 tag fail closed，重读后只修改新 baseline。Case A 模型 test command 失败被诚实标记未交付；无通用 State 缺陷，不搬完整 Codex worktree manager |
+| P1 | T-231 Synchronous Interrupt Recovery Benefit Gate | 先验证 approval 等待和长测试期间 Ctrl-C、child process 回收、单一 Turn 终态与 session continue；只有同步边界失败才修复，不预设完整 async command bus |
 | P2 | reviewer/implement subagent 扩展 | 仅在后续多个真实任务证明 Explore 有稳定收益后重启；写入隔离、冲突处理和审批路由必须先明确 |
 | P2 | LSP rename apply/code action、MCP、Browser | rename apply 需先有事务型多文件 writer；其余每项由真实任务收益驱动 |
 | P3 | fullscreen TUI / Remote | 协议和 streaming 稳定后实现 |

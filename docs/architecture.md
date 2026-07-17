@@ -217,6 +217,8 @@ T-227/T-228 完成真实收益与进程副作用闭环。真实 jdtls Code Actio
 
 T-229 用 T-228 stable 对普通 coding 主链做跨语言黑盒校验：Python 单文件修复、Java/Maven 多文件实现与测试、Node 同 session 需求变更均自然完成 read/patch/test/diff，并由独立命令确认退出码与最终 diff。Java 的 malformed provider schema 在 ToolRegistry 前被抑制，Node 的错误 todo 调用只形成可恢复 tool error；两者都没有越权、错误写入或假交付，因此不新增 provider 样本 guard。`VerificationPlan.business_acceptance` 的 7 项固定来自 code-implementation contract 的 3 项 acceptance、2 项 evidence 和 2 项 verification，继续保持 human/oracle `unverified`；Runtime 只把真实路径证据、当前净 diff、post-write test 和 deterministic reviewer 记为 delivery checks。该分层对齐 Codex 的 turn completion/task outcome 分离和 OMP 的工具事实生命周期，不应为了终端数字好看把代理事实提升为业务验收。
 
+T-230 随后验证当前 State/Worktree 最小边界，不先搬 Codex 的完整 worktree manager。run-start Git baseline 与 patch records 能把 unrelated dirty 文件和本轮修改分开；同一文件既有用户改动与本轮 patch 标记为 mixed；外部进程在 read 后修改并提交时，旧 content tag 先 fail closed，只有重新 `read_file` 取得新 tag 后才能写。第三类场景还证明外部 commit 成为新的 Git diff 基准，本轮 diff 只含 Agent patch。Case A 的模型连续生成不合法测试命令时，VerificationPlan 保持 test failed、Turn `delivered=false`，没有用独立可推导公式冒充测试事实。当前证据支持保留轻量 baseline/attribution/stale-safe 设计；是否增加 worktree 创建、隔离或管理 API，继续由真实并发/多任务需求驱动。
+
 ### T-192：Reviewer Role / Transport Ownership
 
 T-192 将 reviewer role rejection、transport projection 与 proposal/pending/requirement/source finding 语义放回 read-only reviewer 和 transport Owner。它解决的是“建议/待确认/需求事实”被 reviewer 当成必须证明的现有实现，或 transport projection 丢失证据边界的问题。Runtime 只负责调用 facade 与记录 RunSummary，不在主循环识别业务词。
