@@ -240,6 +240,55 @@ class SessionTaskContinuityTests(unittest.TestCase):
             self.assertFalse(lifecycle.revalidate(runtime._run.verification_plan))
             self.assertEqual(runtime._run.verification_plan.coverage(delivery_only=True)["blocked"], 4)
 
+    def test_reinterrupted_continuation_preserves_carried_and_current_writes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            self._init_git(workspace)
+            (workspace / "first.py").write_text("FIRST = 1\n", encoding="utf-8")
+            (workspace / "second.py").write_text("SECOND = 1\n", encoding="utf-8")
+            self._git(workspace, "add", "first.py", "second.py")
+            self._git(workspace, "commit", "-m", "baseline")
+            state_dir = workspace / ".state"
+            store = JsonlSessionStore(workspace, state_dir=state_dir)
+            runtime = self._runtime(workspace, state_dir, store)
+            lifecycle = SessionTaskContinuityLifecycle(runtime)
+
+            self._apply_patch(runtime, "first.py", "FIRST = 1\n", "FIRST = 2\n")
+            self._begin_code_run(runtime, workspace, "run-1")
+            runtime._run.tool_choice_results.append(self._write_result("first.py"))
+            lifecycle.finish("interrupt")
+
+            contract, pending = lifecycle.resolve(
+                generate_requirement_contract("Continue after the interruption."),
+                capture_git_baseline(workspace),
+            )
+            runtime._run.begin(
+                run_id="run-2",
+                started_monotonic=2.0,
+                deadline_monotonic=None,
+                run_start_index=0,
+                git_baseline=capture_git_baseline(workspace),
+                prompt="Continue after the interruption.",
+                requirement_contract=contract,
+                requirement_contract_context="",
+                design_evidence_roots=(),
+                pending_task=pending,
+            )
+            self._apply_patch(runtime, "first.py", "FIRST = 2\n", "FIRST = 3\n")
+            runtime._run.tool_choice_results.append(self._write_result("first.py"))
+            self._apply_patch(runtime, "second.py", "SECOND = 1\n", "SECOND = 2\n")
+            runtime._run.tool_choice_results.append(self._write_result("second.py"))
+
+            summary = lifecycle.finish("interrupt")
+            _, carried = lifecycle.resolve(
+                generate_requirement_contract("Continue after the interruption."),
+                capture_git_baseline(workspace),
+            )
+
+        self.assertEqual(summary["status"], "pending")
+        self.assertIsNotNone(carried)
+        self.assertEqual(carried.write_paths, ("first.py", "second.py"))
+
     def test_continuation_requires_current_read_test_diff_and_review(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp).resolve()
@@ -354,6 +403,9 @@ class SessionTaskContinuityTests(unittest.TestCase):
         target.write_text(before, encoding="utf-8")
         self._git(runtime._workspace_context.primary, "add", path)
         self._git(runtime._workspace_context.primary, "commit", "-m", "baseline")
+        self._apply_patch(runtime, path, before, after)
+
+    def _apply_patch(self, runtime: SimpleNamespace, path: str, before: str, after: str) -> None:
         result = patch_file(
             {
                 "path": path,

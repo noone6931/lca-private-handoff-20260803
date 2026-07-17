@@ -129,7 +129,11 @@ class SessionTaskContinuityLifecycle:
             current_baseline = capture_git_baseline(runtime._workspace_context.primary)
             if _head_revision(runtime._run.git_baseline) != _head_revision(current_baseline):
                 return ()
-            return _writes_from_patch_records(runtime, current_paths)
+            pending = plan.pending_task_continuation
+            if pending is not None and pending.head_revision != _head_revision(current_baseline):
+                return ()
+            paths = tuple(dict.fromkeys((*getattr(pending, "write_paths", ()), *current_paths)))
+            return _writes_from_patch_records(runtime, paths)
         pending = plan.pending_task_continuation
         if pending is None:
             return ()
@@ -149,11 +153,7 @@ class SessionTaskContinuityLifecycle:
     def _write_is_fresh(self, write: PendingWrite) -> bool:
         runtime = self._runtime
         try:
-            path = resolve_workspace_path(
-                runtime._workspace_context.primary,
-                write.path,
-                runtime._workspace_context.additional_roots,
-            )
+            path = resolve_workspace_path(runtime._workspace_context.primary, write.path, runtime._workspace_context.additional_roots)
             return path.is_file() and _sha256(path) == write.content_sha256
         except (OSError, PatchError):
             return False
