@@ -177,6 +177,8 @@ class LspCodeActionPreviewTests(unittest.TestCase):
             )
             self.assertFalse(result.is_error, result.content)
             self.assertIn("Semantic code action preview", result.content)
+            self.assertIn("LCA did not apply a WorkspaceEdit or execute a command", result.content)
+            self.assertNotIn("no files were written", result.content)
             self.assertIn("+fresh = 1", result.content)
             self.assertEqual(target.read_bytes(), before)
             self.assertFalse((workspace / ".local-agent").exists())

@@ -118,7 +118,7 @@ def _lsp_rename_preview(arguments: dict[str, Any], context: ToolContext) -> Tool
     )
     display_root = display_workspace_path(context.workspace, project_root, context.allowed_dirs)
     lines = [
-        "Semantic rename preview (read-only; no files were written)",
+        "Semantic rename preview (in-memory/read-only; LCA did not apply a WorkspaceEdit or execute a command)",
         f"Server: {selected.name}",
         f"Project root: {display_root}",
         f"Target occurrences on line: {match_count}",

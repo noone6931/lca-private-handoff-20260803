@@ -126,7 +126,9 @@ class LspRenamePreviewToolTests(unittest.TestCase):
                 client=_RenameClient(response),
             )
             self.assertFalse(result.is_error, result.content)
-            self.assertIn("Semantic rename preview (read-only", result.content)
+            self.assertIn("Semantic rename preview (in-memory/read-only", result.content)
+            self.assertIn("LCA did not apply a WorkspaceEdit or execute a command", result.content)
+            self.assertNotIn("no files were written", result.content)
             self.assertIn("Files: 2; edits: 2", result.content)
             self.assertIn("apply_patch separately", result.content)
             self.assertEqual(result.metadata["preview"], True)

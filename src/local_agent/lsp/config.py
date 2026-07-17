@@ -7,6 +7,14 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
+JDTLS_METADATA_CONTAINMENT_OPTION = "-Djava.import.generatesMetadataFilesAtProjectRoot=false"
+
+
+@dataclass(frozen=True)
+class LspProcessEnvironment:
+    append: tuple[tuple[str, str], ...] = ()
+
+
 @dataclass(frozen=True)
 class LspServerConfig:
     name: str
@@ -14,6 +22,17 @@ class LspServerConfig:
     file_types: tuple[str, ...]
     root_markers: tuple[str, ...]
     language_id: str
+    process_environment: LspProcessEnvironment = LspProcessEnvironment()
+
+    def __post_init__(self) -> None:
+        containment = ("JAVA_TOOL_OPTIONS", JDTLS_METADATA_CONTAINMENT_OPTION)
+        append = self.process_environment.append
+        if self.name == "jdtls" and (not append or append[-1] != containment):
+            object.__setattr__(
+                self,
+                "process_environment",
+                LspProcessEnvironment(append=(*append, containment)),
+            )
 
 
 LSP_MODE_ENV = "AGENT_LSP_MODE"
@@ -104,6 +123,7 @@ def resolved_server_configs(workspace: Path) -> list[LspServerConfig]:
                 file_types=server.file_types,
                 root_markers=server.root_markers,
                 language_id=server.language_id,
+                process_environment=server.process_environment,
             )
         )
     return configs

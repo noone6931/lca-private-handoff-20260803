@@ -347,7 +347,7 @@ def _render_action_preview(
     )
     display_root = display_workspace_path(context.workspace, project_root, context.allowed_dirs)
     lines = [
-        "Semantic code action preview (read-only; no command ran and no files were written)",
+        "Semantic code action preview (in-memory/read-only; LCA did not apply a WorkspaceEdit or execute a command)",
         f"Server: {server_name}",
         f"Project root: {display_root}",
         f"Action: {action_index}: {action.title}",

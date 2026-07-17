@@ -372,6 +372,23 @@ class ArchitectureBoundaryTests(unittest.TestCase):
         self.assertNotIn("write_text", owner)
         self.assertEqual(owner.count("build_workspace_edit_preview("), 1)
 
+    def test_jdtls_metadata_containment_stays_in_config_and_process_launch_owners(self) -> None:
+        config = (ROOT / "src/local_agent/lsp/config.py").read_text(encoding="utf-8")
+        client = (ROOT / "src/local_agent/lsp/client.py").read_text(encoding="utf-8")
+        rename = (ROOT / "src/local_agent/tools/lsp_rename.py").read_text(encoding="utf-8")
+        code_action = (ROOT / "src/local_agent/tools/lsp_code_action.py").read_text(encoding="utf-8")
+
+        self.assertIn("java.import.generatesMetadataFilesAtProjectRoot=false", config)
+        self.assertNotIn("java.import.generatesMetadataFilesAtProjectRoot", client)
+        self.assertIn("env=_child_process_environment(server)", client)
+        self.assertNotIn("JAVA_TOOL_OPTIONS", rename)
+        self.assertNotIn("JAVA_TOOL_OPTIONS", code_action)
+        self.assertNotIn("process_environment", rename)
+        self.assertNotIn("process_environment", code_action)
+        self.assertNotIn("no files were written", rename)
+        self.assertNotIn("no files were written", code_action)
+        self.assertNotIn("LspServerConfig", ROOT.joinpath("src/local_agent/agent.py").read_text(encoding="utf-8"))
+
     def test_runtime_strategy_owners_do_not_reintroduce_business_keyword_guards(self) -> None:
         strategy_files = (
             ROOT / "src/local_agent/task_contract.py",

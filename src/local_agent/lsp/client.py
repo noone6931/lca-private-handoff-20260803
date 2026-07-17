@@ -9,7 +9,7 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 from urllib.parse import unquote, urlparse
 
 from local_agent.patch.anchored import display_workspace_path
@@ -62,6 +62,17 @@ class LspClientError(RuntimeError):
     pass
 
 
+def _child_process_environment(
+    server: LspServerConfig,
+    parent_environment: Mapping[str, str] | None = None,
+) -> dict[str, str]:
+    child_environment = dict(os.environ if parent_environment is None else parent_environment)
+    for name, value in server.process_environment.append:
+        inherited = child_environment.get(name)
+        child_environment[name] = f"{inherited} {value}" if inherited else value
+    return child_environment
+
+
 class StdioLspClient:
     def __init__(self, server: LspServerConfig, workspace: Path):
         self.server = server
@@ -80,6 +91,7 @@ class StdioLspClient:
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             text=False,
+            env=_child_process_environment(server),
         )
         self._reader = threading.Thread(target=self._reader_loop, name=f"lsp-reader-{server.name}", daemon=True)
         self._reader.start()
@@ -430,7 +442,7 @@ class StdioLspClient:
         self._send(payload)
 
 
-_CLIENTS: dict[tuple[str, str, tuple[str, ...]], StdioLspClient] = {}
+_CLIENTS: dict[tuple[str, LspServerConfig], StdioLspClient] = {}
 
 
 def _workspace_folders(workspace: Path) -> list[dict[str, str]]:
@@ -467,7 +479,7 @@ def _close_pipe(pipe: Any) -> None:
 
 
 def get_client(server: LspServerConfig, workspace: Path) -> StdioLspClient:
-    key = (str(workspace), server.name, server.command)
+    key = (str(workspace), server)
     client = _CLIENTS.get(key)
     if client is not None and client.alive():
         return client
