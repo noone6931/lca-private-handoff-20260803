@@ -17,10 +17,10 @@ python3 scripts/sync_project_excel.py
 | 字段 | 当前值 | 说明 |
 |---|---|---|
 | 最终目标 | 个人本地编程助手 Agent | 本地优先、封闭 VM 可用、只访问指定 AI API，能读代码、搜代码、改代码、跑测试、生成 diff、沉淀项目记忆。 |
-| 当前阶段 | P16 通用 Coding 稳定性与 Runtime/State 价值门槛 | 当前 stable 为 T-228 `20260717T081918Z-24d6daa4f827-c67e5ebe043c`。T-229 clean coding 与 T-230 dirty State 门槛均通过；P14 扩展和 P15 auto-apply 继续冻结，下一步只验证同步 interrupt 恢复。 |
+| 当前阶段 | P16 通用 Coding 稳定性与 Runtime/State 价值门槛 | 当前 stable 为 T-232 `20260717T111651Z-b30240a91398-5bf520393764`。T-229 clean coding、T-230 dirty State 与 T-231/T-232 同步 interrupt continuation 均通过；P14 扩展和 P15 auto-apply 继续冻结。 |
 | 推荐入口 | `./agent "阅读当前项目"` | 自动设置 `PYTHONPATH=src`，默认当前目录为 workspace。 |
 | Token 配置 | 环境变量 / `--env-file` / `.env` | 优先级为真实环境变量、显式 env-file、用户级 `${AGENT_CONFIG_DIR:-~/.config/local-coding-agent}/.env`、workspace `.env`；stable snapshot 不携带密钥。 |
-| 测试数 | T-228 stable 1100/62/21 | release gate 在 Python 3.14 下通过 1100 unittest、compileall、diff-check；62 benchmark、21 architecture 与 14/14 process matrix 通过。真实 jdtls micro 证明 Eclipse metadata containment；provider 复放因授权未执行记 INCONCLUSIVE。Excel 按用户要求不生成。 |
+| 测试数 | T-232 stable 1109/62/22 | release gate 在 Python 3.14 下通过 1109 unittest、compileall、diff-check；62 benchmark、22 architecture 与独立 session-continuity matrix 通过。Excel 按用户要求不生成。 |
 | 三方架构对照 | 已完成 2026-07-16 基线 | 见 `docs/lca-omp-codex-architecture-comparison-2026-07-16.md`；目标修正为 OMP/Codex 级通用底座 + LCA 企业工作流，不以完整复制 OMP platform 为 KPI。 |
 | 默认 budget_seconds | 600 | 单次任务默认 10 分钟墙钟预算；`--budget-seconds 0` 可关闭。 |
 | 默认 max_steps | 0 | 表示不限步；仅在用户显式设置时作为防失控保险丝。 |
@@ -35,7 +35,7 @@ python3 scripts/sync_project_excel.py
 | 默认工作流落地 | 已完成 MVP 版 | system prompt + tool descriptions + runtime workflow reminder 已落地，用户不需要每次手写工具顺序。 |
 | LSP / Light fallback | 已完成 MVP 版 | `lsp_symbols` / `lsp_workspace_symbols` / `lsp_document_symbols` / `lsp_definition` / `lsp_references` / `lsp_diagnostics` / `lsp_status`，覆盖 Python、Java、JavaScript、TypeScript、Vue；默认可用则外部 LSP，不可用则 light fallback。 |
 | Multi-root workspace | 已完成 MVP 版 | `--allow-dir` / `AGENT_ALLOWED_DIRS` 支持显式授权额外目录给文件、搜索、LSP、patch 工具；system prompt 和 `list_files`/path-not-found 等工具观察会列出 primary workspace 和 allowed dirs；需求/文档类任务会先用 soft tool requirement 要求读取 allowed-dir 文档；shell/git/显式项目 memory/skills 仍锚定 `--cwd`，session/todo/patch logs 和默认 consolidation memory 走 state dir。 |
-| Stable / Dev release channels | 已完成 MVP 版 | `lca` 指向已验证的不可变 source snapshot，`lca-dev` 指向当前源码；当前 stable 为 T-228 `20260717T081918Z-24d6daa4f827-c67e5ebe043c`，revision `24d6daa4f827e777dcb0b249ab3c066b0e9facb3`，digest `c67e5ebe043c8a52fa50c38fabb1b0cec82c55f6556b5b0361b014ce1c65524c`。`lca-release publish` 先跑离线 gate 再原子 promote，失败保留旧 stable。 |
+| Stable / Dev release channels | 已完成 MVP 版 | `lca` 指向已验证的不可变 source snapshot，`lca-dev` 指向当前源码；当前 stable 为 T-232 `20260717T111651Z-b30240a91398-5bf520393764`，revision `b30240a91398db707b513c54db50eef65cffbef7`，digest `5bf5203937646ae6a2791a7fe820972b88312139c95647f8fc436802674be7af`。`lca-release publish` 先跑离线 gate 再原子 promote，失败保留旧 stable。 |
 | Workflow Profiles | 已完成 Phase 1 | `auto` 依据 typed `RequirementContract` 解析 `coding`、`enterprise-evidence`、`readiness-audit`；缺 contract 时 optional heavy hooks 全关闭。 | profile 不改变 task kind、tool schema、approval 或 workspace；不强制 `apply_patch`，通过 Session、`ContextUpdated`、RunSummary 和 `/status` 审计。 |
 | Path-scoped rules | 已完成 MVP 版 | 每个 canonical workspace root 可定义 `.local-agent/rules/*.md`；每轮只注入轻量 metadata，用户或工具路径命中时才注入对应规则正文，规则不改变工具权限。 |
 | Offline benchmark / eval | 已完成 MVP 版 | `benchmarks/tasks` 的隔离 fixture 默认使用 deterministic fake provider 跑真实 Runtime，并输出 JSON/Markdown 结果；`--live` 才显式使用外部 provider。 |
@@ -75,7 +75,7 @@ python3 scripts/sync_project_excel.py
 | P13 | Codex-first Product Runtime | typed ExecutionPolicy、普通 coding 可靠性、streaming/command dispatcher、真实回归 | 已完成阶段性 MVP | 100% | T-218~T-220 已发布；T-221 S6-S10 hard safety、连续性、权限、需求变更和 delivery audit 通过。 |
 | P14 | Explicit Subagent Capability | 独立上下文、预算、只读工具集、typed yield | Phase 1 已完成，扩展暂停 | 45% | T-223 小 fixture PASS，但真实三仓 enabled/default-off 都未形成完整覆盖；保留 default-off Explore，不并发、不写入、不扩 reviewer/implement。 |
 | P15 | Semantic Coding Tools | LSP rename preview、Code Action preview 与外部 LSP 进程边界 | Phase 1 已收口 | 55% | T-224/T-226 preview 已发布，T-227/T-228 证明真实 Java 收益并收住 Eclipse metadata；auto-apply、第二 writer、更多 LSP 特例继续冻结。 |
-| P16 | Ordinary Coding Reliability / Runtime State | 跨语言自然读改测 diff、同 session 最新需求、dirty worktree、状态归属与同步中断恢复 | 进行中 | 45% | T-229 clean fixtures 和 T-230 dirty State hard invariants 均通过；下一步只验证 approval/long-test Ctrl-C、子进程回收和 session continue。 |
+| P16 | Ordinary Coding Reliability / Runtime State | 跨语言自然读改测 diff、同 session 最新需求、dirty worktree、状态归属与同步中断恢复 | 阶段性收口 | 70% | T-229/T-230 与 T-231/T-232 已覆盖 clean/dirty coding、stale write、同步中断、子进程回收和 typed session continuation；后续由新的跨场景失败证据决定下一窄批次。 |
 
 ## 已完成功能
 
@@ -347,6 +347,8 @@ python3 scripts/sync_project_excel.py
 | T-228 | P0 | P15 | JDTLS Read-tier Metadata Containment | 已完成并发布 stable | 大猛实现/R1，小红独立 review/门禁/发布 | 收住已证实的外部 server metadata 副作用，不引入 watcher、cleanup、sandbox 假声明或能力削减。 | commit `24d6daa`；child-only property=false、完整 config cache identity、truthful preview 文案。1100/62/21、14/14 matrix、真实 jdtls micro 与 clean publish gate 通过；stable `20260717T081918Z-24d6daa4f827-c67e5ebe043c`。 |
 | T-229 | P0 | P16 | Ordinary Coding Cross-language Stable Batch | 已完成；3/3 PASS，无 Harness 修改 | 小红独立 stable 黑盒 | 在扩 Runtime/State 前验证当前普通 coding 是否已经可用。 | Python 自然 patch/unittest/diff；Java 多文件实现+测试 8/8；Node 同 session 两轮以最新条件交付。独立 test/diff 和 lifecycle 通过；provider schema/todo 噪声未导致越权或错误交付。固定 `business_acceptance_unverified=7/7` 是 contract 与机器 delivery checks 的有意分账。 |
 | T-230 | P0 | P16 | Dirty Worktree / State Benefit Gate | 已完成；State hard invariants 3/3 PASS | 小红独立 stable 黑盒 | 验证现有 baseline/attribution/content tag 是否已覆盖真实 WIP 风险，再决定是否需要 Codex-style worktree 管理切片。 | unrelated tracked/untracked 保留并分账；same-file mixed attribution 正确；外部 commit 后旧 patch stale fail closed，重读后成功 patch/test。Case A 的 test command 模型失败被 Runtime 诚实标记未交付，独立 test 通过；无 Harness 修改。 |
+| T-231 | P0 | P16 | Synchronous Interrupt Recovery Benefit Gate | 已完成；interrupt safety PASS，typed continuation gap reproduced | 小红 stable 黑盒/架构归因 | 验证 approval 与长测试中断、child 回收、单一 lifecycle 和自然 session continue。 | 中断本身安全闭合；但上一轮已写入后中断，下一轮自然继续被 fresh classifier 判 `unclear`，丢失待完成 test/diff/review obligation并可误交付，形成通用 Runtime 缺陷。 |
+| T-232 | P0 | P16 | Typed Session Task Continuity | 已完成并发布 stable | 小红实现/R1、独立 immutable verifier、clean publish | 用 typed Session state 延续未完成 code verification，不下沉自然语言规则，不复用旧测试结果。 | commits `5128c9d` + `b30240a`；HEAD/path/patch-record/hash 全量验证，no-diff fail closed，4/4 current evidence 才关闭；R1 修复 repeated stop 只保留新路径的问题。1109/62/22 与独立 matrix 通过；stable `20260717T111651Z-b30240a91398-5bf520393764`。 |
 
 ## 风险与决策
 
@@ -491,12 +493,12 @@ python3 scripts/sync_project_excel.py
 
 | 项目 | 结论 | 依据 | 后续 |
 |---|---|---|---|
-| 阶段判断 | P13 已阶段性收口；P14/P15 停止横向扩展；P16 进行中 | T-229 clean coding 3/3；T-230 unrelated/mixed/external-change 三类 State hard invariant 通过，无 WIP 覆盖、stale 越界或假交付。 | 下一步只做同步 interrupt 恢复黑盒门槛；不因 Codex 有完整 worktree/async runtime 就机械搬运，业务生产集成继续分账。 |
+| 阶段判断 | P13/P16 已阶段性收口；P14/P15 停止横向扩展 | T-229 clean coding 3/3、T-230 State hard invariants 与 T-231/T-232 同步 interrupt continuation 均通过；无 WIP 覆盖、stale 越界、旧验证复用或假交付。 | 不因 Codex 有完整 worktree/async runtime 就机械搬运；等待下一组跨场景 Runtime 证据，业务生产集成继续分账。 |
 | 与 OMP 的主要差距 | P12 MVP 可用，但不等于完整追平 OMP | OMP 的完整 task/explore/advisor/subagent、AST/LSP write、MCP/Browser、完整 TUI 仍未搬入；LCA 的 document reviewer 与 WorkspaceEvidenceRootProjection 是本地增强。 | Subagent/Advisor、AST/LSP write、MCP、Browser、完整 TUI 继续按收益后置。 |
 | 已关闭风险 | T-203 已关闭 S4 安全失败不可行动风险 | T-192~T-196 live 不再释放不可靠 owner/资料结论；T-202 合并重复控制生命周期；T-203 将被拒候选转为完整 typed BLOCKED，三次 S4 hard/usability 均通过。 | 保留现有 gate，不新增 transport/repair 层；run 1 的 provider schema/error 只记残余 telemetry，避免再次陷入局部补丁。 |
 | reviewer 决策 | 首次 isolated review + deterministic closure | T-193 后不再以 fresh second reviewer pass 作为终止条件；S2 reviewer revise 后 closure accepted，S3 reviewer pass。 | 真实 patch 质量仍由 implementation/delivery reviewer 链路处理；Advisor/Subagent 后置。 |
 | ToolChoiceQueue 决策 | 已做裁剪版 MiniToolChoiceQueue | 当前覆盖只读证据、需求文档前置读取、写后测试/diff hygiene；不做完整多队列/并发/子任务调度 | 后续若仍出现关键工具不用/乱用，再扩展 queue 规则；若出现 patch/总结质量不稳，补 reviewer。 |
-| 下一步 | 通用 Coding Agent 主线选择门槛 | 先做 Codex/OMP 源码对照，评估 interrupt/cancel 与 State/Worktree 生命周期中最小、用户可感知的一项。 | 不先写大重构；明确 Owner、能力边界、默认行为和真实验收后再下发实现，不扩自然语言 gate 或样本特判。 |
+| 下一步 | 通用 Coding Agent 主线选择门槛 | 基于 Codex/OMP 增量源码对照和真实失败样本，选择下一个最小、用户可感知的 Runtime/coding 缺口。 | 不先写大重构；完整 async bus、worktree manager、TUI、auto-apply 和多 Agent 继续由收益证据驱动，不扩自然语言 gate 或样本特判。 |
 
 ## P7 综合压测问题
 
@@ -542,10 +544,10 @@ python3 scripts/sync_project_excel.py
 | 项目 | 结论 | 依据 |
 |---|---|---|
 | 主链路 | 通过 | 百炼真实小改复测已跑通 todo、dry_run、apply_patch、session allow、rollback、run_tests、git_diff。 |
-| 测试 | 分层通过 | P5 收口时 90 个 unittest；当前 T-228 stable 为 1100/62/21，另有 14/14 process matrix；profile/execution-policy、语义边界、command/event lifecycle、streaming、S6-S10、Explore Subagent、LSP rename/Code Action preview 与 jdtls metadata containment 回归通过；T-229 普通 coding Python/Java/Node 3/3；T-214 业务 compile 983/667、focused JUnit 4/17。 |
+| 测试 | 分层通过 | P5 收口时 90 个 unittest；当前 T-232 stable 为 1109/62/22，另有独立 session-continuity matrix；profile/execution-policy、command/event lifecycle、streaming、S6-S10、Explore Subagent、LSP preview/jdtls containment、T-229 三语言 coding、T-230 dirty State 与 T-231/T-232 interrupt recovery 回归通过；T-214 业务 compile 983/667、focused JUnit 4/17。 |
 | 日用入口 | 通过 | README 已补只读分析和小改任务命令模板。 |
 | 开放风险 | 可接受 | shell 仍非沙箱、prompt injection 仍需靠审批和封闭 VM；provider/model 专用 tokenizer、输出 reserve、managed skills、完整 reviewer 和完整 OMP ToolChoiceQueue 继续后置评估。 |
-| 下一阶段 | P16 Synchronous Interrupt Recovery Gate | 用临时 fixture 验证 approval 等待与长测试期间 Ctrl-C、子进程回收、恰好一个 TurnFinished 和 continue 恢复；只有现有同步边界失败才形成开发批次，完整 async bus 继续受 R-036 约束。生产应用仍单独走 Oracle/VM 门禁。 |
+| 下一阶段 | P16 后续按证据选题 | 同步 interrupt/continue 已在 T-231/T-232 收口；下一批先做 Codex/OMP 增量偏差审计和真实用户失败归类，再选择最小 Runtime/coding 切片。完整 async bus 继续受 R-036 约束，生产应用仍单独走 Oracle/VM 门禁。 |
 
 ## 推荐工作流
 

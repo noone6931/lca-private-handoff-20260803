@@ -1,6 +1,6 @@
 # LCA / OMP / Codex 源码级架构对照
 
-更新时间：2026-07-16
+更新时间：2026-07-17
 
 ## 对照基线
 
@@ -26,7 +26,7 @@ LCA 的路线没有错，也不应该直接搬 OMP 或 Codex 的代码。当前�
 4. LCA 当前是“核心平台能力尚未完全打通，交付审查层已经很厚”。这解释了为什么测试很多、只读报告很稳，但第一个真实 S5 写交付仍然失败。
 5. 正确目标不是“复制或完整追平 OMP”，而是：**Codex-first 核心骨架 + OMP-informed coding 能力 + LCA 自己的封闭 VM/企业证据工作流**。
 
-当前阶段判断：**P12 只读分析能力可用；P13 Runtime/Command/Event/Streaming 阶段性收口；P14 只读 Explore 保留 Phase 1 但扩展暂停；P15 semantic preview 已收口；P16 已用 Python、Java、Node 三组 clean fixture 证明普通读改测 diff 和同 session 最新需求覆盖可用。首个企业写路径仍只有 Codex 隔离参考实现，尚未由 LCA 自主交付并进入生产，因此当前是“通用小中型 coding 可用、企业长链需监督”的版本。**
+当前阶段判断：**P12 只读分析能力可用；P13 Runtime/Command/Event/Streaming 阶段性收口；P14 只读 Explore 保留 Phase 1 但扩展暂停；P15 semantic preview 已收口；P16 已用 clean/dirty worktree、跨语言 coding 和同步 interrupt continuation 证明普通读改测 diff、最新需求覆盖与未完成 verification obligation 可恢复。首个企业写路径仍只有 Codex 隔离参考实现，尚未由 LCA 自主交付并进入生产，因此当前是“通用小中型 coding 可用、企业长链需监督”的版本。**
 
 ## 正式参考路线
 
@@ -344,7 +344,7 @@ CLI / Terminal / Future TUI / Remote
 | 已完成 | T-228 JDTLS Read-tier Metadata Containment | commit `24d6daa`；LSP process/config Owner 通过 child-only property=false 收住 `.classpath/.project/.settings`，完整 server config 参与 client cache identity。1100/62/21、14/14 matrix 与真实 jdtls micro 通过；不声称 OS sandbox、不清理构建缓存、不削减 LSP。stable `20260717T081918Z-24d6daa4f827-c67e5ebe043c` |
 | 已完成 | T-229 Ordinary Coding Cross-language Stable Batch | T-228 stable 在 Python、Java/Maven、Node 同 session 需求变更三类 clean fixture 上 3/3 完成自然 read/patch/test/diff；独立测试与 lifecycle 通过。provider schema/todo 噪声安全失败或恢复，不据孤立样本新增 Queue/gate。`7/7 unverified` 保留为业务 contract 与机器 delivery checks 的有意分账 |
 | 已完成 | T-230 Dirty Worktree / State Benefit Gate | unrelated tracked/untracked WIP 保留并与本轮 patch 分账；same-file mixed attribution 正确；外部 commit 使旧 tag fail closed，重读后只修改新 baseline。Case A 模型 test command 失败被诚实标记未交付；无通用 State 缺陷，不搬完整 Codex worktree manager |
-| P1 | T-231 Synchronous Interrupt Recovery Benefit Gate | 先验证 approval 等待和长测试期间 Ctrl-C、child process 回收、单一 Turn 终态与 session continue；只有同步边界失败才修复，不预设完整 async command bus |
+| 已完成 | T-231/T-232 Synchronous Interrupt Recovery + Typed Session Continuity | approval/长测试中断、child 回收和单一 Turn lifecycle 通过；随后修复已写入任务在 fresh `unclear` contract 下丢失 test/diff/review obligation。Session Owner 只继承经 HEAD/path/patch-record/hash 验证的 typed state，不复用旧结果、不解析“继续”关键词；repeated stop 保留 carried A+B。1109/62/22 与独立 immutable matrix 通过，stable `20260717T111651Z-b30240a91398-5bf520393764` |
 | P2 | reviewer/implement subagent 扩展 | 仅在后续多个真实任务证明 Explore 有稳定收益后重启；写入隔离、冲突处理和审批路由必须先明确 |
 | P2 | LSP rename apply/code action、MCP、Browser | rename apply 需先有事务型多文件 writer；其余每项由真实任务收益驱动 |
 | P3 | fullscreen TUI / Remote | 协议和 streaming 稳定后实现 |
