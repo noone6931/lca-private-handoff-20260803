@@ -26,7 +26,7 @@ LCA 的路线没有错，也不应该直接搬 OMP 或 Codex 的代码。当前�
 4. LCA 当前是“核心平台能力尚未完全打通，交付审查层已经很厚”。这解释了为什么测试很多、只读报告很稳，但第一个真实 S5 写交付仍然失败。
 5. 正确目标不是“复制或完整追平 OMP”，而是：**Codex-first 核心骨架 + OMP-informed coding 能力 + LCA 自己的封闭 VM/企业证据工作流**。
 
-当前阶段判断：**P12 只读分析能力可用；P13 Runtime/Command/Event/Streaming 阶段性收口；P14 只读 Explore 保留 Phase 1 但扩展暂停；P15 已发布 semantic rename 和 Code Action 只读 preview。普通读改测 diff 可用，但真实 1 到 N 需求交付尚未通过首个企业写路径验收，因此还不是可放心交给他人自主开发的版本。**
+当前阶段判断：**P12 只读分析能力可用；P13 Runtime/Command/Event/Streaming 阶段性收口；P14 只读 Explore 保留 Phase 1 但扩展暂停；P15 semantic preview 已收口；P16 已用 Python、Java、Node 三组 clean fixture 证明普通读改测 diff 和同 session 最新需求覆盖可用。首个企业写路径仍只有 Codex 隔离参考实现，尚未由 LCA 自主交付并进入生产，因此当前是“通用小中型 coding 可用、企业长链需监督”的版本。**
 
 ## 正式参考路线
 
@@ -342,6 +342,8 @@ CLI / Terminal / Future TUI / Remote
 | 已完成 | T-226 LSP Code Action Preview Phase 1 | commit `e70f20a`；只 list/preview text-only WorkspaceEdit，command/resource operation/server applyEdit/auto-apply 全部 fail closed。独立 OMP 对照发现并修正缺失 `codeActionLiteralSupport`；1095/62/20，stable `20260717T054823Z-e70f20a948d4-d8ee2a1faf0d` |
 | 已完成 | T-227 真实 jdtls Code Action Benefit Gate | 缺 List import 的 Java fixture 完成 list -> preview -> parent reread -> existing patch -> Maven exit 0 -> diff；同时发现 jdtls 默认生成 Eclipse metadata，未误归因为 WorkspaceEdit/command |
 | 已完成 | T-228 JDTLS Read-tier Metadata Containment | commit `24d6daa`；LSP process/config Owner 通过 child-only property=false 收住 `.classpath/.project/.settings`，完整 server config 参与 client cache identity。1100/62/21、14/14 matrix 与真实 jdtls micro 通过；不声称 OS sandbox、不清理构建缓存、不削减 LSP。stable `20260717T081918Z-24d6daa4f827-c67e5ebe043c` |
+| 已完成 | T-229 Ordinary Coding Cross-language Stable Batch | T-228 stable 在 Python、Java/Maven、Node 同 session 需求变更三类 clean fixture 上 3/3 完成自然 read/patch/test/diff；独立测试与 lifecycle 通过。provider schema/todo 噪声安全失败或恢复，不据孤立样本新增 Queue/gate。`7/7 unverified` 保留为业务 contract 与机器 delivery checks 的有意分账 |
+| P1 | T-230 Dirty Worktree / State Benefit Gate | 先用临时 fixture 验证 pre-existing、mixed same-file、untracked 和外部并发变更的归属与 stale-safe 行为；只在跨场景 Runtime 缺陷成立时实现，不预设需要完整 Codex worktree manager |
 | P2 | reviewer/implement subagent 扩展 | 仅在后续多个真实任务证明 Explore 有稳定收益后重启；写入隔离、冲突处理和审批路由必须先明确 |
 | P2 | LSP rename apply/code action、MCP、Browser | rename apply 需先有事务型多文件 writer；其余每项由真实任务收益驱动 |
 | P3 | fullscreen TUI / Remote | 协议和 streaming 稳定后实现 |

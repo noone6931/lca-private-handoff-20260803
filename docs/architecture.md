@@ -215,6 +215,8 @@ T-226 已完成 LSP Code Action Preview Phase 1。它复用 T-224 WorkspaceEdit 
 
 T-227/T-228 完成真实收益与进程副作用闭环。真实 jdtls Code Action 修复缺失 import 的路径已证明有用；随后发现的 `.classpath/.project/.settings` 不是 WorkspaceEdit 或 command，而是 jdtls process 默认行为。T-228 将修复放在 LSP config/process Owner：child 环境追加 property=false，完整 `LspServerConfig` 成为 client cache identity，preview 文案只承诺 LCA 未 apply/execute。它没有向 Runtime、Queue、finalization 回流语义，也没有引入 watcher、cleanup、设置词表或第二 writer。外部 LSP 仍诚实标注为非 OS sandbox。
 
+T-229 用 T-228 stable 对普通 coding 主链做跨语言黑盒校验：Python 单文件修复、Java/Maven 多文件实现与测试、Node 同 session 需求变更均自然完成 read/patch/test/diff，并由独立命令确认退出码与最终 diff。Java 的 malformed provider schema 在 ToolRegistry 前被抑制，Node 的错误 todo 调用只形成可恢复 tool error；两者都没有越权、错误写入或假交付，因此不新增 provider 样本 guard。`VerificationPlan.business_acceptance` 的 7 项固定来自 code-implementation contract 的 3 项 acceptance、2 项 evidence 和 2 项 verification，继续保持 human/oracle `unverified`；Runtime 只把真实路径证据、当前净 diff、post-write test 和 deterministic reviewer 记为 delivery checks。该分层对齐 Codex 的 turn completion/task outcome 分离和 OMP 的工具事实生命周期，不应为了终端数字好看把代理事实提升为业务验收。
+
 ### T-192：Reviewer Role / Transport Ownership
 
 T-192 将 reviewer role rejection、transport projection 与 proposal/pending/requirement/source finding 语义放回 read-only reviewer 和 transport Owner。它解决的是“建议/待确认/需求事实”被 reviewer 当成必须证明的现有实现，或 transport projection 丢失证据边界的问题。Runtime 只负责调用 facade 与记录 RunSummary，不在主循环识别业务词。
