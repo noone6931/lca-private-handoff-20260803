@@ -132,6 +132,9 @@ class PatchReviewSteerer:
             context.requirement_contract,
             request=context.request,
             tool_results=context.tool_results,
+            continuation_write_paths=(
+                context.verification_plan.continuation_write_paths if context.verification_plan is not None else ()
+            ),
         )
         if result.passed:
             return None

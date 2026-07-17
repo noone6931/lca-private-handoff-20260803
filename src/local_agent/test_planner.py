@@ -33,14 +33,19 @@ class TestPlan:
         }
 
 
-def plan_narrow_test(workspace: Path, results: list[ToolResultSummary]) -> TestPlan:
+def plan_narrow_test(
+    workspace: Path,
+    results: list[ToolResultSummary],
+    *,
+    continuation_paths: tuple[str, ...] = (),
+) -> TestPlan:
     """Select one conservative local test candidate without executing it.
 
     A project-level command is useful evidence, but is deliberately not described as
     the narrowest test unless Runtime can derive an exact module/test target.
     """
 
-    changed_paths = _changed_paths(workspace, results)
+    changed_paths = _changed_paths(workspace, results) or continuation_paths
     if not changed_paths:
         return TestPlan(None, "no workspace write has been observed", "blocked")
     suffixes = {Path(path).suffix.lower() for path in changed_paths}

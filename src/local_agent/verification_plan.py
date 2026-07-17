@@ -5,11 +5,14 @@ from typing import Literal, TYPE_CHECKING
 
 from .task_contract import RequirementContract
 from .verification_timeline import results_after_last_write
-from .verification_timeline import code_evidence_for_effective_write
+from .verification_timeline import code_evidence_for_paths
 from .verification_timeline import successful_nonempty_git_diff_after_last_write
+from .verification_timeline import successful_nonempty_git_diff_for_paths
 from .verification_timeline import workspace_write_happened
+from .verification_timeline import effective_workspace_write_paths
 
 if TYPE_CHECKING:
+    from .session_task_continuity import PendingTaskContinuation
     from .test_planner import TestPlan
     from .tool_observation import ToolResultSummary
 
@@ -48,9 +51,16 @@ class VerificationPlan:
 
     items: list[VerificationPlanItem] = field(default_factory=list)
     observed_results: int = 0
+    pending_task_continuation: PendingTaskContinuation | None = None
+    continuation_invalid_reason: str | None = None
 
     @classmethod
-    def from_contract(cls, contract: RequirementContract | None) -> VerificationPlan:
+    def from_contract(
+        cls,
+        contract: RequirementContract | None,
+        *,
+        pending_task: PendingTaskContinuation | None = None,
+    ) -> VerificationPlan:
         if contract is None or contract.task_kind != "code-implementation":
             return cls()
         items: list[VerificationPlanItem] = []
@@ -78,11 +88,32 @@ class VerificationPlan:
                 VerificationPlanItem("runtime-review", "verification", "Deterministic post-diff reviewer completed without blocking findings.", True),
             )
         )
-        return cls(items=items)
+        return cls(items=items, pending_task_continuation=pending_task)
 
     @property
     def active(self) -> bool:
         return bool(self.items)
+
+    @property
+    def continuation_write_paths(self) -> tuple[str, ...]:
+        paths = getattr(self.pending_task_continuation, "write_paths", ())
+        return tuple(paths) if isinstance(paths, tuple) else ()
+
+    def effective_write_paths(self, results: list[ToolResultSummary]) -> tuple[str, ...]:
+        return tuple(dict.fromkeys((*self.continuation_write_paths, *effective_workspace_write_paths(results))))
+
+    def has_effective_write(self, results: list[ToolResultSummary]) -> bool:
+        return bool(self.effective_write_paths(results))
+
+    def results_after_effective_write(self, results: list[ToolResultSummary]) -> list[ToolResultSummary]:
+        if workspace_write_happened(results):
+            return list(results_after_last_write(results))
+        return list(results) if self.continuation_write_paths else []
+
+    def invalidate_continuation(self, reason: str) -> None:
+        self.continuation_invalid_reason = reason
+        for item in self.delivery_items():
+            self._set(item.id, "blocked", reason, [])
 
     def coverage(self, *, delivery_only: bool = False) -> dict[str, int]:
         selected = [item for item in self.items if item.enforce_delivery or not delivery_only]
@@ -120,11 +151,16 @@ class VerificationPlan:
         return "\n".join(lines)
 
     def snapshot(self) -> dict[str, object]:
-        return {
+        snapshot = {
             "business_acceptance": self.business_acceptance_summary(),
             "delivery_coverage": self.coverage(delivery_only=True),
             "items": [item.snapshot() for item in self.items],
         }
+        if self.pending_task_continuation is not None:
+            snapshot["session_task_continuity"] = self.pending_task_continuation.snapshot()
+        if self.continuation_invalid_reason:
+            snapshot["continuation_invalid_reason"] = self.continuation_invalid_reason
+        return snapshot
 
     def observe(self, results: list[ToolResultSummary], *, test_plan: TestPlan | None = None) -> bool:
         if not self.active:
@@ -135,7 +171,8 @@ class VerificationPlan:
         for result in new_results:
             changed |= self._record_attempt(result)
 
-        code_results = code_evidence_for_effective_write(results, code_tool_names=_CODE_EVIDENCE_TOOLS)
+        write_paths = self.effective_write_paths(results)
+        code_results = code_evidence_for_paths(results, write_paths, code_tool_names=_CODE_EVIDENCE_TOOLS)
         changed |= self._set(
             "runtime-code-evidence",
             "passed" if code_results else "pending",
@@ -145,14 +182,19 @@ class VerificationPlan:
             _refs(code_results),
         )
 
-        has_write = workspace_write_happened(results)
-        diff = successful_nonempty_git_diff_after_last_write(results)
+        has_current_write = workspace_write_happened(results)
+        has_write = bool(write_paths)
+        diff = (
+            successful_nonempty_git_diff_after_last_write(results)
+            if has_current_write
+            else successful_nonempty_git_diff_for_paths(results, self.continuation_write_paths)
+        )
         if diff is not None:
             changed |= self._set("runtime-current-diff", "passed", "post-write git_diff reports a non-empty current diff", _refs([diff]))
         elif has_write:
             changed |= self._set("runtime-current-diff", "pending", "awaiting a non-empty post-write git_diff; empty diff cannot prove delivery", [])
 
-        tests = [result for result in results_after_last_write(results) if result.name == "run_tests"]
+        tests = [result for result in self.results_after_effective_write(results) if result.name == "run_tests"]
         if not has_write:
             changed |= self._set("runtime-post-write-test", "pending", "awaiting an effective workspace write", [])
         elif tests:
@@ -181,6 +223,10 @@ class VerificationPlan:
             "Runtime-owned delivery state. Only tool results, write/diff timeline, and deterministic reviewer results may change statuses.",
             "Contract acceptance items remain pending unless a human or explicit business oracle validates them; do not describe runtime checks as proof of business completion.",
         ]
+        if self.continuation_write_paths:
+            lines.append(
+                "- Session continuation: a prior unfinished write remains pending; old tests are not reused, and current read/test/diff/review evidence is required."
+            )
         for item in self.items:
             refs = f" refs={','.join(item.evidence_refs)}" if item.evidence_refs else ""
             prefix = "delivery-check" if item.enforce_delivery else "contract"

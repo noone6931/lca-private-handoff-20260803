@@ -103,6 +103,7 @@ def capture_git_baseline(workspace: str | PathLike[str]) -> dict[str, Any]:
             "staged_name_status": "",
         }
     try:
+        head_revision = _git_raw(workspace_path, ["rev-parse", "HEAD"]).stdout.strip() or None
         status_short = _git_raw(workspace_path, ["status", "--short"]).stdout.rstrip()
         diff_name_status = _git_raw(workspace_path, ["diff", "--name-status"]).stdout.rstrip()
         staged_name_status = _git_raw(workspace_path, ["diff", "--staged", "--name-status"]).stdout.rstrip()
@@ -116,6 +117,7 @@ def capture_git_baseline(workspace: str | PathLike[str]) -> dict[str, Any]:
         }
     return {
         "is_git_repo": True,
+        "head_revision": head_revision,
         "status_short": status_short,
         "diff_name_status": diff_name_status,
         "staged_name_status": staged_name_status,

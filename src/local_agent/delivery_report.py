@@ -4,14 +4,12 @@ from collections.abc import Sequence
 
 from .tool_observation import ToolResultSummary
 from .verification_plan import VerificationPlan
-from .verification_timeline import effective_workspace_write_paths
-from .verification_timeline import results_after_last_write
 
 
 def render_delivery_report(plan: VerificationPlan, results: Sequence[ToolResultSummary]) -> str:
     """Render a terminal delivery record from Runtime facts, never model prose."""
 
-    changed_paths = effective_workspace_write_paths(results)
+    changed_paths = plan.effective_write_paths(list(results))
     if not changed_paths:
         return ""
     coverage = plan.coverage(delivery_only=True)
@@ -25,7 +23,7 @@ def render_delivery_report(plan: VerificationPlan, results: Sequence[ToolResultS
         f"- business_acceptance_unverified: {business['unverified']}/{business['total']}",
         "- tests:",
     ]
-    tests = [result for result in results_after_last_write(results) if result.name == "run_tests"]
+    tests = [result for result in plan.results_after_effective_write(list(results)) if result.name == "run_tests"]
     if not tests:
         lines.append("  - no post-write run_tests command was recorded")
     else:

@@ -118,6 +118,15 @@ def code_evidence_for_effective_write(
     """Return only code evidence whose path is relevant to current runtime writes."""
 
     changed_paths = effective_workspace_write_paths(results)
+    return code_evidence_for_paths(results, changed_paths, code_tool_names=code_tool_names)
+
+
+def code_evidence_for_paths(
+    results: Sequence[TimelineToolResult],
+    changed_paths: tuple[str, ...],
+    *,
+    code_tool_names: frozenset[str],
+) -> list[TimelineToolResult]:
     if not changed_paths:
         return []
     evidence: list[TimelineToolResult] = []
@@ -133,6 +142,19 @@ def code_evidence_for_effective_write(
         if any(_paths_match(path, changed) for path in paths for changed in changed_paths):
             evidence.append(result)
     return evidence
+
+
+def successful_nonempty_git_diff_for_paths(
+    results: Sequence[TimelineToolResult],
+    paths: tuple[str, ...],
+) -> TimelineToolResult | None:
+    if not paths:
+        return None
+    for result in reversed(results):
+        if result.name == "git_diff" and not result.is_error and not _is_empty_diff(result.content):
+            if _diff_mentions_any_path(result, paths):
+                return result
+    return None
 
 
 def _is_empty_diff(content: str) -> bool:

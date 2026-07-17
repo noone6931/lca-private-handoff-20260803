@@ -84,6 +84,7 @@ def review_patch(
     *,
     request: str | None,
     tool_results: list[ToolResultSummary],
+    continuation_write_paths: tuple[str, ...] = (),
 ) -> PatchReviewResult:
     """Review a completed implementation diff before the runtime accepts a final answer.
 
@@ -94,10 +95,12 @@ def review_patch(
 
     if contract is None or contract.task_kind != "code-implementation":
         return PatchReviewResult(())
-    if not workspace_write_happened(tool_results):
+    has_current_write = workspace_write_happened(tool_results)
+    if not has_current_write and not continuation_write_paths:
         return PatchReviewResult(())
 
-    latest_diff = _latest_successful_git_diff_after_last_write(tool_results)
+    review_results = list(results_after_last_write(tool_results)) if has_current_write else tool_results
+    latest_diff = _latest_successful_git_diff(review_results)
     if latest_diff is None:
         return PatchReviewResult(
             (
@@ -132,7 +135,7 @@ def review_patch(
         )
 
     facts = _review_facts_for_diff(latest_diff)
-    if facts.public_api_symbols and not _has_call_site_evidence_after_last_write(tool_results, facts):
+    if facts.public_api_symbols and not _has_call_site_evidence(review_results, facts):
         findings.append(
             _finding(
                 "call_site_review_missing",
@@ -200,8 +203,8 @@ def _finding(code: str, severity: ReviewSeverity, message: str, allowed_tools: f
     return PatchReviewFinding(code, severity, message, tuple(sorted(allowed_tools)))
 
 
-def _latest_successful_git_diff_after_last_write(results: list[ToolResultSummary]) -> ToolResultSummary | None:
-    for result in reversed(results_after_last_write(results)):
+def _latest_successful_git_diff(results: list[ToolResultSummary]) -> ToolResultSummary | None:
+    for result in reversed(results):
         if result.name == "git_diff" and not result.is_error:
             return result
     return None
@@ -266,14 +269,14 @@ def _metadata_strings(value: object) -> tuple[str, ...]:
     return tuple(sorted(str(item) for item in value if isinstance(item, str) and item))
 
 
-def _has_call_site_evidence_after_last_write(
+def _has_call_site_evidence(
     results: list[ToolResultSummary],
     facts: PatchReviewFacts,
 ) -> bool:
     evidence_tokens = {symbol.lower() for symbol in facts.public_api_symbols}
     changed_paths = {path.lower() for path in facts.changed_paths}
     evidence_tokens.update(_source_name_tokens(facts.changed_paths))
-    for result in results_after_last_write(results):
+    for result in results:
         if result.is_error or result.useless or result.name not in CALL_SITE_EVIDENCE_TOOLS:
             continue
         if result.name == "read_file" and result.path and result.path.lower() in changed_paths:

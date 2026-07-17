@@ -47,6 +47,7 @@ OWNER_COMPLEXITY_CEILINGS = {
     "src/local_agent/lsp/workspace_edit.py": 380,
     "src/local_agent/tools/lsp_rename.py": 187,
     "src/local_agent/tools/lsp_code_action.py": 430,
+    "src/local_agent/session_task_continuity.py": 284,
 }
 LEGACY_COMPLEXITY_DEBT_CEILINGS = {
     "src/local_agent/agent.py": 1792,
@@ -74,6 +75,18 @@ def _production_complexity_failures(root: Path) -> list[tuple[str, int, int]]:
 
 
 class ArchitectureBoundaryTests(unittest.TestCase):
+    def test_session_task_continuity_is_typed_and_owned_outside_runtime(self) -> None:
+        owner = (ROOT / "src/local_agent/session_task_continuity.py").read_text(encoding="utf-8")
+        runtime = (ROOT / "src/local_agent/agent.py").read_text(encoding="utf-8")
+        self.assertIn("class SessionTaskContinuityLifecycle:", owner)
+        self.assertIn("current_contract.task_kind != \"unclear\"", owner)
+        self.assertNotIn("import re", owner)
+        self.assertNotIn("generate_requirement_contract", owner)
+        self.assertNotIn("tool_choice_queue", owner)
+        self.assertNotIn("PatchReviewer", owner)
+        self.assertNotIn("def _resolve_session_task_continuity", runtime)
+        self.assertEqual(runtime.count("self._task_continuity."), 3)
+
     def test_runtime_orchestrator_stays_within_line_budget(self) -> None:
         agent = ROOT / "src/local_agent/agent.py"
         self.assertLessEqual(len(agent.read_text(encoding="utf-8").splitlines()), 2100)

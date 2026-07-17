@@ -46,9 +46,7 @@ from .provider_protocol import classify_provider_content_artifact, provider_allo
 from .provider_protocol import normalize_provider_dialect_message
 from .lsp.client import close_all_clients
 from .negative_evidence import negative_claim_metrics as _negative_claim_metrics
-from .patch.anchored import display_workspace_path
-from .patch.anchored import PatchError
-from .patch.anchored import resolve_workspace_path
+from .patch.anchored import display_workspace_path, PatchError, resolve_workspace_path
 from .planner import render_planner_explore_context
 from .patch_reviewer import review_input_summary
 from .patch_reviewer import review_input_metadata
@@ -76,6 +74,7 @@ from .protocol.events import NullEventSink
 from .protocol.events import StderrEventSink
 from .protocol.interactions import InteractionHandler
 from .session.jsonl_store import JsonlSessionStore
+from .session_task_continuity import SessionTaskContinuityLifecycle
 from .session_guard_state import SessionGuardState
 from .state import default_config_root
 from .state import workspace_state_dir
@@ -108,21 +107,16 @@ from .steering.tool_loop import ToolLoopSteeringRegistry
 from .steering.tool_loop import is_filename_search_misuse
 from .steering.termination import synthetic_tool_stop_message
 from .steering.termination import termination_message
-from .task_contract import generate_requirement_contract
-from .task_contract import render_contract_context
+from .task_contract import generate_requirement_contract, render_contract_context, requires_no_edit_final_hygiene
 from .test_planner import plan_narrow_test
 from .tools import create_default_registry, create_runtime_registry
-from .tools.base import ToolContext
-from .tools.base import ToolResult
-from .tools.base import registry_schemas_for_context, session_safe_assistant_message, telemetry_tool_arguments
-from .tools.base import tool_state_dir
+from .tools.base import ToolContext, ToolResult
+from .tools.base import registry_schemas_for_context, session_safe_assistant_message, telemetry_tool_arguments, tool_state_dir
 from .tools.git import capture_git_baseline
 from .tools.relevance import is_analysis_only_request
-from .task_contract import requires_no_edit_final_hygiene
 from .tools.relevance import path_matches_any
 from .tools.relevance import request_mentions_config_or_path
 from .tool_observation import ToolResultSummary
-from .verification_timeline import workspace_write_happened
 from .user_facts import UserFactsLayer
 from .provider_context import ProviderContextPhase
 from .runtime_evidence import EvidenceVerificationLifecycle
@@ -305,6 +299,7 @@ class AgentRuntime:
         self._read_only_explore_phase = RuntimeReadOnlyExplorePhase(self)
         self._read_only_review_phase = WorkflowReadOnlyReviewPhase(self)
         self._provider_terminal_phase = ProviderTerminalPhase(self)
+        self._task_continuity = SessionTaskContinuityLifecycle(self)
         missing_roots = self._workspace_phase.restore_session_workspace_roots()
         self._path_rule_index = discover_path_scoped_rules(self._workspace_context.all_roots)
         system_prompt = self._workspace_phase.build_system_prompt()
@@ -370,6 +365,7 @@ class AgentRuntime:
         run_start_index = len(self._messages)
         model_prompt = _with_workflow_nudge(prompt)
         requirement_contract = generate_requirement_contract(prompt)
+        requirement_contract, pending_task = self._task_continuity.resolve(requirement_contract, git_baseline)
         requirement_contract_context = render_contract_context(requirement_contract)
         workspace_evidence_roots = project_workspace_evidence_roots(
             self._workspace_context.primary,
@@ -388,6 +384,7 @@ class AgentRuntime:
             requirement_contract=requirement_contract,
             requirement_contract_context=requirement_contract_context,
             design_evidence_roots=design_evidence_roots,
+            pending_task=pending_task,
         )
         self._tool_directive_phase.begin_run()
         self._read_only_review_phase.begin_run()
@@ -1058,6 +1055,7 @@ class AgentRuntime:
             payload["business_acceptance"] = self._run.verification_plan.business_acceptance_summary()
             if self._run.verification_test_plan is not None:
                 payload["test_plan"] = self._run.verification_test_plan.snapshot()
+        payload["task_continuity"] = self._task_continuity.finish(reason)
         payload["session_evidence"] = {
             **dict(payload.get("session_evidence") or {}),
             "cache_entries": self._session_evidence.snapshot().get("entries", 0),
@@ -1559,13 +1557,14 @@ class AgentRuntime:
         preserve_terminal_content: bool = False,
     ) -> str:
         self._tool_directive_phase.close_terminal(reason)
+        self._task_continuity.revalidate(self._run.verification_plan)
         incomplete_delivery: str | None = None
         hard_gate = self._run.unresolved_final_answer_gate
         if hard_gate is not None and not preserve_terminal_content:
             content = render_unverified_final_answer(hard_gate.kind, hard_gate.reason)
             if reason == "final":
                 reason = "unverified_final_gate"
-        elif reason == "final" and workspace_write_happened(self._run.tool_choice_results):
+        elif reason == "final" and self._run.verification_plan.has_effective_write(self._run.tool_choice_results):
             incomplete_delivery = self._run.verification_plan.render_incomplete_terminal()
         if reason != "final" and not preserve_terminal_content:
             safe_partial = self._read_only_review_phase.safe_partial_for_terminal(reason)

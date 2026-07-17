@@ -21,6 +21,7 @@ from .tool_observation import ToolResultSummary
 from .verification_plan import VerificationPlan
 from .test_planner import TestPlan
 from .session_evidence import SessionEvidenceReuse
+from .session_task_continuity import PendingTaskContinuation
 from .temporary_tool_directive import DirectiveTransition
 from .temporary_tool_directive import TemporaryToolDirectiveOwner
 from .read_only_reviewer import ReadOnlyReviewState
@@ -151,6 +152,7 @@ class RunContext:
         requirement_contract: RequirementContract,
         requirement_contract_context: str,
         design_evidence_roots: tuple[str, ...],
+        pending_task: PendingTaskContinuation | None = None,
     ) -> None:
         self.run_id = run_id
         self.started_monotonic = started_monotonic
@@ -174,7 +176,7 @@ class RunContext:
         self.requirement_contract = requirement_contract
         self.workflow_profile = resolve_workflow_profile(self.workflow_profile_selector, requirement_contract)
         self.requirement_contract_context = requirement_contract_context
-        self.verification_plan = VerificationPlan.from_contract(requirement_contract)
+        self.verification_plan = VerificationPlan.from_contract(requirement_contract, pending_task=pending_task)
         self.verification_test_plan = None
         self.design_evidence_coverage.reset(design_evidence_roots)
         self.soft_tool_requirement = None

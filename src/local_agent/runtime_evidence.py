@@ -106,7 +106,11 @@ class EvidenceVerificationLifecycle:
         plan = runtime._run.verification_plan
         if not plan.active:
             return
-        test_plan = plan_narrow_test(runtime._workspace_context.primary, runtime._run.tool_choice_results)
+        test_plan = plan_narrow_test(
+            runtime._workspace_context.primary,
+            runtime._run.tool_choice_results,
+            continuation_paths=plan.continuation_write_paths,
+        )
         test_plan_changed = test_plan != runtime._run.verification_test_plan
         runtime._run.verification_test_plan = test_plan
         if plan.observe(runtime._run.tool_choice_results, test_plan=test_plan) or test_plan_changed:

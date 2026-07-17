@@ -234,7 +234,7 @@ def audit_completion(
             )
         )
     if mode == "code-implementation":
-        if verification_plan is not None and verification_plan.active and workspace_write_happened(tool_results):
+        if verification_plan is not None and verification_plan.active and verification_plan.has_effective_write(tool_results):
             return CompletionAuditResult(tuple(_verification_plan_items(verification_plan)))
         return CompletionAuditResult(
             tuple(
