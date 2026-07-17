@@ -20,6 +20,16 @@ DEFAULT_LSP_TIMEOUT_SECONDS = 8.0
 DIAGNOSTICS_SETTLE_SECONDS = 1.5
 PROJECT_LOAD_TIMEOUT_SECONDS = 15.0
 PROJECT_LOAD_NO_PROGRESS_GRACE_SECONDS = 0.25
+CODE_ACTION_KINDS = (
+    "quickfix",
+    "refactor",
+    "refactor.extract",
+    "refactor.inline",
+    "refactor.rewrite",
+    "source",
+    "source.organizeImports",
+    "source.fixAll",
+)
 
 
 @dataclass(frozen=True)
@@ -151,6 +161,40 @@ class StdioLspClient:
             timeout=timeout,
         )
 
+    def code_actions(
+        self,
+        path: Path,
+        position: dict[str, int],
+        *,
+        kind: str | None = None,
+        timeout: float = DEFAULT_LSP_TIMEOUT_SECONDS,
+    ) -> Any:
+        self.ensure_open(path)
+        uri = path.as_uri()
+        context: dict[str, Any] = {
+            "diagnostics": list(self._diagnostics.get(uri, [])),
+            "triggerKind": 1,
+        }
+        if kind is not None:
+            context["only"] = [kind]
+        return self.request(
+            "textDocument/codeAction",
+            {
+                "textDocument": {"uri": uri},
+                "range": {"start": position, "end": position},
+                "context": context,
+            },
+            timeout=timeout,
+        )
+
+    def resolve_code_action(
+        self,
+        action: dict[str, Any],
+        *,
+        timeout: float = DEFAULT_LSP_TIMEOUT_SECONDS,
+    ) -> Any:
+        return self.request("codeAction/resolve", action, timeout=timeout)
+
     def diagnostics(self, path: Path, *, timeout: float = DEFAULT_LSP_TIMEOUT_SECONDS) -> list[LspDiagnostic]:
         uri = path.as_uri()
         self.ensure_open(path)
@@ -238,6 +282,14 @@ class StdioLspClient:
                         "documentSymbol": {"hierarchicalDocumentSymbolSupport": True},
                         "definition": {"linkSupport": True},
                         "references": {},
+                        "codeAction": {
+                            "dynamicRegistration": False,
+                            "codeActionLiteralSupport": {
+                                "codeActionKind": {"valueSet": list(CODE_ACTION_KINDS)},
+                            },
+                            "dataSupport": True,
+                            "resolveSupport": {"properties": ["edit"]},
+                        },
                         "publishDiagnostics": {"relatedInformation": True},
                     },
                     "workspace": {

@@ -69,7 +69,7 @@ class VerificationPlanTests(unittest.TestCase):
 
         self.assertEqual(_item(plan, "runtime-code-evidence").status, "passed")
 
-    def test_semantic_rename_preview_does_not_replace_parent_evidence_or_write_verification(self) -> None:
+    def test_semantic_lsp_previews_do_not_replace_parent_evidence_or_write_verification(self) -> None:
         plan = self._plan()
         preview_only = [
             ToolResultSummary(
@@ -77,7 +77,13 @@ class VerificationPlanTests(unittest.TestCase):
                 "read-only semantic preview",
                 path="src/App.py",
                 metadata={"preview": True, "read_only": True, "evidence_eligible": False},
-            )
+            ),
+            ToolResultSummary(
+                "lsp_code_action_preview",
+                "read-only semantic code action preview",
+                path="src/App.py",
+                metadata={"preview": True, "read_only": True, "evidence_eligible": False},
+            ),
         ]
         plan.observe(preview_only, test_plan=TestPlan("python -m unittest", "project fallback", "project"))
         self.assertEqual(_item(plan, "runtime-code-evidence").status, "pending")

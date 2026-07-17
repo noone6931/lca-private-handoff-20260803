@@ -46,6 +46,7 @@ OWNER_COMPLEXITY_CEILINGS = {
     "src/local_agent/explore_subagent.py": 560,
     "src/local_agent/lsp/workspace_edit.py": 380,
     "src/local_agent/tools/lsp_rename.py": 187,
+    "src/local_agent/tools/lsp_code_action.py": 430,
 }
 LEGACY_COMPLEXITY_DEBT_CEILINGS = {
     "src/local_agent/agent.py": 1792,
@@ -336,6 +337,40 @@ class ArchitectureBoundaryTests(unittest.TestCase):
         self.assertNotIn("write_text", workspace_edit)
         self.assertNotIn("apply_patch", rename_tool.split("description=", 1)[0])
         self.assertNotIn("ToolChoice", rename_tool)
+
+    def test_lsp_code_action_preview_has_one_owner_and_cannot_execute_or_write(self) -> None:
+        tools = importlib.import_module("local_agent.tools")
+        owner = (ROOT / "src/local_agent/tools/lsp_code_action.py").read_text(encoding="utf-8")
+        client = (ROOT / "src/local_agent/lsp/client.py").read_text(encoding="utf-8")
+        legacy_lsp = (ROOT / "src/local_agent/tools/lsp.py").read_text(encoding="utf-8")
+        verification = (ROOT / "src/local_agent/verification_plan.py").read_text(encoding="utf-8")
+        runtime = (ROOT / "src/local_agent/agent.py").read_text(encoding="utf-8")
+        definitions = [
+            path.relative_to(ROOT).as_posix()
+            for path in (ROOT / "src/local_agent").rglob("*.py")
+            if 'name="lsp_code_action_preview"' in path.read_text(encoding="utf-8")
+        ]
+
+        self.assertEqual(definitions, ["src/local_agent/tools/lsp_code_action.py"])
+        schema = next(
+            item for item in tools.create_default_registry().schemas()
+            if item["function"]["name"] == "lsp_code_action_preview"
+        )
+        self.assertFalse(schema["function"]["parameters"]["additionalProperties"])
+        self.assertNotIn("apply", schema["function"]["parameters"]["properties"])
+        self.assertNotIn("query", schema["function"]["parameters"]["properties"])
+        self.assertIn('self.request("codeAction/resolve"', client)
+        self.assertNotIn("lsp_code_action_preview", verification)
+        self.assertNotIn("lsp_code_action_preview", legacy_lsp)
+        self.assertNotIn("lsp_code_action_preview", runtime)
+        self.assertNotIn("_parse_workspace_edit", owner)
+        self.assertNotIn("_parse_text_edits", owner)
+        self.assertNotIn("workspace/executeCommand", owner)
+        self.assertNotIn("workspace/applyEdit", owner)
+        self.assertNotIn("execute_command(", owner)
+        self.assertNotIn("write_bytes", owner)
+        self.assertNotIn("write_text", owner)
+        self.assertEqual(owner.count("build_workspace_edit_preview("), 1)
 
     def test_runtime_strategy_owners_do_not_reintroduce_business_keyword_guards(self) -> None:
         strategy_files = (
