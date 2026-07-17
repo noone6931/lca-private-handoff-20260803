@@ -345,6 +345,7 @@ CLI / Terminal / Future TUI / Remote
 | 已完成 | T-229 Ordinary Coding Cross-language Stable Batch | T-228 stable 在 Python、Java/Maven、Node 同 session 需求变更三类 clean fixture 上 3/3 完成自然 read/patch/test/diff；独立测试与 lifecycle 通过。provider schema/todo 噪声安全失败或恢复，不据孤立样本新增 Queue/gate。`7/7 unverified` 保留为业务 contract 与机器 delivery checks 的有意分账 |
 | 已完成 | T-230 Dirty Worktree / State Benefit Gate | unrelated tracked/untracked WIP 保留并与本轮 patch 分账；same-file mixed attribution 正确；外部 commit 使旧 tag fail closed，重读后只修改新 baseline。Case A 模型 test command 失败被诚实标记未交付；无通用 State 缺陷，不搬完整 Codex worktree manager |
 | 已完成 | T-231/T-232 Synchronous Interrupt Recovery + Typed Session Continuity | approval/长测试中断、child 回收和单一 Turn lifecycle 通过；随后修复已写入任务在 fresh `unclear` contract 下丢失 test/diff/review obligation。Session Owner 只继承经 HEAD/path/patch-record/hash 验证的 typed state，不复用旧结果、不解析“继续”关键词；repeated stop 保留 carried A+B。1109/62/22 与独立 immutable matrix 通过，stable `20260717T111651Z-b30240a91398-5bf520393764` |
+| 已完成 | T-233 Generic Non-delivery Session Continuity | commit `0ab0cad`；Session Owner 复用 protocol `delivered=false`，删除 termination reason 词表。provider error、timeout、max steps、command error 与未来非交付原因写后均延续，写前闭合；RunSummary sink 故障下五类终态记录精确一次。1113/62/22 与 immutable matrix 通过，stable `20260717T121435Z-0ab0cad1156a-c79a019a2d90` |
 | P2 | reviewer/implement subagent 扩展 | 仅在后续多个真实任务证明 Explore 有稳定收益后重启；写入隔离、冲突处理和审批路由必须先明确 |
 | P2 | LSP rename apply/code action、MCP、Browser | rename apply 需先有事务型多文件 writer；其余每项由真实任务收益驱动 |
 | P3 | fullscreen TUI / Remote | 协议和 streaming 稳定后实现 |
