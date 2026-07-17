@@ -20,6 +20,9 @@ DEFAULT_BUDGET_SECONDS = 600
 DEFAULT_CONTEXT_CHAR_BUDGET = 60000
 DEFAULT_CONTEXT_TOKEN_BUDGET = 0
 DEFAULT_CONTEXT_RECENT_MESSAGES = 40
+DEFAULT_SUBAGENT_BUDGET_SECONDS = 60
+MIN_SUBAGENT_BUDGET_SECONDS = 5
+MAX_SUBAGENT_BUDGET_SECONDS = 300
 TOOL_APPROVAL_POLICIES = {"allow", "prompt", "deny"}
 APPROVAL_MODES = {"always-ask", "write", "yolo"}
 SUMMARY_MODES = {"auto", "local", "llm"}
@@ -52,6 +55,8 @@ class AgentConfig:
     vision_model: str = ""
     reviewer_model: str = ""
     workflow_profile: str = "auto"
+    enable_subagents: bool = False
+    subagent_budget_seconds: int = DEFAULT_SUBAGENT_BUDGET_SECONDS
 
 
 def load_config(
@@ -78,6 +83,8 @@ def load_config(
     allowed_dirs: object | None = None,
     reviewer_model: str | None = None,
     workflow_profile: str | None = None,
+    enable_subagents: bool | None = None,
+    subagent_budget_seconds: int | None = None,
 ) -> AgentConfig:
     file_config = _load_json_config(config_path)
     workspace = Path(cwd or file_config.get("workspace") or os.getcwd()).expanduser().resolve()
@@ -226,6 +233,26 @@ def load_config(
         resolved_workflow_profile = normalize_workflow_profile_selector(raw_workflow_profile)
     except ValueError as exc:
         raise ConfigError(str(exc)) from exc
+    raw_enable_subagents = (
+        enable_subagents
+        if enable_subagents is not None
+        else file_config.get("enable_subagents", os.environ.get("LCA_ENABLE_SUBAGENTS", False))
+    )
+    resolved_enable_subagents = _boolean("enable_subagents", raw_enable_subagents)
+    raw_subagent_budget = (
+        subagent_budget_seconds
+        if subagent_budget_seconds is not None
+        else file_config.get(
+            "subagent_budget_seconds",
+            os.environ.get("LCA_SUBAGENT_BUDGET_SECONDS", DEFAULT_SUBAGENT_BUDGET_SECONDS),
+        )
+    )
+    resolved_subagent_budget = _bounded_positive_int(
+        "subagent_budget_seconds",
+        raw_subagent_budget,
+        minimum=MIN_SUBAGENT_BUDGET_SECONDS,
+        maximum=MAX_SUBAGENT_BUDGET_SECONDS,
+    )
     raw_allowed_dirs = (
         allowed_dirs
         if allowed_dirs is not None
@@ -263,6 +290,8 @@ def load_config(
         vision_model=resolved_vision_model,
         reviewer_model=resolved_reviewer_model,
         workflow_profile=resolved_workflow_profile,
+        enable_subagents=resolved_enable_subagents,
+        subagent_budget_seconds=resolved_subagent_budget,
     )
 
 
@@ -468,6 +497,25 @@ def _positive_int(name: str, value: object) -> int:
     if resolved < 1:
         raise ConfigError(f"{name} must be >= 1.")
     return resolved
+
+
+def _bounded_positive_int(name: str, value: object, *, minimum: int, maximum: int) -> int:
+    resolved = _positive_int(name, value)
+    if not minimum <= resolved <= maximum:
+        raise ConfigError(f"{name} must be between {minimum} and {maximum}.")
+    return resolved
+
+
+def _boolean(name: str, value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off", ""}:
+            return False
+    raise ConfigError(f"{name} must be a boolean.")
 
 
 def _non_negative_int(name: str, value: object) -> int:

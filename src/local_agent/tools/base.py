@@ -33,6 +33,9 @@ class ToolContext:
     state_dir: Path | None = None
     allowed_dirs: tuple[Path, ...] = ()
     session_id: str | None = None
+    run_id: str | None = None
+    tool_call_id: str | None = None
+    workspace_revision: int = 0
     auto_approve_tools: tuple[str, ...] = ()
     tool_approval: dict[str, str] | None = None
     session_tool_approval: dict[str, str] | None = None
@@ -43,6 +46,7 @@ class ToolContext:
     patch_preview_checker: Callable[[dict[str, Any], Path], str | None] | None = None
     event_callback: Callable[[str, dict[str, Any]], None] | None = None
     interaction_handler: InteractionHandler | None = None
+    allow_interactive_approval: bool = True
     runtime_tool_allowlist: frozenset[str] | None = None
     runtime_read_file_paths: frozenset[str] | None = None
     runtime_read_file_remaining: int | None = None
@@ -71,6 +75,7 @@ class Tool:
     input_schema: dict[str, Any]
     tier: str
     handler: ToolHandler
+    redact_arguments: bool = False
 
     def openai_schema(self) -> dict[str, Any]:
         return {
@@ -99,6 +104,31 @@ class ToolRegistry:
 
     def tool_names(self) -> tuple[str, ...]:
         return tuple(sorted(self._tools))
+
+    def extended(self, extra_tools: tuple[Tool, ...]) -> "ToolRegistry":
+        return ToolRegistry([*self._tools.values(), *extra_tools])
+
+    def telemetry_arguments(self, name: str, arguments: Any) -> Any:
+        tool = self._tools.get(name)
+        return "[redacted by tool owner]" if tool is not None and tool.redact_arguments else arguments
+
+    def session_safe_assistant_message(self, message: dict[str, Any]) -> dict[str, Any]:
+        safe = dict(message)
+        safe_calls: list[Any] = []
+        for raw_call in message.get("tool_calls") or []:
+            if not isinstance(raw_call, dict):
+                safe_calls.append(raw_call)
+                continue
+            call = dict(raw_call)
+            function = dict(call.get("function") or {})
+            tool = self._tools.get(str(function.get("name") or ""))
+            if tool is not None and tool.redact_arguments:
+                function["arguments"] = "{}"
+            call["function"] = function
+            safe_calls.append(call)
+        if "tool_calls" in message:
+            safe["tool_calls"] = safe_calls
+        return safe
 
     def exposed_tool_names(self, context: ToolContext) -> tuple[str, ...]:
         return tuple(self._exposed_tool_names(context))
@@ -207,6 +237,29 @@ class ToolRegistry:
         return sorted(names)
 
 
+def registry_schemas_for_context(registry: Any, context: ToolContext) -> list[dict[str, Any]]:
+    """Return context-aware schemas while tolerating narrow characterization registries."""
+
+    model_schemas = getattr(registry, "model_schemas", None)
+    if callable(model_schemas):
+        return model_schemas(context)
+    return registry.schemas()
+
+
+def session_safe_assistant_message(registry: Any, message: dict[str, Any]) -> dict[str, Any]:
+    projector = getattr(registry, "session_safe_assistant_message", None)
+    if callable(projector):
+        return projector(message)
+    return message
+
+
+def telemetry_tool_arguments(registry: Any, name: str, arguments: Any) -> Any:
+    projector = getattr(registry, "telemetry_arguments", None)
+    if callable(projector):
+        return projector(name, arguments)
+    return arguments
+
+
 def _runtime_read_file_scope_denial_reason(
     name: str,
     arguments: dict[str, Any],
@@ -235,7 +288,7 @@ def _runtime_read_file_scope_denial_reason(
 
 
 def _interaction_tool_can_prompt(context: ToolContext) -> bool:
-    return context.interaction_handler is not None or sys.stdin.isatty()
+    return context.allow_interactive_approval and (context.interaction_handler is not None or sys.stdin.isatty())
 
 
 def tool_is_preapproved(tool: Tool, context: ToolContext) -> bool:

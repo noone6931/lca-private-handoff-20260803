@@ -67,6 +67,17 @@ def main(argv: list[str] | None = None) -> int:
         help="Workflow hooks: typed auto selection, coding, enterprise evidence, or readiness audit.",
     )
     parser.add_argument(
+        "--enable-subagents",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Expose one synchronous read-only delegate_explore subtask per parent turn (default: disabled).",
+    )
+    parser.add_argument(
+        "--subagent-budget-seconds",
+        type=int,
+        help="Deadline cap for an enabled read-only explore subtask (5-300 seconds; default: 60).",
+    )
+    parser.add_argument(
         "--max-steps",
         type=int,
         help="Safety cap for model/tool iterations. 0 means unlimited; use budget seconds for normal limits.",
@@ -157,6 +168,8 @@ def main(argv: list[str] | None = None) -> int:
             allowed_dirs=args.allowed_dirs,
             reviewer_model=args.reviewer_model,
             workflow_profile=args.workflow_profile,
+            enable_subagents=args.enable_subagents,
+            subagent_budget_seconds=args.subagent_budget_seconds,
         )
         chat_requested = args.chat or _is_chat_prompt(args.prompt)
         event_sink = (

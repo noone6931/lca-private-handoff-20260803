@@ -62,6 +62,8 @@ class EvidenceVerificationLifecycle:
 
     def record_tool_choice_result(self, name: str, arguments: str | dict[str, Any], result: ToolResult) -> None:
         runtime = self._runtime
+        if result.metadata.get("evidence_eligible") is False:
+            return
         metadata = runtime._tool_choice_result_metadata(name, arguments, result)
         if is_session_evidence_reread(
             name,
@@ -150,6 +152,8 @@ class EvidenceVerificationLifecycle:
 
     def record_tool_evidence(self, name: str, arguments: str | dict[str, Any], result: ToolResult) -> None:
         runtime = self._runtime
+        if result.metadata.get("evidence_eligible") is False:
+            return
         record = runtime._run.evidence.record_tool(
             name=name,
             arguments=arguments,

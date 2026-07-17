@@ -58,6 +58,12 @@ def _event_preview(value: Any, limit: int = 1200) -> str:
     return rendered[:limit] + "...<truncated>"
 
 
+def _tool_output_event_preview(content: str, metadata: dict[str, Any] | None) -> str:
+    if metadata and metadata.get("redact_output_event"):
+        return "[redacted by tool owner]"
+    return _event_preview(content)
+
+
 def _parse_tool_arguments(arguments: str | dict[str, Any]) -> dict[str, Any]:
     if isinstance(arguments, dict):
         return arguments
@@ -400,6 +406,15 @@ def _format_last_run_status(summary: dict[str, Any]) -> list[str]:
             "unsandboxed_exec_evaluations="
             f"{execution_policy.get('unsandboxed_exec_evaluations', 0)}, "
             f"invalid_events={execution_policy.get('invalid_events', 0)}"
+        )
+    subagents = summary.get("subagents")
+    if isinstance(subagents, dict) and subagents.get("calls", 0):
+        statuses = subagents.get("statuses") or {}
+        rendered_statuses = ", ".join(f"{name}={count}" for name, count in sorted(statuses.items()))
+        lines.append(
+            "  - subagents: "
+            f"calls={subagents.get('calls', 0)}, statuses={rendered_statuses or 'none'}, "
+            f"tool_calls={subagents.get('tool_calls', 0)}, tool_errors={subagents.get('tool_errors', 0)}"
         )
     discovery_calls = summary.get("file_discovery_calls", 0)
     unknown_tool_calls = summary.get("unknown_tool_calls", 0)

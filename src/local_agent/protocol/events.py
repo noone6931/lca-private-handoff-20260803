@@ -23,6 +23,8 @@ EVENT_TYPES = {
     "ApprovalRequested",
     "ApprovalResult",
     "ExecutionPolicyEvaluated",
+    "SubagentStarted",
+    "SubagentFinished",
     "InteractionRequested",
     "InteractionResolved",
     "InteractionCancelled",

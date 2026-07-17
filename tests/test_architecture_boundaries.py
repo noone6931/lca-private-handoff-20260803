@@ -33,15 +33,17 @@ OWNER_COMPLEXITY_CEILINGS = {
     "src/local_agent/workflow_profile.py": 165,
     "src/local_agent/runtime_workflow_profile.py": 44,
     "src/local_agent/execution_policy.py": 170,
-    "src/local_agent/tools/base.py": 550,
+    "src/local_agent/tools/base.py": 603,
     "src/local_agent/command_dispatcher.py": 219,
     "src/local_agent/provider_stream.py": 340,
     "src/local_agent/chat_runtime.py": 162,
     "src/local_agent/llm.py": 226,
-    "src/local_agent/protocol/events.py": 222,
+    "src/local_agent/protocol/events.py": 224,
     "src/local_agent/frontends/terminal/renderer.py": 165,
     "src/local_agent/provider_protocol.py": 379,
-    "src/local_agent/runtime_prompt.py": 475,
+    "src/local_agent/runtime_prompt.py": 490,
+    "src/local_agent/run_collector.py": 668,
+    "src/local_agent/explore_subagent.py": 541,
 }
 LEGACY_COMPLEXITY_DEBT_CEILINGS = {
     "src/local_agent/agent.py": 1792,
@@ -291,6 +293,27 @@ class ArchitectureBoundaryTests(unittest.TestCase):
         )
         delta_source = ast.get_source_segment(renderer, delta_renderer) or ""
         self.assertNotIn("arguments", delta_source)
+
+    def test_explore_subagent_is_opt_in_readonly_nonrecursive_and_runtime_thin(self) -> None:
+        owner = (ROOT / "src/local_agent/explore_subagent.py").read_text(encoding="utf-8")
+        runtime = (ROOT / "src/local_agent/agent.py").read_text(encoding="utf-8")
+        tools = importlib.import_module("local_agent.tools")
+        subagent = importlib.import_module("local_agent.explore_subagent")
+        expected_tools = {
+            "read_file", "list_files", "glob_files", "search_code", "lsp_symbols",
+            "lsp_workspace_symbols", "lsp_document_symbols", "lsp_definition",
+            "lsp_references", "lsp_diagnostics", "lsp_status",
+        }
+
+        self.assertEqual(set(subagent.EXPLORE_TOOL_NAMES), expected_tools)
+        self.assertNotIn("delegate_explore", subagent.EXPLORE_TOOL_NAMES)
+        self.assertNotIn("AgentRuntime(", owner)
+        self.assertNotIn("from .agent", owner)
+        self.assertNotIn("EXPLORE_TOOL_NAMES", runtime)
+        self.assertNotIn('name == "delegate_explore"', runtime)
+        self.assertNotIn("delegate_explore", tools.create_default_registry().tool_names())
+        enabled = tools.create_runtime_registry(object(), True, 60)
+        self.assertEqual(enabled.tool_names().count("delegate_explore"), 1)
 
     def test_runtime_strategy_owners_do_not_reintroduce_business_keyword_guards(self) -> None:
         strategy_files = (

@@ -111,9 +111,10 @@ from .steering.termination import termination_message
 from .task_contract import generate_requirement_contract
 from .task_contract import render_contract_context
 from .test_planner import plan_narrow_test
-from .tools import create_default_registry
+from .tools import create_default_registry, create_runtime_registry
 from .tools.base import ToolContext
 from .tools.base import ToolResult
+from .tools.base import registry_schemas_for_context, session_safe_assistant_message, telemetry_tool_arguments
 from .tools.base import tool_state_dir
 from .tools.git import capture_git_baseline
 from .tools.relevance import is_analysis_only_request
@@ -134,6 +135,7 @@ from .runtime_read_only_explore import RuntimeReadOnlyExplorePhase
 from .runtime_provider_terminal import ProviderTerminalPhase
 from .runtime_workspace import WorkspaceLifecycle
 from .runtime_prompt import _assistant_event_payload, _event_preview, _tool_call_event_payload
+from .runtime_prompt import _tool_output_event_preview
 from .runtime_prompt import _parse_tool_arguments
 from .runtime_prompt import _clip_memory_text
 from .runtime_prompt import _clip_context_text
@@ -252,7 +254,10 @@ class AgentRuntime:
         self._workspace_context = WorkspaceContext(config.workspace, config.allowed_dirs)
         self._is_running = False
         self._client = OpenAICompatibleClient(config)
-        self._registry = create_default_registry()
+        base_registry = create_default_registry()
+        self._registry = create_runtime_registry(
+            self._client, config.enable_subagents, config.subagent_budget_seconds, base_registry=base_registry
+        )
         self._session_tool_approval: dict[str, str] = {}
         self._summary_cache: dict[str, str] = {}
         self._base_system_prompt = SYSTEM_PROMPT
@@ -329,6 +334,7 @@ class AgentRuntime:
                 "additional_roots": [str(path) for path in self._workspace_context.additional_roots],
                 "state_dir": str(self._state_dir),
                 "provider": config.provider,
+                "subagents_enabled": config.enable_subagents, "subagent_budget_seconds": config.subagent_budget_seconds,
                 "continued": bool(continue_session or session_id),
             },
         )
@@ -427,6 +433,7 @@ class AgentRuntime:
         self._evidence_phase.record_workspace_root_evidence()
         tool_context = replace(
             self._tool_context,
+            run_id=run_id, workspace_revision=self._workspace_context.revision,
             deadline_monotonic=deadline,
             git_baseline=git_baseline,
             current_user_request=prompt,
@@ -562,7 +569,7 @@ class AgentRuntime:
                     if message.get("content") is None:
                         message = {**message, "content": ""}
                     self._messages.append(message)
-                    self._session.append("assistant", message)
+                    self._session.append("assistant", session_safe_assistant_message(self._registry, message))
                     self._events.emit("AssistantMessage", _assistant_event_payload(message, message_id=message_id))
                     if tool_choice_outcome.kind == "force":
                         step += 1
@@ -595,7 +602,7 @@ class AgentRuntime:
                 self._run.clear_forced_final_answer_request()
             message = _provider_safe_assistant_message(raw_message)
             self._messages.append(message)
-            self._session.append("assistant", message)
+            self._session.append("assistant", session_safe_assistant_message(self._registry, message))
             self._events.emit("AssistantMessage", _assistant_event_payload(message, message_id=message_id))
 
             tool_calls = message.get("tool_calls") or []
@@ -676,11 +683,12 @@ class AgentRuntime:
                 function = tool_call.get("function") or {}
                 name = function.get("name") or ""
                 arguments = function.get("arguments") or "{}"
-                self._log_tool_start(name, arguments)
+                self._log_tool_start(name, telemetry_tool_arguments(self._registry, name, arguments))
                 guard_hits_before = self._session_guards.counts()
                 directive_transition = self._tool_directive_phase.before_tool_attempt(name)
                 try:
-                    result = self._execute_tool_with_repeat_guard(name, arguments, tool_context)
+                    call_context = replace(tool_context, tool_call_id=str(tool_call.get("id") or ""))
+                    result = self._execute_tool_with_repeat_guard(name, arguments, call_context)
                 except KeyboardInterrupt:
                     self._append_synthetic_tool_results(
                         tool_calls[index:],
@@ -806,13 +814,13 @@ class AgentRuntime:
         if allowed_names is None:
             schemas = [
                 schema
-                for schema in _registry_schemas_for_context(self._registry, self._tool_context)
+                for schema in registry_schemas_for_context(self._registry, self._tool_context)
                 if schema.get("function", {}).get("name") not in denied_names
             ]
         else:
             schemas = [
                 schema
-                for schema in _registry_schemas_for_context(self._registry, self._tool_context)
+                for schema in registry_schemas_for_context(self._registry, self._tool_context)
                 if schema.get("function", {}).get("name") in allowed_names
                 and schema.get("function", {}).get("name") not in denied_names
             ]
@@ -851,7 +859,7 @@ class AgentRuntime:
         if hasattr(self._registry, "exposed_tool_names"):
             return tuple(name for name in self._registry.exposed_tool_names(self._tool_context) if name not in denied_names)
         names: list[str] = []
-        for schema in _registry_schemas_for_context(self._registry, self._tool_context):
+        for schema in registry_schemas_for_context(self._registry, self._tool_context):
             name = schema.get("function", {}).get("name")
             if isinstance(name, str) and name and name not in denied_names:
                 names.append(name)
@@ -890,6 +898,7 @@ class AgentRuntime:
             f"- max_steps: {self._config.max_steps}",
             f"- summary_mode: {self._config.summary_mode}",
             f"- memory_consolidation: {self._config.memory_consolidation}",
+            f"- subagents: {'enabled' if self._config.enable_subagents else 'disabled'}, budget={self._config.subagent_budget_seconds}s",
             self._run.workflow_profile_status(),
         ]
         if self._workspace_context.additional_roots:
@@ -1642,7 +1651,7 @@ class AgentRuntime:
                 "is_error": is_error,
                 "useless": bool(useless and not is_error),
                 "content_length": len(content),
-                "content_preview": _event_preview(content),
+                "content_preview": _tool_output_event_preview(content, metadata),
             },
         )
         if metadata and metadata.get("provider_schema_violation"):
@@ -1781,12 +1790,3 @@ class AgentRuntime:
     def _emit_event(self, event_type: str, payload: dict[str, Any]) -> None:
         self._run.collector.record_event(event_type, payload)
         self._events.emit(event_type, payload)
-
-
-def _registry_schemas_for_context(registry: Any, context: ToolContext) -> list[dict[str, Any]]:
-    """Return context-aware model schemas while tolerating narrow test registries."""
-
-    model_schemas = getattr(registry, "model_schemas", None)
-    if callable(model_schemas):
-        return model_schemas(context)
-    return registry.schemas()

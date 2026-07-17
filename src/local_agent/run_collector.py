@@ -108,6 +108,10 @@ class RunStats:
     execution_policy_unsandboxed_exec_evaluations: int = 0
     execution_policy_invalid_events: int = 0
     execution_policy_sources: dict[str, int] = field(default_factory=dict)
+    subagent_calls: int = 0
+    subagent_statuses: dict[str, int] = field(default_factory=dict)
+    subagent_tool_calls: int = 0
+    subagent_tool_errors: int = 0
     tool_counts: dict[str, int] = field(default_factory=dict)
     guard_start: dict[str, int] = field(default_factory=dict)
     steer_start: dict[str, int] = field(default_factory=dict)
@@ -194,7 +198,19 @@ class RunCollector:
             self._stats.file_discovery_calls += 1
 
     def record_event(self, event_type: str, payload: Mapping[str, Any]) -> None:
-        if event_type != "ExecutionPolicyEvaluated" or self._stats is None:
+        if self._stats is None:
+            return
+        if event_type == "SubagentStarted":
+            self._stats.subagent_calls += 1
+            return
+        if event_type == "SubagentFinished":
+            status = payload.get("status")
+            if status in {"completed", "partial", "failed", "timeout"}:
+                self._stats.subagent_statuses[status] = self._stats.subagent_statuses.get(status, 0) + 1
+                self._stats.subagent_tool_calls += max(0, _safe_int(payload.get("tool_calls")))
+                self._stats.subagent_tool_errors += max(0, _safe_int(payload.get("tool_errors")))
+            return
+        if event_type != "ExecutionPolicyEvaluated":
             return
         outcome = payload.get("outcome")
         source = payload.get("source")
@@ -626,6 +642,12 @@ class RunCollector:
                 "invalid_events": stats.execution_policy_invalid_events,
                 "sources": dict(sorted(stats.execution_policy_sources.items())),
             },
+            "subagents": {
+                "calls": stats.subagent_calls,
+                "statuses": dict(sorted(stats.subagent_statuses.items())),
+                "tool_calls": stats.subagent_tool_calls,
+                "tool_errors": stats.subagent_tool_errors,
+            },
             "tool_counts": dict(sorted(stats.tool_counts.items())),
             "guard_hits": {key: value for key, value in guard_hits.items() if value},
             "steering_counts": {key: value for key, value in steering_counts.items() if value},
@@ -636,4 +658,11 @@ def _elapsed_ms_since(started_monotonic: float) -> int:
     try:
         return max(0, int((time.monotonic() - started_monotonic) * 1000))
     except Exception:  # noqa: BLE001 - run summary must never break task completion.
+        return 0
+
+
+def _safe_int(value: Any) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
         return 0
