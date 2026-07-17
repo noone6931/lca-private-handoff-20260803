@@ -17,10 +17,10 @@ python3 scripts/sync_project_excel.py
 | 字段 | 当前值 | 说明 |
 |---|---|---|
 | 最终目标 | 个人本地编程助手 Agent | 本地优先、封闭 VM 可用、只访问指定 AI API，能读代码、搜代码、改代码、跑测试、生成 diff、沉淀项目记忆。 |
-| 当前阶段 | P16 通用 Coding 稳定性与 Runtime/State 价值门槛 | 当前 stable 为 T-233 `20260717T121435Z-0ab0cad1156a-c79a019a2d90`。T-229 clean coding、T-230 dirty State 与 T-231-T-233 同步 session continuity 均通过；P14 扩展和 P15 auto-apply 继续冻结。 |
-| 推荐入口 | `./agent "阅读当前项目"` | 自动设置 `PYTHONPATH=src`，默认当前目录为 workspace。 |
+| 当前阶段 | P17 Independent Full-screen TUI 已收口 | 当前 stable 为 T-239 `20260717T133745Z-385be8183447-5263058e2b46`。T-234~T-239 完成独立 curses TUI、bounded mailbox、同步 worker、typed interaction、cooperative cancellation、PTY restoration 与真实 provider live；P14 扩展和 P15 auto-apply 继续冻结。 |
+| 推荐入口 | `lca --tui` 或 `./agent --tui` | 显式进入 full-screen TUI；默认 `./agent` / `--chat` 行为不变，非 TTY 自动回退 terminal chat。 |
 | Token 配置 | 环境变量 / `--env-file` / `.env` | 优先级为真实环境变量、显式 env-file、用户级 `${AGENT_CONFIG_DIR:-~/.config/local-coding-agent}/.env`、workspace `.env`；stable snapshot 不携带密钥。 |
-| 测试数 | T-233 stable 1113/62/22 | release gate 在 Python 3.14 下通过 1113 unittest、compileall、diff-check；62 benchmark、22 architecture 与独立 non-delivery continuity matrix 通过。Excel 按用户要求不生成。 |
+| 测试数 | T-239 stable 1162/62/25 | clean detached release gate 通过 1162 unittest、compileall、diff-check；62 benchmark、25 architecture、PTY normal/resize/signal/Ctrl-C matrix 与一次 fresh 百炼 TUI coding live 通过。Excel 按用户要求不生成。 |
 | 三方架构对照 | 已完成 2026-07-16 基线 | 见 `docs/lca-omp-codex-architecture-comparison-2026-07-16.md`；目标修正为 OMP/Codex 级通用底座 + LCA 企业工作流，不以完整复制 OMP platform 为 KPI。 |
 | 默认 budget_seconds | 600 | 单次任务默认 10 分钟墙钟预算；`--budget-seconds 0` 可关闭。 |
 | 默认 max_steps | 0 | 表示不限步；仅在用户显式设置时作为防失控保险丝。 |
@@ -35,7 +35,7 @@ python3 scripts/sync_project_excel.py
 | 默认工作流落地 | 已完成 MVP 版 | system prompt + tool descriptions + runtime workflow reminder 已落地，用户不需要每次手写工具顺序。 |
 | LSP / Light fallback | 已完成 MVP 版 | `lsp_symbols` / `lsp_workspace_symbols` / `lsp_document_symbols` / `lsp_definition` / `lsp_references` / `lsp_diagnostics` / `lsp_status`，覆盖 Python、Java、JavaScript、TypeScript、Vue；默认可用则外部 LSP，不可用则 light fallback。 |
 | Multi-root workspace | 已完成 MVP 版 | `--allow-dir` / `AGENT_ALLOWED_DIRS` 支持显式授权额外目录给文件、搜索、LSP、patch 工具；system prompt 和 `list_files`/path-not-found 等工具观察会列出 primary workspace 和 allowed dirs；需求/文档类任务会先用 soft tool requirement 要求读取 allowed-dir 文档；shell/git/显式项目 memory/skills 仍锚定 `--cwd`，session/todo/patch logs 和默认 consolidation memory 走 state dir。 |
-| Stable / Dev release channels | 已完成 MVP 版 | `lca` 指向已验证的不可变 source snapshot，`lca-dev` 指向当前源码；当前 stable 为 T-233 `20260717T121435Z-0ab0cad1156a-c79a019a2d90`，revision `0ab0cad1156a9086180c6eeecd699f3eeaaa2231`，digest `c79a019a2d90bcbb660fa869781297f1e970ae0790f1c76ce4fadd9c977e07a8`。`lca-release publish` 先跑离线 gate 再原子 promote，失败保留旧 stable。 |
+| Stable / Dev release channels | 已完成 MVP 版 | `lca` 指向已验证的不可变 source snapshot，`lca-dev` 指向当前源码；当前 stable 为 T-239 `20260717T133745Z-385be8183447-5263058e2b46`，revision `385be8183447fbbc7aac7ac0efcc57a13291f396`，digest `5263058e2b46c8f5f153d77d530f5560c1184323f75de500c9f0ecb6e7eca760`。`lca-release publish` 先跑离线 gate 再原子 promote，失败保留旧 stable。 |
 | Workflow Profiles | 已完成 Phase 1 | `auto` 依据 typed `RequirementContract` 解析 `coding`、`enterprise-evidence`、`readiness-audit`；缺 contract 时 optional heavy hooks 全关闭。 | profile 不改变 task kind、tool schema、approval 或 workspace；不强制 `apply_patch`，通过 Session、`ContextUpdated`、RunSummary 和 `/status` 审计。 |
 | Path-scoped rules | 已完成 MVP 版 | 每个 canonical workspace root 可定义 `.local-agent/rules/*.md`；每轮只注入轻量 metadata，用户或工具路径命中时才注入对应规则正文，规则不改变工具权限。 |
 | Offline benchmark / eval | 已完成 MVP 版 | `benchmarks/tasks` 的隔离 fixture 默认使用 deterministic fake provider 跑真实 Runtime，并输出 JSON/Markdown 结果；`--live` 才显式使用外部 provider。 |
@@ -48,8 +48,8 @@ python3 scripts/sync_project_excel.py
 | Evidence Ledger | 已完成 MVP 版 | Runtime 会从 `read_file`、`search_code`、LSP、patch、run_tests、git 等工具结果提炼短证据账本，作为 provider-bound context 注入，并写入 session JSONL `evidence` 事件。 |
 | Implementation quality / safe new-file | 已完成 MVP 版 | `git_diff` 会对 comment-only 代码实现 patch 输出 reviewer warning；`write_file dry_run=true` 可预览新文件 diff，真实创建写 patch log，`rollback_patch` 可删除本 session 新建文件。 |
 | No-edit final hygiene | 已完成 MVP 版 | 实现任务准备以“无法安全实现/目标服务缺失/无改动”停止时，runtime 会要求先做 todo/git 收束，并临时只开放 todo/git hygiene 工具。 |
-| Event/Command Protocol | 已完成数据形状和 event MVP | `src/local_agent/protocol/events.py` / `commands.py` 提供 dataclass shape；Runtime 可注入 `EventSink`，CLI 使用 `StderrEventSink`，session JSONL 写入 `event_v1`。`AssistantDelta`、统一 command dispatcher、worker/runtime 隔离尚未完成，terminal 当前仍直接调用 Runtime。 |
-| Terminal Frontend | 已完成 MVP 版 | `./agent`、`./agent --chat`、`./agent chat` 进入 terminal-native 交互；可选 `prompt_toolkit` / `rich` 增强输入和输出，缺失时降级；支持 `/help`、`/status`、`/tools`、`/approval`，并对 `/`、`/workspace`、`/approval` 提供带说明的 Tab 补全。 |
+| Event/Command Protocol | 已完成并支持多前端 | dataclass Command/Event/Interaction、AssistantDelta、CommandDispatcher 与 Turn/Run correlation 已统一；terminal chat 和 TUI 都通过共享 protocol/registry 消费，TUI worker 不导入具体 AgentRuntime。 |
+| Terminal Frontends | 已完成 terminal chat + full-screen TUI | 默认 `./agent` / `--chat` 保留 append-only frontend；`--tui` 显式启用独立 curses frontend，支持 responsive transcript、composer、status/tool/todo pane、palette/search/copy、focused ask/approval、session continue 和 cooperative Ctrl-C。 |
 | Run summary / coverage | 已完成 MVP 版 | 每轮结束写 `run_summary` session 事件和 `RunSummary` typed event；`/status` 可看最近一轮终止原因、LLM/工具次数、guard/steering/compaction 统计。 |
 | VerificationPlan / TestPlanner / DeliveryAudit | 已完成 MVP 版 | `verification_plan.py` / `test_planner.py` / `verification_timeline.py`：contract 业务验收保持未机器验证；只有路径关联代码证据、当前本轮净 diff、最后写入后测试、deterministic reviewer 进入 delivery checks。测试候选明确标记 module/project/blocked，绝不绕过 approval。 |
 | 项目边界分析 | 已完成 MVP 版 | 企业服务边界和项目范围分析工作流放入本机 `.local-agent/memory` / `.local-agent/skills`；runtime 新增 analysis-only 任务识别、named skill soft requirement、自定义 memory_read 安全读取和 final structure gate。 |
@@ -67,7 +67,7 @@ python3 scripts/sync_project_excel.py
 | P5 | 安全与恢复增强 | synthetic tool result、patch preview、rollback、ask_user timeout、per-tool approval | 已完成并收口 | 100% | 主链路已通过真实百炼复测；后续只修日用反馈中的 P0/P1 问题。 |
 | P6 | 日用体验与默认工作流固化 | OMP 默认工作流本地化：system prompt、工具描述、轻量 runtime nudge | 已完成 MVP 版 | 100% | 进入真实任务压测。 |
 | P7 | 高级工程能力轻量版 | OMP 风格 auto summary、多语言 LSP/light fallback、LSP 兼容别名、LSP best-effort 置信度提示、multi-root workspace roots、allowed-dir soft tool requirement、startup context/rules、startup memory、learn、memory consolidation、authored skills discovery、path-scoped rules、重复工具调用熔断、duplicate-tool forced-final steering、同文件切片读取漂移 guard、空搜索词跨路径 guard、path escape roots hint、LSP 空 query guard、Current task contract、Evidence Ledger、tool result pruning、todo steering、跨项目 env-file、runtime state dir、真实项目压测记录、relevance gate / diff reviewer、implementation-quality reviewer、safe new-file policy、no-edit final hygiene | 已完成 MVP 版 | 100% | 高级轻量能力主线已收口，后续按真实压测失败形态补完整 reviewer 或 ToolChoiceQueue；架构债按 OMP 原则渐进拆 `agent.py`。 |
-| P8 | 前端协议与交互基础 | Event/Command Protocol、event replay、terminal-native frontend | 已完成 MVP 版 | 100% | T-076/T-077 已完成；完整 async command bus 和更重 UI 后置，下一步按用户项目边界做项目清单分析压测。 |
+| P8 | 前端协议与交互基础 | Event/Command Protocol、event replay、terminal chat 与 full-screen TUI | 已完成 | 100% | T-076/T-077 建立 protocol/chat，T-219/T-220 补 dispatcher/streaming，P17 在同一边界上完成独立 TUI；完整 async bus 仍按证据后置。 |
 | P9 | 真实需求使用准备 | 项目边界分析、用户确认项目范围、源码验证、实现设计 | S5-1 隔离交付完成 | 90% | 候选快照与待制单后端列表已有已审查参考实现；原业务仓应用、Oracle 8u121/真实库集成及后续制单/Word/回退/导出仍未完成。 |
 | P10 | Intelligence Runtime 骨架 | RequirementContract、CompletionAudit、MiniToolChoiceQueue、Planner/Explore、Reviewer | 已完成 | 100% | 目标契约、阶段队列、完成审计、计划/探索、patch reviewer、VerificationPlan/TestPlanner/DeliveryAudit 与 cross-root evidence matrix 已有明确 Owner。 |
 | P11 | Runtime Ownership / Release Discipline | 薄 agent-loop、职责 Owner、stable/dev/candidate 隔离 | 已完成 MVP 版 | 100% | T-148 将 Runtime 收为 facade；T-215 后 `agent.py` 为 1,808 行/71 methods，architecture ratchet 同步锁紧。 |
@@ -76,6 +76,7 @@ python3 scripts/sync_project_excel.py
 | P14 | Explicit Subagent Capability | 独立上下文、预算、只读工具集、typed yield | Phase 1 已完成，扩展暂停 | 45% | T-223 小 fixture PASS，但真实三仓 enabled/default-off 都未形成完整覆盖；保留 default-off Explore，不并发、不写入、不扩 reviewer/implement。 |
 | P15 | Semantic Coding Tools | LSP rename preview、Code Action preview 与外部 LSP 进程边界 | Phase 1 已收口 | 55% | T-224/T-226 preview 已发布，T-227/T-228 证明真实 Java 收益并收住 Eclipse metadata；auto-apply、第二 writer、更多 LSP 特例继续冻结。 |
 | P16 | Ordinary Coding Reliability / Runtime State | 跨语言自然读改测 diff、同 session 最新需求、dirty worktree、状态归属与同步中断恢复 | 阶段性收口 | 70% | T-229/T-230 与 T-231-T-233 已覆盖 clean/dirty coding、stale write、同步中断、子进程回收和 typed non-delivery session continuation；后续由新的跨场景失败证据决定下一窄批次。 |
+| P17 | Independent Full-screen TUI | 独立多前端边界、响应式终端 UI、交互、取消、PTY 恢复与真实 coding 可用性 | 已完成 | 100% | T-234~T-239 已发布；后续只按真实日用失败修窄问题，不预设 async bus、mouse/plugin widgets 或第二套 Runtime。 |
 
 ## 已完成功能
 
@@ -156,7 +157,7 @@ python3 scripts/sync_project_excel.py
 | T-010 | P1 | P4 | 简单上下文 summary | 已完成 MVP 版 | Agent | 长任务会被全量历史拖垮 | 已实现字符阈值 deterministic compaction、LLM summary、本地 token budget + 15% reserve；后续再评估 provider/model 专用 tokenizer 和输出 reserve |
 | T-011 | P1 | P5 | 补 synthetic tool result | 已完成 MVP 版 | Agent | 中断/异常时避免 orphan tool_calls | deadline 到期、用户中断和 length 截断已补齐 |
 | T-012 | P1 | P5 | Patch preview/rollback 设计 | 已完成 MVP 版 | Agent | 进一步降低改错风险 | 已完成 dry_run 预览和 session 级 hash 校验 rollback |
-| T-013 | P2 | P6 | 评估 LSP/TUI/subagents/AST edit | 已部分完成 | User + Agent | 高级能力强但复杂 | 轻量 LSP 已做；TUI/subagents/AST edit/DAP 继续后置 |
+| T-013 | P2 | P6/P14/P17 | 评估 LSP/TUI/subagents/AST edit | 已部分完成 | User + Agent | 高级能力强但复杂 | 轻量 LSP、显式只读 Explore、full-screen TUI 已做；AST edit、DAP、并发/写入 subagents 继续后置 |
 | T-014 | P0 | P3 | 提交 P3 变更 | 已完成 | User + Agent | 把本轮 P3 工作固化为第二个 commit | 提交 `304fbdf` 已创建 |
 | T-015 | P0 | P2 | Markdown 模板同步 Excel | 已完成 | Agent | 避免手工同步 Excel 出错 | `scripts/sync_project_excel.py` 可从本文件生成 Excel |
 | T-016 | P0 | P3 | 细化 budget deadline 执行检查 | 已完成 | Agent | 让时间预算从软闸变成实际主控 | LLM/tool timeout 按剩余预算夹紧；未执行工具有 synthetic result |
@@ -350,6 +351,12 @@ python3 scripts/sync_project_excel.py
 | T-231 | P0 | P16 | Synchronous Interrupt Recovery Benefit Gate | 已完成；interrupt safety PASS，typed continuation gap reproduced | 小红 stable 黑盒/架构归因 | 验证 approval 与长测试中断、child 回收、单一 lifecycle 和自然 session continue。 | 中断本身安全闭合；但上一轮已写入后中断，下一轮自然继续被 fresh classifier 判 `unclear`，丢失待完成 test/diff/review obligation并可误交付，形成通用 Runtime 缺陷。 |
 | T-232 | P0 | P16 | Typed Session Task Continuity | 已完成并发布 stable | 小红实现/R1、独立 immutable verifier、clean publish | 用 typed Session state 延续未完成 code verification，不下沉自然语言规则，不复用旧测试结果。 | commits `5128c9d` + `b30240a`；HEAD/path/patch-record/hash 全量验证，no-diff fail closed，4/4 current evidence 才关闭；R1 修复 repeated stop 只保留新路径的问题。1109/62/22 与独立 matrix 通过；stable `20260717T111651Z-b30240a91398-5bf520393764`。 |
 | T-233 | P0 | P16 | Generic Non-delivery Session Continuity | 已完成并发布 stable | 小红 characterization/实现，双重独立 review，immutable gate | 用 typed delivery lifecycle 覆盖全部未交付终态，删除开放 termination reason 集合。 | commit `0ab0cad`；provider error、timeout、max steps、command error 与 future reason 写后 pending、写前 closed，sink 故障终态精确一次。1113/62/22 与 immutable matrix 通过；stable `20260717T121435Z-0ab0cad1156a-c79a019a2d90`。 |
+| T-234 | P0 | P17 | Full-screen TUI Architecture / CLI Boundary | 已完成 | Codex/OMP 源码审计 + 实现契约 | TUI 必须是独立可替换 frontend，不成为第二个 Runtime。 | `docs/tui-frontend-architecture.md` 固化 9 个 Owner、单 UI 写者、typed projection、terminal restore 和 immutable/live matrix；`--tui` 显式启用，默认 chat/fallback 不变。 |
+| T-235 | P0 | P17 | TUI Model / Rendering / Responsive Layout | 已完成 | 本地实现与 snapshot/PTY | 建立 transcript fact model、Unicode-safe rendering 和窄/宽布局。 | 纯 reducer/view、40/80/120 列 reflow、composer/status/tool/todo/session pane、follow-tail、streaming exact-final dedupe 与 authoritative different-final 标记均通过。 |
+| T-236 | P0 | P17 | Bounded Mailbox / Runtime Worker | 已完成 | 本地实现与 deterministic tests | 隔离 UI/Runtime 线程并限制事件积压、泄漏和乱序。 | 单同步 worker、bounded/coalescing mailbox、critical lifecycle preservation、loss accounting 和 display-safe projection；raw args/XML/env/secret 不进 TUI。 |
+| T-237 | P1 | P17 | Focused Interaction / Shared Commands / Session UX | 已完成 | 本地实现与 deterministic tests | ask/approval 与 terminal commands 复用 typed Owner，补齐日用 UX。 | request-id exactly-once settle、timeout/late reject、draft preservation；共享 TerminalCommandRegistry、palette/search/OSC52 copy、workspace/approval/session continue 已完成。 |
+| T-238 | P0 | P17 | Cooperative Cancellation / Terminal Restoration | 已完成 | 本地实现与 PTY fault matrix | Ctrl-C、signal、worker shutdown 和子进程必须一致闭合且不假装线程强杀。 | typed cancellation 贯穿 provider/summary/reviewer/memory/explore/tools；shell/test process-group TERM/KILL；normal/resize/SIGTERM/SIGHUP/SIGTSTP/Ctrl-C restore 通过。 |
+| T-239 | P0 | P17 | Immutable TUI Gate / Live / Stable Release | 已完成并发布 stable | clean candidate、PTY、真实百炼 live、clean publish | 证明 packaged TUI 与真实 coding 用户流可用且不污染 main/stable/fixture。 | commit `385be81`；1162/62/25、compileall/diff/help/chat、PTY matrix 全绿；fresh 百炼 TUI 完成 read/patch/test/diff/delivery，Turn/RunSummary correlation 精确。stable `20260717T133745Z-385be8183447-5263058e2b46`。 |
 
 ## 风险与决策
 
@@ -361,7 +368,7 @@ python3 scripts/sync_project_excel.py
 | 风险 | R-003 | 中 | ask 模式确认过多 | 已关闭 MVP 版 | 已增加 approvalMode、per-tool allow/prompt/deny、session allow/reject | OMP 用 tool approval tier、approvalMode 和 per-tool policy 控制确认；我们保留旧白名单并补 `tool_approval` 和 session decision，危险 shell 仍可显式 deny。 |
 | 风险 | R-004 | 中 | 中断时 tool_calls 配对仍可增强 | 已关闭 MVP 版 | deadline、用户中断和输出截断已补齐 | OMP 在 abort、error、skipped、截断时补 synthetic tool result；我们按 call_id 补齐未执行工具，并已处理 `finish_reason=length`。 |
 | 风险 | R-005 | 中 | 没有初始 git commit | 已关闭 | 已创建初始 commit | OMP 依赖 session、diff 和工作区状态追踪修改，但不替代 VCS 基线；我们继续用 git commit 作为回滚锚点。 |
-| 风险 | R-006 | 低 | 高级能力过早引入 | 受控 | 已引入 auto summary、multi-root、startup memory、learn 和可选外部 LSP adapter；完整 DAP/subagents/重 UI 继续后置 | OMP 将 LSP、subagents、AST edit、TUI 等做成可组合高级能力；我们只把 LSP 做成可选增强，不作为默认强依赖。 |
+| 风险 | R-006 | 低 | 高级能力过早引入 | 受控 | 已引入 auto summary、multi-root、startup memory、可选 LSP 与独立 full-screen TUI；DAP、AST edit、并发/写入 subagents 继续后置 | OMP/Codex 的能力按 Owner 边界裁剪；TUI 只作为显式 frontend，不成为 Runtime 默认重链，其他高级能力仍按收益启用。 |
 | 风险 | R-007 | 中 | Prompt injection | 开放 | 文档提示；不信任仓库禁用 yolo | OMP 将仓库 context 视为 advisory，并靠 approval/yolo 策略限制工具权限；我们默认不信任仓库内容，危险工具需确认。 |
 | 风险 | R-008 | 中 | P3/P4 变更尚未提交 | 已关闭 | P3 提交 `304fbdf`，P4 提交 `4beb487` | OMP 持久化 session 和 compaction 以支持恢复，但代码里程碑仍要靠 VCS；我们继续阶段性 commit 固化节点。 |
 | 风险 | R-009 | 中 | ask_user 会阻塞等待用户 | 已缓解 | 已支持 timeout/default，并自动受剩余 budget 约束；显式 timeout 也会被剩余 budget 夹紧 | OMP 的 approval/elicitation 可以被拒绝或取消并回灌结果；我们给 `ask_user` 加 timeout/default，支持无人值守场景。 |
@@ -413,7 +420,7 @@ python3 scripts/sync_project_excel.py
 | 风险 | R-032 | 高 | 真实实现可能退化成低价值注释 patch | 已缓解并复跑 | T-073 复跑 session `20260709T021349259159Z` 中模型定位到相关 Java 文件，但因 `write_file` 被 deny，最终只给 DTO 字段补 JavaDoc；这不能算真实业务实现 | T-074 已补 implementation-quality reviewer：本轮代码 diff 若只有注释/文档改动，`git_diff` 会提示不能声称行为、校验、解析或测试覆盖变化；复跑 session `20260709T025706579604Z` 没有再做 comment-only patch。 |
 | 风险 | R-033 | 中 | no-edit 停止路径可能跳过收束工具 | 已关闭 MVP 版 | T-074 复跑中模型正确停止并说明目标实现属于 `zqyl-investment-plan`，但没有维护 todo，也没有调用 git_diff 证明无改动 | T-075 已参考 OMP current task / tool-choice steering 思路：no-edit stop 缺 todo/git 收束时会触发 runtime steering，并临时只开放 todo/git hygiene 工具。 |
 | 风险 | R-035 | 中 | Runtime 与前端输出耦合会阻碍后续终端体验 | 已关闭 MVP 版 | 工具日志、审批显示、最终输出如果继续散落在 Runtime/CLI print，后续 `prompt_toolkit + rich` 前端难以复用和 replay | T-076 已参考 OMP runtime/TUI 分层思路：Runtime 产出 typed events，CLI 只是第一消费者，session 写 `event_v1`。 |
-| 风险 | R-036 | 中 | 完整 async command bus 过早引入会扩大复杂度 | 新增，受控 | T-077 已满足本地 terminal 交互，但 approval/cancel/interrupt 仍是同步路径；如果立刻搬完整异步 command bus，会影响当前稳定的单 Agent runtime | 参考 OMP 分层但按 LCA 裁剪：MVP 先保留同步 `AgentRuntime.run()`，把 event/replay/terminal 输入输出打通；等真实交互压测需要取消、远程 UI 或并发审批时，再升级 Command Bus。 |
+| 风险 | R-036 | 中 | 完整 async command bus 过早引入会扩大复杂度 | 受控，T-239 补 cooperative cancel | TUI 已需要 worker/interaction/cancel，但仍没有 remote UI、并发 turn 或 batch approval 的真实收益证据 | 保留单同步 Runtime worker 与 typed cancellation；只有远程、多并发或后台任务出现跨场景需求时才评估完整 async bus。 |
 | 风险 | R-037 | 中 | 纯分析任务被实现任务 hygiene 带偏 | 已关闭 MVP 版 | “根据需求和服务边界圈项目范围”曾被 `需求/项目` 等关键词误判为实现任务，导致 git/todo/no-edit 审计干扰或最终只说 ready | 已补 analysis-only 任务识别；此类任务不加 coding workflow nudge、不触发 no-edit final hygiene；纯只读分析默认跳过 todo；final structure gate 会在缺表格/缺指定段落/ready-to-output 时强制无工具重答。 |
 | 风险 | R-038 | 中 | 点名 authored skill 但模型不读正文 | 已关闭 MVP 版 | T-078 压测中模型只看 skill metadata 时，范围分析规则无法充分生效 | 已参考 OMP soft tool requirement 思路：prompt 点名已发现的 project skill 时，runtime 会软性要求先 `read_file` 对应 `SKILL.md`。 |
 | 风险 | R-039 | 中 | TUI 命令不可发现会降低日用体验 | 已关闭 MVP 版 | 交互入口已有，但用户需要记 `/approval` 等命令，且缺少当前 runtime 状态视图 | 已参考 terminal frontend 设计文档，在 append-only 前端内新增 `/help`、`/status`、`/tools`，不做 fullscreen。 |
@@ -494,12 +501,12 @@ python3 scripts/sync_project_excel.py
 
 | 项目 | 结论 | 依据 | 后续 |
 |---|---|---|---|
-| 阶段判断 | P13/P16 已阶段性收口；P14/P15 停止横向扩展 | T-229 clean coding 3/3、T-230 State hard invariants 与 T-231-T-233 同步 non-delivery continuation 均通过；无 WIP 覆盖、stale 越界、旧验证复用或假交付。 | 不因 Codex 有完整 worktree/async runtime 就机械搬运；等待下一组跨场景 Runtime 证据，业务生产集成继续分账。 |
-| 与 OMP 的主要差距 | P12 MVP 可用，但不等于完整追平 OMP | OMP 的完整 task/explore/advisor/subagent、AST/LSP write、MCP/Browser、完整 TUI 仍未搬入；LCA 的 document reviewer 与 WorkspaceEvidenceRootProjection 是本地增强。 | Subagent/Advisor、AST/LSP write、MCP、Browser、完整 TUI 继续按收益后置。 |
+| 阶段判断 | P13/P16/P17 已阶段性收口；P14/P15 停止横向扩展 | clean/dirty coding、typed non-delivery continuation 与 independent full-screen TUI 均已通过 immutable/live；无 WIP 覆盖、stale 越界、旧验证复用、TUI 越权或假交付。 | 不因 Codex 有完整 worktree/async runtime 就机械搬运；用 T-239 stable 日常运行，等待下一组跨场景证据。 |
+| 与 OMP 的主要差距 | 核心底座与 full-screen TUI 可用，但不等于完整追平 OMP | OMP 的完整 task/explore/advisor/subagent、AST/LSP write、MCP/Browser 与 extension widgets 仍未搬入；LCA 的同步 Python Runtime、document reviewer 与 WorkspaceEvidenceRootProjection 是有意取舍/本地增强。 | Subagent/Advisor、AST/LSP write、MCP、Browser 和 plugin widgets 继续按收益后置。 |
 | 已关闭风险 | T-203 已关闭 S4 安全失败不可行动风险 | T-192~T-196 live 不再释放不可靠 owner/资料结论；T-202 合并重复控制生命周期；T-203 将被拒候选转为完整 typed BLOCKED，三次 S4 hard/usability 均通过。 | 保留现有 gate，不新增 transport/repair 层；run 1 的 provider schema/error 只记残余 telemetry，避免再次陷入局部补丁。 |
 | reviewer 决策 | 首次 isolated review + deterministic closure | T-193 后不再以 fresh second reviewer pass 作为终止条件；S2 reviewer revise 后 closure accepted，S3 reviewer pass。 | 真实 patch 质量仍由 implementation/delivery reviewer 链路处理；Advisor/Subagent 后置。 |
 | ToolChoiceQueue 决策 | 已做裁剪版 MiniToolChoiceQueue | 当前覆盖只读证据、需求文档前置读取、写后测试/diff hygiene；不做完整多队列/并发/子任务调度 | 后续若仍出现关键工具不用/乱用，再扩展 queue 规则；若出现 patch/总结质量不稳，补 reviewer。 |
-| 下一步 | 通用 Coding Agent 主线选择门槛 | 基于 Codex/OMP 增量源码对照和真实失败样本，选择下一个最小、用户可感知的 Runtime/coding 缺口。 | 不先写大重构；完整 async bus、worktree manager、TUI、auto-apply 和多 Agent 继续由收益证据驱动，不扩自然语言 gate 或样本特判。 |
+| 下一步 | T-239 stable 日用与证据门槛 | 使用 `lca --tui` 跑真实 coding，按可复现的 Runtime/frontend 失败选择下一个最小切片。 | 不先写大重构；完整 async bus、worktree manager、auto-apply、多 Agent、mouse/plugin widgets 继续由收益证据驱动，不扩自然语言 gate 或样本特判。 |
 
 ## P7 综合压测问题
 
@@ -545,10 +552,10 @@ python3 scripts/sync_project_excel.py
 | 项目 | 结论 | 依据 |
 |---|---|---|
 | 主链路 | 通过 | 百炼真实小改复测已跑通 todo、dry_run、apply_patch、session allow、rollback、run_tests、git_diff。 |
-| 测试 | 分层通过 | P5 收口时 90 个 unittest；当前 T-233 stable 为 1113/62/22，另有独立 non-delivery continuity matrix；profile/execution-policy、command/event lifecycle、streaming、S6-S10、Explore Subagent、LSP preview/jdtls containment、T-229 三语言 coding、T-230 dirty State 与 T-231-T-233 session recovery 回归通过；T-214 业务 compile 983/667、focused JUnit 4/17。 |
+| 测试 | 分层通过 | P5 收口时 90 个 unittest；当前 T-239 stable 为 1162/62/25，另有 non-delivery continuity、TUI reducer/mailbox/interaction/cancellation、PTY restore/resize/signal/Ctrl-C matrix 与真实百炼 TUI coding live；T-214 业务 compile 983/667、focused JUnit 4/17。 |
 | 日用入口 | 通过 | README 已补只读分析和小改任务命令模板。 |
 | 开放风险 | 可接受 | shell 仍非沙箱、prompt injection 仍需靠审批和封闭 VM；provider/model 专用 tokenizer、输出 reserve、managed skills、完整 reviewer 和完整 OMP ToolChoiceQueue 继续后置评估。 |
-| 下一阶段 | P16 后续按证据选题 | 同步 non-delivery/continue 已在 T-231-T-233 收口；下一批先做 Codex/OMP 增量偏差审计和真实用户失败归类，再选择最小 Runtime/coding 切片。完整 async bus 继续受 R-036 约束，生产应用仍单独走 Oracle/VM 门禁。 |
+| 下一阶段 | T-239 后按证据选题 | P16 continuity 与 P17 TUI 已收口；下一批先做真实日用和 Codex/OMP 增量偏差审计，再选择最小 Runtime/frontend 切片。完整 async bus 继续受 R-036 约束，生产应用仍单独走 Oracle/VM 门禁。 |
 
 ## 推荐工作流
 
