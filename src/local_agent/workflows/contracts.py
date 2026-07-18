@@ -4,7 +4,7 @@ from dataclasses import dataclass
 import re
 from typing import Literal
 
-from ..document_artifacts import DocumentArtifactRequirement, extract_document_artifact_requirements
+from ..evidence.documents import DocumentArtifactRequirement, extract_document_artifact_requirements
 from ..review.readiness import has_implementation_readiness_intent
 
 TaskKind = Literal["read-only", "code-implementation", "unclear"]

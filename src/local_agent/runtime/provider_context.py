@@ -28,7 +28,7 @@ from .compaction import summary_request_content as _summary_request_content
 from .compaction import tool_snippets as _tool_snippets
 from .compaction import truncate_recent_tool_outputs as _truncate_recent_tool_outputs
 from ..providers.llm import LlmError
-from ..memory_consolidation import _messages_to_memory_transcript
+from ..memory.consolidation import _messages_to_memory_transcript
 from ..workspace.path_rules import candidate_paths_for_path_rules, matching_path_rule_context, render_path_rule_metadata
 from ..workflows.planner import render_planner_explore_context
 from ..evidence.requirements import render_pinned_requirement_evidence

@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from typing import Any
 
-from ...document_artifacts import DocumentArtifactRequirement
+from ...evidence.documents import DocumentArtifactRequirement
 from ..contracts import is_inspection_forbidden
 from .decision import CODE_EVIDENCE_ALLOWED_TOOL_NAMES
 from .decision import CODE_EVIDENCE_TOOL_NAMES

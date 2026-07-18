@@ -12,8 +12,8 @@ import re
 from typing import Any, Iterable
 
 from .document_consistency import explicit_reconciliation_excerpt
-from ..document_identity import canonical_root_identity
-from ..document_identity import document_artifact_identity
+from ..evidence.document_identity import canonical_root_identity
+from ..evidence.document_identity import document_artifact_identity
 from ..evidence import EvidenceRecord
 from ..evidence.requirements import DocumentLocator
 from ..evidence.requirements import document_locator_excerpt

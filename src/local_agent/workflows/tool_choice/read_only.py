@@ -6,9 +6,9 @@ from collections.abc import Iterable
 from typing import Any
 
 from ...evidence.design import missing_design_evidence_roots
-from ...document_artifacts import DocumentArtifactRequirement
-from ...document_artifacts import document_artifact_coverage
-from ...document_artifacts import document_material_targets
+from ...evidence.documents import DocumentArtifactRequirement
+from ...evidence.documents import document_artifact_coverage
+from ...evidence.documents import document_material_targets
 from ..inventory import inventory_glob_arguments_for_roots, inventory_glob_call_hint
 from ...evidence.negative import allowed_tools_for_negative_claims, parse_negative_evidence_claims, unsupported_negative_existence_claims
 from ..explore import BOUNDED_EXPLORE_TOOLS

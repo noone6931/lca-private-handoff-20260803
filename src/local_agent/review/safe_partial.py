@@ -6,7 +6,7 @@ from typing import Iterable, Literal
 
 from .document_consistency import DocumentConsistencyAssessment
 from .document_consistency import unresolved_document_conflict_items
-from ..document_artifacts import DocumentArtifactRequirement
+from ..evidence.documents import DocumentArtifactRequirement
 from .handoff import ClaimEvidenceItem, ExploreHandoff
 from .readiness import IMPLEMENTATION_READINESS_DIMENSIONS
 from .readiness import ImplementationReadinessAssessment

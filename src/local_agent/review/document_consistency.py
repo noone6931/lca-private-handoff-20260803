@@ -5,7 +5,7 @@ import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Iterable, Literal, Mapping
 
-from ..document_identity import document_artifact_identity
+from ..evidence.document_identity import document_artifact_identity
 
 if TYPE_CHECKING:
     from .handoff import ClaimEvidenceItem, ExploreHandoff

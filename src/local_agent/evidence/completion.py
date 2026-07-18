@@ -4,9 +4,9 @@ import re
 from dataclasses import dataclass
 from typing import Literal
 
-from ..document_artifacts import document_artifact_coverage
-from ..document_artifacts import missing_document_artifacts
-from ..document_artifacts import unavailable_document_artifacts
+from ..evidence.documents import document_artifact_coverage
+from ..evidence.documents import missing_document_artifacts
+from ..evidence.documents import unavailable_document_artifacts
 from .status import EVIDENCE_STATUS_LABELS
 from .status import content_has_evidence_status_label
 from .negative import allowed_tools_for_negative_claims

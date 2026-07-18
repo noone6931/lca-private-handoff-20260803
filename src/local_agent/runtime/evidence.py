@@ -4,7 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Mapping, Protocol
 
-from ..document_artifacts import local_artifact_references
+from ..evidence.documents import local_artifact_references
 from ..evidence import EvidenceRecord, evidence_root_for_path, evidence_root_label
 from ..patch.anchored import PatchError, display_workspace_path, resolve_workspace_path
 from ..review.patch import review_input_metadata, review_input_summary
