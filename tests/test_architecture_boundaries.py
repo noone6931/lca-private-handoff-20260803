@@ -10,6 +10,14 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_PRODUCTION_MODULE_LINE_LIMIT = 900
+ROOT_IMPLEMENTATION_ENTRYPOINTS = {"agent.py", "cli.py", "config.py"}
+IMPORT_FREE_PACKAGE_INITIALIZERS = (
+    "src/local_agent/session/__init__.py",
+    "src/local_agent/review/__init__.py",
+    "src/local_agent/workflows/__init__.py",
+    "src/local_agent/workflows/tool_choice/__init__.py",
+    "src/local_agent/frontends/terminal/__init__.py",
+)
 OWNER_COMPLEXITY_CEILINGS = {
     "src/local_agent/workflows/tool_choice/queue.py": 185,
     "src/local_agent/review/read_only.py": 42,
@@ -159,6 +167,29 @@ class ArchitectureBoundaryTests(unittest.TestCase):
 
     def test_split_facades_and_debt_files_obey_complexity_ratchets(self) -> None:
         self.assertEqual(_production_complexity_failures(ROOT), [])
+
+    def test_root_package_contains_only_entrypoints_and_thin_compatibility_facades(self) -> None:
+        root_package = ROOT / "src/local_agent"
+        for path in sorted(root_package.glob("*.py")):
+            if path.name == "__init__.py" or path.name in ROOT_IMPLEMENTATION_ENTRYPOINTS:
+                continue
+            content = path.read_text(encoding="utf-8")
+            self.assertIn("Compatibility", content, f"root implementation owner: {path.name}")
+            self.assertLessEqual(
+                len(content.splitlines()),
+                64,
+                f"compatibility facade grew into an implementation owner: {path.name}",
+            )
+
+    def test_cycle_sensitive_package_initializers_remain_import_free(self) -> None:
+        for relative_path in IMPORT_FREE_PACKAGE_INITIALIZERS:
+            tree = ast.parse((ROOT / relative_path).read_text(encoding="utf-8"))
+            imports = [
+                node.lineno
+                for node in ast.walk(tree)
+                if isinstance(node, (ast.Import, ast.ImportFrom))
+            ]
+            self.assertEqual(imports, [], f"eager package import reintroduced in {relative_path}")
 
     def test_unregistered_production_module_cannot_bypass_global_line_limit(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
