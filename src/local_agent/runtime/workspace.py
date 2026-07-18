@@ -6,13 +6,13 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from ..lsp.client import close_all_clients
-from ..path_rules import discover_path_scoped_rules
+from ..workspace.path_rules import discover_path_scoped_rules
 from ..run_context import RunContext
 from ..session_guard_state import SessionGuardState
-from ..startup_context import build_system_prompt
+from ..workspace.startup import build_system_prompt
 from ..state import workspace_state_dir
-from ..workspace_context import WorkspaceContext
-from ..workspace_migration import WorkspaceMigrationError, migrate_session_artifacts, rollback_session_artifacts
+from ..workspace.context import WorkspaceContext
+from ..workspace.migration import WorkspaceMigrationError, migrate_session_artifacts, rollback_session_artifacts
 
 STARTUP_MEMORY_CHAR_LIMIT = 8000
 STARTUP_CONTEXT_CHAR_LIMIT = 8000

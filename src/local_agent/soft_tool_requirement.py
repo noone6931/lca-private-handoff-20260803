@@ -6,8 +6,8 @@ from pathlib import Path
 
 from .patch.anchored import PatchError
 from .patch.anchored import resolve_workspace_path
-from .startup_context import iter_authored_skill_files
-from .startup_context import read_skill_metadata
+from .workspace.startup import iter_authored_skill_files
+from .workspace.startup import read_skill_metadata
 from .tools.base import ToolResult
 
 

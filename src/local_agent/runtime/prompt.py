@@ -6,8 +6,8 @@ import json
 from pathlib import Path
 from typing import Any
 
-from ..startup_context import load_sticky_rules
-from ..startup_context import workspace_roots_context
+from ..workspace.startup import load_sticky_rules
+from ..workspace.startup import workspace_roots_context
 from ..steering.final_answer import request_mentions_todo
 from ..task_contract import RequirementContract
 from ..task_contract import requires_no_edit_final_hygiene

@@ -68,7 +68,7 @@ class WorkspaceMigrationTests(unittest.TestCase):
                     raise OSError("simulated patch move failure")
                 return original_replace(source_path, target_path)
 
-            with patch("local_agent.workspace_migration.os.replace", side_effect=fail_patch_move):
+            with patch("local_agent.workspace.migration.os.replace", side_effect=fail_patch_move):
                 with self.assertRaisesRegex(WorkspaceMigrationError, "simulated patch move failure"):
                     migrate_session_artifacts(
                         source_state_dir=source,
