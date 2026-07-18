@@ -1,95 +1,94 @@
-# Full-screen TUI frontend architecture
+# Normal-screen TUI frontend architecture
 
-Status: implementation contract for T-234 through T-239.
+Status: implemented through T-243.
 
 ## Scope
 
-The TUI is an explicit, replaceable frontend under `local_agent.frontends.tui`.
-It consumes the existing `AgentCommand`, `AgentEvent`, and
+The TUI is a replaceable frontend under `local_agent.frontends.tui`. It
+consumes the existing `AgentCommand`, `AgentEvent`, and
 `InteractionRequest`/`InteractionResult` boundaries. It does not own Runtime,
 tool, approval-policy, evidence, workflow, session, or finalization semantics.
 
-The existing terminal chat remains the default interactive frontend. `--tui`
-selects the full-screen frontend. If stdin/stdout are not TTYs or curses is not
-available, startup falls back to terminal chat before constructing a TUI event
-sink.
+`lca` starts this frontend on a POSIX TTY. `--chat` keeps the lighter terminal
+chat frontend, and non-TTY or non-termios environments fall back before a TUI
+event sink is constructed.
 
 ## Reference facts
 
-Codex keeps UI state in its app owner and routes input, protocol events, and
-worker completions through one event loop. Its protocol projection and Runtime
-remain outside widgets. Interrupt is an intent; the authoritative turn-completed
-notification clears running state. Terminal restoration is guarded across normal
-and exceptional exits. Relevant owners are:
+Codex keeps its main transcript in the normal terminal buffer and inserts
+settled rows into native scrollback. Mutable input and in-flight content remain
+in an inline viewport; alternate screen is reserved for explicit overlays.
+Relevant owners are `codex-rs/tui/src/tui.rs` and `insert_history.rs`.
 
-- `codex-rs/tui/src/app.rs` and `app/event_dispatch.rs`
-- `codex-rs/tui/src/chatwidget/protocol.rs`
-- `codex-rs/tui/src/chatwidget/interaction.rs`
-- `codex-rs/tui/src/tui.rs`
+OMP separates committed transcript rows from the mutable live tail. Its TUI
+controller commits immutable rows once, re-renders only mutable content, and
+borrows alternate screen only for configured full-screen overlays. Relevant
+owners are `packages/tui/src/tui.ts` and `terminal.ts`.
 
-OMP separates terminal rendering/input in `packages/tui` from coding-agent
-message, tool, interaction, and session semantics. Its event controller mutates
-view models and invalidates visible state instead of rendering on every event.
-Resize reflows from transcript state. Dynamic text is sanitized before styling.
-Relevant owners are:
-
-- `packages/tui/src/tui.ts`, `terminal.ts`, and `stdin-buffer.ts`
-- `packages/coding-agent/src/modes/controllers/event-controller.ts`
-- `packages/coding-agent/src/modes/components/transcript-container.ts`
-- `packages/coding-agent/src/tools/approval.ts`
-
-LCA intentionally does not copy Codex multi-agent routing, app-server RPC,
-inline native scrollback replay, OMP extension widgets, smooth reveal, or
-JavaScript reference-equality invalidation.
+LCA ports these lifecycle invariants into synchronous Python. It does not copy
+the Rust/ratatui or TypeScript/Bun implementation, and it intentionally leaves
+source-backed resize replay, extension widgets, smooth reveal, remote UI, and
+concurrent turns out of this phase.
 
 ## Owners
 
 - `messages.py`: immutable cross-thread message types.
-- `mailbox.py`: bounded queue, delta coalescing, and explicit loss accounting.
-- `model.py`: safe `AgentEvent` projection and immutable display state reducer.
-- `worker.py`: one synchronous Runtime command worker and focused interaction bridge.
-- `controller.py`: UI-thread input focus, command routing, and reducer dispatch.
-- `text.py`: terminal text sanitization, cell width, wrapping, and clipping.
-- `view.py`: pure responsive frame composition.
-- `screen.py`: curses terminal session, key decoding, drawing, and restoration.
-- `app.py`: startup/fallback/lifecycle composition.
+- `mailbox.py`: bounded queue, delta coalescing, and loss accounting.
+- `model.py`: safe `AgentEvent` projection and immutable display reducer.
+- `worker.py`: one synchronous Runtime command worker and interaction bridge.
+- `controller.py`: UI-thread focus, command routing, and input state.
+- `text.py`: sanitization, cell width, wrapping, and clipping.
+- `view.py`: pure normal-tail and search-overlay frame composition.
+- `native_renderer.py`: stable-row commit, mutable-tail repaint, and overlay ownership.
+- `screen.py`: POSIX input mode, byte decoding, signal handling, and restoration.
+- `app.py`: startup, fallback, and lifecycle composition.
 
 No TUI module imports Runtime phase owners, ToolRegistry, ExecutionPolicy,
 EvidenceLedger, Finalization, provider protocol, or session storage.
 
 ## Lifecycle
 
-1. CLI selects a terminal sink or TUI mailbox before constructing Runtime.
-2. TUI builds its reducer/controller before starting the producer worker.
-3. Runtime worker serially dispatches typed commands.
-4. Runtime-thread event callbacks project to bounded, display-safe messages and
-   never mutate widgets.
-5. The UI loop drains messages and is the only TUI-state writer.
-6. A focused interaction is correlated by request ID and settles exactly once.
-7. Ctrl-C first cancels the focused interaction, then requests cooperative turn
-   cancellation. Running clears only after the terminal Runtime lifecycle event.
-8. Shutdown rejects new input, resolves pending interaction, stops the worker,
-   and restores curses state in `finally`/wrapper cleanup.
+1. CLI selects a TUI mailbox before constructing Runtime.
+2. The controller/reducer starts before the single Runtime worker.
+3. Runtime events cross the mailbox as bounded, display-safe typed messages.
+4. The UI thread is the only reducer and terminal writer.
+5. Settled transcript entries commit exactly once to the normal terminal buffer.
+6. Provisional assistant text, activity, palette, interaction, and composer stay
+   in one mutable live tail below committed history.
+7. `Ctrl-F` search temporarily enters alternate screen; leaving search restores
+   the normal buffer and repaints the live tail.
+8. Ctrl-C is a cooperative intent. Turn closure still comes from the typed
+   Runtime lifecycle.
+9. Normal exit, exception, SIGTERM/SIGHUP, and suspend/resume restore termios,
+   bracketed paste, cursor visibility, and any borrowed overlay.
 
-## Rendering and trust
+## Terminal invariants
 
-The transcript model is the display fact source; wrapped rows are derived cache.
-Resize and scroll never mutate transcript entries. Manual scroll disables
-follow-tail until the user returns to the bottom.
+- Main rendering never emits alternate-screen enter, mouse-capture enable, or
+  scrollback-clear (`ED3`). Wheel and trackpad input therefore belong to the
+  terminal's native scrollback.
+- Search is the only alternate-screen owner and pairs `1049` and `1007` modes.
+- Live-tail cleanup uses cursor-relative movement plus `ED0`; committed rows are
+  never repainted during composer, tool, or resize updates.
+- Resize relies on terminal reflow for committed history and recomputes physical
+  rows before clearing the mutable tail.
+- Exact streaming final content is committed once. A different authoritative
+  final remains a separate, explicitly labelled entry.
 
-User, model, tool, provider, and interaction text is sanitized before curses
-styling. Raw tool arguments, provider markup, environment values, and secrets are
-not projected into TUI messages. Tool timeline entries carry only bounded name,
-status, error preview, and output length. Provisional assistant text is marked as
-such and an identical authoritative final is not duplicated.
+## Trust boundary
+
+User, model, tool, provider, and interaction text is sanitized before rendering.
+Raw tool arguments, provider markup, environment values, and secrets never
+cross the TUI projection. Tool rows contain only bounded name, status, safe
+error preview, and output length.
 
 ## Test matrix
 
-- reducer traces: duplicate/out-of-order delta, exact/different final, terminal event closure;
-- queue: contiguous coalescing, saturation, critical-event preservation, close;
-- interaction: answer/cancel/timeout/late resolution and focus ownership;
-- snapshots: 40/80/120 columns, Unicode, controls, long text, tools/todos, modal;
-- worker: UI-thread isolation, command serialization, crash closure, cancellation;
-- CLI: explicit selection and non-TTY fallback with legacy chat behavior unchanged;
-- PTY: normal exit, Ctrl-C, resize, crash restoration, and no leaked raw mode;
-- immutable/live: packaged gate plus one fresh real provider coding flow.
+- reducer: ordered/late delta, exact/different final, unique local IDs;
+- renderer: commit-once, provisional tail, resize cleanup, no main-screen
+  `1049h`/`1007h`/`ED3`, paired search overlay;
+- input: fragmented CSI, UTF-8, bracketed paste, and bounded failure;
+- worker/interaction: typed isolation, cancellation, timeout, and late reject;
+- PTY: logo, `/workspace list`, native history, search overlay, resize, normal
+  exit, Ctrl-C, SIGTERM, and termios restoration;
+- immutable release: clean detached source identity plus installed `lca` smoke.

@@ -81,7 +81,7 @@ export AGENT_ALLOWED_DIRS="/path/to/requirements:/path/to/other-read-write-root"
 ./agent "阅读这个项目并总结入口"
 ```
 
-安装后不带 prompt 会直接进入 full-screen TUI：
+安装后不带 prompt 会直接进入 normal-screen TUI：
 
 ```bash
 lca
@@ -89,7 +89,7 @@ lca
 ./agent
 ```
 
-需要保留原生终端滚动记录时，可以显式启动 terminal-native chat 前端：
+主 TUI 会把已完成消息写入终端原生 scrollback，鼠标滚轮/触控板可直接浏览历史。也可以显式启动更轻量的 terminal-native chat 前端：
 
 ```bash
 ./agent --chat
@@ -105,7 +105,7 @@ python3 -m pip install -e ".[terminal]"
 
 在 chat 中输入 `/` 或命令前缀（例如 `/wor`）会显示带说明的补全候选，按 `Tab` 完成；`/workspace` 和 `/approval` 会继续补全各自合法的子命令。所有输入都按普通 `Enter` 发送；需要多行内容时按 `Esc` + `Enter` 插入换行。
 
-full-screen TUI 使用 Python 标准库 curses，不需要额外前端依赖；当 stdin/stdout 不是 TTY 或当前系统没有 curses 时，`lca` 会自动回退到 terminal chat。上述可选依赖只增强 `--chat`，不影响一次性任务。
+normal-screen TUI 使用 Python 标准库 termios/ANSI，不需要额外前端依赖。主 transcript 不进入 alternate screen、不捕获鼠标滚轮，也不清空终端 scrollback；只有 `Ctrl-F` 搜索会临时借用 alternate screen，退出搜索后恢复主屏。stdin/stdout 不是 TTY 或系统没有 POSIX termios 时，`lca` 会自动回退到 terminal chat。上述可选依赖只增强 `--chat`，不影响一次性任务。
 
 任务运行期间，LCA 会临时静默终端输入回显，避免你误敲的内容混入工具日志；遇到 approval 或 ask_user 时会恢复输入并清理运行期间的误敲缓冲。需要边看边连续提问时，优先使用 `./agent --chat`。
 

@@ -17,10 +17,10 @@ python3 scripts/sync_project_excel.py
 | 字段 | 当前值 | 说明 |
 |---|---|---|
 | 最终目标 | 个人本地编程助手 Agent | 本地优先、封闭 VM 可用、只访问指定 AI API，能读代码、搜代码、改代码、跑测试、生成 diff、沉淀项目记忆。 |
-| 当前阶段 | P17 Independent Full-screen TUI 已收口 | 当前 stable 为 T-242 `20260718T033001Z-cd235cf3b47c-2076f2cbe834`。T-234~T-242 完成独立 curses TUI、bounded mailbox、同步 worker、typed interaction、cooperative cancellation、PTY restoration、真实 provider live、默认入口、原子 paste 与自然历史滚动 UX；P14 扩展和 P15 auto-apply 继续冻结。 |
-| 推荐入口 | `lca` 或 `./agent` | 连接 TTY 时直接进入 full-screen TUI；`lca --chat` / `lca chat` 使用 terminal-native chat，非 TTY 自动回退。 |
+| 当前阶段 | P17 Normal-screen TUI 已收口 | 当前 stable 为 T-243 `20260718T035333Z-4271172e8d36-fab5ff2b17ed`。T-234~T-242 建立独立前端、bounded mailbox、同步 worker、typed interaction、取消/恢复与日用 UX；T-243 将主 transcript 替换为 Codex/OMP 风格 normal-screen native scrollback。P14 扩展和 P15 auto-apply 继续冻结。 |
+| 推荐入口 | `lca` 或 `./agent` | 连接 POSIX TTY 时进入 normal-screen TUI，wheel/trackpad 使用终端原生历史；`lca --chat` / `lca chat` 使用轻量 terminal-native chat，非 TTY 自动回退。 |
 | Token 配置 | 环境变量 / `--env-file` / `.env` | 优先级为真实环境变量、显式 env-file、用户级 `${AGENT_CONFIG_DIR:-~/.config/local-coding-agent}/.env`、workspace `.env`；stable snapshot 不携带密钥。 |
-| 测试数 | T-242 stable 1195/62/25 | clean detached release gate 通过 1195 unittest、compileall、diff-check；62 benchmark、25 architecture、focused input/scrollback matrix、PTY workspace command/normal/resize/signal/Ctrl-C/Page/X10 wheel 与 T-239 fresh 百炼 TUI coding live 通过。Excel 按用户要求不生成。 |
+| 测试数 | T-243 stable 1203/62/25 | clean detached release gate 通过 1203 unittest、compileall、diff-check；62 benchmark、25 architecture、94 focused candidate matrix 与安装后 stable PTY mode/restore smoke 通过。Excel 按用户要求不生成。 |
 | 三方架构对照 | 已完成 2026-07-16 基线 | 见 `docs/lca-omp-codex-architecture-comparison-2026-07-16.md`；目标修正为 OMP/Codex 级通用底座 + LCA 企业工作流，不以完整复制 OMP platform 为 KPI。 |
 | 默认 budget_seconds | 600 | 单次任务默认 10 分钟墙钟预算；`--budget-seconds 0` 可关闭。 |
 | 默认 max_steps | 0 | 表示不限步；仅在用户显式设置时作为防失控保险丝。 |
@@ -35,7 +35,7 @@ python3 scripts/sync_project_excel.py
 | 默认工作流落地 | 已完成 MVP 版 | system prompt + tool descriptions + runtime workflow reminder 已落地，用户不需要每次手写工具顺序。 |
 | LSP / Light fallback | 已完成 MVP 版 | `lsp_symbols` / `lsp_workspace_symbols` / `lsp_document_symbols` / `lsp_definition` / `lsp_references` / `lsp_diagnostics` / `lsp_status`，覆盖 Python、Java、JavaScript、TypeScript、Vue；默认可用则外部 LSP，不可用则 light fallback。 |
 | Multi-root workspace | 已完成 MVP 版 | `--allow-dir` / `AGENT_ALLOWED_DIRS` 支持显式授权额外目录给文件、搜索、LSP、patch 工具；system prompt 和 `list_files`/path-not-found 等工具观察会列出 primary workspace 和 allowed dirs；需求/文档类任务会先用 soft tool requirement 要求读取 allowed-dir 文档；shell/git/显式项目 memory/skills 仍锚定 `--cwd`，session/todo/patch logs 和默认 consolidation memory 走 state dir。 |
-| Stable / Dev release channels | 已完成 MVP 版 | `lca` 指向已验证的不可变 source snapshot，`lca-dev` 指向当前源码；当前 stable 为 T-242 `20260718T033001Z-cd235cf3b47c-2076f2cbe834`，revision `cd235cf3b47cceae69b821466b9e41a3a433c4a9`，digest `2076f2cbe8342b1f8aa5170103d29ce878b9b62017b549792df66ade181b16b7`。`lca-release publish` 先跑离线 gate 再原子 promote，失败保留旧 stable。 |
+| Stable / Dev release channels | 已完成 MVP 版 | `lca` 指向已验证的不可变 source snapshot，`lca-dev` 指向当前源码；当前 stable 为 T-243 `20260718T035333Z-4271172e8d36-fab5ff2b17ed`，revision `4271172e8d36c390d512eaded6b1f06052dbd10a`，digest `fab5ff2b17edd4094d8fca3fc9871598997c89110d438af63f2978ac1fda4707`。`lca-release publish` 先跑离线 gate 再原子 promote，失败保留旧 stable。 |
 | Workflow Profiles | 已完成 Phase 1 | `auto` 依据 typed `RequirementContract` 解析 `coding`、`enterprise-evidence`、`readiness-audit`；缺 contract 时 optional heavy hooks 全关闭。 | profile 不改变 task kind、tool schema、approval 或 workspace；不强制 `apply_patch`，通过 Session、`ContextUpdated`、RunSummary 和 `/status` 审计。 |
 | Path-scoped rules | 已完成 MVP 版 | 每个 canonical workspace root 可定义 `.local-agent/rules/*.md`；每轮只注入轻量 metadata，用户或工具路径命中时才注入对应规则正文，规则不改变工具权限。 |
 | Offline benchmark / eval | 已完成 MVP 版 | `benchmarks/tasks` 的隔离 fixture 默认使用 deterministic fake provider 跑真实 Runtime，并输出 JSON/Markdown 结果；`--live` 才显式使用外部 provider。 |
@@ -49,7 +49,7 @@ python3 scripts/sync_project_excel.py
 | Implementation quality / safe new-file | 已完成 MVP 版 | `git_diff` 会对 comment-only 代码实现 patch 输出 reviewer warning；`write_file dry_run=true` 可预览新文件 diff，真实创建写 patch log，`rollback_patch` 可删除本 session 新建文件。 |
 | No-edit final hygiene | 已完成 MVP 版 | 实现任务准备以“无法安全实现/目标服务缺失/无改动”停止时，runtime 会要求先做 todo/git 收束，并临时只开放 todo/git hygiene 工具。 |
 | Event/Command Protocol | 已完成并支持多前端 | dataclass Command/Event/Interaction、AssistantDelta、CommandDispatcher 与 Turn/Run correlation 已统一；terminal chat 和 TUI 都通过共享 protocol/registry 消费，TUI worker 不导入具体 AgentRuntime。 |
-| Terminal Frontends | 已完成 terminal chat + full-screen TUI | 默认 `lca` 进入独立 curses frontend；`--chat` 保留 append-only frontend，非 TTY 自动回退。TUI 支持 responsive transcript、composer、status/tool/todo pane、palette/search/copy、focused ask/approval、session continue、cooperative Ctrl-C、原子 bracketed paste，以及 Page/wheel wrapped-row history。 |
+| Terminal Frontends | 已完成 terminal chat + normal-screen TUI | 默认 `lca` 进入独立 inline frontend；`--chat` 保留轻量 append-only frontend，非 TTY 自动回退。TUI 支持 responsive transcript、composer、status/tool/todo、palette/search/copy、focused ask/approval、session continue、cooperative Ctrl-C 与原子 bracketed paste。settled transcript 写入终端原生 scrollback，主屏不捕获 wheel；搜索独占 alternate-screen overlay。 |
 | Run summary / coverage | 已完成 MVP 版 | 每轮结束写 `run_summary` session 事件和 `RunSummary` typed event；`/status` 可看最近一轮终止原因、LLM/工具次数、guard/steering/compaction 统计。 |
 | VerificationPlan / TestPlanner / DeliveryAudit | 已完成 MVP 版 | `verification_plan.py` / `test_planner.py` / `verification_timeline.py`：contract 业务验收保持未机器验证；只有路径关联代码证据、当前本轮净 diff、最后写入后测试、deterministic reviewer 进入 delivery checks。测试候选明确标记 module/project/blocked，绝不绕过 approval。 |
 | 项目边界分析 | 已完成 MVP 版 | 企业服务边界和项目范围分析工作流放入本机 `.local-agent/memory` / `.local-agent/skills`；runtime 新增 analysis-only 任务识别、named skill soft requirement、自定义 memory_read 安全读取和 final structure gate。 |
@@ -67,7 +67,7 @@ python3 scripts/sync_project_excel.py
 | P5 | 安全与恢复增强 | synthetic tool result、patch preview、rollback、ask_user timeout、per-tool approval | 已完成并收口 | 100% | 主链路已通过真实百炼复测；后续只修日用反馈中的 P0/P1 问题。 |
 | P6 | 日用体验与默认工作流固化 | OMP 默认工作流本地化：system prompt、工具描述、轻量 runtime nudge | 已完成 MVP 版 | 100% | 进入真实任务压测。 |
 | P7 | 高级工程能力轻量版 | OMP 风格 auto summary、多语言 LSP/light fallback、LSP 兼容别名、LSP best-effort 置信度提示、multi-root workspace roots、allowed-dir soft tool requirement、startup context/rules、startup memory、learn、memory consolidation、authored skills discovery、path-scoped rules、重复工具调用熔断、duplicate-tool forced-final steering、同文件切片读取漂移 guard、空搜索词跨路径 guard、path escape roots hint、LSP 空 query guard、Current task contract、Evidence Ledger、tool result pruning、todo steering、跨项目 env-file、runtime state dir、真实项目压测记录、relevance gate / diff reviewer、implementation-quality reviewer、safe new-file policy、no-edit final hygiene | 已完成 MVP 版 | 100% | 高级轻量能力主线已收口，后续按真实压测失败形态补完整 reviewer 或 ToolChoiceQueue；架构债按 OMP 原则渐进拆 `agent.py`。 |
-| P8 | 前端协议与交互基础 | Event/Command Protocol、event replay、terminal chat 与 full-screen TUI | 已完成 | 100% | T-076/T-077 建立 protocol/chat，T-219/T-220 补 dispatcher/streaming，P17 在同一边界上完成独立 TUI 与自然 history navigation；完整 async bus 仍按证据后置。 |
+| P8 | 前端协议与交互基础 | Event/Command Protocol、event replay、terminal chat 与独立 TUI | 已完成 | 100% | T-076/T-077 建立 protocol/chat，T-219/T-220 补 dispatcher/streaming，P17 在同一边界上完成 normal-screen TUI 与 native scrollback；完整 async bus 仍按证据后置。 |
 | P9 | 真实需求使用准备 | 项目边界分析、用户确认项目范围、源码验证、实现设计 | S5-1 隔离交付完成 | 90% | 候选快照与待制单后端列表已有已审查参考实现；原业务仓应用、Oracle 8u121/真实库集成及后续制单/Word/回退/导出仍未完成。 |
 | P10 | Intelligence Runtime 骨架 | RequirementContract、CompletionAudit、MiniToolChoiceQueue、Planner/Explore、Reviewer | 已完成 | 100% | 目标契约、阶段队列、完成审计、计划/探索、patch reviewer、VerificationPlan/TestPlanner/DeliveryAudit 与 cross-root evidence matrix 已有明确 Owner。 |
 | P11 | Runtime Ownership / Release Discipline | 薄 agent-loop、职责 Owner、stable/dev/candidate 隔离 | 已完成 MVP 版 | 100% | T-148 将 Runtime 收为 facade；T-215 后 `agent.py` 为 1,808 行/71 methods，architecture ratchet 同步锁紧。 |
@@ -76,7 +76,7 @@ python3 scripts/sync_project_excel.py
 | P14 | Explicit Subagent Capability | 独立上下文、预算、只读工具集、typed yield | Phase 1 已完成，扩展暂停 | 45% | T-223 小 fixture PASS，但真实三仓 enabled/default-off 都未形成完整覆盖；保留 default-off Explore，不并发、不写入、不扩 reviewer/implement。 |
 | P15 | Semantic Coding Tools | LSP rename preview、Code Action preview 与外部 LSP 进程边界 | Phase 1 已收口 | 55% | T-224/T-226 preview 已发布，T-227/T-228 证明真实 Java 收益并收住 Eclipse metadata；auto-apply、第二 writer、更多 LSP 特例继续冻结。 |
 | P16 | Ordinary Coding Reliability / Runtime State | 跨语言自然读改测 diff、同 session 最新需求、dirty worktree、状态归属与同步中断恢复 | 阶段性收口 | 70% | T-229/T-230 与 T-231-T-233 已覆盖 clean/dirty coding、stale write、同步中断、子进程回收和 typed non-delivery session continuation；后续由新的跨场景失败证据决定下一窄批次。 |
-| P17 | Independent Full-screen TUI | 独立多前端边界、响应式终端 UI、交互、取消、PTY 恢复与真实 coding 可用性 | 已完成 | 100% | T-234~T-242 已发布；默认 `lca`、首页字标、workspace completion、原子 paste 和自然 wheel/trackpad history 已收口。当前仍是 curses 内部 viewport，normal-screen native scrollback 作为独立 renderer 边界后置。 |
+| P17 | Independent Terminal TUI | 独立多前端边界、响应式终端 UI、交互、取消、PTY 恢复与真实 coding 可用性 | 已完成 | 100% | T-234~T-243 已发布；默认 `lca`、首页字标、workspace completion、原子 paste 与 normal-screen native scrollback 已收口。主屏 scrollback 归终端，搜索 overlay 才借用 alternate screen。 |
 
 ## 已完成功能
 
@@ -157,7 +157,7 @@ python3 scripts/sync_project_excel.py
 | T-010 | P1 | P4 | 简单上下文 summary | 已完成 MVP 版 | Agent | 长任务会被全量历史拖垮 | 已实现字符阈值 deterministic compaction、LLM summary、本地 token budget + 15% reserve；后续再评估 provider/model 专用 tokenizer 和输出 reserve |
 | T-011 | P1 | P5 | 补 synthetic tool result | 已完成 MVP 版 | Agent | 中断/异常时避免 orphan tool_calls | deadline 到期、用户中断和 length 截断已补齐 |
 | T-012 | P1 | P5 | Patch preview/rollback 设计 | 已完成 MVP 版 | Agent | 进一步降低改错风险 | 已完成 dry_run 预览和 session 级 hash 校验 rollback |
-| T-013 | P2 | P6/P14/P17 | 评估 LSP/TUI/subagents/AST edit | 已部分完成 | User + Agent | 高级能力强但复杂 | 轻量 LSP、显式只读 Explore、full-screen TUI 已做；AST edit、DAP、并发/写入 subagents 继续后置 |
+| T-013 | P2 | P6/P14/P17 | 评估 LSP/TUI/subagents/AST edit | 已部分完成 | User + Agent | 高级能力强但复杂 | 轻量 LSP、显式只读 Explore、normal-screen TUI 已做；AST edit、DAP、并发/写入 subagents 继续后置 |
 | T-014 | P0 | P3 | 提交 P3 变更 | 已完成 | User + Agent | 把本轮 P3 工作固化为第二个 commit | 提交 `304fbdf` 已创建 |
 | T-015 | P0 | P2 | Markdown 模板同步 Excel | 已完成 | Agent | 避免手工同步 Excel 出错 | `scripts/sync_project_excel.py` 可从本文件生成 Excel |
 | T-016 | P0 | P3 | 细化 budget deadline 执行检查 | 已完成 | Agent | 让时间预算从软闸变成实际主控 | LLM/tool timeout 按剩余预算夹紧；未执行工具有 synthetic result |
@@ -360,6 +360,7 @@ python3 scripts/sync_project_excel.py
 | T-240 | P0 | P17 | Default TUI Entry / LCA Home / Workspace Completion | 已完成并发布 stable | 用户日用反馈、deterministic/PTY、clean publish | 让 `lca` 直接进入有品牌首页的 TUI，并修复 `/workspace list` completion 路由。 | commit `e80e934`；1169/62/25、compileall/diff/help、PTY workspace/restore/cancel 全绿；stable `20260717T141106Z-e80e9345f2fd-d1fd7322ac5c`。 |
 | T-241 | P0 | P17 | TUI Input / Scrollback Integrity | 已完成并发布 stable | 用户滚动历史反馈、Codex/OMP 边界复核、deterministic/PTY、clean publish | 统一初始 prompt 与 paste 输入生命周期，增加 wrapped-row history，同时保持单 UI 写者和 typed worker 边界。 | commit `ebc2f50`；1192/62/25、compileall/diff/help/chat、56 focused TUI、immutable candidate 与安装后 PTY smoke 通过。真实物理 wheel PTY 自动化 INCONCLUSIVE，确定性 owner、macOS Button5 fallback 与 Page PTY 已通过；stable `20260718T031104Z-ebc2f5040cc3-8d06c53405c8`。 |
 | T-242 | P0 | P17 | Natural TUI History Navigation | 已完成并发布 stable | 用户真实 wheel/trackpad 反馈、Codex/OMP scrollback 边界复核、X10 PTY、clean publish | 让滚轮按视口比例移动；空 composer 的 Up/Down、End、新提交与 footer 形成无需学习 PageUp/PageDown 的自然历史生命周期，并成对管理 DECSET 1007。 | commit `cd235cf`；1195/62/25、compileall/diff/help/chat、46 focused TUI、真实 X10 wheel PTY、immutable candidate 与安装后 stable mode/restore smoke 通过。当前 curses 内部 viewport 不冒充 Codex/OMP normal-screen native scrollback；stable `20260718T033001Z-cd235cf3b47c-2076f2cbe834`。 |
+| T-243 | P0 | P17 | Normal-screen Native Scrollback Renderer | 已完成并发布 stable | 用户跨终端真实反馈、Codex/OMP renderer Owner 对照、clean detached/PTY | settled transcript 只提交一次到 normal buffer；provisional/activity/composer 是 mutable tail；主屏零 alternate enter、零 mouse capture、零 ED3，wheel/trackpad 归终端原生 scrollback。`Ctrl-F` 搜索单独借用并恢复 alternate screen。 | commit `4271172`；1203/62/25、compileall/diff/help/chat、94 focused candidate matrix、安装后 stable PTY 与 termios restore 全绿。stable `20260718T035333Z-4271172e8d36-fab5ff2b17ed`。 |
 
 ## 风险与决策
 
@@ -371,7 +372,7 @@ python3 scripts/sync_project_excel.py
 | 风险 | R-003 | 中 | ask 模式确认过多 | 已关闭 MVP 版 | 已增加 approvalMode、per-tool allow/prompt/deny、session allow/reject | OMP 用 tool approval tier、approvalMode 和 per-tool policy 控制确认；我们保留旧白名单并补 `tool_approval` 和 session decision，危险 shell 仍可显式 deny。 |
 | 风险 | R-004 | 中 | 中断时 tool_calls 配对仍可增强 | 已关闭 MVP 版 | deadline、用户中断和输出截断已补齐 | OMP 在 abort、error、skipped、截断时补 synthetic tool result；我们按 call_id 补齐未执行工具，并已处理 `finish_reason=length`。 |
 | 风险 | R-005 | 中 | 没有初始 git commit | 已关闭 | 已创建初始 commit | OMP 依赖 session、diff 和工作区状态追踪修改，但不替代 VCS 基线；我们继续用 git commit 作为回滚锚点。 |
-| 风险 | R-006 | 低 | 高级能力过早引入 | 受控 | 已引入 auto summary、multi-root、startup memory、可选 LSP 与独立 full-screen TUI；DAP、AST edit、并发/写入 subagents 继续后置 | OMP/Codex 的能力按 Owner 边界裁剪；TUI 只作为显式 frontend，不成为 Runtime 默认重链，其他高级能力仍按收益启用。 |
+| 风险 | R-006 | 低 | 高级能力过早引入 | 受控 | 已引入 auto summary、multi-root、startup memory、可选 LSP 与独立 normal-screen TUI；DAP、AST edit、并发/写入 subagents 继续后置 | OMP/Codex 的能力按 Owner 边界裁剪；TUI 只作为 frontend，不成为 Runtime 默认重链，其他高级能力仍按收益启用。 |
 | 风险 | R-007 | 中 | Prompt injection | 开放 | 文档提示；不信任仓库禁用 yolo | OMP 将仓库 context 视为 advisory，并靠 approval/yolo 策略限制工具权限；我们默认不信任仓库内容，危险工具需确认。 |
 | 风险 | R-008 | 中 | P3/P4 变更尚未提交 | 已关闭 | P3 提交 `304fbdf`，P4 提交 `4beb487` | OMP 持久化 session 和 compaction 以支持恢复，但代码里程碑仍要靠 VCS；我们继续阶段性 commit 固化节点。 |
 | 风险 | R-009 | 中 | ask_user 会阻塞等待用户 | 已缓解 | 已支持 timeout/default，并自动受剩余 budget 约束；显式 timeout 也会被剩余 budget 夹紧 | OMP 的 approval/elicitation 可以被拒绝或取消并回灌结果；我们给 `ask_user` 加 timeout/default，支持无人值守场景。 |
@@ -504,12 +505,12 @@ python3 scripts/sync_project_excel.py
 
 | 项目 | 结论 | 依据 | 后续 |
 |---|---|---|---|
-| 阶段判断 | P13/P16/P17 已阶段性收口；P14/P15 停止横向扩展 | clean/dirty coding、typed non-delivery continuation 与 independent full-screen TUI 均已通过 immutable/live；默认入口、首页字标、workspace completion、paste 与自然 history navigation 也已通过分层门禁。 | 不因 Codex/OMP 有不同语言和渲染栈就机械搬运；用 T-242 stable 日常运行，等待下一组跨场景证据。 |
-| 与 OMP 的主要差距 | 核心底座与 full-screen TUI 可用，但不等于完整追平 OMP | OMP 的完整 task/explore/advisor/subagent、AST/LSP write、MCP/Browser 与 extension widgets 仍未搬入；LCA 的同步 Python Runtime、document reviewer 与 WorkspaceEvidenceRootProjection 是有意取舍/本地增强。 | Subagent/Advisor、AST/LSP write、MCP、Browser 和 plugin widgets 继续按收益后置。 |
+| 阶段判断 | P13/P16/P17 已阶段性收口；P14/P15 停止横向扩展 | clean/dirty coding、typed non-delivery continuation 与 independent normal-screen TUI 均已通过 immutable/live；默认入口、首页字标、workspace completion、paste 与 native scrollback 也已通过分层门禁。 | 不因 Codex/OMP 有不同语言和渲染栈就机械搬运；用 T-243 stable 日常运行，等待下一组跨场景证据。 |
+| 与 OMP 的主要差距 | 核心底座与 normal-screen TUI 可用，但不等于完整追平 OMP | OMP 的完整 task/explore/advisor/subagent、AST/LSP write、MCP/Browser、extension widgets 与更强 resize replay 仍未搬入；LCA 的同步 Python Runtime、document reviewer 与 WorkspaceEvidenceRootProjection 是有意取舍/本地增强。 | Subagent/Advisor、AST/LSP write、MCP、Browser 和 plugin widgets 继续按收益后置。 |
 | 已关闭风险 | T-203 已关闭 S4 安全失败不可行动风险 | T-192~T-196 live 不再释放不可靠 owner/资料结论；T-202 合并重复控制生命周期；T-203 将被拒候选转为完整 typed BLOCKED，三次 S4 hard/usability 均通过。 | 保留现有 gate，不新增 transport/repair 层；run 1 的 provider schema/error 只记残余 telemetry，避免再次陷入局部补丁。 |
 | reviewer 决策 | 首次 isolated review + deterministic closure | T-193 后不再以 fresh second reviewer pass 作为终止条件；S2 reviewer revise 后 closure accepted，S3 reviewer pass。 | 真实 patch 质量仍由 implementation/delivery reviewer 链路处理；Advisor/Subagent 后置。 |
 | ToolChoiceQueue 决策 | 已做裁剪版 MiniToolChoiceQueue | 当前覆盖只读证据、需求文档前置读取、写后测试/diff hygiene；不做完整多队列/并发/子任务调度 | 后续若仍出现关键工具不用/乱用，再扩展 queue 规则；若出现 patch/总结质量不稳，补 reviewer。 |
-| 下一步 | T-242 stable 日用与 renderer 收益门槛 | 使用默认 `lca` 跑真实 coding，继续观察不同终端的 wheel/trackpad history；若内部 viewport 仍有跨场景问题，再单独评估 normal-screen native scrollback renderer。 | 不把 Rust/TypeScript frontend 直接搬进 Python curses；完整 async bus、worktree manager、auto-apply、多 Agent 和 plugin widgets 继续由收益证据驱动。 |
+| 下一步 | T-243 stable 日用观察 | 使用默认 `lca` 跑真实 coding，继续观察不同终端的 native scrollback、resize reflow 与 search overlay；只有跨终端可复现问题才进入下一窄批次。 | 不直接搬 Rust/TypeScript frontend；完整 async bus、source-backed resize replay、worktree manager、auto-apply、多 Agent 和 plugin widgets 继续由收益证据驱动。 |
 
 ## P7 综合压测问题
 
@@ -555,10 +556,10 @@ python3 scripts/sync_project_excel.py
 | 项目 | 结论 | 依据 |
 |---|---|---|
 | 主链路 | 通过 | 百炼真实小改复测已跑通 todo、dry_run、apply_patch、session allow、rollback、run_tests、git_diff。 |
-| 测试 | 分层通过 | P5 收口时 90 个 unittest；当前 T-242 stable 为 1195/62/25，另有 non-delivery continuity、TUI reducer/mailbox/interaction/cancellation/input/scrollback、PTY workspace command/restore/resize/signal/Ctrl-C/Page/X10 wheel matrix 与真实百炼 TUI coding live；T-214 业务 compile 983/667、focused JUnit 4/17。 |
+| 测试 | 分层通过 | P5 收口时 90 个 unittest；当前 T-243 stable 为 1203/62/25，另有 non-delivery continuity、TUI reducer/mailbox/interaction/cancellation/input/normal-screen scrollback、PTY workspace command/restore/resize/signal/Ctrl-C/search overlay matrix 与真实百炼 TUI coding live；T-214 业务 compile 983/667、focused JUnit 4/17。 |
 | 日用入口 | 通过 | README 已补只读分析和小改任务命令模板。 |
 | 开放风险 | 可接受 | shell 仍非沙箱、prompt injection 仍需靠审批和封闭 VM；provider/model 专用 tokenizer、输出 reserve、managed skills、完整 reviewer 和完整 OMP ToolChoiceQueue 继续后置评估。 |
-| 下一阶段 | T-242 stable 日用与 renderer 收益门槛 | P16 continuity 与 P17 TUI 已收口；下一批先做真实日用和 Codex/OMP 增量偏差审计，再决定是否值得替换主 transcript renderer。完整 async bus 继续受 R-036 约束，生产应用仍单独走 Oracle/VM 门禁。 |
+| 下一阶段 | T-243 stable 日用观察 | P16 continuity 与 P17 TUI 已收口，主 transcript renderer 已替换为 normal-screen native scrollback；下一批先做真实日用和 Codex/OMP 增量偏差审计。完整 async bus 继续受 R-036 约束，生产应用仍单独走 Oracle/VM 门禁。 |
 
 ## 推荐工作流
 
