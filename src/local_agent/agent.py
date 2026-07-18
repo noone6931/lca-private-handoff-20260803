@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 from datetime import datetime, timezone
 from dataclasses import replace
@@ -55,6 +54,9 @@ from .path_rules import discover_path_scoped_rules
 from .path_rules import matching_path_rule_context
 from .path_rules import render_path_rule_metadata
 from .requirement_evidence import render_pinned_requirement_evidence
+from .runtime.assistant_message import AssistantMessageLifecycle
+from .runtime.system_prompt import SYSTEM_PROMPT
+from .runtime.system_prompt import WORKFLOW_NUDGE
 from .run_context import RunContext
 from .session_evidence import SessionEvidenceCache
 from .session_evidence import query_identity as _session_evidence_query_identity
@@ -129,7 +131,7 @@ from .runtime_workflow_profile import WorkflowReadOnlyReviewPhase
 from .runtime_read_only_explore import RuntimeReadOnlyExplorePhase
 from .runtime_provider_terminal import ProviderTerminalPhase
 from .runtime_workspace import WorkspaceLifecycle
-from .runtime_prompt import _assistant_event_payload, _event_preview, _tool_call_event_payload
+from .runtime_prompt import _event_preview, _tool_call_event_payload
 from .runtime_prompt import _tool_output_event_preview
 from .runtime_prompt import _parse_tool_arguments
 from .runtime_prompt import _clip_memory_text
@@ -179,26 +181,6 @@ from .tool_gateway import _llm_failure_reason
 from .tool_gateway import _validate_runtime_tool_name
 from .tool_gateway import is_session_evidence_reread
 
-SYSTEM_PROMPT = """You are a local coding agent running inside a user's workspace.
-
-Default working style:
-- Work from local evidence, not guesses. Choose the tools yourself; the user should not need to spell out tool order.
-- For repo understanding, use glob_files for filename, extension, and directory discovery; use list_files only to browse a nearby directory and search_code only for text inside file contents. For code navigation in Python, Java, JavaScript, TypeScript, or Vue, prefer lsp_symbols/lsp_definition/lsp_references/lsp_diagnostics before broad text search when helpful. lsp_workspace_symbols and lsp_document_symbols are compatibility aliases for lsp_symbols. Read the exact file or range before editing it.
-- The primary --cwd is the main workspace. If additional directories are configured, file/search/LSP/patch tools may access those explicit paths; shell, git, session, todo, and memory remain anchored to --cwd.
-- For multi-step coding or implementation work, maintain a concise todo list with todo_add/todo_update/todo_read. For pure read-only analysis, skip todo unless the user asks for it.
-- If a requirement is ambiguous and guessing would affect the result, use ask_user. If local evidence is enough, continue without asking.
-- For read-only tasks, do not modify files, run commands, or write memory unless the user asks.
-- For edits to existing files, use read_file first, then apply_patch with the hash tag returned by read_file. Preview meaningful edits with dry_run=true before writing unless the user explicitly says to skip preview.
-- For insertions, use apply_patch with mode=insert_before or mode=insert_after instead of empty replacements.
-- After changes, run the most relevant tests or checks available in the workspace. If you cannot run them, say why.
-- Inspect git_diff after writing so the final answer can summarize exactly what changed.
-- Do not claim a command, test, or diff passed unless you actually ran the relevant tool.
-- Memory is advisory. Current user instructions and direct repository evidence override memory. Do not write memory or use learn unless the user asks you to remember something or a durable convention is clearly established.
-- User/project AGENTS.md context and RULES.md sticky rules are advisory operating guidance. Current user instructions and direct repository evidence still take precedence when they conflict.
-- Path-scoped rules are advisory project guidance. Their metadata may be visible for every request, but their bodies apply only after a relevant path is mentioned or inspected. They never grant tool permissions.
-- Keep final answers concise and include changed files, verification, and any remaining risk.
-"""
-
 MEMORY_CONSOLIDATION_INPUT_CHAR_LIMIT = 14000
 MEMORY_CONSOLIDATION_OUTPUT_CHAR_LIMIT = 8000
 MEMORY_CONSOLIDATION_REQUEST_TIMEOUT = 30.0
@@ -228,12 +210,6 @@ MAX_COMPLETION_AUDIT_STEERS = 2
 MAX_PATCH_REVIEW_STEERS = 2
 MAX_TOOL_CHOICE_QUEUE_STEERS_PER_SIGNATURE = 1
 MAX_SESSION_EVIDENCE_TAGGED_PATHS = 32
-WORKFLOW_NUDGE = (
-    "For this coding task, infer the tool sequence yourself. "
-    "Use local inspection and lsp_* code navigation before editing; use todo for multi-step work; use ask_user only when ambiguity affects the outcome; "
-    "preview meaningful existing-file edits with apply_patch dry_run=true; verify changes with tests/checks and git_diff."
-)
-
 class AgentRuntime:
     def __init__(
         self,
@@ -485,7 +461,12 @@ class AgentRuntime:
             )
             force_final_answer = self._run.finalization.begin_forced_final_turn()
             forced_final_kind = self._run.finalization.kind if force_final_answer else None
-            message_id = hashlib.sha256(f"{self._run.run_id}:{step}:{time.monotonic_ns()}".encode()).hexdigest()[:32]
+            assistant_lifecycle = AssistantMessageLifecycle(
+                self._events,
+                provider=self._config.provider,
+                stream_enabled=provider_allows_provisional_text(self._config.provider),
+                observer=self._run.output,
+            )
             try:
                 response = call_chat_with_timeout(
                     self._client,
@@ -494,10 +475,14 @@ class AgentRuntime:
                     timeout=self._provider_context_phase.remaining_timeout(deadline),
                     tool_choice=tool_choice_turn.tool_choice,
                     use_stream=True,
-                    on_text_delta=self._events.assistant_delta_callback(message_id, enabled=provider_allows_provisional_text(self._config.provider)),
+                    on_text_delta=assistant_lifecycle.delta_callback(),
                     cancel_event=self.commands.cancellation.event,
                 )
+            except KeyboardInterrupt:
+                assistant_lifecycle.abort("interrupt")
+                raise
             except LlmError as exc:
+                assistant_lifecycle.abort(_llm_failure_reason(exc))
                 if self._deadline_exceeded(deadline): return self._stop_for_budget(deadline, run_start_index)
                 fallback = self._forced_final_timeout_fallback(
                     force_final_answer,
@@ -528,6 +513,7 @@ class AgentRuntime:
                     tool_calls=raw_tool_calls,
                     deadline=deadline,
                 )
+                assistant_lifecycle.abort("structured_tool_calls")
                 if protocol_outcome.action == "retry":
                     step += 1
                     continue
@@ -547,6 +533,7 @@ class AgentRuntime:
                     artifact=artifact,
                     deadline=deadline,
                 )
+                assistant_lifecycle.abort("provider_protocol_artifact")
                 if protocol_outcome.action == "retry":
                     step += 1
                     continue
@@ -566,9 +553,13 @@ class AgentRuntime:
                     message = _provider_safe_assistant_message(raw_message)
                     if message.get("content") is None:
                         message = {**message, "content": ""}
+                    finalized_message = assistant_lifecycle.finalize(
+                        message,
+                        finish_reason=getattr(response, "finish_reason", None),
+                    )
+                    message = finalized_message.model_message()
                     self._messages.append(message)
                     self._session.append("assistant", session_safe_assistant_message(self._registry, message))
-                    self._events.emit("AssistantMessage", _assistant_event_payload(message, message_id=message_id))
                     if tool_choice_outcome.kind == "force":
                         step += 1
                         continue
@@ -584,9 +575,11 @@ class AgentRuntime:
                     forced_final=force_final_answer,
                 )
                 if terminal_outcome.action == "retry":
+                    assistant_lifecycle.abort("provider_non_substantive_response")
                     step += 1
                     continue
                 if terminal_outcome.action == "unverified":
+                    assistant_lifecycle.abort("provider_non_substantive_response")
                     return self._finish_run(
                         terminal_outcome.terminal_message,
                         deadline,
@@ -599,9 +592,13 @@ class AgentRuntime:
                 self._session.append("runtime_steering", {"kind": "forced_final_answer", "step": step})
                 self._run.clear_forced_final_answer_request()
             message = _provider_safe_assistant_message(raw_message)
+            finalized_message = assistant_lifecycle.finalize(
+                message,
+                finish_reason=getattr(response, "finish_reason", None),
+            )
+            message = finalized_message.model_message()
             self._messages.append(message)
             self._session.append("assistant", session_safe_assistant_message(self._registry, message))
-            self._events.emit("AssistantMessage", _assistant_event_payload(message, message_id=message_id))
 
             tool_calls = message.get("tool_calls") or []
             tool_choice_outcome = self._tool_choice_directive_phase.after_model_turn(tool_calls)
@@ -1588,7 +1585,7 @@ class AgentRuntime:
         else:
             self._memory_phase.consolidate_session_memory(run_messages, content, deadline)
         run_summary = self._finish_run_summary(reason)
-        self._events.finish_turn(content=content, reason=reason, run_summary=run_summary)
+        self._run.output.emit(self._events, content=content, reason=reason, run_summary=run_summary)
         return content
 
     def _stop_for_budget(self, deadline: float | None, run_start_index: int) -> str:
@@ -1601,7 +1598,7 @@ class AgentRuntime:
         self._session.append("final", {"content": content})
         self._events.emit("ErrorEvent", {"kind": "interrupt", "message": content})
         run_summary = self._finish_run_summary("interrupt")
-        self._events.finish_turn(content=content, reason="interrupt", run_summary=run_summary)
+        self._run.output.emit(self._events, content=content, reason="interrupt", run_summary=run_summary)
         return content
 
     def _length_stop_tool_message(self) -> str:

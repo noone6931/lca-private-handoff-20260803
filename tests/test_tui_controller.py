@@ -192,7 +192,7 @@ class TuiControllerTests(unittest.TestCase):
         from local_agent.frontends.tui.view import render_frame
 
         frame = render_frame(controller.state, controller.view, 120, 40)
-        self.assertTrue(any("assistant>" in line for line in frame.lines))
+        self.assertTrue(any("• " in line for line in frame.lines))
 
     def test_help_and_exit_stay_frontend_local(self) -> None:
         mailbox = TuiMailbox(capacity=8)

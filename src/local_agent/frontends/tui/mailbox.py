@@ -21,7 +21,10 @@ _DROPPABLE_EVENT_TYPES = frozenset(
         "ToolOutput",
     }
 )
-_PROTECTED_EVENT_TYPES = frozenset({"SessionStarted", "TurnStarted", "TurnFinished", "ErrorEvent"})
+_PROTECTED_EVENT_TYPES = frozenset(
+    {"SessionStarted", "TurnStarted", "AssistantMessage", "AssistantMessageAborted", "TurnFinished", "ErrorEvent"}
+)
+_CRITICAL_EVENT_TYPES = frozenset({"AssistantMessage", "AssistantMessageAborted", "TurnFinished", "ErrorEvent"})
 _MAX_COALESCED_DELTA_CHARS = 64 * 1024
 
 
@@ -145,4 +148,10 @@ class TuiMailbox:
                     del self._items[index]
                     self._dropped += 1
                     return True
+            if isinstance(incoming, TuiEvent) and incoming.type in _CRITICAL_EVENT_TYPES:
+                for index, queued in enumerate(self._items):
+                    if isinstance(queued, TuiEvent) and queued.type not in _CRITICAL_EVENT_TYPES:
+                        del self._items[index]
+                        self._dropped += 1
+                        return True
         return False

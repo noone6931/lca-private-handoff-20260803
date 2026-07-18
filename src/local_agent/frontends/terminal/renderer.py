@@ -5,6 +5,8 @@ import sys
 from typing import Any, TextIO
 
 from ...protocol.events import AgentEvent
+from ..text import sanitize_terminal_text
+from .assistant import TerminalAssistantPresenter
 
 
 class TerminalEventSink:
@@ -18,25 +20,25 @@ class TerminalEventSink:
         self._stream = stream or sys.stdout
         self._show_tools = show_tools
         self._console = _load_console(self._stream) if use_rich else None
-        self._streamed_messages: dict[str, str] = {}
-        self._delta_indices: dict[str, int] = {}
-        self._last_assistant_message_id: str | None = None
-        self._stream_line_open = False
+        self._assistant = TerminalAssistantPresenter(
+            stream=self._stream,
+            render_content=self._print_content,
+            render_notice=self._print_muted,
+        )
 
     def emit(self, event: AgentEvent) -> None:
         if event.type == "AssistantDelta":
-            self._render_assistant_delta(event)
+            self._assistant.render_delta(event.payload)
             return
-        if self._stream_line_open:
-            self._finish_stream_line()
+        self._assistant.before_non_delta()
         if event.type == "TurnStarted":
-            self._reset_turn_stream_state()
+            self._assistant.start_turn()
         elif event.type == "SessionStarted":
             self._print_muted(f"[session] {event.session_id}")
         elif event.type == "AssistantMessage":
-            message_id = event.payload.get("message_id")
-            if isinstance(message_id, str) and message_id:
-                self._last_assistant_message_id = message_id
+            self._assistant.render_message(event.payload)
+        elif event.type == "AssistantMessageAborted":
+            self._assistant.abort_message(event.payload)
         elif event.type == "ToolStarted" and self._show_tools:
             self._render_tool_started(event)
         elif event.type == "ToolOutput" and self._show_tools:
@@ -46,7 +48,7 @@ class TerminalEventSink:
         elif event.type == "ApprovalResult":
             self._render_approval_result(event)
         elif event.type == "TurnFinished":
-            self._render_final(event)
+            self._assistant.finish_turn(event.payload)
         elif event.type == "ErrorEvent":
             self._print_error(str(event.payload.get("message", "Unknown error.")))
 
@@ -78,56 +80,24 @@ class TerminalEventSink:
         else:
             self._print_error(f"[approval] {tool} {decision}")
 
-    def _render_final(self, event: AgentEvent) -> None:
-        content = str(event.payload.get("content", ""))
-        streamed = self._streamed_messages.get(self._last_assistant_message_id or "")
-        had_provisional = any(self._streamed_messages.values())
-        if streamed is not None and streamed == content:
-            self._reset_turn_stream_state()
-            return
-        if had_provisional:
-            self._print_muted("[authoritative final]")
+    def _print_content(self, content: str) -> None:
+        content = sanitize_terminal_text(content)
         if self._console is not None:
             markdown = _load_rich_markdown(content)
             if markdown is not None:
                 self._console.print(markdown)
-                self._reset_turn_stream_state()
                 return
         print(content, file=self._stream)
-        self._reset_turn_stream_state()
-
-    def _render_assistant_delta(self, event: AgentEvent) -> None:
-        message_id = event.payload.get("message_id")
-        delta = event.payload.get("delta")
-        delta_index = event.payload.get("delta_index")
-        if not isinstance(message_id, str) or not message_id or not isinstance(delta, str):
-            return
-        expected = self._delta_indices.get(message_id, 0)
-        if type(delta_index) is not int or delta_index != expected:
-            return
-        self._delta_indices[message_id] = expected + 1
-        self._streamed_messages[message_id] = self._streamed_messages.get(message_id, "") + delta
-        self._last_assistant_message_id = message_id
-        print(delta, end="", file=self._stream, flush=True)
-        self._stream_line_open = True
-
-    def _finish_stream_line(self) -> None:
-        print(file=self._stream, flush=True)
-        self._stream_line_open = False
-
-    def _reset_turn_stream_state(self) -> None:
-        self._streamed_messages.clear()
-        self._delta_indices.clear()
-        self._last_assistant_message_id = None
-        self._stream_line_open = False
 
     def _print_muted(self, text: str) -> None:
+        text = sanitize_terminal_text(text)
         if self._console is not None:
             self._console.print(text, style="dim", markup=False)
             return
         print(text, file=self._stream)
 
     def _print_error(self, text: str) -> None:
+        text = sanitize_terminal_text(text)
         if self._console is not None:
             self._console.print(text, style="bold red", markup=False)
             return

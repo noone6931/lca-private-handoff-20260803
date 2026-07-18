@@ -40,6 +40,11 @@ OWNER_COMPLEXITY_CEILINGS = {
     "src/local_agent/llm.py": 226,
     "src/local_agent/protocol/events.py": 228,
     "src/local_agent/frontends/terminal/renderer.py": 165,
+    "src/local_agent/frontends/terminal/assistant.py": 100,
+    "src/local_agent/frontends/text.py": 60,
+    "src/local_agent/frontends/tui/markdown.py": 120,
+    "src/local_agent/runtime/assistant_message.py": 170,
+    "src/local_agent/runtime/run_output.py": 130,
     "src/local_agent/provider_protocol.py": 379,
     "src/local_agent/runtime_prompt.py": 490,
     "src/local_agent/run_collector.py": 668,
@@ -322,7 +327,7 @@ class ArchitectureBoundaryTests(unittest.TestCase):
         self.assertIn('frontend.add_argument("--tui"', cli)
         self.assertIn("TuiEventSink(tui_mailbox, show_tools=not args.hide_tools)", cli)
         self.assertEqual(len(re.findall(r"^    def ", runtime, flags=re.MULTILINE)), 71)
-        self.assertEqual(len(runtime.splitlines()), 1792)
+        self.assertLessEqual(len(runtime.splitlines()), LEGACY_COMPLEXITY_DEBT_CEILINGS["src/local_agent/agent.py"])
 
     def test_tui_cross_thread_messages_are_typed_and_bounded(self) -> None:
         messages = (ROOT / "src/local_agent/frontends/tui/messages.py").read_text(encoding="utf-8")
@@ -375,7 +380,7 @@ class ArchitectureBoundaryTests(unittest.TestCase):
         llm = (ROOT / "src/local_agent/llm.py").read_text(encoding="utf-8")
         runtime = (ROOT / "src/local_agent/agent.py").read_text(encoding="utf-8")
         prompt = (ROOT / "src/local_agent/runtime_prompt.py").read_text(encoding="utf-8")
-        renderer_path = ROOT / "src/local_agent/frontends/terminal/renderer.py"
+        renderer_path = ROOT / "src/local_agent/frontends/terminal/assistant.py"
         renderer = renderer_path.read_text(encoding="utf-8")
         self.assertNotIn("from .agent", owner)
         self.assertNotIn("from .runtime_", owner)
@@ -383,12 +388,23 @@ class ArchitectureBoundaryTests(unittest.TestCase):
         self.assertNotIn("class _SseDecoder", runtime)
         self.assertNotIn("data: [DONE]", runtime)
         self.assertEqual(runtime.count("use_stream=True"), 1)
-        self.assertIn("assistant_delta_callback", runtime)
+        self.assertNotIn("assistant_delta_callback", runtime)
+        lifecycle = (ROOT / "src/local_agent/runtime/assistant_message.py").read_text(encoding="utf-8")
+        run_output = (ROOT / "src/local_agent/runtime/run_output.py").read_text(encoding="utf-8")
+        mailbox = (ROOT / "src/local_agent/frontends/tui/mailbox.py").read_text(encoding="utf-8")
+        self.assertIn("class AssistantMessageLifecycle:", lifecycle)
+        self.assertIn("class RunOutputLifecycle:", run_output)
+        self.assertIn('"AssistantDelta"', lifecycle)
+        self.assertIn('"AssistantMessage"', lifecycle)
+        self.assertIn('"AssistantMessageAborted"', lifecycle)
+        self.assertNotIn("self._events.finish_turn", runtime)
+        self.assertIn('"AssistantMessage"', mailbox)
+        self.assertIn('"TurnFinished"', mailbox)
         self.assertNotIn("arguments_preview", prompt)
 
         tree = ast.parse(renderer)
         delta_renderer = next(
-            node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name == "_render_assistant_delta"
+            node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name == "render_delta"
         )
         delta_source = ast.get_source_segment(renderer, delta_renderer) or ""
         self.assertNotIn("arguments", delta_source)

@@ -12,6 +12,7 @@ from local_agent.frontends.tui.view import TuiView
 from local_agent.frontends.tui.view import TuiViewport
 from local_agent.frontends.tui.view import render_frame
 from local_agent.frontends.tui.view import render_inline_frame
+from local_agent.frontends.tui.view import transcript_lines
 
 
 class TuiViewTests(unittest.TestCase):
@@ -19,6 +20,45 @@ class TuiViewTests(unittest.TestCase):
         self.assertEqual(cell_width("A中"), 3)
         self.assertEqual(clip_cells("A中文", 4), "A中")
         self.assertEqual(wrap_cells("A中文B", 4), ("A中", "文B"))
+
+    def test_emoji_clusters_are_measured_and_wrapped_atomically(self) -> None:
+        self.assertEqual(cell_width("👩‍💻"), 2)
+        self.assertEqual(cell_width("🇨🇳"), 2)
+        self.assertEqual(clip_cells("A👩‍💻B", 3), "A👩‍💻")
+        self.assertEqual(wrap_cells("A👩‍💻中B", 4), ("A👩‍💻", "中B"))
+
+    def test_markdown_source_keeps_structure_with_narrow_role_marker(self) -> None:
+        source = """回答开头
+
+### 关键约束与设计
+- 第一项包含中文和 emoji 👩‍💻，并且足够长以触发换行
+  - 嵌套项
+```python
+print("中文👩‍💻")
+```
+| 单元 | 约束 |
+| --- | --- |"""
+
+        rows = transcript_lines((TranscriptEntry("a1", "assistant", source),), 32)
+
+        self.assertEqual(rows[0], "• 回答开头")
+        self.assertIn("  ### 关键约束与设计", rows)
+        self.assertIn("  ```python", rows)
+        self.assertIn('  print("中文👩‍💻")', rows)
+        self.assertIn("  | 单元 | 约束 |", rows)
+        self.assertTrue(any(row.startswith("    ") and "触发换行" in row for row in rows))
+        self.assertFalse(any(row.startswith("           ") for row in rows if row.strip()))
+        self.assertTrue(all(cell_width(row) <= 32 for row in rows))
+
+    def test_markdown_reflows_from_source_at_each_width(self) -> None:
+        entry = TranscriptEntry("a1", "assistant", "- 中文👩‍💻 content that wraps by width")
+
+        narrow = transcript_lines((entry,), 18)
+        wide = transcript_lines((entry,), 48)
+
+        self.assertGreater(len(narrow), len(wide))
+        self.assertEqual(wide[0], "• - 中文👩‍💻 content that wraps by width")
+        self.assertTrue(all(cell_width(row) <= 18 for row in narrow))
 
     def test_frame_is_stable_and_never_exceeds_viewport(self) -> None:
         state = TuiState(
@@ -88,7 +128,7 @@ class TuiViewTests(unittest.TestCase):
         state = TuiState(transcript=(TranscriptEntry("a1", "assistant", "ready"),))
         frame = render_frame(state, TuiView(), 80, 14)
 
-        self.assertTrue(any("assistant> ready" in line for line in frame.lines))
+        self.assertTrue(any("• ready" in line for line in frame.lines))
         self.assertFalse(any("LOCAL CODING AGENT" in line for line in frame.lines))
 
     def test_reference_viewport_widths_are_exact(self) -> None:

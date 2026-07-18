@@ -72,6 +72,7 @@ class TuiProjector:
         self._state = state or TuiState()
         self._delta_indices: dict[str, int] = {}
         self._active_run_id: str | None = None
+        self._last_assistant_content: str | None = None
         self._local_entry_seq = _next_local_entry_seq(self._state.transcript)
 
     @property
@@ -111,6 +112,7 @@ class TuiProjector:
         elif event.type == "TurnStarted":
             self._delta_indices.clear()
             self._active_run_id = event.run_id
+            self._last_assistant_content = None
             state = replace(
                 state,
                 session_id=event.session_id,
@@ -124,6 +126,12 @@ class TuiProjector:
         elif event.type == "AssistantDelta":
             if event.run_id == self._active_run_id:
                 state = self._apply_delta(state, event)
+        elif event.type == "AssistantMessage":
+            if event.run_id == self._active_run_id:
+                state = self._apply_assistant_message(state, event)
+        elif event.type == "AssistantMessageAborted":
+            if event.run_id == self._active_run_id:
+                state = self._apply_assistant_message_aborted(state, event)
         elif event.type == "TurnFinished":
             if event.run_id == self._active_run_id:
                 state = self._apply_turn_finished(state, event)
@@ -174,13 +182,47 @@ class TuiProjector:
             entries.append(TranscriptEntry(message_id, "assistant", delta, provisional=True))
         return replace(state, transcript=tuple(entries[-_MAX_TRANSCRIPT_ENTRIES:]))
 
+    def _apply_assistant_message(self, state: TuiState, event: TuiEvent) -> TuiState:
+        message_id = event.get("message_id")
+        content = event.get("content")
+        if not isinstance(message_id, str) or not message_id or not isinstance(content, str):
+            return state
+        self._last_assistant_content = content
+        entries = list(state.transcript)
+        provisional = (
+            entries[-1]
+            if entries and entries[-1].entry_id == message_id and entries[-1].provisional
+            else None
+        )
+        if provisional is not None and provisional.text == content:
+            entries[-1] = replace(provisional, provisional=False)
+        elif provisional is not None:
+            entries[-1] = replace(provisional, text=content, provisional=False, authoritative=True)
+        elif content:
+            entries.append(TranscriptEntry(entry_id=message_id, role="assistant", text=content))
+        self._delta_indices.pop(message_id, None)
+        return replace(state, transcript=tuple(entries[-_MAX_TRANSCRIPT_ENTRIES:]))
+
     def _apply_turn_finished(self, state: TuiState, event: TuiEvent) -> TuiState:
         content = str(event.get("content", ""))
         entries = list(state.transcript)
+        final_message_id = event.get("final_message_id")
+        origin = str(event.get("origin", ""))
+        if isinstance(final_message_id, str) and final_message_id:
+            final_index = next(
+                (index for index in range(len(entries) - 1, -1, -1) if entries[index].entry_id == final_message_id),
+                None,
+            )
+            if final_index is not None:
+                if content and entries[final_index].text != content:
+                    entries[final_index] = replace(
+                        entries[final_index], text=content, provisional=False, authoritative=origin == "runtime"
+                    )
+                content = ""
         provisional = entries[-1] if entries and entries[-1].provisional else None
         if provisional is not None and provisional.text == content:
             entries[-1] = replace(provisional, provisional=False)
-        elif content:
+        elif content and content != self._last_assistant_content:
             if provisional is not None:
                 entries[-1] = replace(provisional, provisional=False)
             entries.append(
@@ -188,7 +230,7 @@ class TuiProjector:
                     entry_id=f"final:{event.run_id or event.seq}",
                     role="assistant",
                     text=content,
-                    authoritative=provisional is not None,
+                    authoritative=self._last_assistant_content is not None or provisional is not None,
                 )
             )
         reason = str(event.get("reason", ""))
@@ -199,6 +241,16 @@ class TuiProjector:
             status=status,
             transcript=tuple(entries[-_MAX_TRANSCRIPT_ENTRIES:]),
         )
+
+    def _apply_assistant_message_aborted(self, state: TuiState, event: TuiEvent) -> TuiState:
+        message_id = event.get("message_id")
+        if not isinstance(message_id, str) or not message_id:
+            return state
+        entries = list(state.transcript)
+        if entries and entries[-1].entry_id == message_id and entries[-1].provisional:
+            entries.pop()
+        self._delta_indices.pop(message_id, None)
+        return replace(state, transcript=tuple(entries[-_MAX_TRANSCRIPT_ENTRIES:]))
 
     @staticmethod
     def _append_transcript(state: TuiState, event: TuiEvent, role: str, text: str) -> TuiState:
@@ -248,7 +300,25 @@ def project_agent_event(event: AgentEvent) -> TuiEvent | None:
             )
         )
     elif event.type == "AssistantMessage":
-        fields.append(("message_id", _string(payload.get("message_id"), 256)))
+        fields.extend(
+            (
+                ("message_id", _string(payload.get("message_id"), 256)),
+                ("content", _string(payload.get("content"), _MAX_EVENT_TEXT)),
+                ("finish_reason", _string(payload.get("finish_reason"), 128)),
+                ("provider", _string(payload.get("provider"), 128)),
+                ("authoritative", bool(payload.get("authoritative", True))),
+                ("origin", _string(payload.get("origin"), 128)),
+                ("phase", _string(payload.get("phase"), 128)),
+                ("status", _string(payload.get("status"), 128)),
+            )
+        )
+    elif event.type == "AssistantMessageAborted":
+        fields.extend(
+            (
+                ("message_id", _string(payload.get("message_id"), 256)),
+                ("reason", _string(payload.get("reason"), 128)),
+            )
+        )
     elif event.type in {"UserMessage", "TurnFinished"}:
         fields.append(("content", _string(payload.get("content"), _MAX_EVENT_TEXT)))
         if event.type == "TurnFinished":
@@ -257,6 +327,9 @@ def project_agent_event(event: AgentEvent) -> TuiEvent | None:
                     ("reason", _string(payload.get("reason"), 128)),
                     ("status", _string(payload.get("status"), 128)),
                     ("delivered", bool(payload.get("delivered", False))),
+                    ("final_message_id", _string(payload.get("final_message_id"), 256)),
+                    ("origin", _string(payload.get("origin"), 128)),
+                    ("output_kind", _string(payload.get("output_kind"), 128)),
                 )
             )
     elif event.type in {"ToolStarted", "ToolFinished", "ToolFailed"}:

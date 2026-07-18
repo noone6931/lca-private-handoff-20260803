@@ -15,6 +15,7 @@ EVENT_TYPES = {
     "UserMessage",
     "AssistantDelta",
     "AssistantMessage",
+    "AssistantMessageAborted",
     "LlmRequest",
     "ToolStarted",
     "ToolOutput",
@@ -147,7 +148,16 @@ class EventEmitter:
     def turn_finished_payload(self) -> dict[str, Any] | None:
         return dict(self._turn_finished_payload) if self._turn_finished_payload is not None else None
 
-    def finish_turn(self, *, content: str, reason: str, run_summary: dict[str, Any]) -> AgentEvent:
+    def finish_turn(
+        self,
+        *,
+        content: str,
+        reason: str,
+        run_summary: dict[str, Any],
+        final_message_id: str | None = None,
+        origin: str = "runtime",
+        output_kind: str = "runtime_only",
+    ) -> AgentEvent:
         if turn_is_delivered(reason):
             status = "completed"
         elif reason == "interrupt":
@@ -164,30 +174,11 @@ class EventEmitter:
                 "status": status,
                 "delivered": turn_is_delivered(reason),
                 "run_summary": run_summary,
+                "final_message_id": final_message_id,
+                "origin": origin,
+                "output_kind": output_kind,
             },
         )
-
-    def assistant_delta_callback(
-        self,
-        message_id: str,
-        *,
-        enabled: bool,
-    ) -> Callable[[str, int], None] | None:
-        if not enabled:
-            return None
-
-        def emit_delta(delta: str, delta_index: int) -> None:
-            self.emit(
-                "AssistantDelta",
-                {
-                    "message_id": message_id,
-                    "delta": delta,
-                    "delta_index": delta_index,
-                    "provisional": True,
-                },
-            )
-
-        return emit_delta
 
     def emit(self, event_type: str, payload: dict[str, Any] | None = None) -> AgentEvent:
         if event_type not in EVENT_TYPES:

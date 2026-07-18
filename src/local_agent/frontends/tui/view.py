@@ -4,13 +4,13 @@ from dataclasses import dataclass
 from dataclasses import field
 from dataclasses import replace
 
+from .markdown import render_markdown_source
 from .model import TranscriptEntry
 from .model import TuiState
 from .text import cell_width
 from .text import clip_cells
 from .text import pad_cells
 from .text import tail_cells
-from .text import wrap_cells
 
 
 @dataclass(frozen=True)
@@ -209,21 +209,26 @@ def _welcome_lines(width: int, height: int) -> tuple[str, ...]:
 def transcript_lines(entries: tuple[TranscriptEntry, ...], width: int) -> tuple[str, ...]:
     lines: list[str] = []
     for entry in entries:
-        label = {
-            "assistant": "assistant",
-            "error": "error",
-            "system": "system",
-            "user": "you",
-        }.get(entry.role, entry.role)
-        if entry.authoritative:
-            label += " (authoritative)"
-        prefix = f"{label}> "
-        wrapped = wrap_cells(entry.text, max(width - cell_width(prefix), 1)) or ("",)
-        lines.append(prefix + wrapped[0])
-        indent = " " * cell_width(prefix)
-        lines.extend(indent + line for line in wrapped[1:])
+        marker = _transcript_marker(entry)
+        rendered = render_markdown_source(entry.text, max(width - 2, 1)) or ("",)
+        for index, line in enumerate(rendered):
+            if not line:
+                lines.append(marker.rstrip() if index == 0 else "")
+                continue
+            lines.append((marker if index == 0 else "  ") + line)
         lines.append("")
     return tuple(lines)
+
+
+def _transcript_marker(entry: TranscriptEntry) -> str:
+    if entry.authoritative:
+        return "* "
+    return {
+        "assistant": "• ",
+        "error": "! ",
+        "system": "· ",
+        "user": "› ",
+    }.get(entry.role, "? ")
 
 
 def _inline_activity_lines(state: TuiState, width: int) -> tuple[str, ...]:

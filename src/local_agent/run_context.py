@@ -25,6 +25,7 @@ from .session_task_continuity import PendingTaskContinuation
 from .temporary_tool_directive import DirectiveTransition
 from .temporary_tool_directive import TemporaryToolDirectiveOwner
 from .read_only_reviewer import ReadOnlyReviewState
+from .runtime.run_output import RunOutputLifecycle
 from .workflow_profile import WorkflowProfileResolution
 from .workflow_profile import resolve_workflow_profile
 
@@ -73,6 +74,7 @@ class RunContext:
     negative_claim_metrics: dict[str, int] = field(default_factory=dict)
     read_only_review: ReadOnlyReviewState = field(default_factory=ReadOnlyReviewState)
     read_only_explore_finalized: bool = False
+    output: RunOutputLifecycle = field(default_factory=RunOutputLifecycle)
 
     # Compatibility views keep existing runtime tests and integrations stable while
     # EvidenceLedger becomes the single owner of the mutable evidence state.
@@ -191,6 +193,7 @@ class RunContext:
         self.negative_claim_metrics.clear()
         self.read_only_review.reset()
         self.read_only_explore_finalized = False
+        self.output.reset()
 
     def workflow_profile_payload(self) -> dict[str, Any]:
         if self.workflow_profile is None:

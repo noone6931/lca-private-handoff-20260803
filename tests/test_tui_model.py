@@ -64,7 +64,16 @@ class TuiModelTests(unittest.TestCase):
                 fields=(("message_id", "m1"), ("delta", "hello"), ("delta_index", 0), ("delta_span", 1)),
             )
         )
-        state = projector.apply(_tui_event("TurnFinished", fields=(("content", "hello"), ("reason", "final"))))
+        projector.apply(
+            _tui_event(
+                "AssistantMessage",
+                seq=3,
+                fields=(("message_id", "m1"), ("content", "hello"), ("authoritative", True)),
+            )
+        )
+        state = projector.apply(
+            _tui_event("TurnFinished", seq=4, fields=(("content", "hello"), ("reason", "final")))
+        )
 
         self.assertEqual([entry.text for entry in state.transcript], ["hello"])
         self.assertFalse(state.transcript[0].provisional)
@@ -96,11 +105,75 @@ class TuiModelTests(unittest.TestCase):
             )
         )
         state = projector.apply(
-            _tui_event("TurnFinished", fields=(("content", "safe final"), ("reason", "final")))
+            _tui_event(
+                "AssistantMessage",
+                seq=3,
+                fields=(("message_id", "m1"), ("content", "safe final"), ("authoritative", True)),
+            )
         )
 
-        self.assertEqual([entry.text for entry in state.transcript], ["draft", "safe final"])
+        self.assertEqual([entry.text for entry in state.transcript], ["safe final"])
         self.assertTrue(state.transcript[-1].authoritative)
+
+    def test_aborted_message_closes_provisional_before_runtime_delivery(self) -> None:
+        projector = TuiProjector()
+        projector.apply(_tui_event("TurnStarted"))
+        projector.apply(
+            _tui_event(
+                "AssistantDelta",
+                seq=2,
+                fields=(("message_id", "m1"), ("delta", "draft"), ("delta_index", 0), ("delta_span", 1)),
+            )
+        )
+        state = projector.apply(
+            _tui_event("AssistantMessageAborted", seq=3, fields=(("message_id", "m1"), ("reason", "provider_error")))
+        )
+
+        self.assertEqual(state.transcript, ())
+        state = projector.apply(
+            _tui_event("TurnFinished", seq=4, fields=(("content", "Provider request failed."), ("reason", "provider_error")))
+        )
+        self.assertEqual([entry.text for entry in state.transcript], ["Provider request failed."])
+
+    def test_turn_finished_preserves_a_distinct_runtime_delivery(self) -> None:
+        projector = TuiProjector()
+        projector.apply(_tui_event("TurnStarted"))
+        projector.apply(
+            _tui_event(
+                "AssistantMessage",
+                seq=2,
+                fields=(("message_id", "m1"), ("content", "provider final"), ("authoritative", True)),
+            )
+        )
+
+        state = projector.apply(
+            _tui_event(
+                "TurnFinished",
+                seq=3,
+                fields=(
+                    ("content", "runtime wrapper"),
+                    ("reason", "final"),
+                    ("final_message_id", "m1"),
+                    ("origin", "runtime"),
+                    ("output_kind", "runtime_replaced"),
+                ),
+            )
+        )
+
+        self.assertEqual([entry.text for entry in state.transcript], ["runtime wrapper"])
+        self.assertTrue(state.transcript[-1].authoritative)
+
+    def test_mailbox_preserves_assistant_completion_under_backpressure(self) -> None:
+        mailbox = TuiMailbox(capacity=8)
+        for seq in range(8):
+            mailbox.put(_tui_event("TurnStarted", seq=seq))
+
+        accepted = mailbox.put(
+            _tui_event("AssistantMessage", seq=9, fields=(("message_id", "m1"), ("content", "done")))
+        )
+
+        self.assertTrue(accepted)
+        self.assertIn("AssistantMessage", [item.type for item in mailbox.drain() if isinstance(item, TuiEvent)])
 
     def test_late_delta_and_duplicate_terminal_do_not_reopen_closed_turn(self) -> None:
         projector = TuiProjector()
@@ -112,17 +185,24 @@ class TuiModelTests(unittest.TestCase):
                 fields=(("message_id", "m1"), ("delta", "done"), ("delta_index", 0), ("delta_span", 1)),
             )
         )
-        projector.apply(_tui_event("TurnFinished", seq=3, fields=(("content", "done"), ("reason", "final"))))
+        projector.apply(
+            _tui_event(
+                "AssistantMessage",
+                seq=3,
+                fields=(("message_id", "m1"), ("content", "done"), ("authoritative", True)),
+            )
+        )
+        projector.apply(_tui_event("TurnFinished", seq=4, fields=(("content", "done"), ("reason", "final"))))
 
         projector.apply(
             _tui_event(
                 "AssistantDelta",
-                seq=4,
+                seq=5,
                 fields=(("message_id", "m1"), ("delta", "late"), ("delta_index", 1), ("delta_span", 1)),
             )
         )
         state = projector.apply(
-            _tui_event("TurnFinished", seq=5, fields=(("content", "duplicate"), ("reason", "final")))
+            _tui_event("TurnFinished", seq=6, fields=(("content", "duplicate"), ("reason", "final")))
         )
 
         self.assertEqual([entry.text for entry in state.transcript], ["done"])

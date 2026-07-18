@@ -34,7 +34,7 @@ class TuiNativeRendererTests(unittest.TestCase):
             renderer.render(state, TuiView(input_text="draft", cursor=5), 60, 18)
 
         rendered = b"".join(chunks)
-        self.assertEqual(rendered.count(b"you> hello native history"), 1)
+        self.assertEqual(rendered.count("› hello native history".encode()), 1)
         self.assertNotIn(b"\x1b[?1049h", rendered)
         self.assertNotIn(b"\x1b[?1007h", rendered)
         self.assertNotIn(b"\x1b[3J", rendered)
@@ -59,8 +59,8 @@ class TuiNativeRendererTests(unittest.TestCase):
             chunks.clear()
             renderer.render(settled, TuiView(input_text="x", cursor=1), 80, 24)
 
-        self.assertEqual(committed.count(b"assistant> streaming answer"), 1)
-        self.assertNotIn(b"assistant> streaming answer", b"".join(chunks))
+        self.assertEqual(committed.count("• streaming answer".encode()), 1)
+        self.assertNotIn("• streaming answer".encode(), b"".join(chunks))
 
     def test_different_authoritative_final_commits_both_messages_once(self) -> None:
         chunks = []
@@ -84,8 +84,36 @@ class TuiNativeRendererTests(unittest.TestCase):
             renderer.render(settled, TuiView(input_text="x", cursor=1), 80, 24)
 
         rendered = b"".join(chunks)
-        self.assertEqual(rendered.count(b"assistant> draft"), 1)
-        self.assertEqual(rendered.count(b"assistant (authoritative)> safe final"), 1)
+        self.assertEqual(rendered.count("• draft".encode()), 1)
+        self.assertEqual(rendered.count(b"* safe final"), 1)
+
+    def test_markdown_rows_commit_once_without_wide_hanging_indent(self) -> None:
+        chunks = []
+
+        def write(_fd, payload):
+            chunks.append(payload)
+            return len(payload)
+
+        renderer = NativeScrollbackRenderer(_Output())
+        state = TuiState(
+            transcript=(
+                TranscriptEntry(
+                    "a1",
+                    "assistant",
+                    "Intro\n\n### Heading\n- list item\n```python\nprint('ok')\n```\n| A | B |",
+                ),
+            )
+        )
+        with patch("local_agent.frontends.tui.native_renderer.os.write", side_effect=write):
+            renderer.render(state, TuiView(), 48, 20)
+            renderer.render(state, TuiView(input_text="draft", cursor=5), 48, 20)
+            renderer.render(state, TuiView(input_text="draft", cursor=5), 40, 20)
+
+        rendered = b"".join(chunks)
+        self.assertEqual(rendered.count(b"### Heading"), 1)
+        self.assertEqual(rendered.count(b"```python"), 1)
+        self.assertEqual(rendered.count(b"| A | B |"), 1)
+        self.assertNotIn(b"           ### Heading", rendered)
 
     def test_search_alone_borrows_alternate_screen_and_restores_normal_tail(self) -> None:
         chunks = []

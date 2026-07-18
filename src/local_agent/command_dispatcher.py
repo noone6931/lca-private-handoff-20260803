@@ -5,12 +5,9 @@ from typing import Any, Literal, Protocol
 
 from .config import ConfigError
 from .cancellation import RunCancellation
-from .protocol.commands import AgentCommand
-from .protocol.commands import CommandResult
-from .protocol.commands import UNSUPPORTED_COMMAND_TYPES
-from .protocol.commands import command_validation_error
-from .protocol.commands import new_command
+from .protocol.commands import AgentCommand, CommandResult, UNSUPPORTED_COMMAND_TYPES, command_validation_error, new_command
 from .protocol.events import EventEmitter
+from .runtime.run_output import emit_runtime_delivery
 
 
 class _SessionWriter(Protocol):
@@ -184,7 +181,7 @@ class CommandDispatcher:
             finals = self._runtime._session.load_event_payloads("final", max_events=1)
             reason = str(summary.get("termination_reason") or reason)
             content = str(finals[-1]["content"]) if finals and "content" in finals[-1] else content
-            self._events.finish_turn(content=content, reason=reason, run_summary=summary)
+            emit_runtime_delivery(self._runtime, self._events, content=content, reason=reason, run_summary=summary)
             return
         if reason == "interrupt":
             self._events.emit("ErrorEvent", {"kind": "interrupt", "message": content})
@@ -203,7 +200,7 @@ class CommandDispatcher:
             if not self._events.run_summary_emitted:
                 runtime._session.append("run_summary", summary)
                 self._events.emit("RunSummary", summary)
-        self._events.finish_turn(content=content, reason=reason, run_summary=summary)
+        emit_runtime_delivery(runtime, self._events, content=content, reason=reason, run_summary=summary)
 
     def _error(
         self,

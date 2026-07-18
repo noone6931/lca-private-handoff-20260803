@@ -200,12 +200,91 @@ class TerminalFrontendTests(unittest.TestCase):
                 {"message_id": "m1", "delta": "unsafe draft", "delta_index": 0, "provisional": True},
             )
         )
+        sink.emit(
+            _event(
+                "AssistantMessage",
+                {"message_id": "m1", "content": "safe authoritative final", "authoritative": True},
+            )
+        )
         sink.emit(_event("TurnFinished", {"content": "safe authoritative final"}))
 
         rendered = output.getvalue()
         self.assertEqual(rendered.count("unsafe draft"), 1)
         self.assertEqual(rendered.count("safe authoritative final"), 1)
         self.assertIn("[authoritative final]", rendered)
+
+    def test_terminal_closes_aborted_delta_and_renders_runtime_delivery(self) -> None:
+        output = io.StringIO()
+        sink = TerminalEventSink(stream=output, show_tools=True, use_rich=False)
+
+        sink.emit(_event("TurnStarted", {}))
+        sink.emit(
+            _event(
+                "AssistantDelta",
+                {"message_id": "m1", "delta": "draft", "delta_index": 0, "provisional": True},
+            )
+        )
+        sink.emit(_event("AssistantMessageAborted", {"message_id": "m1", "reason": "provider_error"}))
+        sink.emit(_event("TurnFinished", {"content": "Provider request failed.", "reason": "provider_error"}))
+
+        rendered = output.getvalue()
+        self.assertEqual(rendered.count("draft"), 1)
+        self.assertEqual(rendered.count("Provider request failed."), 1)
+        self.assertIn("[authoritative final]", rendered)
+
+    def test_terminal_preserves_a_distinct_runtime_delivery_after_provider_message(self) -> None:
+        output = io.StringIO()
+        sink = TerminalEventSink(stream=output, show_tools=True, use_rich=False)
+
+        sink.emit(_event("TurnStarted", {}))
+        sink.emit(_event("AssistantMessage", {"message_id": "m1", "content": "provider final"}))
+        sink.emit(_event("TurnFinished", {"content": "runtime wrapper"}))
+
+        rendered = output.getvalue()
+        self.assertEqual(rendered.count("provider final"), 1)
+        self.assertEqual(rendered.count("runtime wrapper"), 1)
+        self.assertIn("[authoritative final]", rendered)
+
+    def test_terminal_prints_only_the_runtime_appendix_for_augmented_delivery(self) -> None:
+        output = io.StringIO()
+        sink = TerminalEventSink(stream=output, show_tools=True, use_rich=False)
+
+        sink.emit(_event("TurnStarted", {}))
+        sink.emit(_event("AssistantMessage", {"message_id": "m1", "content": "provider final"}))
+        sink.emit(
+            _event(
+                "TurnFinished",
+                {
+                    "content": "provider final\n\nVerification: tests passed.",
+                    "final_message_id": "m1",
+                    "origin": "runtime",
+                    "output_kind": "runtime_augmented",
+                },
+            )
+        )
+
+        rendered = output.getvalue()
+        self.assertEqual(rendered.count("provider final"), 1)
+        self.assertEqual(rendered.count("Verification: tests passed."), 1)
+        self.assertIn("[runtime delivery]", rendered)
+
+    def test_terminal_removes_control_and_bidi_sequences_from_model_text(self) -> None:
+        output = io.StringIO()
+        sink = TerminalEventSink(stream=output, show_tools=True, use_rich=False)
+
+        sink.emit(_event("TurnStarted", {}))
+        sink.emit(
+            _event(
+                "AssistantDelta",
+                {"message_id": "m1", "delta": "safe\x1b[31m\u202etext", "delta_index": 0},
+            )
+        )
+        sink.emit(_event("AssistantMessage", {"message_id": "m1", "content": "safe\x1b[31m\u202etext"}))
+
+        rendered = output.getvalue()
+        self.assertNotIn("\x1b", rendered)
+        self.assertNotIn("\u202e", rendered)
+        self.assertIn("safe[31mtext", rendered)
 
     def test_terminal_keeps_tool_logs_on_their_own_line_after_a_delta(self) -> None:
         output = io.StringIO()
