@@ -34,7 +34,7 @@ LCA、OMP 与 Codex 的当前源码级对照和路线校正见 `docs/lca-omp-cod
 
 ## 当前进度
 
-当前 stable 为 T-243：release `20260718T035333Z-4271172e8d36-fab5ff2b17ed`，revision `4271172e8d36c390d512eaded6b1f06052dbd10a`，digest `fab5ff2b17edd4094d8fca3fc9871598997c89110d438af63f2978ac1fda4707`；clean detached release gate 在 Python 3.14 下通过 1203/1203 unittest、compileall 和 diff-check，独立门禁另通过 62/62 deterministic benchmark、25/25 architecture checks、94 项 immutable TUI matrix 与安装后 stable PTY smoke。`lca` 无参数且连接 POSIX TTY 时默认进入 normal-screen TUI，空 transcript 显示响应式 LCA 首页字标；`lca --chat` / `lca chat` 保留轻量 terminal-native chat，非 TTY/非 termios 环境自动回退。settled transcript 只提交一次到终端原生 scrollback，主屏不进入 alternate screen、不捕获鼠标、不清空 scrollback，wheel/trackpad 可直接浏览；provisional/activity/composer 留在 mutable tail，`Ctrl-F` 搜索才临时借用 alternate screen。
+当前 stable 为 T-245：release `20260718T051636Z-f5bfd0ec49bf-78e1b0da38af`，revision `f5bfd0ec49bfcc8478140a1fa045c6693f78b6b3`，digest `78e1b0da38af2372d5aef0bc9876acbb6b03ef09edb7af2ed82a9521b6c28383`；clean detached Python 3.14 release gate 通过 1224/1224 unittest、compileall 和 diff-check，独立门禁另通过 62/62 deterministic benchmark、30/30 architecture checks、31 项 CLI/TUI/AssistantMessage smoke 与安装后 stable launcher smoke。`lca` 无参数且连接 POSIX TTY 时默认进入 normal-screen TUI，空 transcript 显示响应式 LCA 首页字标；settled transcript 进入终端原生 scrollback，provisional/activity/composer 留在 mutable tail。T-245 同时完成 `src/local_agent` 的 owner package 收口：根目录只保留 `agent.py`、`cli.py`、`config.py` 三个真实入口，其余为小于等于 64 行的兼容 facade；实现包不再反向依赖 facade，tools/providers 不再依赖 runtime/frontend，运行时 import SCC 为 0。
 
 T-219/T-220 已完成并发布。Codex 以 `CodexThread.submit(Op)`、唯一 submission loop、`next_event()` 和 response stream 建立双向 Runtime 边界，OMP 由 agent loop 消费 provider stream 并产出 turn/message/tool 生命周期；LCA 采用 Python 同步渐进路径：CommandDispatcher 统一消费 prompt/status/workspace/approval，Provider Stream Owner 解析同一次 OpenAI-compatible SSE/JSON 响应，text delta 与 tool argument delta 分离，只有完整合法 tool call 才能进入 ToolRegistry。`AssistantDelta` 与最终 `AssistantMessage` 共享 message/command/run identity；百炼 in-band XML 不泄漏、不执行。T-239 已在该协议上增加独立同步 TUI worker 和 cooperative cancellation；完整 async bus 与 OS sandbox 仍未冒充实现。
 
@@ -61,6 +61,10 @@ T-231/T-232 已完成同步 interrupt 恢复闭环。approval 等待与长测试
 T-233 已完成 non-delivery continuity closure。真实 characterization 证明 provider error、LLM timeout 与 max steps 在成功 patch 后都会留下未完成验证义务，而旧显式原因集合会错误关闭 session；修复改为复用协议 Owner 的 typed `delivered` 判定，不解析 termination 文本。独立 immutable matrix 覆盖三类写后 pending/自然 continue、三类写前 closed、future non-final reason、command error，以及 RunSummary sink 抛错的精确一次终态；`final`、session `run_summary`、continuity、RunSummary 与 TurnFinished 在所有故障注入中均各一份且 correlation 一致。
 
 T-234~T-243 已完成独立 TUI 模块并发布。实现先对照 Codex 单 UI 写者、typed protocol projection、interrupt intent、normal-buffer history insertion 与 terminal restore，以及 OMP terminal/controller/committed-row/live-tail 分层；随后落地纯 view/model reducer、bounded/coalescing mailbox、单同步 Runtime worker、共享 TerminalCommandRegistry、search/copy/palette、focused ask/approval 和 responsive transcript/tool/todo 布局。Ctrl-C 只发取消意图，CommandDispatcher 持有 typed token并传播到 provider、compaction、reviewer、memory、Explore 和工具；shell/test 子进程以进程组 TERM/KILL 收束，最终仍由唯一 TurnFinished 关闭 running。T-241/T-242 先收口原子 paste 与旧 viewport 的自然滚动；T-243 用独立 `NativeScrollbackRenderer` 替换 curses 主屏：stable rows commit once，provisional/activity/composer 只重画 mutable tail，搜索单独借用并恢复 alternate screen。主屏 PTY 证明 `1049h=0`、`1007h=0`、`ED3=0`，正常/信号/suspend 路径恢复 termios。TUI 不导入 ToolRegistry、ExecutionPolicy、EvidenceLedger、Finalization 或 session storage，不形成第二套领域语义。
+
+T-244 已完成回答输出生命周期和产品身份收口。Provider text 只经 AssistantMessage lifecycle 进入前端，provisional/final/run output 保持 command/run/message correlation；source-backed Markdown、role markers、terminal control/bidi sanitation 和 LCA 品牌身份均由前端 owner 处理，不改写模型语义或把展示文本回流 Runtime。normal-screen renderer 保持终端原生 scrollback，不恢复 curses transcript viewport。
+
+T-245 已完成 Codex/OMP 风格目录与依赖方向收口。`providers/runtime/session/workspace/evidence/review/workflows/tools/memory/frontends/lsp/patch/steering/devtools` 承担真实 owner，根目录旧模块只保留兼容导出；`protocol/cancellation.py` 和 `platform/terminal.py` 分别成为跨边界 cancellation 与 terminal focus 单一 owner。独立 review 首轮发现 10 个实现模块仍穿过根 facade、tools 反向依赖 frontend/runtime，以及 `agent.py` 残留 guard 文案/evidence metadata；R1 全部删除并新增全局门禁。`agent.py` 从 1789 行/71 methods 降为 1632 行/63 methods，保持 turn composition root，不机械拆成新上帝包。
 
 T-204 已完成 S5 readiness closure，结论为 typed `BLOCKED`，未选择实施切片、未进入阶段 B。新增 `zqylfinancebasemasterfccb090b` 与 `zqylcrclfinancemaster7b875cd3c` 后已证实：直接保理底层值为 `FACTOR_TYPE=4`，`104` 是云信融资 10 与直接保理 4 的组合码；放款完成是 `T_FINANCE_PROJECT.APPLY_STATUS=60`；云信 `XF0003` 显示为“拓展服务费”，计划费用经 `findDetailList` 映射到旧名 `expectApplySponsorTaxFee`，而 `YJ0001` 保荐商佣金是独立费用项。放款完成链路会向 payment 推送实际费用和部分主体/日期，但 payment 现有结构化字段与 JSON 参数仍不能形成完整待制单数据源，`BusinessPayer.finalAmount` 还是多费用合计而非 `XF0003` 单项。五个候选均缺至少一项 Owner、完整 data contract、write target、test entry 或 rollback boundary，因此未修改业务原目录。下一步不再扩展 LCA gate，而是补齐目标业务契约后重新进入 S5。项目状态暂只维护 Markdown，不同步 Excel。
 
@@ -196,16 +200,16 @@ T-213/T-214 已完成 S5-1 的 Codex 直接隔离交付。T-213 在上述 clean 
 | P5 | 安全与恢复增强 | 已完成并收口 | synthetic tool result、patch preview、回滚策略、非信任仓库提示、OMP 风格 approval model、approval prompt deadline cancel；真实小改复测通过。 |
 | P6 | 日用体验与默认工作流固化 | 已完成 MVP 版 | OMP 默认工作流本地化：system prompt、工具描述、轻量 runtime nudge。 |
 | P7 | 高级工程能力轻量版 | 已完成 MVP 版 | 已完成 OMP 风格 auto summary、多语言 LSP/light fallback、LSP 兼容别名、multi-root workspace roots 与工具观察提示、allowed-dir soft tool requirement、Markdown memory 启动注入、learn、可选 memory consolidation、authored skills discovery、综合压测记录、重复工具调用熔断、duplicate-tool forced-final steering、同文件切片读取漂移 guard、search_code 空搜索词跨路径 guard、path escape roots hint、LSP 空 query guard、Current task contract、Evidence Ledger、tool result pruning、todo steering、跨项目 env-file、用户级 `--state-dir` runtime state 分层、relevance gate、implementation-quality reviewer、safe new-file policy、no-edit final hygiene 和 path-scoped rules；DAP、subagents、完整 reviewer、AST edit、managed skills 继续后置。 |
-| P8 | 前端协议与交互基础 | 已完成 | T-076/T-077 完成 Event/Command Protocol 与 terminal-native frontend；T-219/T-220 补齐 dispatcher/streaming，T-234~T-243 在同一协议上完成独立 TUI、默认入口、输入与 normal-screen native scrollback。 |
+| P8 | 前端协议与交互基础 | 已完成 | T-076/T-077 完成 Event/Command Protocol 与 terminal-native frontend；T-219/T-220 补齐 dispatcher/streaming，T-234~T-244 在同一协议上完成独立 TUI、默认入口、输入、normal-screen native scrollback 和 AssistantMessage 输出生命周期。 |
 | P9 | 真实需求使用准备 | 已完成阶段性 MVP | 已完成项目边界分析、真实需求模板、企业项目只读源码验证、Java LSP 韧性、拓展服务费结算链路压测和服务范围复核；后续继续按真实需求推进设计/实现切片。 |
 | P10 | Intelligence Runtime 骨架 | 已完成 | 按 OMP 架构原则补单 Agent 内部的目标契约、工具选择队列、完成审计、两阶段计划和 reviewer；phase 通过显式 Protocol ports 协作，领域策略不回流 Runtime。 |
-| P11 | Runtime Ownership / Release Discipline | 已完成 MVP 版 | T-148 将 `agent.py` 从 3,638 行/113 methods 收为薄编排 facade；T-203 stable 时仍为 1,873 行/71 methods，连续 P12 修复没有回涨到架构阈值。 |
+| P11 | Runtime Ownership / Release Discipline | 已完成并发布 T-245 stable | T-245 将真实 owner 收入 `providers/runtime/session/workspace/evidence/review/workflows/tools/memory/frontends/lsp/patch/steering/devtools`，根目录只保留 3 个真实入口和小于等于 64 行的兼容 facade；实现包不反向依赖 facade，tools/providers 不依赖 runtime/frontend，运行时 import SCC 为 0。`agent.py` 现为 1,632 行/63 methods。 |
 | P12 | Read-only Convergence Closure | 已完成并发布 T-203 stable | T-201 完成 Owner 拆分和全 production complexity ratchet，T-202 合并重复控制生命周期，T-203 用 typed terminal assembly 产品化安全失败；950/61/13 与三次 S4 hard/usability 验收通过。 |
 | P13 | Codex-first Product Runtime | 已完成阶段性 MVP | T-215 profile、T-217 ExecutionPolicy、T-218 semantic-boundary correction、T-219 Command/Event/Turn、T-220 provider streaming 与 T-221 S6-S10 黑盒验收均已完成；hard safety、连续性、权限、需求变更和交付审计通过。 |
 | P14 | Explicit Subagent Capability | Phase 1 已完成，扩展暂停 | T-223 证明小 fixture 的 typed handoff 可用，但真实三仓单样本没有收益且模型未选择 delegate；保留 default-off Explore，不扩 reviewer/implement、并发、写入、worktree、advisor 或默认自动调度。 |
 | P15 | Semantic Coding Tools | Phase 1 已完成并发布 T-228 stable | T-224/T-226 完成 external LSP rename 与 Code Action 的只读 preview，T-227 证明真实 Java Code Action 收益，T-228 收住 jdtls Eclipse metadata 副作用；复用同一 WorkspaceEdit 校验 Owner 和现有 patch/test/diff 写入闭环，不执行 command、server applyEdit 或 auto-apply。TS/Vue 因无 external server 保持 INCONCLUSIVE。 |
 | P16 | Ordinary Coding Reliability / Runtime State | 阶段性收口 | T-229/T-230 与 T-231~T-233 已覆盖 clean/dirty coding、stale write、同步中断、子进程回收和 typed non-delivery session continuation。 |
-| P17 | Independent Terminal TUI | 已完成并发布 T-243 stable | T-234~T-243 完成独立 Owner、单 UI 写者、bounded mailbox、同步 Runtime worker、focused interaction、cooperative cancellation、responsive rendering、PTY restore、真实百炼 coding live、默认 `lca` 入口、LCA 首页字标、workspace completion、原子 paste 和 normal-screen native scrollback；显式 `--chat` 仍可用。 |
+| P17 | Independent Terminal TUI | 已完成并发布 T-244 stable | T-234~T-244 完成独立 Owner、单 UI 写者、bounded mailbox、同步 Runtime worker、focused interaction、cooperative cancellation、responsive rendering、PTY restore、真实百炼 coding live、默认 `lca` 入口、LCA 首页字标、workspace completion、原子 paste、normal-screen native scrollback，以及 source-backed Markdown / role marker / sanitation / AssistantMessage correlation；显式 `--chat` 仍可用。 |
 
 ## 已完成功能
 
@@ -479,6 +483,8 @@ T-213/T-214 已完成 S5-1 的 Codex 直接隔离交付。T-213 在上述 clean 
 | T-241 | TUI Input / Scrollback Integrity | 已完成并发布 stable | P17/Product UX | 统一初始 prompt、bracketed paste、历史 viewport、滚轮与终端恢复，不向 Runtime 回流展示状态。 | commit `ebc2f50`；1192/62/25、compileall/diff/help/chat、56 focused TUI、immutable candidate 与安装后 PTY smoke 通过。64 KiB paste 原子且 fail closed；PageUp/PageDown、wrapped-row history、stream anchor、macOS wheel bitmask 与 Alt-Enter 回归已覆盖。stable `20260718T031104Z-ebc2f5040cc3-8d06c53405c8`。 |
 | T-242 | Natural TUI History Navigation | 已完成并发布 stable | P17/Product UX | 让 wheel/trackpad、空 composer Up/Down、End 与 follow-tail 符合自然阅读预期，PageUp/PageDown 退为可选路径。 | commit `cd235cf`；1195/62/25、compileall/diff/help/chat、46 focused TUI、真实 X10 wheel PTY、immutable candidate 与安装后 stable mode/restore smoke 通过。底部隐藏 history 教程，离开最新位置才显示范围；DECSET 1007 生命周期成对恢复。stable `20260718T033001Z-cd235cf3b47c-2076f2cbe834`。 |
 | T-243 | Normal-screen Native Scrollback Renderer | 已完成并发布 stable | P17/Product UX | 以 Codex/OMP committed-history/live-tail 边界替换 curses 主 transcript，不直接搬 Rust/TypeScript。 | commit `4271172`；stable rows commit once，provisional/activity/composer 是 mutable tail；主屏零 alternate enter、零 mouse capture、零 ED3，search overlay 成对恢复。1203/62/25、94 focused candidate matrix 与安装后 PTY/termios smoke 全绿。stable `20260718T035333Z-4271172e8d36-fab5ff2b17ed`。 |
+| T-244 | Assistant Output Lifecycle / LCA Identity Closure | 已完成并发布 stable | P17/Frontend | 把模型原始语义、协议事实和前端展示彻底分层，同时补齐 LCA 产品身份与终端安全渲染。 | commit `2f68e7a`；Provider text 仅经 AssistantMessage lifecycle 投影，provisional/final/run output correlation 完整；source-backed Markdown、role markers、terminal control/bidi sanitation 和 LCA identity 由前端 owner 持有。1219/62/25 与 immutable TUI/CLI matrix 通过；stable `20260718T043254Z-2f68e7a408a5-8092fe6e61f5`。 |
+| T-245 | Codex/OMP Package Ownership Architecture | 已完成并发布 stable | P11/Architecture | 将长期平铺在 `src/local_agent` 的领域 owner 收入明确 package，并锁住向内依赖方向、兼容 API 和单一生命周期 owner。 | commits `57f03ab`~`f5bfd0e`；根目录只保留 `agent.py`、`cli.py`、`config.py` 三个真实入口，其余为小兼容 facade；实现包不反向依赖 facade，tools/providers 不依赖 runtime/frontend，cancellation/terminal focus 各有单一 owner，运行时 import SCC 为 0。1224/62/30、31 项 CLI/TUI/AssistantMessage smoke 与 clean detached publish gate 全绿；stable `20260718T051636Z-f5bfd0ec49bf-78e1b0da38af`。 |
 
 ## 风险清单
 
@@ -640,10 +646,10 @@ T-213/T-214 已完成 S5-1 的 Codex 直接隔离交付。T-213 在上述 clean 
 | 项目 | 结论 | 依据 |
 |---|---|---|
 | 主链路 | 通过 | 百炼真实小改复测已跑通 todo、dry_run、apply_patch、session allow、rollback、run_tests、git_diff。 |
-| 测试 | 分层通过 | P5 收口时 90 个 unittest；当前 T-243 stable 为 1203/62/25，另有 immutable non-delivery continuity、TUI reducer/mailbox/interaction/cancellation/input/native scrollback、PTY workspace command/restore/resize/signal/Ctrl-C/search overlay matrix 与一次真实百炼 TUI coding live。 |
+| 测试 | 分层通过 | P5 收口时 90 个 unittest；当前 T-245 stable 为 1224/62/30，另有 immutable non-delivery continuity、TUI reducer/mailbox/interaction/cancellation/input/native scrollback、AssistantMessage/CLI smoke、package dependency/import-cycle/compat API matrix、PTY workspace command/restore/resize/signal/Ctrl-C/search overlay 与一次真实百炼 TUI coding live。 |
 | 日用入口 | 通过 | README 已补只读分析和小改任务命令模板。 |
 | 开放风险 | 可接受 | shell 仍非沙箱、prompt injection 仍需靠审批和封闭 VM；provider/model 专用 tokenizer、输出 reserve、managed skills、完整 reviewer 和完整 OMP ToolChoiceQueue 继续后置评估。 |
-| 下一阶段 | T-243 stable 日用观察 | P16 continuity 与 P17 normal-screen TUI 已收口。后续先用默认 `lca` stable 进行日常 coding，观察不同终端的 native scrollback、resize reflow 与 search overlay；不把 Rust/TypeScript frontend 直接搬进 Python。 |
+| 下一阶段 | T-245 stable 日用观察 | P11 package ownership、P16 continuity 与 P17 output/TUI lifecycle 已收口。后续先用默认 `lca` stable 进行日常 coding，观察真实 owner 边界、兼容 facade、不同终端的 native scrollback、resize reflow 与 search overlay；不把 Rust/TypeScript 实现直接搬进 Python。 |
 
 ## 推荐工作流
 
@@ -678,7 +684,7 @@ T-213/T-214 已完成 S5-1 的 Codex 直接隔离交付。T-213 在上述 clean 
 
 用户确认本文件后，建议按以下顺序继续：
 
-1. 使用 T-243 stable 的 `lca` 做真实日常 coding，直接用 wheel/trackpad 浏览终端原生 scrollback；重点观察不同终端的 resize reflow、搜索 overlay 返回和长流式回答。`lca --chat` 继续提供更轻量的 terminal-native frontend。
+1. 使用 T-245 stable 的 `lca` 做真实日常 coding，直接用 wheel/trackpad 浏览终端原生 scrollback；重点观察 package owner/兼容 facade、不同终端的 resize reflow、搜索 overlay 返回和长流式回答。`lca --chat` 继续提供更轻量的 terminal-native frontend。
 2. 保留 T-214 隔离 workspace 和完整 diff，是否写回原 finance-base/payment 由用户单独确认；不得把隔离交付描述成生产已上线。
 3. 若进入生产集成，先在 Oracle JDK 8u121 和真实 Oracle/MyBatis 环境验证 DDL、事务、唯一键并发与现有 MQ 回放，再应用到目标分支。
 4. P14 保留 Phase 1 default-off Explore，只有后续多个真实任务出现稳定收益时才重启 reviewer/implement 评估；TUI 已完成但不与 MCP、Browser、多 Agent 或 auto-apply 横向捆绑扩展。
