@@ -7,7 +7,14 @@ import sys
 from typing import Any
 
 from .controller import TuiController
+from .input import BracketedPasteDecoder
+from .input import TuiInputEvent
 from .view import render_frame
+
+
+_BRACKETED_PASTE_ENABLE = b"\x1b[?2004h"
+_BRACKETED_PASTE_DISABLE = b"\x1b[?2004l"
+_NCURSES_MOUSE_BUTTON_STRIDE = 6
 
 
 def run_curses_screen(controller: TuiController) -> int:
@@ -22,20 +29,23 @@ def run_curses_screen(controller: TuiController) -> int:
 
 def _screen_loop(stdscr, controller: TuiController, curses_module: Any) -> int:
     _configure_screen(stdscr, curses_module)
-    with _TerminalSignalHandlers(stdscr, curses_module) as signals:
-        while not controller.exit_requested:
-            controller.poll()
-            height, width = stdscr.getmaxyx()
-            frame = render_frame(controller.state, controller.view, width, height)
-            _draw_frame(stdscr, frame, width, curses_module)
-            clipboard_text = controller.take_clipboard_text()
-            if clipboard_text is not None:
-                _copy_with_osc52(clipboard_text)
-            key = _read_key(stdscr, curses_module)
-            if signals.consume_interrupt():
-                controller.handle_key("CTRL_C")
-            if key is not None:
-                controller.handle_key(key)
+    decoder = BracketedPasteDecoder()
+    with _TerminalModes() as terminal_modes:
+        with _TerminalSignalHandlers(stdscr, curses_module, terminal_modes=terminal_modes) as signals:
+            while not controller.exit_requested:
+                controller.poll()
+                height, width = stdscr.getmaxyx()
+                controller.update_viewport(width, height)
+                frame = render_frame(controller.state, controller.view, width, height)
+                _draw_frame(stdscr, frame, width, curses_module)
+                clipboard_text = controller.take_clipboard_text()
+                if clipboard_text is not None:
+                    _copy_with_osc52(clipboard_text)
+                events = _read_inputs(stdscr, curses_module, decoder)
+                if signals.consume_interrupt():
+                    controller.handle_key("CTRL_C")
+                for event in events:
+                    _handle_input_event(controller, event)
     return 0
 
 
@@ -45,6 +55,11 @@ def _configure_screen(stdscr, curses_module: Any) -> None:
     try:
         curses_module.curs_set(1)
     except curses_module.error:
+        pass
+    try:
+        curses_module.mousemask(curses_module.ALL_MOUSE_EVENTS)
+        curses_module.mouseinterval(0)
+    except (AttributeError, curses_module.error):
         pass
     if not curses_module.has_colors():
         return
@@ -78,31 +93,27 @@ def _draw_frame(stdscr, frame, width: int, curses_module: Any) -> None:
     stdscr.refresh()
 
 
-def _read_key(stdscr, curses_module: Any) -> str | None:
+def _read_inputs(
+    stdscr,
+    curses_module: Any,
+    decoder: BracketedPasteDecoder,
+) -> tuple[TuiInputEvent, ...]:
     try:
         value = stdscr.get_wch()
     except curses_module.error:
-        return None
-    if value == "\x1b":
-        return _escape_sequence(stdscr, curses_module)
+        expired = decoder.expire()
+        return expired or decoder.flush_normal()
     if isinstance(value, str):
-        return {
-            "\x03": "CTRL_C",
-            "\x06": "CTRL_F",
-            "\x10": "CTRL_P",
-            "\x11": "CTRL_Q",
-            "\x19": "CTRL_Y",
-            "\x7f": "BACKSPACE",
-            "\b": "BACKSPACE",
-            "\n": "ENTER",
-            "\r": "ENTER",
-        }.get(value, value)
+        return decoder.feed(value)
+    if value == curses_module.KEY_ENTER:
+        return decoder.feed("\n")
+    if value == getattr(curses_module, "KEY_MOUSE", object()):
+        return _mouse_inputs(curses_module)
     mapping = {
         curses_module.KEY_BACKSPACE: "BACKSPACE",
         curses_module.KEY_DC: "DELETE",
         curses_module.KEY_DOWN: "DOWN",
         curses_module.KEY_END: "END",
-        curses_module.KEY_ENTER: "ENTER",
         curses_module.KEY_HOME: "HOME",
         curses_module.KEY_LEFT: "LEFT",
         curses_module.KEY_NPAGE: "PAGE_DOWN",
@@ -111,20 +122,35 @@ def _read_key(stdscr, curses_module: Any) -> str | None:
         curses_module.KEY_RIGHT: "RIGHT",
         curses_module.KEY_UP: "UP",
     }
-    return mapping.get(value)
+    key = mapping.get(value)
+    return (TuiInputEvent("key", key),) if key is not None else ()
 
 
-def _escape_sequence(stdscr, curses_module: Any) -> str:
-    stdscr.timeout(20)
+def _mouse_inputs(curses_module: Any) -> tuple[TuiInputEvent, ...]:
     try:
-        following = stdscr.get_wch()
-    except curses_module.error:
-        return "ESC"
-    finally:
-        stdscr.timeout(50)
-    if following in {"\n", "\r", curses_module.KEY_ENTER}:
-        return "ALT_ENTER"
-    return "ESC"
+        _, _, _, _, state = curses_module.getmouse()
+    except (AttributeError, curses_module.error):
+        return ()
+    if state & getattr(curses_module, "BUTTON4_PRESSED", 0):
+        return (TuiInputEvent("key", "WHEEL_UP"),)
+    button4 = getattr(curses_module, "BUTTON4_PRESSED", 0)
+    button5 = getattr(
+        curses_module,
+        "BUTTON5_PRESSED",
+        button4 << _NCURSES_MOUSE_BUTTON_STRIDE,
+    )
+    if state & button5:
+        return (TuiInputEvent("key", "WHEEL_DOWN"),)
+    return ()
+
+
+def _handle_input_event(controller: TuiController, event: TuiInputEvent) -> None:
+    if event.kind == "key":
+        controller.handle_key(event.value)
+    elif event.kind == "paste":
+        controller.handle_paste(event.value)
+    elif event.kind == "notice":
+        controller.show_notice(event.value)
 
 
 def _color_pair(curses_module: Any, pair: int) -> int:
@@ -142,10 +168,41 @@ def _copy_with_osc52(text: str) -> None:
         return
 
 
+class _TerminalModes:
+    def __init__(self, output=None) -> None:
+        self._output = output or sys.stdout
+        self._enabled = False
+
+    def __enter__(self):
+        self.resume()
+        return self
+
+    def __exit__(self, exc_type, exc, traceback) -> None:
+        del exc_type, exc, traceback
+        self.suspend()
+
+    def resume(self) -> None:
+        if not self._enabled:
+            self._write(_BRACKETED_PASTE_ENABLE)
+            self._enabled = True
+
+    def suspend(self) -> None:
+        if self._enabled:
+            self._write(_BRACKETED_PASTE_DISABLE)
+            self._enabled = False
+
+    def _write(self, payload: bytes) -> None:
+        try:
+            os.write(self._output.fileno(), payload)
+        except (AttributeError, OSError, ValueError):
+            return
+
+
 class _TerminalSignalHandlers:
-    def __init__(self, stdscr, curses_module: Any) -> None:
+    def __init__(self, stdscr, curses_module: Any, *, terminal_modes: _TerminalModes | None = None) -> None:
         self._stdscr = stdscr
         self._curses = curses_module
+        self._terminal_modes = terminal_modes
         self._original: dict[int, Any] = {}
         self._interrupt_requested = False
 
@@ -186,6 +243,8 @@ class _TerminalSignalHandlers:
 
     def _suspend(self, signum, frame) -> None:
         del frame
+        if self._terminal_modes is not None:
+            self._terminal_modes.suspend()
         self._curses.endwin()
         signal.signal(signum, signal.SIG_DFL)
         os.kill(os.getpid(), signum)
@@ -195,6 +254,8 @@ class _TerminalSignalHandlers:
             self._stdscr.refresh()
         except self._curses.error:
             pass
+        if self._terminal_modes is not None:
+            self._terminal_modes.resume()
 
 
 def streams_are_tty(input_stream=None, output_stream=None) -> bool:

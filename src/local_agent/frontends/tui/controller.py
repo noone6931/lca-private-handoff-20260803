@@ -7,6 +7,7 @@ from ...protocol.commands import new_command
 from ...protocol.interactions import InteractionResult
 from ..terminal.command_registry import TerminalCommandRegistry
 from .mailbox import TuiMailbox
+from .input import MAX_INPUT_BYTES
 from .messages import TuiCommandCompleted
 from .messages import TuiEvent
 from .messages import TuiInteractionClosed
@@ -14,6 +15,9 @@ from .messages import TuiInteractionPending
 from .messages import TuiWorkerFailed
 from .model import TuiProjector
 from .view import TuiView
+from .view import page_viewport
+from .view import scroll_viewport
+from .view import synchronize_viewport
 from .worker import TuiWorker
 
 
@@ -45,6 +49,7 @@ class TuiController:
         self._composer_before_search: tuple[str, int] | None = None
         self._composer_before_interaction: tuple[str, int] | None = None
         self._clipboard_text: str | None = None
+        self._viewport_size: tuple[int, int] | None = None
 
     @property
     def state(self):
@@ -91,7 +96,25 @@ class TuiController:
                 self._in_flight = max(self._in_flight - 1, 0)
                 self._projector.append_local("error", f"Runtime worker failed: {message.error_kind}")
                 self._projector.set_status("error")
+        self._sync_viewport()
         return len(messages)
+
+    def submit_initial_prompt(self, prompt: str) -> bool:
+        text = prompt.strip()
+        if not text or self._in_flight:
+            return False
+        self._submit_command(new_command("SubmitPrompt", {"prompt": text}))
+        return self._in_flight > 0
+
+    def update_viewport(self, width: int, height: int) -> None:
+        self._viewport_size = (width, height)
+        self._sync_viewport()
+
+    def handle_paste(self, text: str) -> None:
+        self._insert(text.replace("\r\n", "\n").replace("\r", "\n"))
+
+    def show_notice(self, message: str) -> None:
+        self._view = replace(self._view, notice=message)
 
     def handle_key(self, key: str) -> None:
         if key == "CTRL_Q":
@@ -121,9 +144,15 @@ class TuiController:
         elif key == "DOWN" and self._view.palette:
             self._move_palette(1)
         elif key == "PAGE_UP":
-            self._view = replace(self._view, scroll_offset=self._view.scroll_offset + 10)
+            self._view = replace(self._view, viewport=page_viewport(self._view.viewport, -1))
         elif key == "PAGE_DOWN":
-            self._view = replace(self._view, scroll_offset=max(self._view.scroll_offset - 10, 0))
+            self._view = replace(self._view, viewport=page_viewport(self._view.viewport, 1))
+        elif key == "WHEEL_UP":
+            self._view = replace(self._view, viewport=scroll_viewport(self._view.viewport, -3))
+        elif key == "WHEEL_DOWN":
+            self._view = replace(self._view, viewport=scroll_viewport(self._view.viewport, 3))
+        elif key == "RESIZE":
+            self._sync_viewport()
         elif key == "LEFT":
             self._view = replace(self._view, cursor=max(self._view.cursor - 1, 0))
         elif key == "RIGHT":
@@ -311,7 +340,7 @@ class TuiController:
     def _insert(self, text: str) -> None:
         value = self._view.input_text
         cursor = self._view.cursor
-        if len(value) + len(text) > 64 * 1024:
+        if len((value[:cursor] + text + value[cursor:]).encode("utf-8")) > MAX_INPUT_BYTES:
             self._view = replace(self._view, notice="Input is limited to 64 KiB.")
             return
         updated = value[:cursor] + text + value[cursor:]
@@ -328,6 +357,13 @@ class TuiController:
             palette=palette,
             palette_index=0,
         )
+
+    def _sync_viewport(self) -> None:
+        if self._viewport_size is None:
+            return
+        width, height = self._viewport_size
+        viewport = synchronize_viewport(self.state, self._view, width, height)
+        self._view = replace(self._view, viewport=viewport)
 
     def _backspace(self) -> None:
         cursor = self._view.cursor

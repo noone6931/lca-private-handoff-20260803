@@ -177,6 +177,41 @@ class CliTests(unittest.TestCase):
         self.assertEqual(run_tui.call_count, 1)
         self.assertEqual(type(run_tui.call_args.args[1]).__name__, "TuiMailbox")
 
+    def test_explicit_tui_prompt_is_forwarded_to_typed_frontend(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = SimpleNamespace(workspace=Path(tmp), state_dir=Path(tmp) / "state")
+            with (
+                patch("local_agent.cli.load_config", return_value=config),
+                patch("local_agent.cli.AgentRuntime", _FakeAgentRuntime),
+                patch("local_agent.cli.tui_is_supported", return_value=True),
+                patch("local_agent.cli.run_tui", return_value=0) as run_tui,
+            ):
+                code = main(["--tui", "inspect", "project"])
+
+        self.assertEqual(code, 0)
+        self.assertEqual(run_tui.call_args.kwargs["initial_prompt"], "inspect project")
+
+    def test_chat_and_non_tty_tui_fallback_preserve_explicit_initial_prompt(self) -> None:
+        for frontend_flag in ("--chat", "--tui"):
+            with self.subTest(frontend_flag=frontend_flag), tempfile.TemporaryDirectory() as tmp:
+                config = SimpleNamespace(workspace=Path(tmp), state_dir=Path(tmp) / "state")
+
+                def consume_prompt(runtime, **kwargs) -> int:
+                    del runtime
+                    self.assertEqual(kwargs["input_stream"].readline(), "inspect fallback\n")
+                    return 0
+
+                with (
+                    patch("local_agent.cli.load_config", return_value=config),
+                    patch("local_agent.cli.AgentRuntime", _FakeAgentRuntime),
+                    patch("local_agent.cli.tui_is_supported", return_value=False),
+                    patch("local_agent.cli.run_terminal_chat", side_effect=consume_prompt) as run_chat,
+                ):
+                    code = main([frontend_flag, "inspect", "fallback"])
+
+                self.assertEqual(code, 0)
+                self.assertEqual(run_chat.call_count, 1)
+
     def test_no_args_prefers_tui_when_supported(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             config = SimpleNamespace(workspace=Path(tmp), state_dir=Path(tmp) / "state")

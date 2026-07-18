@@ -12,6 +12,7 @@ from .frontends.terminal.command_registry import TerminalCommandDispatch
 from .frontends.terminal.command_registry import TerminalCommandRegistry
 from .frontends.tui import TuiEventSink
 from .frontends.tui import TuiMailbox
+from .frontends.tui import prepend_initial_prompt
 from .frontends.tui import run_tui
 from .frontends.tui import tui_is_supported
 from .llm import LlmError
@@ -196,13 +197,17 @@ def main(argv: list[str] | None = None) -> int:
         )
         if tui_active:
             assert tui_mailbox is not None
-            return run_tui(runtime, tui_mailbox)
+            initial_prompt = " ".join(args.prompt) if args.tui and args.prompt else None
+            return run_tui(runtime, tui_mailbox, initial_prompt=initial_prompt)
         if chat_requested or not args.prompt or tui_requested:
             if tui_requested:
                 print("Full-screen TUI unavailable; using terminal chat.", file=sys.stderr)
+            initial_prompt = " ".join(args.prompt) if (args.chat or args.tui) and args.prompt else None
+            input_stream = prepend_initial_prompt(sys.stdin, initial_prompt) if initial_prompt else None
             return run_terminal_chat(
                 runtime,
                 history_path=(config.state_dir or config.workspace / ".local-agent") / "terminal_history",
+                input_stream=input_stream,
             )
         if args.prompt:
             with silenced_terminal_input():

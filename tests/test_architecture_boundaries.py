@@ -329,6 +329,16 @@ class ArchitectureBoundaryTests(unittest.TestCase):
         self.assertNotIn("Queue()", worker)
         self.assertIn("Queue(maxsize=command_capacity)", worker)
         self.assertIn("class TuiInteractionBridge:", worker)
+        input_owner = (ROOT / "src/local_agent/frontends/tui/input.py").read_text(encoding="utf-8")
+        self.assertIn("class BracketedPasteDecoder:", input_owner)
+        self.assertEqual(
+            sum(
+                "class BracketedPasteDecoder:" in path.read_text(encoding="utf-8")
+                for path in (ROOT / "src/local_agent/frontends/tui").glob("*.py")
+            ),
+            1,
+        )
+        self.assertNotIn("commands.dispatch", input_owner)
 
     def test_all_runtime_provider_waits_receive_the_shared_cancel_signal(self) -> None:
         missing: list[str] = []

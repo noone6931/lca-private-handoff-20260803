@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import time
 import unittest
 
 from local_agent.cancellation import RunCancellation
@@ -14,12 +15,16 @@ class _FakeRuntime:
         self.commands = self
         self.cancellation = RunCancellation()
         self.handlers = []
+        self.dispatched = []
 
     def set_interaction_handler(self, handler) -> None:
         self.handlers.append(handler)
 
     def dispatch(self, command):
-        raise AssertionError(f"Unexpected command: {command.type}")
+        self.dispatched.append(command)
+        from local_agent.protocol.commands import CommandResult
+
+        return CommandResult(command.command_id, "s1", "r1", "ok", {"content": "done"})
 
 
 class TuiAppTests(unittest.TestCase):
@@ -57,6 +62,43 @@ class TuiAppTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("Full-screen TUI unavailable", output.getvalue())
         self.assertIn("local-agent chat", output.getvalue())
+
+    def test_initial_prompt_is_dispatched_by_worker_before_screen_exit(self) -> None:
+        runtime = _FakeRuntime()
+        mailbox = TuiMailbox(capacity=8)
+
+        def screen(controller) -> int:
+            deadline = time.monotonic() + 1
+            while not runtime.dispatched and time.monotonic() < deadline:
+                controller.poll()
+                time.sleep(0.005)
+            return 0
+
+        code = run_tui(
+            runtime,  # type: ignore[arg-type]
+            mailbox,
+            screen_runner=screen,
+            initial_prompt="inspect project",
+        )
+
+        self.assertEqual(code, 0)
+        self.assertEqual([command.type for command in runtime.dispatched], ["SubmitPrompt"])
+        self.assertEqual(runtime.dispatched[0].payload, {"prompt": "inspect project"})
+
+    def test_non_tty_fallback_does_not_swallow_initial_prompt(self) -> None:
+        runtime = _FakeRuntime()
+        output = io.StringIO()
+
+        code = run_tui(
+            runtime,  # type: ignore[arg-type]
+            TuiMailbox(capacity=8),
+            input_stream=io.StringIO("/exit\n"),
+            output_stream=output,
+            initial_prompt="inspect fallback",
+        )
+
+        self.assertEqual(code, 0)
+        self.assertEqual(runtime.dispatched[0].payload, {"prompt": "inspect fallback"})
 
 
 if __name__ == "__main__":

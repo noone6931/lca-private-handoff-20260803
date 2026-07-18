@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from dataclasses import field
+from dataclasses import replace
 
 from .model import TranscriptEntry
 from .model import TuiState
@@ -12,6 +14,18 @@ from .text import wrap_cells
 
 
 @dataclass(frozen=True)
+class TuiViewport:
+    top: int = 0
+    total_rows: int = 0
+    visible_rows: int = 1
+    follow_bottom: bool = True
+
+    @property
+    def max_top(self) -> int:
+        return max(self.total_rows - self.visible_rows, 0)
+
+
+@dataclass(frozen=True)
 class TuiView:
     input_text: str = ""
     cursor: int = 0
@@ -19,7 +33,7 @@ class TuiView:
     interaction_prompt: str = ""
     palette: tuple[str, ...] = ()
     palette_index: int = 0
-    scroll_offset: int = 0
+    viewport: TuiViewport = field(default_factory=TuiViewport)
     notice: str = ""
     search_query: str = ""
 
@@ -47,11 +61,12 @@ def render_frame(state: TuiState, view: TuiView, width: int, height: int) -> Tui
     width = max(width, 20)
     height = max(height, 6)
     header = _header(state, width)
-    footer = _footer(state, view, width)
+    viewport = synchronize_viewport(state, view, width, height)
+    footer = _footer(state, view, viewport, width)
     palette_rows = min(len(view.palette), 5) if view.palette else 0
     prompt_rows = 2 if view.interaction_prompt else 1
     body_height = max(height - 2 - prompt_rows - palette_rows, 1)
-    body = _body(state, width, body_height, view.scroll_offset, view.search_query)
+    body = _body(state, width, body_height, viewport.top, view.search_query)
     palette = _palette(view, width, palette_rows)
     prompt, cursor_x = _prompt(view, width)
     lines = [header, *body, *palette]
@@ -67,6 +82,36 @@ def render_frame(state: TuiState, view: TuiView, width: int, height: int) -> Tui
     return TuiFrame(tuple(lines), cursor_y, min(cursor_x, width - 1), accent_rows)
 
 
+def synchronize_viewport(state: TuiState, view: TuiView, width: int, height: int) -> TuiViewport:
+    safe_width = max(width, 20)
+    safe_height = max(height, 6)
+    palette_rows = min(len(view.palette), 5) if view.palette else 0
+    prompt_rows = 2 if view.interaction_prompt else 1
+    visible_rows = max(safe_height - 2 - prompt_rows - palette_rows, 1)
+    transcript_width = _transcript_width(safe_width)
+    entries = _filtered_entries(state, view.search_query)
+    total_rows = len(_transcript_lines(entries, transcript_width)) if state.transcript or view.search_query else 0
+    max_top = max(total_rows - visible_rows, 0)
+    clamped_to_bottom = not view.viewport.follow_bottom and view.viewport.top >= max_top
+    follow_bottom = view.viewport.follow_bottom or clamped_to_bottom
+    top = max_top if follow_bottom else min(max(view.viewport.top, 0), max_top)
+    return TuiViewport(
+        top=top,
+        total_rows=total_rows,
+        visible_rows=visible_rows,
+        follow_bottom=follow_bottom,
+    )
+
+
+def scroll_viewport(viewport: TuiViewport, rows: int) -> TuiViewport:
+    top = min(max(viewport.top + rows, 0), viewport.max_top)
+    return replace(viewport, top=top, follow_bottom=top == viewport.max_top)
+
+
+def page_viewport(viewport: TuiViewport, pages: int) -> TuiViewport:
+    return scroll_viewport(viewport, pages * max(viewport.visible_rows - 1, 1))
+
+
 def _header(state: TuiState, width: int) -> str:
     session = state.session_id[:8] if state.session_id else "new"
     activity = "RUNNING" if state.busy else "READY"
@@ -76,22 +121,17 @@ def _header(state: TuiState, width: int) -> str:
     return clip_cells(left + " " * gap + right, width)
 
 
-def _body(state: TuiState, width: int, height: int, scroll_offset: int, search_query: str) -> tuple[str, ...]:
+def _body(state: TuiState, width: int, height: int, scroll_top: int, search_query: str) -> tuple[str, ...]:
     side_width = 30 if width >= 100 else 0
     transcript_width = width - side_width - (1 if side_width else 0)
-    entries = state.transcript
-    if search_query:
-        query = search_query.casefold()
-        entries = tuple(entry for entry in entries if query in entry.text.casefold())
+    entries = _filtered_entries(state, search_query)
     if not state.transcript and not search_query:
         visible = list(_welcome_lines(transcript_width, height))
     else:
         transcript = _transcript_lines(entries, transcript_width)
-        offset = max(scroll_offset, 0)
-        end = max(len(transcript) - offset, 0)
-        start = max(end - height, 0)
-        visible = list(transcript[start:end])
-        visible = [""] * max(height - len(visible), 0) + visible
+        start = min(max(scroll_top, 0), max(len(transcript) - height, 0))
+        visible = list(transcript[start:start + height])
+        visible.extend([""] * max(height - len(visible), 0))
     if not side_width:
         return tuple(pad_cells(line, width) for line in visible)
     side = _side_lines(state, side_width, height)
@@ -99,6 +139,18 @@ def _body(state: TuiState, width: int, height: int, scroll_offset: int, search_q
         pad_cells(left, transcript_width) + " " + pad_cells(right, side_width)
         for left, right in zip(visible, side, strict=True)
     )
+
+
+def _transcript_width(width: int) -> int:
+    side_width = 30 if width >= 100 else 0
+    return width - side_width - (1 if side_width else 0)
+
+
+def _filtered_entries(state: TuiState, search_query: str) -> tuple[TranscriptEntry, ...]:
+    if not search_query:
+        return state.transcript
+    query = search_query.casefold()
+    return tuple(entry for entry in state.transcript if query in entry.text.casefold())
 
 
 def _welcome_lines(width: int, height: int) -> tuple[str, ...]:
@@ -172,9 +224,15 @@ def _prompt(view: TuiView, width: int) -> tuple[str, int]:
     return pad_cells(label + visible, width), cursor_x
 
 
-def _footer(state: TuiState, view: TuiView, width: int) -> str:
+def _footer(state: TuiState, view: TuiView, viewport: TuiViewport, width: int) -> str:
     notice = view.notice or (f"dropped {state.dropped_messages} UI updates" if state.dropped_messages else "")
-    keys = "Enter send  Alt-Enter newline  Ctrl-P commands  Ctrl-F search  Ctrl-Y copy  Ctrl-C cancel  Ctrl-Q quit"
+    if viewport.total_rows:
+        start = viewport.top + 1
+        end = min(viewport.top + viewport.visible_rows, viewport.total_rows)
+        history = f"history {start}-{end}/{viewport.total_rows}"
+    else:
+        history = "history 0/0"
+    keys = f"{history} | Enter send  PageUp/PageDown history  Ctrl-P commands  Ctrl-F search  Ctrl-C cancel  Ctrl-Q quit"
     if view.search_query:
         notice = f"search: {view.search_query}" + (f" | {notice}" if notice else "")
     if notice:

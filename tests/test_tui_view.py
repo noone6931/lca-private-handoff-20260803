@@ -108,6 +108,21 @@ class TuiViewTests(unittest.TestCase):
         self.assertIn("cursor-tail", frame.lines[-2])
         self.assertLess(frame.cursor_x, 24)
 
+    def test_long_single_message_and_multiple_turns_expose_history_position(self) -> None:
+        state = TuiState(
+            transcript=(
+                TranscriptEntry("u1", "user", "question"),
+                TranscriptEntry("a1", "assistant", "long answer " * 80),
+                TranscriptEntry("u2", "user", "follow up"),
+                TranscriptEntry("a2", "assistant", "final answer " * 40),
+            )
+        )
+        frame = render_frame(state, TuiView(), 48, 10)
+
+        self.assertIn("history ", frame.lines[-1])
+        self.assertRegex(frame.lines[-1], r"history \d+-\d+/\d+")
+        self.assertTrue(any("final answer" in line for line in frame.lines))
+
 
 if __name__ == "__main__":
     unittest.main()

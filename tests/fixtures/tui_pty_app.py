@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+import sys
 
 from local_agent.cancellation import RunCancellation
 from local_agent.frontends.tui.app import run_tui
@@ -22,6 +23,15 @@ class _Commands:
                 {"text": "Workspace roots (revision 0):\n- primary: /tmp/lca-tui-fixture"},
             )
         if command.type == "SubmitPrompt":
+            prompt = str(command.payload.get("prompt", ""))
+            if prompt != "wait":
+                return CommandResult(
+                    command.command_id,
+                    "fixture-session",
+                    "fixture-run",
+                    "ok",
+                    {"text": f"SUBMITTED:{prompt!r}"},
+                )
             self.cancellation.begin()
             try:
                 while not self.cancellation.requested:
@@ -42,4 +52,7 @@ class _Runtime:
 
 
 if __name__ == "__main__":
-    raise SystemExit(run_tui(_Runtime(), TuiMailbox(capacity=64)))  # type: ignore[arg-type]
+    initial_prompt = sys.argv[1] if len(sys.argv) > 1 else None
+    raise SystemExit(
+        run_tui(_Runtime(), TuiMailbox(capacity=64), initial_prompt=initial_prompt)  # type: ignore[arg-type]
+    )
