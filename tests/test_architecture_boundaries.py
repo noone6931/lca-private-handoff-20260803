@@ -59,7 +59,7 @@ LEGACY_COMPLEXITY_DEBT_CEILINGS = {
     "src/local_agent/tools/lsp.py": 1166,
     "src/local_agent/evidence/completion.py": 1093,
     "src/local_agent/review/handoff.py": 991,
-    "src/local_agent/benchmark.py": 989,
+    "src/local_agent/devtools/benchmark.py": 989,
     "src/local_agent/steering/evidence.py": 985,
     "src/local_agent/workflows/explore.py": 981,
     "src/local_agent/review/document_consistency.py": 939,

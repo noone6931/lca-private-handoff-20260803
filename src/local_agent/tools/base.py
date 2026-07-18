@@ -15,7 +15,7 @@ from .policy import evaluate_execution_policy
 from .policy import execution_action
 from ..protocol.interactions import InteractionHandler
 from ..protocol.interactions import InteractionRequest
-from ..terminal_io import terminal_input_prompt
+from ..frontends.terminal.io import terminal_input_prompt
 from .argument_normalization import normalize_compatibility_arguments
 
 

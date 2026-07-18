@@ -211,7 +211,7 @@ class ReleaseChannelTests(unittest.TestCase):
                 stderr="AssertionError: super-secret-token != expected\n",
             )
             with patch.dict("os.environ", environment, clear=True):
-                with patch("local_agent.release.subprocess.run", return_value=failure):
+                with patch("local_agent.devtools.release.subprocess.run", return_value=failure):
                     with self.assertRaises(ReleaseError) as raised:
                         run_release_gate(source, sys.executable)
 
@@ -241,8 +241,16 @@ def _write_config_loading_mini_agent(root: Path) -> None:
     package = root / "src" / "local_agent"
     repository = Path(__file__).resolve().parents[1]
     shutil.copy2(repository / "src" / "local_agent" / "config.py", package / "config.py")
-    shutil.copy2(repository / "src" / "local_agent" / "state.py", package / "state.py")
-    shutil.copy2(repository / "src" / "local_agent" / "workflow_profile.py", package / "workflow_profile.py")
+    for relative_path in (
+        "session/__init__.py",
+        "session/state.py",
+        "workflows/__init__.py",
+        "workflows/profile.py",
+    ):
+        source = repository / "src" / "local_agent" / relative_path
+        target = package / relative_path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
     (package / "cli.py").write_text(
         "from __future__ import annotations\n"
         "import os\n"

@@ -6,8 +6,8 @@ from typing import TextIO
 
 from .agent import AgentRuntime
 from .config import ConfigError, load_config
-from .frontends.terminal import TerminalEventSink
-from .frontends.terminal import run_terminal_chat
+from .frontends.terminal.app import run_terminal_chat
+from .frontends.terminal.renderer import TerminalEventSink
 from .frontends.terminal.command_registry import TerminalCommandDispatch
 from .frontends.terminal.command_registry import TerminalCommandRegistry
 from .frontends.tui import TuiEventSink
@@ -19,7 +19,7 @@ from .providers.llm import LlmError
 from .protocol.commands import CommandResult
 from .protocol.commands import new_command
 from .session.jsonl_store import SessionError
-from .terminal_io import silenced_terminal_input
+from .frontends.terminal.io import silenced_terminal_input
 
 
 _TERMINAL_COMMANDS = TerminalCommandRegistry()
