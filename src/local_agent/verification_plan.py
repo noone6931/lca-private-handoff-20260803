@@ -12,7 +12,7 @@ from .verification_timeline import workspace_write_happened
 from .verification_timeline import effective_workspace_write_paths
 
 if TYPE_CHECKING:
-    from .session_task_continuity import PendingTaskContinuation
+    from .session.continuity import PendingTaskContinuation
     from .test_planner import TestPlan
     from .tool_observation import ToolResultSummary
 

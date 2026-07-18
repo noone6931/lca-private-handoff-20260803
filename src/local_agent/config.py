@@ -5,9 +5,9 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-from .state import default_config_root
-from .state import resolve_state_root
-from .state import workspace_state_dir
+from .session.state import default_config_root
+from .session.state import resolve_state_root
+from .session.state import workspace_state_dir
 from .workflow_profile import normalize_workflow_profile_selector
 
 

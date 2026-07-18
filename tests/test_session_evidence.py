@@ -86,7 +86,7 @@ class SessionEvidenceCacheTests(unittest.TestCase):
 
             for approval_mode, policy in (("always-ask", "deny"), ("always-ask", "prompt")):
                 config = replace(_config(root), approval_mode=approval_mode, tool_approval={"read_file": policy})
-                with patch("local_agent.session_evidence._read_journal_file_content") as read_file:
+                with patch("local_agent.session.evidence._read_journal_file_content") as read_file:
                     resumed = AgentRuntime(config, show_tool_logs=False, session_id=session_id)
                 self.assertEqual(read_file.call_count, 0)
                 self.assertEqual(resumed._session_evidence.snapshot()["entries"], 0)

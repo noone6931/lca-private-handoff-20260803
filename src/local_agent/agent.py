@@ -58,8 +58,8 @@ from .runtime.assistant_message import AssistantMessageLifecycle
 from .runtime.system_prompt import SYSTEM_PROMPT
 from .runtime.system_prompt import WORKFLOW_NUDGE
 from .run_context import RunContext
-from .session_evidence import SessionEvidenceCache
-from .session_evidence import query_identity as _session_evidence_query_identity
+from .session.evidence import SessionEvidenceCache
+from .session.evidence import query_identity as _session_evidence_query_identity
 from .soft_tool_requirement import advance_soft_tool_requirement
 from .soft_tool_requirement import initial_soft_tool_requirement
 from .soft_tool_requirement import observe_soft_tool_requirement
@@ -77,10 +77,10 @@ from .protocol.events import StderrEventSink
 from .protocol.events import turn_is_delivered
 from .protocol.interactions import InteractionHandler
 from .session.jsonl_store import JsonlSessionStore
-from .session_task_continuity import SessionTaskContinuityLifecycle
-from .session_guard_state import SessionGuardState
-from .state import default_config_root
-from .state import workspace_state_dir
+from .session.continuity import SessionTaskContinuityLifecycle
+from .session.guards import SessionGuardState
+from .session.state import default_config_root
+from .session.state import workspace_state_dir
 from .workspace.context import WorkspaceContext
 from .workspace.migration import WorkspaceMigrationError
 from .workspace.migration import migrate_session_artifacts

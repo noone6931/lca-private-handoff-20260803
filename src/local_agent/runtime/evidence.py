@@ -8,9 +8,9 @@ from ..document_artifacts import local_artifact_references
 from ..evidence import EvidenceRecord, evidence_root_for_path, evidence_root_label
 from ..patch.anchored import PatchError, display_workspace_path, resolve_workspace_path
 from ..patch_reviewer import review_input_metadata, review_input_summary
-from ..session_evidence import MAX_SESSION_EVIDENCE_JOURNAL_EVENTS
-from ..session_evidence import is_journal_safe_cached_evidence
-from ..session_evidence import serialize_cached_evidence_entry
+from ..session.evidence import MAX_SESSION_EVIDENCE_JOURNAL_EVENTS
+from ..session.evidence import is_journal_safe_cached_evidence
+from ..session.evidence import serialize_cached_evidence_entry
 from ..test_planner import plan_narrow_test
 from ..tool_choice_queue import session_evidence_reuse_directive
 from ..tool_observation import ToolResultSummary

@@ -20,8 +20,8 @@ from .tool_choice_queue import ToolChoiceQueue
 from .tool_observation import ToolResultSummary
 from .verification_plan import VerificationPlan
 from .test_planner import TestPlan
-from .session_evidence import SessionEvidenceReuse
-from .session_task_continuity import PendingTaskContinuation
+from .session.evidence import SessionEvidenceReuse
+from .session.continuity import PendingTaskContinuation
 from .temporary_tool_directive import DirectiveTransition
 from .temporary_tool_directive import TemporaryToolDirectiveOwner
 from .read_only_reviewer import ReadOnlyReviewState

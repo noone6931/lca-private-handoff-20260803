@@ -52,7 +52,7 @@ OWNER_COMPLEXITY_CEILINGS = {
     "src/local_agent/lsp/workspace_edit.py": 380,
     "src/local_agent/tools/lsp_rename.py": 187,
     "src/local_agent/tools/lsp_code_action.py": 430,
-    "src/local_agent/session_task_continuity.py": 284,
+    "src/local_agent/session/continuity.py": 284,
 }
 LEGACY_COMPLEXITY_DEBT_CEILINGS = {
     "src/local_agent/agent.py": 1792,
@@ -81,7 +81,7 @@ def _production_complexity_failures(root: Path) -> list[tuple[str, int, int]]:
 
 class ArchitectureBoundaryTests(unittest.TestCase):
     def test_session_task_continuity_is_typed_and_owned_outside_runtime(self) -> None:
-        owner = (ROOT / "src/local_agent/session_task_continuity.py").read_text(encoding="utf-8")
+        owner = (ROOT / "src/local_agent/session/continuity.py").read_text(encoding="utf-8")
         runtime = (ROOT / "src/local_agent/agent.py").read_text(encoding="utf-8")
         self.assertIn("class SessionTaskContinuityLifecycle:", owner)
         self.assertIn("current_contract.task_kind != \"unclear\"", owner)
