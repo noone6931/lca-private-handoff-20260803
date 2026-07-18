@@ -3344,7 +3344,7 @@ class ReadOnlyReviewerTests(unittest.TestCase):
             runtime._run.deadline_monotonic = 150.0
             with (
                 patch.object(runtime._provider_context_phase, "remaining_timeout", return_value=120.0),
-                patch("local_agent.runtime_read_only_review.time.monotonic", return_value=120.0),
+                patch("local_agent.runtime.review.time.monotonic", return_value=120.0),
             ):
                 timeout = runtime._read_only_review_phase._review_timeout()
 

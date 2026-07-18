@@ -6,12 +6,12 @@ import json
 from pathlib import Path
 from typing import Any
 
-from .startup_context import load_sticky_rules
-from .startup_context import workspace_roots_context
-from .steering.final_answer import request_mentions_todo
-from .task_contract import RequirementContract
-from .task_contract import requires_no_edit_final_hygiene
-from .tools.relevance import is_analysis_only_request
+from ..startup_context import load_sticky_rules
+from ..startup_context import workspace_roots_context
+from ..steering.final_answer import request_mentions_todo
+from ..task_contract import RequirementContract
+from ..task_contract import requires_no_edit_final_hygiene
+from ..tools.relevance import is_analysis_only_request
 
 WORKFLOW_NUDGE = (
     "For this coding task, infer the tool sequence yourself. "

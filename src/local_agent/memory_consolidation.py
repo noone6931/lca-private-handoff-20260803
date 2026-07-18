@@ -16,8 +16,8 @@ MEMORY_CONSOLIDATION_MAX_ITEM_CHARS = 700
 MEMORY_CONSOLIDATION_BUCKETS = ("project", "decisions", "conventions", "learned")
 MEMORY_CONSOLIDATION_WRITE_TOOLS = {"memory_write", "learn"}
 
-from .runtime_prompt import _one_line
-from .runtime_prompt import _strip_workflow_nudge
+from .runtime.prompt import _one_line
+from .runtime.prompt import _strip_workflow_nudge
 
 def _messages_to_memory_transcript(
     messages: list[dict[str, Any]],
@@ -255,5 +255,4 @@ def _memory_item_digest(bucket: str, item: str) -> str:
 
 def _normalized_memory_item_key(item: str) -> str:
     return " ".join(item.casefold().split())
-
 

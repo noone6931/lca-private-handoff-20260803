@@ -23,15 +23,15 @@ OWNER_COMPLEXITY_CEILINGS = {
     "src/local_agent/read_only_reviewer_validation.py": 419,
     "src/local_agent/reviewer_correction_contract.py": 148,
     "src/local_agent/reviewer_output_lifecycle.py": 418,
-    "src/local_agent/runtime_read_only_review.py": 643,
-    "src/local_agent/runtime_read_only_review_round.py": 452,
+    "src/local_agent/runtime/review.py": 643,
+    "src/local_agent/runtime/review_round.py": 452,
     "src/local_agent/safe_partial_report.py": 446,
     "src/local_agent/tools/shell.py": 357,
     "src/local_agent/tools/test_runner_policy.py": 217,
     "src/local_agent/steering/pre_review.py": 83,
     "src/local_agent/steering/final_answer.py": 59,
     "src/local_agent/workflow_profile.py": 165,
-    "src/local_agent/runtime_workflow_profile.py": 44,
+    "src/local_agent/runtime/workflow_profile.py": 44,
     "src/local_agent/execution_policy.py": 170,
     "src/local_agent/tools/base.py": 607,
     "src/local_agent/command_dispatcher.py": 221,
@@ -46,7 +46,7 @@ OWNER_COMPLEXITY_CEILINGS = {
     "src/local_agent/runtime/assistant_message.py": 170,
     "src/local_agent/runtime/run_output.py": 130,
     "src/local_agent/providers/protocol.py": 379,
-    "src/local_agent/runtime_prompt.py": 490,
+    "src/local_agent/runtime/prompt.py": 490,
     "src/local_agent/run_collector.py": 668,
     "src/local_agent/explore_subagent.py": 561,
     "src/local_agent/lsp/workspace_edit.py": 380,
@@ -137,7 +137,7 @@ class ArchitectureBoundaryTests(unittest.TestCase):
 
     def test_runtime_only_dispatches_generic_tool_choice_outcomes(self) -> None:
         content = (ROOT / "src/local_agent/agent.py").read_text(encoding="utf-8")
-        directive = (ROOT / "src/local_agent/runtime_tool_choice_directive.py").read_text(encoding="utf-8")
+        directive = (ROOT / "src/local_agent/runtime/tool_choice_directive.py").read_text(encoding="utf-8")
         self.assertIn("requeue_required", directive)
         self.assertNotIn("implementation_readiness_required", content)
         self.assertNotIn("read_only_unlocated", content)
@@ -240,11 +240,11 @@ class ArchitectureBoundaryTests(unittest.TestCase):
 
     def test_workflow_profile_owner_and_runtime_facade_have_one_way_dependencies(self) -> None:
         owner = (ROOT / "src/local_agent/workflow_profile.py").read_text(encoding="utf-8")
-        facade = (ROOT / "src/local_agent/runtime_workflow_profile.py").read_text(encoding="utf-8")
+        facade = (ROOT / "src/local_agent/runtime/workflow_profile.py").read_text(encoding="utf-8")
         runtime = (ROOT / "src/local_agent/agent.py").read_text(encoding="utf-8")
         self.assertNotIn("from .runtime_", owner)
-        self.assertIn("from .workflow_profile import", facade)
-        self.assertIn("from .runtime_read_only_review import ReadOnlyReviewPhase", facade)
+        self.assertIn("from ..workflow_profile import", facade)
+        self.assertIn("from .review import ReadOnlyReviewPhase", facade)
         self.assertNotIn("implementation_readiness_required", runtime)
         self.assertNotIn("if self._config.workflow_profile", runtime)
 
@@ -379,7 +379,7 @@ class ArchitectureBoundaryTests(unittest.TestCase):
         owner = (ROOT / "src/local_agent/providers/stream.py").read_text(encoding="utf-8")
         llm = (ROOT / "src/local_agent/providers/llm.py").read_text(encoding="utf-8")
         runtime = (ROOT / "src/local_agent/agent.py").read_text(encoding="utf-8")
-        prompt = (ROOT / "src/local_agent/runtime_prompt.py").read_text(encoding="utf-8")
+        prompt = (ROOT / "src/local_agent/runtime/prompt.py").read_text(encoding="utf-8")
         renderer_path = ROOT / "src/local_agent/frontends/terminal/assistant.py"
         renderer = renderer_path.read_text(encoding="utf-8")
         self.assertNotIn("from .agent", owner)
@@ -514,13 +514,13 @@ class ArchitectureBoundaryTests(unittest.TestCase):
             ROOT / "src/local_agent/read_only_reviewer_claims.py",
             ROOT / "src/local_agent/read_only_reviewer_contract.py",
             ROOT / "src/local_agent/read_only_reviewer_validation.py",
-            ROOT / "src/local_agent/runtime_read_only_review.py",
+            ROOT / "src/local_agent/runtime/review.py",
             ROOT / "src/local_agent/safe_partial_report.py",
             ROOT / "src/local_agent/reviewer_output_lifecycle.py",
             ROOT / "src/local_agent/steering/evidence.py",
             ROOT / "src/local_agent/implementation_readiness.py",
             ROOT / "src/local_agent/workflow_profile.py",
-            ROOT / "src/local_agent/runtime_workflow_profile.py",
+            ROOT / "src/local_agent/runtime/workflow_profile.py",
         )
         forbidden = re.compile(
             r"(拓展服务费|结算单|服务费|分账|退款|计费|(?<![A-Za-z])settlement(?![A-Za-z])|"

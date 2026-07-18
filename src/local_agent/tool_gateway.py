@@ -9,7 +9,7 @@ from typing import Any, Mapping
 from .providers.llm import LlmError, LlmTimeoutError
 from .patch.anchored import PatchError, display_workspace_path, resolve_workspace_path
 from .tools.base import ToolResult
-from .runtime_prompt import _parse_tool_arguments
+from .runtime.prompt import _parse_tool_arguments
 
 def _tool_call_signature(name: str, arguments: str | dict[str, Any]) -> str:
     if isinstance(arguments, dict):
