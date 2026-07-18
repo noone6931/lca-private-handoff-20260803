@@ -7,28 +7,28 @@ from pathlib import Path
 import time
 from typing import Any, Mapping
 
-from .compaction import SUMMARY_INPUT_CHAR_LIMIT
-from .compaction import SUMMARY_OUTPUT_CHAR_LIMIT
-from .compaction import SUMMARY_REQUEST_TIMEOUT
-from .compaction import assistant_snippets as _assistant_snippets
-from .compaction import compaction_recent_messages as _compaction_recent_messages
-from .compaction import estimate_message_chars as _estimate_message_chars
-from .compaction import estimate_message_tokens as _estimate_message_tokens
-from .compaction import format_llm_compaction_summary as _format_llm_compaction_summary
-from .compaction import last_user_message_index as _last_user_message_index
-from .compaction import messages_with_compaction_context as _messages_with_compaction_context
-from .compaction import messages_to_summary_transcript as _messages_to_summary_transcript
-from .compaction import provider_safe_messages as _provider_safe_messages
-from .compaction import prune_context_tool_outputs as _prune_context_tool_outputs
-from .compaction import resolve_compaction_threshold_chars as _resolve_compaction_threshold_chars
-from .compaction import resolve_compaction_threshold_tokens as _resolve_compaction_threshold_tokens
-from .compaction import snippets_for_role as _snippets_for_role
-from .compaction import summary_cache_key as _summary_cache_key
-from .compaction import summary_request_content as _summary_request_content
-from .compaction import tool_snippets as _tool_snippets
-from .compaction import truncate_recent_tool_outputs as _truncate_recent_tool_outputs
+from .runtime.compaction import SUMMARY_INPUT_CHAR_LIMIT
+from .runtime.compaction import SUMMARY_OUTPUT_CHAR_LIMIT
+from .runtime.compaction import SUMMARY_REQUEST_TIMEOUT
+from .runtime.compaction import assistant_snippets as _assistant_snippets
+from .runtime.compaction import compaction_recent_messages as _compaction_recent_messages
+from .runtime.compaction import estimate_message_chars as _estimate_message_chars
+from .runtime.compaction import estimate_message_tokens as _estimate_message_tokens
+from .runtime.compaction import format_llm_compaction_summary as _format_llm_compaction_summary
+from .runtime.compaction import last_user_message_index as _last_user_message_index
+from .runtime.compaction import messages_with_compaction_context as _messages_with_compaction_context
+from .runtime.compaction import messages_to_summary_transcript as _messages_to_summary_transcript
+from .runtime.compaction import provider_safe_messages as _provider_safe_messages
+from .runtime.compaction import prune_context_tool_outputs as _prune_context_tool_outputs
+from .runtime.compaction import resolve_compaction_threshold_chars as _resolve_compaction_threshold_chars
+from .runtime.compaction import resolve_compaction_threshold_tokens as _resolve_compaction_threshold_tokens
+from .runtime.compaction import snippets_for_role as _snippets_for_role
+from .runtime.compaction import summary_cache_key as _summary_cache_key
+from .runtime.compaction import summary_request_content as _summary_request_content
+from .runtime.compaction import tool_snippets as _tool_snippets
+from .runtime.compaction import truncate_recent_tool_outputs as _truncate_recent_tool_outputs
 from .providers.deadline import call_chat_with_timeout
-from .command_dispatcher import CommandDispatcher
+from .runtime.commands import CommandDispatcher
 from .config import AgentConfig
 from .config import normalize_approval_mode
 from .evidence.design import project_workspace_evidence_roots
@@ -38,7 +38,7 @@ from .evidence import first_result_line_paths
 from .evidence import first_search_result_paths
 from .evidence import evidence_root_for_path
 from .evidence import evidence_root_label
-from .finalization import FINAL_ANSWER_STEERING_HARD
+from .runtime.finalization import FINAL_ANSWER_STEERING_HARD
 from .providers.llm import LlmError, LlmTimeoutError, OpenAICompatibleClient
 from .providers.protocol import ProviderProtocolArtifact, provider_safe_assistant_message as _provider_safe_assistant_message
 from .providers.protocol import classify_provider_content_artifact, provider_allows_provisional_text
@@ -57,7 +57,7 @@ from .evidence.requirements import render_pinned_requirement_evidence
 from .runtime.assistant_message import AssistantMessageLifecycle
 from .runtime.system_prompt import SYSTEM_PROMPT
 from .runtime.system_prompt import WORKFLOW_NUDGE
-from .run_context import RunContext
+from .runtime.context import RunContext
 from .session.evidence import SessionEvidenceCache
 from .session.evidence import query_identity as _session_evidence_query_identity
 from .workflows.soft_requirement import advance_soft_tool_requirement
@@ -121,7 +121,7 @@ from .tools.relevance import path_matches_any
 from .tools.relevance import request_mentions_config_or_path
 from .tool_observation import ToolResultSummary
 from .user_facts import UserFactsLayer
-from .provider_context import ProviderContextPhase
+from .runtime.provider_context import ProviderContextPhase
 from .runtime.evidence import EvidenceVerificationLifecycle
 from .runtime.memory import MemoryConsolidationLifecycle
 from .runtime.tool_directive import RuntimeToolDirectivePhase

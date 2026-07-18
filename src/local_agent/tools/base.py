@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
-from ..cancellation import CancellationSignal, raise_if_cancelled
+from ..runtime.cancellation import CancellationSignal, raise_if_cancelled
 from ..execution_policy import ExecutionPolicyDecision
 from ..execution_policy import evaluate_execution_policy
 from ..execution_policy import execution_action

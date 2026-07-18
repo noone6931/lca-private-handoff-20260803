@@ -34,7 +34,7 @@ OWNER_COMPLEXITY_CEILINGS = {
     "src/local_agent/runtime/workflow_profile.py": 44,
     "src/local_agent/execution_policy.py": 170,
     "src/local_agent/tools/base.py": 607,
-    "src/local_agent/command_dispatcher.py": 221,
+    "src/local_agent/runtime/commands.py": 221,
     "src/local_agent/providers/stream.py": 340,
     "src/local_agent/providers/deadline.py": 179,
     "src/local_agent/providers/llm.py": 226,
@@ -47,7 +47,7 @@ OWNER_COMPLEXITY_CEILINGS = {
     "src/local_agent/runtime/run_output.py": 130,
     "src/local_agent/providers/protocol.py": 379,
     "src/local_agent/runtime/prompt.py": 490,
-    "src/local_agent/run_collector.py": 668,
+    "src/local_agent/runtime/collector.py": 668,
     "src/local_agent/workflows/explore_subagent.py": 561,
     "src/local_agent/lsp/workspace_edit.py": 380,
     "src/local_agent/tools/lsp_rename.py": 187,
@@ -143,7 +143,7 @@ class ArchitectureBoundaryTests(unittest.TestCase):
         self.assertNotIn("read_only_unlocated", content)
 
     def test_runtime_uses_explicit_phase_components_not_a_provider_mixin(self) -> None:
-        provider_context = (ROOT / "src/local_agent/provider_context.py").read_text(encoding="utf-8")
+        provider_context = (ROOT / "src/local_agent/runtime/provider_context.py").read_text(encoding="utf-8")
         self.assertIn("class ProviderContextPhase:", provider_context)
         self.assertNotIn("class ProviderContextMixin:", provider_context)
 
@@ -264,7 +264,7 @@ class ArchitectureBoundaryTests(unittest.TestCase):
         cli = (ROOT / "src/local_agent/cli.py").read_text(encoding="utf-8")
         terminal = (ROOT / "src/local_agent/frontends/terminal/app.py").read_text(encoding="utf-8")
         registry = (ROOT / "src/local_agent/frontends/terminal/command_registry.py").read_text(encoding="utf-8")
-        dispatcher = (ROOT / "src/local_agent/command_dispatcher.py").read_text(encoding="utf-8")
+        dispatcher = (ROOT / "src/local_agent/runtime/commands.py").read_text(encoding="utf-8")
         production = "\n".join(
             path.read_text(encoding="utf-8")
             for path in (ROOT / "src/local_agent").rglob("*.py")

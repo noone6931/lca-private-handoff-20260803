@@ -6,7 +6,7 @@ import time
 from collections.abc import Callable, Iterator
 from typing import Any
 
-from ..cancellation import RunCancelled
+from ..runtime.cancellation import RunCancelled
 from .llm import LlmError
 from .llm import LlmTimeoutError
 from .stream import ProviderTextDelta

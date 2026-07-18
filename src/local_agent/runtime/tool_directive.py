@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
-from ..run_context import RunContext
+from .context import RunContext
 from ..steering.models import SteeringDecision
 from ..workflows.temporary_directive import DirectiveTransition
 

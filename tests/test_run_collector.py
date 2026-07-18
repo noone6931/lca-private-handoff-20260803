@@ -22,7 +22,7 @@ class RunCollectorTests(unittest.TestCase):
         collector.mark_llm_context_summary()
         collector.record_context_compaction(estimated_tokens_before=100, estimated_tokens_after=70)
 
-        with patch("local_agent.run_collector.time.monotonic", return_value=10.125):
+        with patch("local_agent.runtime.collector.time.monotonic", return_value=10.125):
             summary = collector.finish(
                 "final",
                 guard_values={"duplicate_tool": 3},

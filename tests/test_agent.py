@@ -4808,7 +4808,7 @@ class AgentRuntimeTests(unittest.TestCase):
             with (
                 patch("local_agent.agent.OpenAICompatibleClient", _ShortBudgetGitCorrectionClient),
                 patch("local_agent.agent.time.monotonic", return_value=100.0),
-                patch("local_agent.finalization.time.monotonic", return_value=100.0),
+                patch("local_agent.runtime.finalization.time.monotonic", return_value=100.0),
             ):
                 runtime = AgentRuntime(config, show_tool_logs=False)
                 result = runtime.run("当前primary是不是Git仓库？")
@@ -4845,7 +4845,7 @@ class AgentRuntimeTests(unittest.TestCase):
             with (
                 patch("local_agent.agent.OpenAICompatibleClient", _DeadlineReserveDesignEvidenceClient),
                 patch("local_agent.agent.time.monotonic", return_value=100.0),
-                patch("local_agent.finalization.time.monotonic", return_value=100.0),
+                patch("local_agent.runtime.finalization.time.monotonic", return_value=100.0),
             ):
                 runtime = AgentRuntime(config, show_tool_logs=False)
                 with patch.object(

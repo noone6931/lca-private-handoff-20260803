@@ -7,7 +7,7 @@ from typing import Any, Protocol
 
 from ..lsp.client import close_all_clients
 from ..workspace.path_rules import discover_path_scoped_rules
-from ..run_context import RunContext
+from .context import RunContext
 from ..session.guards import SessionGuardState
 from ..workspace.startup import build_system_prompt
 from ..state import workspace_state_dir
