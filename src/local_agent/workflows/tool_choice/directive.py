@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from .queue import ToolChoiceDecision
-from ...tool_observation import ToolResultSummary
+from ...tools.observation import ToolResultSummary
 
 
 MAX_EXACT_TOOL_CHOICE_ESCALATIONS = 3

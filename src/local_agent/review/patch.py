@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Any, Literal, Mapping
 
 from ..workflows.contracts import RequirementContract
-from ..tool_observation import ToolResultSummary
+from ..tools.observation import ToolResultSummary
 from ..evidence.timeline import results_after_last_write
 from ..evidence.timeline import workspace_write_happened
 

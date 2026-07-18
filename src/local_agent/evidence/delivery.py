@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from ..tool_observation import ToolResultSummary
+from ..tools.observation import ToolResultSummary
 from .verification import VerificationPlan
 
 

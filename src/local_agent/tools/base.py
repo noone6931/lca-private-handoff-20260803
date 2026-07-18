@@ -10,9 +10,9 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from ..runtime.cancellation import CancellationSignal, raise_if_cancelled
-from ..execution_policy import ExecutionPolicyDecision
-from ..execution_policy import evaluate_execution_policy
-from ..execution_policy import execution_action
+from .policy import ExecutionPolicyDecision
+from .policy import evaluate_execution_policy
+from .policy import execution_action
 from ..protocol.interactions import InteractionHandler
 from ..protocol.interactions import InteractionRequest
 from ..terminal_io import terminal_input_prompt

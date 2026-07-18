@@ -13,7 +13,7 @@ from ..verification_timeline import effective_workspace_write_paths
 
 if TYPE_CHECKING:
     from .jsonl_store import JsonlSessionStore
-    from ..tool_observation import ToolResultSummary
+    from ..tools.observation import ToolResultSummary
     from ..verification_plan import VerificationPlan
 
 

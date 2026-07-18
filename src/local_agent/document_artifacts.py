@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Literal
 
-from .tool_observation import ToolResultSummary
+from .tools.observation import ToolResultSummary
 
 
 ArtifactKind = Literal["markdown", "html", "image"]

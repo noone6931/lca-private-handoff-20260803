@@ -12,7 +12,7 @@ from ..evidence import EvidenceRecord
 from ..requirement_evidence import RequirementEvidence
 from ..requirement_evidence import is_requirement_source_path
 from ..steering.final_answer import SourceEvidence
-from ..tool_observation import ToolResultSummary
+from ..tools.observation import ToolResultSummary
 
 
 MAX_SESSION_EVIDENCE_ENTRIES = 24

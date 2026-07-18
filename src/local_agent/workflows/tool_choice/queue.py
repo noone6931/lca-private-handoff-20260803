@@ -38,7 +38,7 @@ from .implementation import evaluate_implementation_phase
 from .read_only import _preferred_evidence_tools
 from .read_only import evaluate_read_only_phase
 from .classification import is_read_only_task
-from ...tool_observation import ToolResultSummary
+from ...tools.observation import ToolResultSummary
 from ...evidence.timeline import WRITE_TOOL_NAMES
 
 

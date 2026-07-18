@@ -17,7 +17,7 @@ from .requirements import requirement_fact_citation_issues
 from ..workflows.contracts import RequirementContract
 from ..workflows.tool_choice.queue import CODE_EVIDENCE_TOOL_NAMES
 from ..workflows.tool_choice.queue import DOCUMENT_ONLY_TOOL_NAMES
-from ..tool_observation import ToolResultSummary
+from ..tools.observation import ToolResultSummary
 from .timeline import results_after_last_write
 from .timeline import successful_tool_after_last_write
 from .timeline import workspace_write_happened

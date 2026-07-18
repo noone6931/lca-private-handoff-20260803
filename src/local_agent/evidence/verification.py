@@ -13,8 +13,8 @@ from .timeline import effective_workspace_write_paths
 
 if TYPE_CHECKING:
     from ..session.continuity import PendingTaskContinuation
-    from .test_planner import TestPlan
-    from .tool_observation import ToolResultSummary
+    from ..workflows.test_planner import TestPlan
+    from ..tools.observation import ToolResultSummary
 
 
 PlanKind = Literal["acceptance", "evidence", "verification"]

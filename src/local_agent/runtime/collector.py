@@ -4,9 +4,9 @@ from dataclasses import dataclass, field
 import time
 from typing import Any, Mapping
 
-from ..execution_policy import EXECUTION_POLICY_OUTCOMES
-from ..execution_policy import EXECUTION_POLICY_SOURCES
-from ..execution_policy import EXECUTION_SANDBOX_STATES
+from ..tools.policy import EXECUTION_POLICY_OUTCOMES
+from ..tools.policy import EXECUTION_POLICY_SOURCES
+from ..tools.policy import EXECUTION_SANDBOX_STATES
 
 
 READ_ONLY_REVIEWER_LIFECYCLE_CATEGORIES = frozenset(

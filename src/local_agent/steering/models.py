@@ -8,7 +8,7 @@ from typing import Any, Protocol
 
 from ..requirement_evidence import RequirementEvidence
 from ..workflows.contracts import RequirementContract
-from ..tool_observation import ToolResultSummary
+from ..tools.observation import ToolResultSummary
 from ..verification_plan import VerificationPlan
 from ..evidence_status import EVIDENCE_STATUS_LABELS
 from ..evidence_status import EVIDENCE_STATUS_REQUEST_KEYWORDS

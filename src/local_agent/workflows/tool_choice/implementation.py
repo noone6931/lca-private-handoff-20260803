@@ -10,7 +10,7 @@ from .decision import _compact
 from .decision import _lower_text
 from .decision import _successful_tool_result
 from .decision import has_code_evidence
-from ...tool_observation import ToolResultSummary
+from ...tools.observation import ToolResultSummary
 from .classification import is_implementation_task
 from ...evidence.timeline import last_workspace_write_index
 from ...evidence.timeline import result_changed_workspace

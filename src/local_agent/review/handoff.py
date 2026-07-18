@@ -23,7 +23,7 @@ from ..evidence.requirements import RequirementEvidence
 from ..workflows.root_coverage import read_only_root_coverage
 from ..steering.final_answer import SourceEvidence
 from ..workflows.contracts import RequirementContract
-from ..tool_observation import ToolResultSummary
+from ..tools.observation import ToolResultSummary
 
 
 MAX_HANDOFF_ITEMS = 32

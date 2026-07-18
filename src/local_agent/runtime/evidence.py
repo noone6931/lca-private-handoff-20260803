@@ -11,14 +11,14 @@ from ..review.patch import review_input_metadata, review_input_summary
 from ..session.evidence import MAX_SESSION_EVIDENCE_JOURNAL_EVENTS
 from ..session.evidence import is_journal_safe_cached_evidence
 from ..session.evidence import serialize_cached_evidence_entry
-from ..test_planner import plan_narrow_test
+from ..workflows.test_planner import plan_narrow_test
 from ..workflows.tool_choice.queue import session_evidence_reuse_directive
-from ..tool_observation import ToolResultSummary
+from ..tools.observation import ToolResultSummary
 from ..tools.base import ToolResult
 from ..tools.relevance import is_code_implementation_request, request_mentions_config_or_path
 from ..verification_plan import VerificationPlan
 from ..steering.final_answer import SteeringDecision
-from ..tool_gateway import _display_read_file_range_subject, _request_requires_patch_preview, _source_evidence_matches_path, _tool_call_uses_dry_run, _tool_choice_result_path, is_session_evidence_reread
+from ..tools.gateway import _display_read_file_range_subject, _request_requires_patch_preview, _source_evidence_matches_path, _tool_call_uses_dry_run, _tool_choice_result_path, is_session_evidence_reread
 
 MAX_PATCH_REVIEW_STEERS = 2
 

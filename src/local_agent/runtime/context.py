@@ -17,9 +17,9 @@ from ..steering.tool_loop import ToolLoopSteeringRegistry
 from ..workflows.contracts import RequirementContract
 from ..workflows.tool_choice.directive import ToolChoiceDirectiveOwner
 from ..workflows.tool_choice.queue import ToolChoiceQueue
-from ..tool_observation import ToolResultSummary
+from ..tools.observation import ToolResultSummary
 from ..evidence.verification import VerificationPlan
-from ..test_planner import TestPlan
+from ..workflows.test_planner import TestPlan
 from ..session.evidence import SessionEvidenceReuse
 from ..session.continuity import PendingTaskContinuation
 from ..workflows.temporary_directive import DirectiveTransition

@@ -6,8 +6,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Literal
 
-from ..tool_observation import ToolResultSummary
-from ..tool_observation import tool_result_is_executed_attempt
+from ..tools.observation import ToolResultSummary
+from ..tools.observation import tool_result_is_executed_attempt
 
 
 ReadOnlyExploreAction = Literal["none", "precise", "finalize"]

@@ -6,7 +6,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from ...tool_observation import ToolResultSummary
+from ...tools.observation import ToolResultSummary
 
 
 DEFAULT_TOOL_NAMES = frozenset(

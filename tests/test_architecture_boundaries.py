@@ -32,7 +32,7 @@ OWNER_COMPLEXITY_CEILINGS = {
     "src/local_agent/steering/final_answer.py": 59,
     "src/local_agent/workflows/profile.py": 165,
     "src/local_agent/runtime/workflow_profile.py": 44,
-    "src/local_agent/execution_policy.py": 170,
+    "src/local_agent/tools/policy.py": 170,
     "src/local_agent/tools/base.py": 607,
     "src/local_agent/runtime/commands.py": 221,
     "src/local_agent/providers/stream.py": 340,
@@ -150,7 +150,7 @@ class ArchitectureBoundaryTests(unittest.TestCase):
     def test_tool_choice_steering_helpers_live_with_queue_owner(self) -> None:
         queue = (ROOT / "src/local_agent/workflows/tool_choice/queue.py").read_text(encoding="utf-8")
         decision = (ROOT / "src/local_agent/workflows/tool_choice/decision.py").read_text(encoding="utf-8")
-        gateway = (ROOT / "src/local_agent/tool_gateway.py").read_text(encoding="utf-8")
+        gateway = (ROOT / "src/local_agent/tools/gateway.py").read_text(encoding="utf-8")
         self.assertIn("from .decision import tool_choice_steering_message", queue)
         self.assertIn("def tool_choice_steering_message", decision)
         self.assertIn("def tool_choice_steering_signature", decision)
@@ -250,7 +250,7 @@ class ArchitectureBoundaryTests(unittest.TestCase):
         self.assertNotIn("if self._config.workflow_profile", runtime)
 
     def test_execution_policy_owner_is_pure_and_registry_has_no_duplicate_policy_tree(self) -> None:
-        owner = (ROOT / "src/local_agent/execution_policy.py").read_text(encoding="utf-8")
+        owner = (ROOT / "src/local_agent/tools/policy.py").read_text(encoding="utf-8")
         registry = (ROOT / "src/local_agent/tools/base.py").read_text(encoding="utf-8")
         self.assertNotIn("from .tools", owner)
         self.assertNotIn("from .agent", owner)

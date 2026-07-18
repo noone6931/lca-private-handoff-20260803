@@ -3,9 +3,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from ..tool_observation import ToolResultSummary
-from ..tool_observation import tool_result_is_executed_attempt
-from ..tool_observation import tool_result_was_not_executed
+from ..tools.observation import ToolResultSummary
+from ..tools.observation import tool_result_is_executed_attempt
+from ..tools.observation import tool_result_was_not_executed
 
 
 @dataclass(frozen=True)

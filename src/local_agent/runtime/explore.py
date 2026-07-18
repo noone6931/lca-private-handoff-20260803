@@ -11,7 +11,7 @@ from ..patch.anchored import resolve_workspace_path
 from ..workflows.explore import OBSERVATION_TOOLS
 from ..workflows.explore import ReadOnlyExploreDecision
 from ..workflows.explore import evaluate_read_only_explore
-from ..tool_observation import ToolResultSummary
+from ..tools.observation import ToolResultSummary
 from ..workflows.profile import workflow_read_only_explore_enabled
 
 

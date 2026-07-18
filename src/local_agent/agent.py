@@ -111,7 +111,7 @@ from .steering.tool_loop import is_filename_search_misuse
 from .steering.termination import synthetic_tool_stop_message
 from .steering.termination import termination_message
 from .workflows.contracts import generate_requirement_contract, render_contract_context, requires_no_edit_final_hygiene
-from .test_planner import plan_narrow_test
+from .workflows.test_planner import plan_narrow_test
 from .tools import create_default_registry, create_runtime_registry
 from .tools.base import ToolContext, ToolResult
 from .tools.base import registry_schemas_for_context, session_safe_assistant_message, telemetry_tool_arguments, tool_state_dir
@@ -119,7 +119,7 @@ from .tools.git import capture_git_baseline
 from .tools.relevance import is_analysis_only_request
 from .tools.relevance import path_matches_any
 from .tools.relevance import request_mentions_config_or_path
-from .tool_observation import ToolResultSummary
+from .tools.observation import ToolResultSummary
 from .user_facts import UserFactsLayer
 from .runtime.provider_context import ProviderContextPhase
 from .runtime.evidence import EvidenceVerificationLifecycle
@@ -160,26 +160,26 @@ from .memory_consolidation import _memory_consolidation_root
 from .memory_consolidation import _append_consolidated_memory
 from .memory_consolidation import _memory_item_digest
 from .memory_consolidation import _normalized_memory_item_key
-from .tool_gateway import _tool_call_signature
-from .tool_gateway import _intersect_optional_tool_allowlist
-from .tool_gateway import _tool_choice_result_path
-from .tool_gateway import _tool_call_uses_dry_run
-from .tool_gateway import _source_evidence_matches_path
-from .tool_gateway import _request_requires_patch_preview
-from .tool_gateway import _patch_preview_signature
-from .tool_gateway import _search_pattern_key
-from .tool_gateway import _lsp_symbol_query_key
-from .tool_gateway import _semantic_exploration_key
-from .tool_gateway import _semantic_directory_key
-from .tool_gateway import _path_parts_relative_to_known_root
-from .tool_gateway import _read_file_path_key
-from .tool_gateway import _read_file_range_key
-from .tool_gateway import _read_file_line_number
-from .tool_gateway import _display_read_file_range_key
-from .tool_gateway import _display_read_file_range_subject
-from .tool_gateway import _llm_failure_reason
-from .tool_gateway import _validate_runtime_tool_name
-from .tool_gateway import is_session_evidence_reread
+from .tools.gateway import _tool_call_signature
+from .tools.gateway import _intersect_optional_tool_allowlist
+from .tools.gateway import _tool_choice_result_path
+from .tools.gateway import _tool_call_uses_dry_run
+from .tools.gateway import _source_evidence_matches_path
+from .tools.gateway import _request_requires_patch_preview
+from .tools.gateway import _patch_preview_signature
+from .tools.gateway import _search_pattern_key
+from .tools.gateway import _lsp_symbol_query_key
+from .tools.gateway import _semantic_exploration_key
+from .tools.gateway import _semantic_directory_key
+from .tools.gateway import _path_parts_relative_to_known_root
+from .tools.gateway import _read_file_path_key
+from .tools.gateway import _read_file_range_key
+from .tools.gateway import _read_file_line_number
+from .tools.gateway import _display_read_file_range_key
+from .tools.gateway import _display_read_file_range_subject
+from .tools.gateway import _llm_failure_reason
+from .tools.gateway import _validate_runtime_tool_name
+from .tools.gateway import is_session_evidence_reread
 
 MEMORY_CONSOLIDATION_INPUT_CHAR_LIMIT = 14000
 MEMORY_CONSOLIDATION_OUTPUT_CHAR_LIMIT = 8000
