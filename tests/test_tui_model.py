@@ -6,10 +6,23 @@ from local_agent.frontends.tui.mailbox import TuiMailbox
 from local_agent.frontends.tui.messages import TuiEvent
 from local_agent.frontends.tui.model import TuiEventSink
 from local_agent.frontends.tui.model import TuiProjector
+from local_agent.frontends.tui.model import TranscriptEntry
+from local_agent.frontends.tui.model import TuiState
 from local_agent.protocol.events import AgentEvent
 
 
 class TuiModelTests(unittest.TestCase):
+    def test_local_transcript_ids_remain_unique_after_history_is_bounded(self) -> None:
+        projector = TuiProjector(
+            TuiState(transcript=tuple(TranscriptEntry(f"local:{index}", "system", "old") for index in range(512)))
+        )
+
+        first = projector.append_local("system", "same")
+        second = projector.append_local("system", "same")
+
+        self.assertEqual(first.transcript[-1].entry_id, "local:512")
+        self.assertEqual(second.transcript[-1].entry_id, "local:513")
+
     def test_sink_removes_tool_arguments_before_cross_thread_queue(self) -> None:
         mailbox = TuiMailbox(capacity=8)
         sink = TuiEventSink(mailbox)

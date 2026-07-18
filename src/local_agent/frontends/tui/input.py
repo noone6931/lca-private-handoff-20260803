@@ -13,6 +13,31 @@ MAX_INPUT_BYTES = 64 * 1024
 _INCOMPLETE_PASTE_SECONDS = 2.0
 _NORMAL_PREFIX_SECONDS = 0.1
 
+_TERMINAL_KEY_SEQUENCES = {
+    "\x1b[A": "UP",
+    "\x1b[B": "DOWN",
+    "\x1b[C": "RIGHT",
+    "\x1b[D": "LEFT",
+    "\x1b[H": "HOME",
+    "\x1b[F": "END",
+    "\x1b[1~": "HOME",
+    "\x1b[3~": "DELETE",
+    "\x1b[4~": "END",
+    "\x1b[5~": "PAGE_UP",
+    "\x1b[6~": "PAGE_DOWN",
+    "\x1bOH": "HOME",
+    "\x1bOF": "END",
+    "\x1bOA": "UP",
+    "\x1bOB": "DOWN",
+    "\x1bOC": "RIGHT",
+    "\x1bOD": "LEFT",
+}
+_NORMAL_SEQUENCES = (
+    BRACKETED_PASTE_START,
+    BRACKETED_PASTE_END,
+    *_TERMINAL_KEY_SEQUENCES,
+)
+
 
 @dataclass(frozen=True)
 class TuiInputEvent:
@@ -108,7 +133,7 @@ class BracketedPasteDecoder:
             self._paste_marker_pending = ""
             self._paste_bytes = 0
             return combined[start_index + len(BRACKETED_PASTE_START):]
-        suffix = _longest_marker_prefix(combined, BRACKETED_PASTE_START)
+        suffix = _longest_sequence_prefix(combined, _NORMAL_SEQUENCES)
         if suffix:
             emitted = combined[:-len(suffix)]
             self._normal_pending = suffix
@@ -178,6 +203,18 @@ class BracketedPasteDecoder:
         result: list[TuiInputEvent] = []
         index = 0
         while index < len(normalized):
+            sequence = next(
+                (
+                    sequence
+                    for sequence in sorted(_TERMINAL_KEY_SEQUENCES, key=len, reverse=True)
+                    if normalized.startswith(sequence, index)
+                ),
+                None,
+            )
+            if sequence is not None:
+                result.append(TuiInputEvent("key", _TERMINAL_KEY_SEQUENCES[sequence]))
+                index += len(sequence)
+                continue
             character = normalized[index]
             if character == "\x1b" and index + 1 < len(normalized) and normalized[index + 1] in {"\n", "\r"}:
                 result.append(TuiInputEvent("key", "ALT_ENTER"))
@@ -206,3 +243,12 @@ def _longest_marker_prefix(value: str, marker: str) -> str:
         if value.endswith(marker[:size]):
             return value[-size:]
     return ""
+
+
+def _longest_sequence_prefix(value: str, sequences: tuple[str, ...]) -> str:
+    best = ""
+    for sequence in sequences:
+        candidate = _longest_marker_prefix(value, sequence)
+        if len(candidate) > len(best):
+            best = candidate
+    return best

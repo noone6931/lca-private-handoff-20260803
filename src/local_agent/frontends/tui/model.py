@@ -72,6 +72,7 @@ class TuiProjector:
         self._state = state or TuiState()
         self._delta_indices: dict[str, int] = {}
         self._active_run_id: str | None = None
+        self._local_entry_seq = _next_local_entry_seq(self._state.transcript)
 
     @property
     def state(self) -> TuiState:
@@ -81,10 +82,11 @@ class TuiProjector:
         """Append frontend-owned help, status, or error text without forging Runtime events."""
 
         entry = TranscriptEntry(
-            entry_id=f"local:{len(self._state.transcript)}",
+            entry_id=f"local:{self._local_entry_seq}",
             role=role,
             text=_bounded_text(text),
         )
+        self._local_entry_seq += 1
         self._state = replace(
             self._state,
             transcript=(*self._state.transcript, entry)[-_MAX_TRANSCRIPT_ENTRIES:],
@@ -342,3 +344,12 @@ def _bounded_text(value: str, limit: int = _MAX_EVENT_TEXT) -> str:
     if len(sanitized) <= limit:
         return sanitized
     return sanitized[:limit] + "...<truncated>"
+
+
+def _next_local_entry_seq(entries: tuple[TranscriptEntry, ...]) -> int:
+    values: list[int] = []
+    for entry in entries:
+        prefix, separator, suffix = entry.entry_id.partition(":")
+        if prefix == "local" and separator and suffix.isdecimal():
+            values.append(int(suffix))
+    return max(values, default=-1) + 1

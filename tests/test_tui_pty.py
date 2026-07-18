@@ -205,7 +205,7 @@ class TuiPtyTests(unittest.TestCase):
         self.assertEqual(process.returncode, 0, output.decode("utf-8", errors="replace"))
         self.assertEqual(after[3] & mask, before[3] & mask)
 
-    def test_x10_wheel_scrolls_history_without_page_keys(self) -> None:
+    def test_main_transcript_uses_native_scrollback_without_mouse_capture(self) -> None:
         master, slave = os.openpty()
         self._set_size(slave, 18, 80)
         process = subprocess.Popen(
@@ -217,18 +217,17 @@ class TuiPtyTests(unittest.TestCase):
             close_fds=True,
         )
         output = bytearray()
-        wheel_up = b"\x1b[M\x60!!"
-        wheel_down = b"\x1b[M\x61!!"
         try:
             output.extend(self._read_until(master, b"LOCAL CODING AGENT", timeout=3))
-            os.write(master, b"/help\n/help\n")
+            os.write(master, b"/help\n")
             output.extend(self._read_until(master, b"Commands:", timeout=3))
-            time.sleep(0.1)
+            self._set_size(slave, 22, 100)
+            process.send_signal(signal.SIGWINCH)
+            os.write(master, b"draft")
+            time.sleep(0.2)
             output.extend(self._read_available(master))
-            os.write(master, wheel_up)
-            output.extend(self._read_until(master, b"history ", timeout=3))
-            for _ in range(20):
-                os.write(master, wheel_down)
+            for _ in range(5):
+                os.write(master, b"\x7f")
             os.write(master, b"/exit\n")
             output.extend(self._drain_until_exit(master, process, timeout=3))
             process.wait(timeout=1)
@@ -241,9 +240,48 @@ class TuiPtyTests(unittest.TestCase):
 
         rendered = output.decode("utf-8", errors="replace")
         self.assertEqual(process.returncode, 0, rendered)
-        self.assertIn("history ", rendered)
-        self.assertIn("\x1b[?1007h", rendered)
-        self.assertIn("\x1b[?1007l", rendered)
+        self.assertEqual(rendered.count("Commands:"), 1)
+        self.assertNotIn("\x1b[?1049h", rendered)
+        self.assertNotIn("\x1b[?1007h", rendered)
+        self.assertNotIn("\x1b[3J", rendered)
+
+    def test_search_overlay_borrows_and_restores_alternate_screen(self) -> None:
+        master, slave = os.openpty()
+        self._set_size(slave, 18, 80)
+        process = subprocess.Popen(
+            [sys.executable, str(FIXTURE)],
+            stdin=slave,
+            stdout=slave,
+            stderr=slave,
+            env={**os.environ, "PYTHONPATH": str(ROOT / "src"), "TERM": "xterm-256color"},
+            close_fds=True,
+        )
+        output = bytearray()
+        try:
+            output.extend(self._read_until(master, b"LOCAL CODING AGENT", timeout=3))
+            os.write(master, b"/help\n")
+            output.extend(self._read_until(master, b"Commands:", timeout=3))
+            os.write(master, b"\x06Commands\n")
+            output.extend(self._read_until(master, b"\x1b[?1049h", timeout=3))
+            os.write(master, b"\x1b")
+            time.sleep(0.2)
+            output.extend(self._read_until(master, b"\x1b[?1049l", timeout=3))
+            os.write(master, b"/exit\n")
+            output.extend(self._drain_until_exit(master, process, timeout=3))
+            process.wait(timeout=1)
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait(timeout=2)
+            os.close(master)
+            os.close(slave)
+
+        rendered = output.decode("utf-8", errors="replace")
+        self.assertEqual(process.returncode, 0, rendered)
+        self.assertEqual(rendered.count("\x1b[?1049h"), 1)
+        self.assertEqual(rendered.count("\x1b[?1049l"), 1)
+        self.assertEqual(rendered.count("\x1b[?1007h"), 1)
+        self.assertGreaterEqual(rendered.count("\x1b[?1007l"), 1)
 
     @staticmethod
     def _set_size(fd: int, rows: int, columns: int) -> None:

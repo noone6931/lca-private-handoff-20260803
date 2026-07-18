@@ -292,6 +292,7 @@ class ArchitectureBoundaryTests(unittest.TestCase):
         model = production["model.py"]
         worker = production["worker.py"]
         screen = production["screen.py"]
+        native_renderer = production["native_renderer.py"]
         cli = (ROOT / "src/local_agent/cli.py").read_text(encoding="utf-8")
         runtime = (ROOT / "src/local_agent/agent.py").read_text(encoding="utf-8")
 
@@ -311,6 +312,12 @@ class ArchitectureBoundaryTests(unittest.TestCase):
         self.assertIn("self._runtime.commands.dispatch(command)", worker)
         self.assertNotIn("AgentRuntime", model)
         self.assertNotIn("AgentRuntime", screen)
+        self.assertNotIn("curses", "\n".join(production.values()))
+        self.assertIn("class NativeScrollbackRenderer:", native_renderer)
+        self.assertIn("self._commit_entries(pending, width)", native_renderer)
+        self.assertEqual(native_renderer.count("\\x1b[?1049h"), 1)
+        self.assertNotIn("\\x1b[3J", native_renderer)
+        self.assertIn("from .screen import run_inline_screen", production["app.py"])
         self.assertNotIn("arguments", model.split("def project_agent_event", 1)[1].split("def _todo_text", 1)[0])
         self.assertIn('frontend.add_argument("--tui"', cli)
         self.assertIn("TuiEventSink(tui_mailbox, show_tools=not args.hide_tools)", cli)

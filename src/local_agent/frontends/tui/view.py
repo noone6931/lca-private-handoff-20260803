@@ -82,6 +82,36 @@ def render_frame(state: TuiState, view: TuiView, width: int, height: int) -> Tui
     return TuiFrame(tuple(lines), cursor_y, min(cursor_x, width - 1), accent_rows)
 
 
+def render_inline_frame(state: TuiState, view: TuiView, width: int, height: int) -> TuiFrame:
+    """Render only the mutable tail kept below native terminal scrollback."""
+
+    width = max(width, 20)
+    height = max(height, 6)
+    interaction_rows = 1 if view.interaction_prompt else 0
+    palette_rows = min(len(view.palette), 5, max(height - interaction_rows - 3, 0)) if view.palette else 0
+    fixed_rows = 1 + palette_rows + interaction_rows + 2
+    content_height = max(height - fixed_rows, 0)
+    provisional = tuple(entry for entry in state.transcript if entry.provisional)
+    if not state.transcript and not view.search_query:
+        content = list(_welcome_lines(width, content_height))
+    else:
+        content = list(transcript_lines(provisional, width))
+        content.extend(_inline_activity_lines(state, width))
+        if not content_height:
+            content = []
+        elif len(content) > content_height:
+            content = content[-content_height:]
+
+    lines = [_header(state, width), *content, *_palette(view, width, palette_rows)]
+    if view.interaction_prompt:
+        lines.append(pad_cells(clip_cells(view.interaction_prompt, width, marker="..."), width))
+    prompt, cursor_x = _prompt(view, width)
+    cursor_y = len(lines)
+    lines.extend((prompt, _footer(state, view, TuiViewport(), width)))
+    accent_rows = tuple(index for index, line in enumerate(lines) if line.strip() in _LCA_ACCENTS)
+    return TuiFrame(tuple(lines[:height]), min(cursor_y, height - 2), min(cursor_x, width - 1), accent_rows)
+
+
 def synchronize_viewport(state: TuiState, view: TuiView, width: int, height: int) -> TuiViewport:
     safe_width = max(width, 20)
     safe_height = max(height, 6)
@@ -90,7 +120,7 @@ def synchronize_viewport(state: TuiState, view: TuiView, width: int, height: int
     visible_rows = max(safe_height - 2 - prompt_rows - palette_rows, 1)
     transcript_width = _transcript_width(safe_width)
     entries = _filtered_entries(state, view.search_query)
-    total_rows = len(_transcript_lines(entries, transcript_width)) if state.transcript or view.search_query else 0
+    total_rows = len(transcript_lines(entries, transcript_width)) if state.transcript or view.search_query else 0
     max_top = max(total_rows - visible_rows, 0)
     clamped_to_bottom = not view.viewport.follow_bottom and view.viewport.top >= max_top
     follow_bottom = view.viewport.follow_bottom or clamped_to_bottom
@@ -139,7 +169,7 @@ def _body(state: TuiState, width: int, height: int, scroll_top: int, search_quer
     if not state.transcript and not search_query:
         visible = list(_welcome_lines(transcript_width, height))
     else:
-        transcript = _transcript_lines(entries, transcript_width)
+        transcript = transcript_lines(entries, transcript_width)
         start = min(max(scroll_top, 0), max(len(transcript) - height, 0))
         visible = list(transcript[start:start + height])
         visible.extend([""] * max(height - len(visible), 0))
@@ -176,7 +206,7 @@ def _welcome_lines(width: int, height: int) -> tuple[str, ...]:
     return tuple(pad_cells(line, width) for line in lines[:height])
 
 
-def _transcript_lines(entries: tuple[TranscriptEntry, ...], width: int) -> tuple[str, ...]:
+def transcript_lines(entries: tuple[TranscriptEntry, ...], width: int) -> tuple[str, ...]:
     lines: list[str] = []
     for entry in entries:
         label = {
@@ -193,6 +223,26 @@ def _transcript_lines(entries: tuple[TranscriptEntry, ...], width: int) -> tuple
         indent = " " * cell_width(prefix)
         lines.extend(indent + line for line in wrapped[1:])
         lines.append("")
+    return tuple(lines)
+
+
+def _inline_activity_lines(state: TuiState, width: int) -> tuple[str, ...]:
+    lines: list[str] = []
+    context = " | ".join(
+        part
+        for part in (
+            f"provider {state.provider}" if state.provider else "",
+            f"workspace {state.workspace}" if state.workspace else "",
+        )
+        if part
+    )
+    if context:
+        lines.append(clip_cells(context, width, marker="..."))
+    for tool in state.tools[-4:]:
+        summary = f"{tool.status:<9} {tool.name} {tool.detail}".rstrip()
+        lines.append(clip_cells(summary, width, marker="..."))
+    if state.todos:
+        lines.extend(clip_cells(f"todo {todo}", width, marker="...") for todo in state.todos[-2:])
     return tuple(lines)
 
 

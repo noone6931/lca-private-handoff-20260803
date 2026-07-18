@@ -7,7 +7,7 @@ from ..terminal.app import run_terminal_chat
 from .controller import TuiController
 from .mailbox import TuiMailbox
 from .model import TuiProjector
-from .screen import run_curses_screen
+from .screen import run_inline_screen
 from .screen import streams_are_tty
 from .worker import TuiWorker
 from .worker import TuiRuntimePort
@@ -15,10 +15,6 @@ from .worker import TuiRuntimePort
 
 def tui_is_supported(*, input_stream=None, output_stream=None) -> bool:
     if not streams_are_tty(input_stream, output_stream):
-        return False
-    try:
-        import curses  # noqa: F401
-    except ImportError:
         return False
     return True
 
@@ -32,15 +28,15 @@ def run_tui(
     screen_runner: Callable[[TuiController], int] | None = None,
     initial_prompt: str | None = None,
 ) -> int:
-    """Run the TUI, falling back to the existing REPL on unsupported terminals."""
+    """Run the inline TUI, falling back to the existing REPL on unsupported terminals."""
 
     if screen_runner is None and not tui_is_supported(input_stream=input_stream, output_stream=output_stream):
-        print("Full-screen TUI unavailable; using terminal chat.", file=output_stream or sys.stderr)
+        print("Interactive TUI unavailable; using terminal chat.", file=output_stream or sys.stderr)
         prompt_input = prepend_initial_prompt(input_stream or sys.stdin, initial_prompt)
         return run_terminal_chat(runtime, input_stream=prompt_input, output_stream=output_stream)
     worker = TuiWorker(runtime, mailbox)
     controller = TuiController(mailbox, TuiProjector(), worker)
-    runner = screen_runner or run_curses_screen
+    runner = screen_runner or run_inline_screen
     worker.start()
     try:
         if initial_prompt:

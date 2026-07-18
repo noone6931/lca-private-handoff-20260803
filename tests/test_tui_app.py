@@ -60,7 +60,7 @@ class TuiAppTests(unittest.TestCase):
         )
 
         self.assertEqual(code, 0)
-        self.assertIn("Full-screen TUI unavailable", output.getvalue())
+        self.assertIn("Interactive TUI unavailable", output.getvalue())
         self.assertIn("local-agent chat", output.getvalue())
 
     def test_initial_prompt_is_dispatched_by_worker_before_screen_exit(self) -> None:

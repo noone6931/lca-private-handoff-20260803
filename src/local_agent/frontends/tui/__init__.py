@@ -1,4 +1,4 @@
-"""Full-screen terminal frontend with a single synchronous Runtime worker."""
+"""Inline terminal frontend with native scrollback and one synchronous Runtime worker."""
 
 from .mailbox import TuiMailbox
 from .app import run_tui

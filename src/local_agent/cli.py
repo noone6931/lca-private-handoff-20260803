@@ -27,7 +27,7 @@ _TERMINAL_COMMANDS = TerminalCommandRegistry()
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="local-agent")
-    parser.add_argument("prompt", nargs="*", help="Task prompt. If omitted, starts the full-screen TUI.")
+    parser.add_argument("prompt", nargs="*", help="Task prompt. If omitted, starts the interactive TUI.")
     parser.add_argument("--cwd", help="Workspace directory.")
     parser.add_argument(
         "--state-dir",
@@ -147,7 +147,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--session", help="Continue a specific session id from .local-agent/sessions.")
     frontend = parser.add_mutually_exclusive_group()
     frontend.add_argument("--chat", action="store_true", help="Start the terminal-native interactive frontend.")
-    frontend.add_argument("--tui", action="store_true", help="Start the full-screen terminal frontend.")
+    frontend.add_argument("--tui", action="store_true", help="Start the interactive terminal frontend.")
     parser.add_argument("--hide-tools", action="store_true", help="Hide tool call logs from stderr.")
     args = parser.parse_args(argv)
 
@@ -201,7 +201,7 @@ def main(argv: list[str] | None = None) -> int:
             return run_tui(runtime, tui_mailbox, initial_prompt=initial_prompt)
         if chat_requested or not args.prompt or tui_requested:
             if tui_requested:
-                print("Full-screen TUI unavailable; using terminal chat.", file=sys.stderr)
+                print("Interactive TUI unavailable; using terminal chat.", file=sys.stderr)
             initial_prompt = " ".join(args.prompt) if (args.chat or args.tui) and args.prompt else None
             input_stream = prepend_initial_prompt(sys.stdin, initial_prompt) if initial_prompt else None
             return run_terminal_chat(

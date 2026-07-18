@@ -11,6 +11,7 @@ from local_agent.frontends.tui.text import wrap_cells
 from local_agent.frontends.tui.view import TuiView
 from local_agent.frontends.tui.view import TuiViewport
 from local_agent.frontends.tui.view import render_frame
+from local_agent.frontends.tui.view import render_inline_frame
 
 
 class TuiViewTests(unittest.TestCase):
@@ -65,6 +66,23 @@ class TuiViewTests(unittest.TestCase):
         self.assertTrue(wide.accent_rows)
         self.assertTrue(any(line.strip() == "LCA" for line in narrow.lines))
         self.assertTrue(all(cell_width(line) == 24 for line in narrow.lines))
+
+    def test_inline_frame_keeps_only_provisional_transcript_in_mutable_tail(self) -> None:
+        state = TuiState(
+            provider="bailian",
+            transcript=(
+                TranscriptEntry("u1", "user", "already committed"),
+                TranscriptEntry("a1", "assistant", "streaming now", provisional=True),
+            ),
+        )
+
+        frame = render_inline_frame(state, TuiView(), 80, 20)
+
+        rendered = "\n".join(frame.lines)
+        self.assertNotIn("already committed", rendered)
+        self.assertIn("streaming now", rendered)
+        self.assertIn("provider bailian", rendered)
+        self.assertLess(len(frame.lines), 20)
 
     def test_home_logo_yields_to_transcript_content(self) -> None:
         state = TuiState(transcript=(TranscriptEntry("a1", "assistant", "ready"),))

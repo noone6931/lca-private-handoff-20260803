@@ -55,6 +55,20 @@ class TuiInputTests(unittest.TestCase):
 
         self.assertEqual([(event.kind, event.value) for event in decoder.flush_normal()], [("key", "ESC")])
 
+    def test_fragmented_terminal_key_sequences_decode_without_leaking_bytes(self) -> None:
+        decoder = BracketedPasteDecoder()
+
+        self.assertEqual(decoder.feed("\x1b["), ())
+        events = decoder.feed("A\x1b[6~\x1bO")
+        self.assertEqual(
+            [(event.kind, event.value) for event in events],
+            [("key", "UP"), ("key", "PAGE_DOWN")],
+        )
+        self.assertEqual(
+            [(event.kind, event.value) for event in decoder.feed("D")],
+            [("key", "LEFT")],
+        )
+
     def test_incomplete_timeout_tracks_idle_time_not_total_paste_duration(self) -> None:
         now = [0.0]
         decoder = BracketedPasteDecoder(incomplete_seconds=1.0, clock=lambda: now[0])
