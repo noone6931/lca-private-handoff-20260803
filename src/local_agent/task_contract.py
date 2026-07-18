@@ -5,7 +5,7 @@ import re
 from typing import Literal
 
 from .document_artifacts import DocumentArtifactRequirement, extract_document_artifact_requirements
-from .implementation_readiness import has_implementation_readiness_intent
+from .review.readiness import has_implementation_readiness_intent
 
 TaskKind = Literal["read-only", "code-implementation", "unclear"]
 EvidenceDomain = Literal["repository_code", "requirement_documents", "workspace_metadata", "semantic"]

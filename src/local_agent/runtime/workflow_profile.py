@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..read_only_reviewer import ReviewerPhaseOutcome
+from ..review.read_only import ReviewerPhaseOutcome
 from .review import ReadOnlyReviewPhase
 from ..workflow_profile import workflow_read_only_review_enabled
 from ..workflow_profile import workflow_safe_partial_enabled

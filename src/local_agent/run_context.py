@@ -24,7 +24,7 @@ from .session.evidence import SessionEvidenceReuse
 from .session.continuity import PendingTaskContinuation
 from .temporary_tool_directive import DirectiveTransition
 from .temporary_tool_directive import TemporaryToolDirectiveOwner
-from .read_only_reviewer import ReadOnlyReviewState
+from .review.read_only import ReadOnlyReviewState
 from .runtime.run_output import RunOutputLifecycle
 from .workflow_profile import WorkflowProfileResolution
 from .workflow_profile import resolve_workflow_profile

@@ -4,26 +4,26 @@ from __future__ import annotations
 import time
 from typing import Any, Protocol
 
-from ..document_consistency import validate_document_consistency_assessment
-from ..explore_handoff import build_explore_handoff
+from ..review.document_consistency import validate_document_consistency_assessment
+from ..review.handoff import build_explore_handoff
 from ..providers.protocol import classify_provider_content_artifact
-from ..read_only_reviewer import candidate_claim_units
-from ..read_only_reviewer import candidate_claim_projection_issues
-from ..read_only_reviewer import MAX_REVIEWER_FINDINGS
-from ..read_only_reviewer import MAX_REVIEWER_SCHEMA_REPAIRS
-from ..read_only_reviewer import MAX_TRANSPORT_RESIDUAL_PROJECTION_ROUNDS
-from ..read_only_reviewer import prune_exact_transport_residual_claim_lines
-from ..read_only_reviewer import ReviewerPhaseOutcome
-from ..read_only_reviewer import ReviewerResult
-from ..read_only_reviewer import ReviewerValidationError
-from ..read_only_reviewer import reviewer_messages
-from ..read_only_reviewer import reviewer_transport_rewrite_message
-from ..read_only_reviewer import reviewer_rewrite_message
-from ..read_only_reviewer import rewrite_complies_with_review
-from ..read_only_reviewer import should_review_read_only_candidate
+from ..review.read_only import candidate_claim_units
+from ..review.read_only import candidate_claim_projection_issues
+from ..review.read_only import MAX_REVIEWER_FINDINGS
+from ..review.read_only import MAX_REVIEWER_SCHEMA_REPAIRS
+from ..review.read_only import MAX_TRANSPORT_RESIDUAL_PROJECTION_ROUNDS
+from ..review.read_only import prune_exact_transport_residual_claim_lines
+from ..review.read_only import ReviewerPhaseOutcome
+from ..review.read_only import ReviewerResult
+from ..review.read_only import ReviewerValidationError
+from ..review.read_only import reviewer_messages
+from ..review.read_only import reviewer_transport_rewrite_message
+from ..review.read_only import reviewer_rewrite_message
+from ..review.read_only import rewrite_complies_with_review
+from ..review.read_only import should_review_read_only_candidate
 from .review_round import ReviewRoundPort
 from .review_round import run_review_round
-from ..safe_partial_report import build_safe_partial_report
+from ..review.safe_partial import build_safe_partial_report
 from ..steering.pre_review import PreReviewAudit
 from ..steering.pre_review import collect_pre_review_audit
 

@@ -7,7 +7,7 @@ from typing import Any, Mapping, Protocol
 from ..document_artifacts import local_artifact_references
 from ..evidence import EvidenceRecord, evidence_root_for_path, evidence_root_label
 from ..patch.anchored import PatchError, display_workspace_path, resolve_workspace_path
-from ..patch_reviewer import review_input_metadata, review_input_summary
+from ..review.patch import review_input_metadata, review_input_summary
 from ..session.evidence import MAX_SESSION_EVIDENCE_JOURNAL_EVENTS
 from ..session.evidence import is_journal_safe_cached_evidence
 from ..session.evidence import serialize_cached_evidence_entry

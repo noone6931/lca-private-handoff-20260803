@@ -47,8 +47,8 @@ from .lsp.client import close_all_clients
 from .evidence.negative import negative_claim_metrics as _negative_claim_metrics
 from .patch.anchored import display_workspace_path, PatchError, resolve_workspace_path
 from .planner import render_planner_explore_context
-from .patch_reviewer import review_input_summary
-from .patch_reviewer import review_input_metadata
+from .review.patch import review_input_summary
+from .review.patch import review_input_metadata
 from .workspace.path_rules import candidate_paths_for_path_rules
 from .workspace.path_rules import discover_path_scoped_rules
 from .workspace.path_rules import matching_path_rule_context

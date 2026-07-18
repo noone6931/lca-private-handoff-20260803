@@ -1,42 +1,45 @@
-"""Stable facade for the isolated, bounded read-only reviewer."""
-from __future__ import annotations
+"""Compatibility imports for the bounded read-only reviewer."""
 
-from .read_only_reviewer_claims import candidate_claim_projection_issues
-from .read_only_reviewer_claims import candidate_claim_units
-from .read_only_reviewer_claims import prune_exact_transport_residual_claim_lines
-from .read_only_reviewer_claims import should_review_read_only_candidate
-from .read_only_reviewer_contract import reviewer_finding_tool_schema
-from .read_only_reviewer_contract import reviewer_messages
-from .read_only_reviewer_contract import reviewer_output_tool_schema
-from .read_only_reviewer_contract import reviewer_output_tool_schemas
-from .read_only_reviewer_contract import reviewer_repair_message
-from .read_only_reviewer_contract import reviewer_repair_messages
-from .read_only_reviewer_contract import reviewer_transport_rewrite_message
-from .read_only_reviewer_types import CandidateClaimProjectionIssue
-from .read_only_reviewer_types import CandidateClaimRole
-from .read_only_reviewer_types import CandidateClaimUnit
-from .read_only_reviewer_types import MAX_CLAIM_TOTAL_CHARS
-from .read_only_reviewer_types import MAX_CLAIM_UNIT_CHARS
-from .read_only_reviewer_types import MAX_CLAIM_UNITS
-from .read_only_reviewer_types import MAX_REVIEWER_CAPACITY_DIRECTIVES
-from .read_only_reviewer_types import MAX_REVIEWER_FINDINGS
-from .read_only_reviewer_types import MAX_REVIEWER_OUTPUT_LIFECYCLE_ERRORS
-from .read_only_reviewer_types import MAX_REVIEWER_RESPONSE_CHARS
-from .read_only_reviewer_types import MAX_REVIEWER_SCHEMA_REPAIRS
-from .read_only_reviewer_types import MAX_TRANSPORT_RESIDUAL_PROJECTION_ROUNDS
-from .read_only_reviewer_types import MAX_TRANSPORT_RESIDUAL_PRUNE_CLAIMS
-from .read_only_reviewer_types import REVIEWER_FINDING_TOOL_NAME
-from .read_only_reviewer_types import REVIEWER_OUTPUT_TOOL_NAME
-from .read_only_reviewer_types import ReadOnlyReviewState
-from .read_only_reviewer_types import ReviewerFinding
-from .read_only_reviewer_types import ReviewerFindingScope
-from .read_only_reviewer_types import ReviewerPhaseOutcome
-from .read_only_reviewer_types import ReviewerResult
-from .read_only_reviewer_types import ReviewerValidationError
-from .read_only_reviewer_types import ReviewerVerdict
-from .read_only_reviewer_validation import parse_reviewer_final_payload
-from .read_only_reviewer_validation import parse_reviewer_finding_payload
-from .read_only_reviewer_validation import parse_reviewer_payload
-from .read_only_reviewer_validation import parse_reviewer_result
-from .read_only_reviewer_validation import reviewer_rewrite_message
-from .read_only_reviewer_validation import rewrite_complies_with_review
+from .review.read_only import (
+    CandidateClaimProjectionIssue,
+    CandidateClaimRole,
+    CandidateClaimUnit,
+    MAX_CLAIM_TOTAL_CHARS,
+    MAX_CLAIM_UNIT_CHARS,
+    MAX_CLAIM_UNITS,
+    MAX_REVIEWER_CAPACITY_DIRECTIVES,
+    MAX_REVIEWER_FINDINGS,
+    MAX_REVIEWER_OUTPUT_LIFECYCLE_ERRORS,
+    MAX_REVIEWER_RESPONSE_CHARS,
+    MAX_REVIEWER_SCHEMA_REPAIRS,
+    MAX_TRANSPORT_RESIDUAL_PROJECTION_ROUNDS,
+    MAX_TRANSPORT_RESIDUAL_PRUNE_CLAIMS,
+    REVIEWER_FINDING_TOOL_NAME,
+    REVIEWER_OUTPUT_TOOL_NAME,
+    ReadOnlyReviewState,
+    ReviewerFinding,
+    ReviewerFindingScope,
+    ReviewerPhaseOutcome,
+    ReviewerResult,
+    ReviewerValidationError,
+    ReviewerVerdict,
+    candidate_claim_projection_issues,
+    candidate_claim_units,
+    parse_reviewer_final_payload,
+    parse_reviewer_finding_payload,
+    parse_reviewer_payload,
+    parse_reviewer_result,
+    prune_exact_transport_residual_claim_lines,
+    reviewer_finding_tool_schema,
+    reviewer_messages,
+    reviewer_output_tool_schema,
+    reviewer_output_tool_schemas,
+    reviewer_repair_message,
+    reviewer_repair_messages,
+    reviewer_rewrite_message,
+    reviewer_transport_rewrite_message,
+    rewrite_complies_with_review,
+    should_review_read_only_candidate,
+)
+
+__all__ = [name for name in globals() if not name.startswith("_")]
