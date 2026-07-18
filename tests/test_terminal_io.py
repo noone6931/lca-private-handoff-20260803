@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
-from local_agent.frontends.terminal import io as terminal_io
+from local_agent.platform import terminal as terminal_io
 
 
 class _FakeStdin:

@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any, Literal, Protocol
 
 from ..config import ConfigError
-from .cancellation import RunCancellation
+from ..protocol.cancellation import RunCancellation
 from ..protocol.commands import AgentCommand, CommandResult, UNSUPPORTED_COMMAND_TYPES, command_validation_error, new_command
 from ..protocol.events import EventEmitter
 from .run_output import emit_runtime_delivery

@@ -6,7 +6,7 @@ import sys
 from ...agent import AgentRuntime
 from ...protocol.commands import CommandResult
 from ...protocol.commands import new_command
-from ...terminal_io import silenced_terminal_input
+from ...platform.terminal import silenced_terminal_input
 from .command_registry import TerminalCommandCompletion
 from .command_registry import TerminalCommandRegistry
 from .interactions import TerminalInteractionController

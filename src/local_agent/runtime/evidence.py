@@ -5,22 +5,28 @@ from pathlib import Path
 from typing import Any, Mapping, Protocol
 
 from ..evidence.documents import local_artifact_references
-from ..evidence import EvidenceRecord, evidence_root_for_path, evidence_root_label
+from ..evidence.ledger import EvidenceRecord
+from ..evidence.ledger import evidence_root_for_path
+from ..evidence.ledger import evidence_root_label
+from ..evidence.ledger import first_result_line_paths
+from ..evidence.ledger import first_search_result_paths
 from ..patch.anchored import PatchError, display_workspace_path, resolve_workspace_path
 from ..review.patch import review_input_metadata, review_input_summary
 from ..session.evidence import MAX_SESSION_EVIDENCE_JOURNAL_EVENTS
 from ..session.evidence import is_journal_safe_cached_evidence
+from ..session.evidence import query_identity as session_evidence_query_identity
 from ..session.evidence import serialize_cached_evidence_entry
 from ..workflows.test_planner import plan_narrow_test
 from ..workflows.tool_choice.queue import session_evidence_reuse_directive
 from ..tools.observation import ToolResultSummary
 from ..tools.base import ToolResult
 from ..tools.relevance import is_code_implementation_request, request_mentions_config_or_path
-from ..verification_plan import VerificationPlan
+from ..evidence.verification import VerificationPlan
 from ..steering.final_answer import SteeringDecision
 from ..tools.gateway import _display_read_file_range_subject, _request_requires_patch_preview, _source_evidence_matches_path, _tool_call_uses_dry_run, _tool_choice_result_path, is_session_evidence_reread
 
 MAX_PATCH_REVIEW_STEERS = 2
+MAX_SESSION_EVIDENCE_TAGGED_PATHS = 32
 
 
 class EvidenceRuntimePort(Protocol):
@@ -34,13 +40,6 @@ class EvidenceRuntimePort(Protocol):
     _session_evidence: Any
     _tool_context: Any
     _workspace_context: Any
-
-    def _tool_choice_result_metadata(
-        self,
-        name: str,
-        arguments: str | dict[str, Any],
-        result: ToolResult,
-    ) -> dict[str, Any]: ...
 
 class EvidenceVerificationLifecycle:
     """Cohesive Runtime phase kept outside the turn orchestrator."""
@@ -64,7 +63,7 @@ class EvidenceVerificationLifecycle:
         runtime = self._runtime
         if result.metadata.get("evidence_eligible") is False:
             return
-        metadata = runtime._tool_choice_result_metadata(name, arguments, result)
+        metadata = self.tool_choice_result_metadata(name, arguments, result)
         if is_session_evidence_reread(
             name,
             arguments,
@@ -100,6 +99,84 @@ class EvidenceVerificationLifecycle:
             canonical_path=resolved_path if isinstance(resolved_path, str) else None,
         )
         self.refresh_verification_plan()
+
+    def tool_choice_result_metadata(
+        self,
+        name: str,
+        arguments: str | dict[str, Any],
+        result: ToolResult,
+    ) -> dict[str, Any]:
+        runtime = self._runtime
+        metadata = dict(result.metadata)
+        raw_path = _tool_choice_result_path(arguments, result)
+        canonical_path: str | None = None
+        if raw_path:
+            try:
+                resolved = resolve_workspace_path(
+                    runtime._workspace_context.primary,
+                    raw_path,
+                    runtime._workspace_context.additional_roots,
+                )
+            except PatchError:
+                resolved = None
+            if resolved is not None:
+                canonical_path = str(resolved)
+                metadata.setdefault("resolved_path", canonical_path)
+                root = evidence_root_for_path(
+                    resolved,
+                    runtime._workspace_context.primary,
+                    runtime._workspace_context.additional_roots,
+                )
+                metadata.setdefault("evidence_root", str(root))
+                metadata.setdefault(
+                    "evidence_root_label",
+                    evidence_root_label(
+                        root,
+                        runtime._workspace_context.primary,
+                        runtime._workspace_context.additional_roots,
+                    ),
+                )
+                metadata.setdefault("evidence_scope", "root_local")
+        metadata.setdefault(
+            "session_evidence_query_identity",
+            session_evidence_query_identity(name, arguments, canonical_path=canonical_path),
+        )
+        if name == "glob_files":
+            searched_roots = metadata.get("searched_roots")
+            root_values = (
+                [str(root).strip() for root in searched_roots if str(root).strip()]
+                if isinstance(searched_roots, list)
+                else []
+            )
+            if len(root_values) == 1:
+                root = Path(root_values[0]).resolve()
+                metadata.setdefault("evidence_root", str(root))
+                metadata.setdefault(
+                    "evidence_root_label",
+                    evidence_root_label(
+                        root,
+                        runtime._workspace_context.primary,
+                        runtime._workspace_context.additional_roots,
+                    ),
+                )
+            elif len(root_values) > 1:
+                metadata.setdefault("evidence_scope", "multi_root")
+            metadata.setdefault("evidence_scope", "root_discovery")
+        elif name == "git_status":
+            metadata.setdefault("evidence_root", str(runtime._workspace_context.primary))
+            metadata.setdefault("evidence_root_label", "primary")
+            metadata.setdefault("evidence_scope", "root_local")
+        if name == "search_code":
+            paths = first_search_result_paths(result.content, limit=MAX_SESSION_EVIDENCE_TAGGED_PATHS + 1)
+            metadata.setdefault("evidence_paths", paths[:MAX_SESSION_EVIDENCE_TAGGED_PATHS])
+            if len(paths) > MAX_SESSION_EVIDENCE_TAGGED_PATHS:
+                metadata.setdefault("evidence_paths_overflow", True)
+        elif name.startswith("lsp_"):
+            paths = first_result_line_paths(result.content, limit=MAX_SESSION_EVIDENCE_TAGGED_PATHS + 1)
+            metadata.setdefault("evidence_paths", paths[:MAX_SESSION_EVIDENCE_TAGGED_PATHS])
+            if len(paths) > MAX_SESSION_EVIDENCE_TAGGED_PATHS:
+                metadata.setdefault("evidence_paths_overflow", True)
+        return metadata
 
     def refresh_verification_plan(self) -> None:
         runtime = self._runtime

@@ -6,12 +6,12 @@ from dataclasses import field
 from enum import Enum
 from typing import Any, Protocol
 
-from ..requirement_evidence import RequirementEvidence
+from ..evidence.requirements import RequirementEvidence
 from ..workflows.contracts import RequirementContract
 from ..tools.observation import ToolResultSummary
-from ..verification_plan import VerificationPlan
-from ..evidence_status import EVIDENCE_STATUS_LABELS
-from ..evidence_status import EVIDENCE_STATUS_REQUEST_KEYWORDS
+from ..evidence.verification import VerificationPlan
+from ..evidence.status import EVIDENCE_STATUS_LABELS
+from ..evidence.status import EVIDENCE_STATUS_REQUEST_KEYWORDS
 
 NO_EDIT_FINAL_HYGIENE_TOOLS = {"todo_read", "todo_add", "todo_update", "git_status", "git_diff"}
 READ_ONLY_EVIDENCE_TOOLS = {

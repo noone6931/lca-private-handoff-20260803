@@ -10,7 +10,7 @@ from ..workspace.path_rules import discover_path_scoped_rules
 from .context import RunContext
 from ..session.guards import SessionGuardState
 from ..workspace.startup import build_system_prompt
-from ..state import workspace_state_dir
+from ..session.state import workspace_state_dir
 from ..workspace.context import WorkspaceContext
 from ..workspace.migration import WorkspaceMigrationError, migrate_session_artifacts, rollback_session_artifacts
 

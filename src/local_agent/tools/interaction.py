@@ -6,7 +6,7 @@ import time
 from typing import Any
 
 from ..protocol.interactions import InteractionRequest
-from ..frontends.terminal.io import terminal_input_prompt
+from ..platform.terminal import terminal_input_prompt
 from .base import Tool, ToolContext, ToolResult
 
 

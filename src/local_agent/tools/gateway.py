@@ -9,7 +9,87 @@ from typing import Any, Mapping
 from ..providers.llm import LlmError, LlmTimeoutError
 from ..patch.anchored import PatchError, display_workspace_path, resolve_workspace_path
 from .base import ToolResult
-from ..runtime.prompt import _parse_tool_arguments
+from .argument_normalization import parse_tool_arguments
+
+
+def guarded_tool_result(
+    kind: str,
+    subject: str,
+    prior_count: int,
+    *,
+    tool_name: str,
+    evidence: str = "",
+) -> ToolResult:
+    if kind == "repeated_read_file":
+        evidence_note = f"\nExisting evidence:\n{evidence}" if evidence else ""
+        return ToolResult(
+            (
+                f"Tool call skipped: read_file has already read '{subject}' {prior_count} times in this run. "
+                "Use the collected evidence and provide the requested final answer, "
+                "or switch to a different, more targeted file only if new evidence is truly necessary."
+                f"{evidence_note}"
+            ),
+            is_error=True,
+        )
+    if kind == "duplicate_tool":
+        return ToolResult(
+            (
+                f"Tool call skipped: identical call to '{tool_name}' with the same arguments "
+                f"has already run {prior_count} times in this session. "
+                "Use the earlier tool results and provide the requested final answer, "
+                "or call a different tool/arguments only if new evidence is truly necessary."
+            ),
+            is_error=True,
+        )
+    if kind == "repeated_complete_glob":
+        return ToolResult(
+            (
+                "Tool call skipped: identical glob_files arguments already returned a complete result in this session. "
+                "Use the collected scope, or query a different uncovered workspace root or narrower pattern instead."
+            ),
+            is_error=True,
+            metadata={"repeated_complete_glob": True, "guarded": True},
+        )
+    if kind == "useless_search_pattern":
+        return ToolResult(
+            (
+                "Tool call skipped: search_code has already returned no matches for pattern "
+                f"'{subject}' {prior_count} times recently across paths. "
+                "Use the collected evidence and provide the requested final answer, "
+                "or switch to a meaningfully different business term only if new evidence is truly necessary."
+            ),
+            is_error=True,
+        )
+    if kind == "useless_lsp_symbol":
+        return ToolResult(
+            (
+                f"Tool call skipped: lsp symbol queries have returned no matches {prior_count} times recently; "
+                f"latest query was '{subject}'. Use the collected evidence and provide the requested final answer, "
+                "or switch to search_code with a genuinely different business term only if new evidence is necessary."
+            ),
+            is_error=True,
+        )
+    if kind == "unknown_tool":
+        return ToolResult(
+            (
+                f"Tool call skipped: unknown tool '{subject}' has already been rejected {prior_count} times recently. "
+                "Use a tool name from the current exposed tool list; do not keep retrying the same unknown name."
+            ),
+            is_error=True,
+            metadata={"unknown_tool": True, "requested_tool": subject, "guarded": True},
+        )
+    if kind == "semantic_exploration":
+        return ToolResult(
+            (
+                f"Tool call skipped: directory exploration under '{subject}' has already happened "
+                f"{prior_count} times recently. Stop guessing parent/child paths in the same module. "
+                "Use search_code, lsp_* navigation, or read_file on exact matched files; if evidence is sufficient, "
+                "answer the user's original question and mark any uncertainty explicitly."
+            ),
+            is_error=True,
+        )
+    raise ValueError(f"unsupported session guard decision: {kind}")
+
 
 def _tool_call_signature(name: str, arguments: str | dict[str, Any]) -> str:
     if isinstance(arguments, dict):
@@ -65,7 +145,7 @@ def is_session_evidence_reread(
 
     if name != "read_file" or not cached_paths:
         return False
-    raw_path = _parse_tool_arguments(arguments).get("path")
+    raw_path = parse_tool_arguments(arguments).get("path")
     if not isinstance(raw_path, str) or not raw_path.strip():
         return False
     try:
@@ -168,7 +248,7 @@ def _semantic_exploration_key(
 ) -> str | None:
     if name != "list_files":
         return None
-    parsed = _parse_tool_arguments(arguments)
+    parsed = parse_tool_arguments(arguments)
     raw_path = str(parsed.get("path") or ".").strip() or "."
     if raw_path in {"", "."}:
         return None
@@ -253,7 +333,7 @@ def _read_file_range_key(
 ) -> tuple[str, int, str] | None:
     if name != "read_file":
         return None
-    parsed = _parse_tool_arguments(arguments)
+    parsed = parse_tool_arguments(arguments)
     raw_path = parsed.get("path")
     if not isinstance(raw_path, str) or not raw_path.strip():
         return None

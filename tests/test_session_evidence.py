@@ -442,7 +442,7 @@ class SessionEvidenceCacheTests(unittest.TestCase):
                 show_tool_logs=False,
             )
             output = "\n".join(f"{path}:1: class" for path in paths)
-            metadata = runtime._tool_choice_result_metadata("search_code", {"path": "."}, ToolResult(output))
+            metadata = runtime._evidence_phase.tool_choice_result_metadata("search_code", {"path": "."}, ToolResult(output))
             self.assertEqual(metadata["evidence_paths"], paths)
             self.assertNotIn("evidence_paths_overflow", metadata)
             result = ToolResultSummary(
@@ -502,7 +502,9 @@ class SessionEvidenceCacheTests(unittest.TestCase):
                 show_tool_logs=False,
             )
             output = "\n".join(f"{path}:1: class" for path in paths)
-            producer_metadata = runtime._tool_choice_result_metadata("search_code", {"path": "."}, ToolResult(output))
+            producer_metadata = runtime._evidence_phase.tool_choice_result_metadata(
+                "search_code", {"path": "."}, ToolResult(output)
+            )
             self.assertTrue(producer_metadata["evidence_paths_overflow"])
             self.assertEqual(len(producer_metadata["evidence_paths"]), 32)
             result = ToolResultSummary(
@@ -626,9 +628,13 @@ class SessionEvidenceCacheTests(unittest.TestCase):
             source.write_text("one\ntwo\n", encoding="utf-8")
             runtime = AgentRuntime(_config(root), show_tool_logs=False)
             result = ToolResult(source.read_text(encoding="utf-8"))
-            implicit = runtime._tool_choice_result_metadata("read_file", {"path": "a.py"}, result)
-            explicit_first = runtime._tool_choice_result_metadata("read_file", {"path": "a.py", "start_line": 1}, result)
-            second_line = runtime._tool_choice_result_metadata("read_file", {"path": "a.py", "start_line": 2}, result)
+            implicit = runtime._evidence_phase.tool_choice_result_metadata("read_file", {"path": "a.py"}, result)
+            explicit_first = runtime._evidence_phase.tool_choice_result_metadata(
+                "read_file", {"path": "a.py", "start_line": 1}, result
+            )
+            second_line = runtime._evidence_phase.tool_choice_result_metadata(
+                "read_file", {"path": "a.py", "start_line": 2}, result
+            )
             self.assertEqual(implicit["session_evidence_query_identity"], explicit_first["session_evidence_query_identity"])
             self.assertNotEqual(implicit["session_evidence_query_identity"], second_line["session_evidence_query_identity"])
             cache = SessionEvidenceCache()
@@ -649,8 +655,10 @@ class SessionEvidenceCacheTests(unittest.TestCase):
             source.write_text("VALUE = 1\n", encoding="utf-8")
             runtime = AgentRuntime(_config(root), show_tool_logs=False)
             result = ToolResult(source.read_text(encoding="utf-8"))
-            relative = runtime._tool_choice_result_metadata("read_file", {"path": "a.py"}, result)
-            absolute = runtime._tool_choice_result_metadata("read_file", {"path": str(source)}, result)
+            relative = runtime._evidence_phase.tool_choice_result_metadata("read_file", {"path": "a.py"}, result)
+            absolute = runtime._evidence_phase.tool_choice_result_metadata(
+                "read_file", {"path": str(source)}, result
+            )
             self.assertEqual(relative["session_evidence_query_identity"], absolute["session_evidence_query_identity"])
             cache = SessionEvidenceCache()
             _capture_read(cache, root, source, request="inspect a.py", run_id="run-a", metadata=relative, path="a.py")

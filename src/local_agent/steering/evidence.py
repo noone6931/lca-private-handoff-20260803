@@ -2,15 +2,15 @@ from __future__ import annotations
 
 import re
 
-from ..design_evidence import missing_design_evidence_roots
-from ..negative_evidence import allowed_tools_for_negative_claims
-from ..negative_evidence import negative_claim_metrics
-from ..negative_evidence import render_negative_existence_issues
-from ..negative_evidence import unsupported_negative_existence_claims
-from ..negative_evidence import unsupported_unlocated_escalations
+from ..evidence.design import missing_design_evidence_roots
+from ..evidence.negative import allowed_tools_for_negative_claims
+from ..evidence.negative import negative_claim_metrics
+from ..evidence.negative import render_negative_existence_issues
+from ..evidence.negative import unsupported_negative_existence_claims
+from ..evidence.negative import unsupported_unlocated_escalations
 from ..workflows.root_coverage import read_only_root_coverage
-from ..requirement_evidence import requirement_citation_examples
-from ..requirement_evidence import requirement_fact_citation_issues
+from ..evidence.requirements import requirement_citation_examples
+from ..evidence.requirements import requirement_fact_citation_issues
 from ..workflows.contracts import is_inspection_forbidden
 from .models import *  # noqa: F403
 from .models import _EXPLICIT_TOOL_NON_EXECUTION

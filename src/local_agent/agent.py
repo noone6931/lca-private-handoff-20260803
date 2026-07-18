@@ -34,10 +34,6 @@ from .config import normalize_approval_mode
 from .evidence.design import project_workspace_evidence_roots
 from .evidence.delivery import render_delivery_report
 from .evidence import EvidenceRecord
-from .evidence import first_result_line_paths
-from .evidence import first_search_result_paths
-from .evidence import evidence_root_for_path
-from .evidence import evidence_root_label
 from .runtime.finalization import FINAL_ANSWER_STEERING_HARD
 from .providers.llm import LlmError, LlmTimeoutError, OpenAICompatibleClient
 from .providers.protocol import ProviderProtocolArtifact, provider_safe_assistant_message as _provider_safe_assistant_message
@@ -59,7 +55,6 @@ from .runtime.system_prompt import SYSTEM_PROMPT
 from .runtime.system_prompt import WORKFLOW_NUDGE
 from .runtime.context import RunContext
 from .session.evidence import SessionEvidenceCache
-from .session.evidence import query_identity as _session_evidence_query_identity
 from .workflows.soft_requirement import advance_soft_tool_requirement
 from .workflows.soft_requirement import initial_soft_tool_requirement
 from .workflows.soft_requirement import observe_soft_tool_requirement
@@ -133,7 +128,6 @@ from .runtime.provider_terminal import ProviderTerminalPhase
 from .runtime.workspace import WorkspaceLifecycle
 from .runtime.prompt import _event_preview, _tool_call_event_payload
 from .runtime.prompt import _tool_output_event_preview
-from .runtime.prompt import _parse_tool_arguments
 from .runtime.prompt import _clip_memory_text
 from .runtime.prompt import _clip_context_text
 from .runtime.prompt import _messages_with_runtime_todo_reminder
@@ -161,8 +155,8 @@ from .memory.consolidation import _append_consolidated_memory
 from .memory.consolidation import _memory_item_digest
 from .memory.consolidation import _normalized_memory_item_key
 from .tools.gateway import _tool_call_signature
+from .tools.gateway import guarded_tool_result
 from .tools.gateway import _intersect_optional_tool_allowlist
-from .tools.gateway import _tool_choice_result_path
 from .tools.gateway import _tool_call_uses_dry_run
 from .tools.gateway import _source_evidence_matches_path
 from .tools.gateway import _request_requires_patch_preview
@@ -209,7 +203,6 @@ MAX_SOURCE_GROUNDED_NUMERIC_STEERS = 2
 MAX_COMPLETION_AUDIT_STEERS = 2
 MAX_PATCH_REVIEW_STEERS = 2
 MAX_TOOL_CHOICE_QUEUE_STEERS_PER_SIGNATURE = 1
-MAX_SESSION_EVIDENCE_TAGGED_PATHS = 32
 class AgentRuntime:
     def __init__(
         self,
@@ -1162,13 +1155,15 @@ class AgentRuntime:
             range_count = self._run.read_file_range_counts.get(read_file_range_key, 0)
             if range_count >= MAX_READ_FILE_SUCCESSES_PER_RANGE_IN_RUN:
                 self._session_guards.record_hit("repeated_read_file")
-                return self._repeated_read_file_result(
+                return guarded_tool_result(
+                    "repeated_read_file",
                     _display_read_file_range_key(
                         read_file_range_key,
                         self._workspace_context.primary,
                         self._workspace_context.additional_roots,
                     ),
                     range_count,
+                    tool_name=name,
                     evidence=self._evidence_phase.evidence_for_read_file_range(read_file_range_key),
                 )
         signature = _tool_call_signature(name, arguments)
@@ -1193,19 +1188,12 @@ class AgentRuntime:
             complete_glob_signature=signature if name == "glob_files" else None,
         )
         if decision is not None:
-            if decision.kind == "repeated_read_file":
-                return self._repeated_read_file_result(decision.subject, decision.prior_count)
-            if decision.kind == "duplicate_tool":
-                return self._duplicate_tool_result(name, decision.prior_count)
-            if decision.kind == "useless_search_pattern":
-                return self._useless_search_pattern_result(decision.subject, decision.prior_count)
-            if decision.kind == "useless_lsp_symbol":
-                return self._useless_lsp_symbol_result(decision.subject, decision.prior_count)
-            if decision.kind == "unknown_tool":
-                return self._unknown_tool_result(decision.subject, decision.prior_count)
-            if decision.kind == "repeated_complete_glob":
-                return self._repeated_complete_glob_result()
-            return self._semantic_exploration_result(decision.subject, decision.prior_count)
+            return guarded_tool_result(
+                decision.kind,
+                decision.subject,
+                decision.prior_count,
+                tool_name=name,
+            )
         result = self._registry.execute(name, arguments, tool_context)
         self._session_guards.record_result(
             search_pattern_key=search_pattern_key,
@@ -1232,81 +1220,6 @@ class AgentRuntime:
                 continue
             resolved_paths.add(str(resolved))
         return frozenset(resolved_paths)
-
-    def _repeated_read_file_result(self, path_key: str, prior_count: int, *, evidence: str = "") -> ToolResult:
-        evidence_note = f"\nExisting evidence:\n{evidence}" if evidence else ""
-        return ToolResult(
-            (
-                f"Tool call skipped: read_file has already read '{path_key}' {prior_count} times in this run. "
-                "Use the collected evidence and provide the requested final answer, "
-                "or switch to a different, more targeted file only if new evidence is truly necessary."
-                f"{evidence_note}"
-            ),
-            is_error=True,
-        )
-
-    def _duplicate_tool_result(self, name: str, prior_count: int) -> ToolResult:
-        return ToolResult(
-            (
-                f"Tool call skipped: identical call to '{name}' with the same arguments "
-                f"has already run {prior_count} times in this session. "
-                "Use the earlier tool results and provide the requested final answer, "
-                "or call a different tool/arguments only if new evidence is truly necessary."
-            ),
-            is_error=True,
-        )
-
-    def _repeated_complete_glob_result(self) -> ToolResult:
-        return ToolResult(
-            (
-                "Tool call skipped: identical glob_files arguments already returned a complete result in this session. "
-                "Use the collected scope, or query a different uncovered workspace root or narrower pattern instead."
-            ),
-            is_error=True,
-            metadata={"repeated_complete_glob": True, "guarded": True},
-        )
-
-    def _useless_search_pattern_result(self, pattern_key: str, prior_count: int) -> ToolResult:
-        return ToolResult(
-            (
-                f"Tool call skipped: search_code has already returned no matches for pattern "
-                f"'{pattern_key}' {prior_count} times recently across paths. "
-                "Use the collected evidence and provide the requested final answer, "
-                "or switch to a meaningfully different business term only if new evidence is truly necessary."
-            ),
-            is_error=True,
-        )
-
-    def _useless_lsp_symbol_result(self, query_key: str, prior_count: int) -> ToolResult:
-        return ToolResult(
-            (
-                f"Tool call skipped: lsp symbol queries have returned no matches {prior_count} times recently; "
-                f"latest query was '{query_key}'. Use the collected evidence and provide the requested final answer, "
-                "or switch to search_code with a genuinely different business term only if new evidence is necessary."
-            ),
-            is_error=True,
-        )
-
-    def _semantic_exploration_result(self, path_key: str, prior_count: int) -> ToolResult:
-        return ToolResult(
-            (
-                f"Tool call skipped: directory exploration under '{path_key}' has already happened "
-                f"{prior_count} times recently. Stop guessing parent/child paths in the same module. "
-                "Use search_code, lsp_* navigation, or read_file on exact matched files; if evidence is sufficient, "
-                "answer the user's original question and mark any uncertainty explicitly."
-            ),
-            is_error=True,
-        )
-
-    def _unknown_tool_result(self, name: str, prior_count: int) -> ToolResult:
-        return ToolResult(
-            (
-                f"Tool call skipped: unknown tool '{name}' has already been rejected {prior_count} times recently. "
-                "Use a tool name from the current exposed tool list; do not keep retrying the same unknown name."
-            ),
-            is_error=True,
-            metadata={"unknown_tool": True, "requested_tool": name, "guarded": True},
-        )
 
     def _apply_tool_loop_steering(self, decision: ToolLoopSteeringDecision) -> None:
         self._messages.append({"role": "user", "content": decision.message})
@@ -1670,76 +1583,6 @@ class AgentRuntime:
                 "_lca_useless": bool(useless and not is_error),
             }
         )
-
-    def _tool_choice_result_metadata(
-        self,
-        name: str,
-        arguments: str | dict[str, Any],
-        result: ToolResult,
-    ) -> dict[str, Any]:
-        metadata = dict(result.metadata)
-        raw_path = _tool_choice_result_path(arguments, result)
-        canonical_path: str | None = None
-        if raw_path:
-            try:
-                resolved = resolve_workspace_path(
-                    self._workspace_context.primary,
-                    raw_path,
-                    self._workspace_context.additional_roots,
-                )
-            except PatchError:
-                resolved = None
-            if resolved is not None:
-                canonical_path = str(resolved)
-                metadata.setdefault("resolved_path", canonical_path)
-                root = evidence_root_for_path(
-                    resolved,
-                    self._workspace_context.primary,
-                    self._workspace_context.additional_roots,
-                )
-                metadata.setdefault("evidence_root", str(root))
-                metadata.setdefault(
-                    "evidence_root_label",
-                    evidence_root_label(
-                        root,
-                        self._workspace_context.primary,
-                        self._workspace_context.additional_roots,
-                    ),
-                )
-                metadata.setdefault("evidence_scope", "root_local")
-        metadata.setdefault(
-            "session_evidence_query_identity",
-            _session_evidence_query_identity(name, arguments, canonical_path=canonical_path),
-        )
-        if name == "glob_files":
-            searched_roots = metadata.get("searched_roots")
-            root_values = [str(root).strip() for root in searched_roots if str(root).strip()] if isinstance(searched_roots, list) else []
-            if len(root_values) == 1:
-                root = Path(root_values[0]).resolve()
-                metadata.setdefault("evidence_root", str(root))
-                metadata.setdefault(
-                    "evidence_root_label",
-                    evidence_root_label(root, self._workspace_context.primary, self._workspace_context.additional_roots),
-                )
-            elif len(root_values) > 1:
-                metadata.setdefault("evidence_scope", "multi_root")
-            metadata.setdefault("evidence_scope", "root_discovery")
-        elif name == "git_status":
-            # Git is intentionally anchored to the active primary workspace.
-            metadata.setdefault("evidence_root", str(self._workspace_context.primary))
-            metadata.setdefault("evidence_root_label", "primary")
-            metadata.setdefault("evidence_scope", "root_local")
-        if name == "search_code":
-            paths = first_search_result_paths(result.content, limit=MAX_SESSION_EVIDENCE_TAGGED_PATHS + 1)
-            metadata.setdefault("evidence_paths", paths[:MAX_SESSION_EVIDENCE_TAGGED_PATHS])
-            if len(paths) > MAX_SESSION_EVIDENCE_TAGGED_PATHS:
-                metadata.setdefault("evidence_paths_overflow", True)
-        elif name.startswith("lsp_"):
-            paths = first_result_line_paths(result.content, limit=MAX_SESSION_EVIDENCE_TAGGED_PATHS + 1)
-            metadata.setdefault("evidence_paths", paths[:MAX_SESSION_EVIDENCE_TAGGED_PATHS])
-            if len(paths) > MAX_SESSION_EVIDENCE_TAGGED_PATHS:
-                metadata.setdefault("evidence_paths_overflow", True)
-        return metadata
 
     def _queue_forced_final_answer(
         self,

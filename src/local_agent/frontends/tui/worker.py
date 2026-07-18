@@ -11,7 +11,7 @@ import time
 import uuid
 from typing import Protocol
 
-from ...cancellation import RunCancellation
+from ...protocol.cancellation import RunCancellation
 from ...protocol.commands import AgentCommand
 from ...protocol.commands import CommandResult
 from ...protocol.interactions import InteractionRequest

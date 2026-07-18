@@ -8,9 +8,9 @@ import json
 import re
 from typing import Any, Iterable, Mapping
 
-from ..evidence import EvidenceRecord
-from ..requirement_evidence import RequirementEvidence
-from ..requirement_evidence import is_requirement_source_path
+from ..evidence.ledger import EvidenceRecord
+from ..evidence.requirements import RequirementEvidence
+from ..evidence.requirements import is_requirement_source_path
 from ..steering.final_answer import SourceEvidence
 from ..tools.observation import ToolResultSummary
 

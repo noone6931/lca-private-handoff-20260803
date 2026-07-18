@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 import ast
 import importlib
+from importlib.util import resolve_name
 import re
 import tempfile
 import unittest
@@ -17,6 +18,7 @@ IMPORT_FREE_PACKAGE_INITIALIZERS = (
     "src/local_agent/workflows/__init__.py",
     "src/local_agent/workflows/tool_choice/__init__.py",
     "src/local_agent/frontends/terminal/__init__.py",
+    "src/local_agent/platform/__init__.py",
 )
 OWNER_COMPLEXITY_CEILINGS = {
     "src/local_agent/workflows/tool_choice/queue.py": 185,
@@ -56,6 +58,10 @@ OWNER_COMPLEXITY_CEILINGS = {
     "src/local_agent/providers/protocol.py": 379,
     "src/local_agent/runtime/prompt.py": 490,
     "src/local_agent/runtime/collector.py": 668,
+    "src/local_agent/runtime/evidence.py": 518,
+    "src/local_agent/tools/gateway.py": 404,
+    "src/local_agent/platform/terminal.py": 122,
+    "src/local_agent/protocol/cancellation.py": 66,
     "src/local_agent/workflows/explore_subagent.py": 561,
     "src/local_agent/lsp/workspace_edit.py": 380,
     "src/local_agent/tools/lsp_rename.py": 187,
@@ -63,7 +69,7 @@ OWNER_COMPLEXITY_CEILINGS = {
     "src/local_agent/session/continuity.py": 284,
 }
 LEGACY_COMPLEXITY_DEBT_CEILINGS = {
-    "src/local_agent/agent.py": 1792,
+    "src/local_agent/agent.py": 1632,
     "src/local_agent/tools/lsp.py": 1166,
     "src/local_agent/evidence/completion.py": 1093,
     "src/local_agent/review/handoff.py": 991,
@@ -85,6 +91,24 @@ def _production_complexity_failures(root: Path) -> list[tuple[str, int, int]]:
         if line_count > limit:
             failures.append((relative_path, line_count, limit))
     return failures
+
+
+def _resolved_import_targets(path: Path) -> list[tuple[int, str]]:
+    module = ".".join(path.relative_to(ROOT / "src").with_suffix("").parts)
+    package = module.rpartition(".")[0]
+    targets: list[tuple[int, str]] = []
+    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        if isinstance(node, ast.Import):
+            targets.extend((node.lineno, alias.name) for alias in node.names)
+            continue
+        if not isinstance(node, ast.ImportFrom):
+            continue
+        if node.level:
+            target = resolve_name("." * node.level + (node.module or ""), package)
+        else:
+            target = node.module or ""
+        targets.append((node.lineno, target))
+    return targets
 
 
 class ArchitectureBoundaryTests(unittest.TestCase):
@@ -128,6 +152,8 @@ class ArchitectureBoundaryTests(unittest.TestCase):
             "def _record_workspace_roots_change",
             "def _capture_session_evidence",
             "def _maybe_consolidate_session_memory",
+            "def _tool_choice_result_metadata",
+            "def _repeated_read_file_result",
         ):
             self.assertNotIn(helper, content)
         self.assertNotIn("def __getattr__", content)
@@ -190,6 +216,46 @@ class ArchitectureBoundaryTests(unittest.TestCase):
                 if isinstance(node, (ast.Import, ast.ImportFrom))
             ]
             self.assertEqual(imports, [], f"eager package import reintroduced in {relative_path}")
+
+    def test_implementation_packages_do_not_depend_on_root_compatibility_facades(self) -> None:
+        root_package = ROOT / "src/local_agent"
+        facade_modules = {
+            f"local_agent.{path.stem}"
+            for path in root_package.glob("*.py")
+            if path.name != "__init__.py" and path.name not in ROOT_IMPLEMENTATION_ENTRYPOINTS
+        }
+        dependencies: list[str] = []
+        for path in sorted(root_package.rglob("*.py")):
+            if path.parent == root_package:
+                continue
+            for line, target in _resolved_import_targets(path):
+                if target in facade_modules:
+                    dependencies.append(f"{path.relative_to(ROOT)}:{line} -> {target}")
+        self.assertEqual(dependencies, [])
+
+    def test_tools_and_providers_do_not_depend_on_runtime_or_frontend_implementations(self) -> None:
+        dependencies: list[str] = []
+        for package_name in ("tools", "providers"):
+            for path in sorted((ROOT / f"src/local_agent/{package_name}").rglob("*.py")):
+                for line, target in _resolved_import_targets(path):
+                    if target.startswith(("local_agent.frontends", "local_agent.runtime")):
+                        dependencies.append(f"{path.relative_to(ROOT)}:{line} -> {target}")
+        self.assertEqual(dependencies, [])
+
+    def test_cross_boundary_cancellation_and_terminal_input_have_one_low_level_owner(self) -> None:
+        production = list((ROOT / "src/local_agent").rglob("*.py"))
+        cancellation_owners = [
+            path.relative_to(ROOT).as_posix()
+            for path in production
+            if "class RunCancellation:" in path.read_text(encoding="utf-8")
+        ]
+        terminal_input_owners = [
+            path.relative_to(ROOT).as_posix()
+            for path in production
+            if "class TerminalInputSilencer:" in path.read_text(encoding="utf-8")
+        ]
+        self.assertEqual(cancellation_owners, ["src/local_agent/protocol/cancellation.py"])
+        self.assertEqual(terminal_input_owners, ["src/local_agent/platform/terminal.py"])
 
     def test_unregistered_production_module_cannot_bypass_global_line_limit(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -358,7 +424,7 @@ class ArchitectureBoundaryTests(unittest.TestCase):
         self.assertNotIn("arguments", model.split("def project_agent_event", 1)[1].split("def _todo_text", 1)[0])
         self.assertIn('frontend.add_argument("--tui"', cli)
         self.assertIn("TuiEventSink(tui_mailbox, show_tools=not args.hide_tools)", cli)
-        self.assertEqual(len(re.findall(r"^    def ", runtime, flags=re.MULTILINE)), 71)
+        self.assertLessEqual(len(re.findall(r"^    def ", runtime, flags=re.MULTILINE)), 71)
         self.assertLessEqual(len(runtime.splitlines()), LEGACY_COMPLEXITY_DEBT_CEILINGS["src/local_agent/agent.py"])
 
     def test_tui_cross_thread_messages_are_typed_and_bounded(self) -> None:

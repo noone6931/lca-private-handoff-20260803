@@ -7,7 +7,7 @@ from typing import TextIO
 
 from ...protocol.interactions import InteractionRequest
 from ...protocol.interactions import InteractionResult
-from ...terminal_io import terminal_input_prompt
+from ...platform.terminal import terminal_input_prompt
 
 
 class InputState(str, Enum):

@@ -6,8 +6,8 @@ import subprocess
 import time
 from pathlib import Path
 
-from ..runtime.cancellation import CancellationSignal
-from ..runtime.cancellation import RunCancelled
+from ..protocol.cancellation import CancellationSignal
+from ..protocol.cancellation import RunCancelled
 
 
 def run_process(

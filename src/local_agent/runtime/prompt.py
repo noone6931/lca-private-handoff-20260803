@@ -55,16 +55,6 @@ def _tool_output_event_preview(content: str, metadata: dict[str, Any] | None) ->
     return _event_preview(content)
 
 
-def _parse_tool_arguments(arguments: str | dict[str, Any]) -> dict[str, Any]:
-    if isinstance(arguments, dict):
-        return arguments
-    try:
-        parsed = json.loads(arguments or "{}")
-    except json.JSONDecodeError:
-        return {}
-    return parsed if isinstance(parsed, dict) else {}
-
-
 def _clip_memory_text(text: str, *, max_chars: int) -> str:
     return _clip_context_text(text, max_chars=max_chars, marker="...<earlier memory truncated>\n")
 

@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from ..completion_audit import audit_completion
-from ..completion_audit import render_completion_audit_message
-from ..evidence_status import content_has_evidence_status_label as _shared_content_has_evidence_status_label
+from ..evidence.completion import audit_completion
+from ..evidence.completion import render_completion_audit_message
+from ..evidence.status import content_has_evidence_status_label as _shared_content_has_evidence_status_label
 from ..review.patch import render_patch_review_message
 from ..review.patch import review_patch
 from ..workflows.contracts import requires_no_edit_final_hygiene

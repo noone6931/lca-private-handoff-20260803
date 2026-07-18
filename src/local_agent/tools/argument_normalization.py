@@ -4,6 +4,16 @@ import json
 from typing import Any
 
 
+def parse_tool_arguments(arguments: str | dict[str, Any]) -> dict[str, Any]:
+    if isinstance(arguments, dict):
+        return arguments
+    try:
+        parsed = json.loads(arguments or "{}")
+    except json.JSONDecodeError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
 def normalize_compatibility_arguments(name: str, arguments: dict[str, Any]) -> tuple[dict[str, Any], tuple[str, ...]]:
     """Normalize only observed provider argument variants before schema validation.
 
