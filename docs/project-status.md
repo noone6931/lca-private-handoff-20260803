@@ -1,6 +1,6 @@
 # Local Coding Agent 项目状态
 
-更新时间：2026-07-17
+更新时间：2026-07-18
 
 本文档是开发 `local-coding-agent` 时给参与开发的人和协作 Agent 读取的项目管理基线。`docs/local-coding-agent-project-management.xlsx` 继续作为人工查看的表格视图；本 Markdown 文件作为后续开发时优先读取的项目状态、路线、Todo 和决策来源。它不是 LCA 运行时自己的 memory 或用户项目记忆。
 
@@ -34,7 +34,7 @@ LCA、OMP 与 Codex 的当前源码级对照和路线校正见 `docs/lca-omp-cod
 
 ## 当前进度
 
-当前 stable 为 T-239：release `20260717T133745Z-385be8183447-5263058e2b46`，revision `385be8183447fbbc7aac7ac0efcc57a13291f396`，digest `5263058e2b46c8f5f153d77d530f5560c1184323f75de500c9f0ecb6e7eca760`；clean detached release gate 在 Python 3.14 下通过 1162/1162 unittest、compileall 和 diff-check，独立门禁另通过 62/62 deterministic benchmark、25/25 architecture checks、PTY normal/resize/signal/Ctrl-C matrix 与一次 fresh 百炼 TUI coding live。该版本新增独立 `local_agent.frontends.tui` 全屏前端、bounded typed mailbox、单 Runtime worker、focused interaction bridge 和 cooperative cancellation；`lca --tui` 显式开启，默认 chat 入口与非 TTY fallback 保持兼容。
+当前 stable 为 T-241：release `20260718T031104Z-ebc2f5040cc3-8d06c53405c8`，revision `ebc2f5040cc30e6e58ed0bb37a0fc33935ce85e9`，digest `8d06c53405c84c952d4aa3508a9e724f636272a2e915c2590a8712b87ea0059a`；clean detached release gate 在 Python 3.14 下通过 1192/1192 unittest、compileall 和 diff-check，独立门禁另通过 62/62 deterministic benchmark、25/25 architecture checks 与 immutable TUI matrix。`lca` 无参数且连接 TTY 时默认进入 full-screen TUI，空 transcript 显示响应式 LCA 首页字标；`lca --chat` / `lca chat` 保留 terminal-native chat，非 TTY 自动回退。TUI 已支持 `/workspace list` completion、64 KiB 原子 bracketed paste、PageUp/PageDown、mouse/trackpad wheel、resize-safe history anchor 和 `history x-y/n` footer。
 
 T-219/T-220 已完成并发布。Codex 以 `CodexThread.submit(Op)`、唯一 submission loop、`next_event()` 和 response stream 建立双向 Runtime 边界，OMP 由 agent loop 消费 provider stream 并产出 turn/message/tool 生命周期；LCA 采用 Python 同步渐进路径：CommandDispatcher 统一消费 prompt/status/workspace/approval，Provider Stream Owner 解析同一次 OpenAI-compatible SSE/JSON 响应，text delta 与 tool argument delta 分离，只有完整合法 tool call 才能进入 ToolRegistry。`AssistantDelta` 与最终 `AssistantMessage` 共享 message/command/run identity；百炼 in-band XML 不泄漏、不执行。T-239 已在该协议上增加独立同步 TUI worker 和 cooperative cancellation；完整 async bus 与 OS sandbox 仍未冒充实现。
 
@@ -60,7 +60,7 @@ T-231/T-232 已完成同步 interrupt 恢复闭环。approval 等待与长测试
 
 T-233 已完成 non-delivery continuity closure。真实 characterization 证明 provider error、LLM timeout 与 max steps 在成功 patch 后都会留下未完成验证义务，而旧显式原因集合会错误关闭 session；修复改为复用协议 Owner 的 typed `delivered` 判定，不解析 termination 文本。独立 immutable matrix 覆盖三类写后 pending/自然 continue、三类写前 closed、future non-final reason、command error，以及 RunSummary sink 抛错的精确一次终态；`final`、session `run_summary`、continuity、RunSummary 与 TurnFinished 在所有故障注入中均各一份且 correlation 一致。
 
-T-234~T-239 已完成独立 full-screen TUI 模块并发布。实现先对照 Codex 单 UI 写者、typed protocol projection、interrupt intent 与 terminal restore，以及 OMP terminal/controller/transcript/approval 分层；随后落地 curses screen、纯 view/model reducer、bounded/coalescing mailbox、单同步 Runtime worker、共享 TerminalCommandRegistry、search/copy/palette、focused ask/approval 和 responsive transcript/tool/todo 布局。Ctrl-C 只发取消意图，CommandDispatcher 持有 typed token并传播到 provider、compaction、reviewer、memory、Explore 和工具；shell/test 子进程以进程组 TERM/KILL 收束，最终仍由唯一 TurnFinished 关闭 running。候选与 stable 的 1162/62/25、PTY restore/resize/SIGTERM/Ctrl-C matrix 和真实百炼 read/patch/test/diff/delivery 均通过；TUI 不导入 ToolRegistry、ExecutionPolicy、EvidenceLedger、Finalization 或 session storage，不形成第二套领域语义。
+T-234~T-241 已完成独立 full-screen TUI 模块并发布。实现先对照 Codex 单 UI 写者、typed protocol projection、interrupt intent 与 terminal restore，以及 OMP terminal/controller/transcript/approval 分层；随后落地 curses screen、纯 view/model reducer、bounded/coalescing mailbox、单同步 Runtime worker、共享 TerminalCommandRegistry、search/copy/palette、focused ask/approval 和 responsive transcript/tool/todo 布局。Ctrl-C 只发取消意图，CommandDispatcher 持有 typed token并传播到 provider、compaction、reviewer、memory、Explore 和工具；shell/test 子进程以进程组 TERM/KILL 收束，最终仍由唯一 TurnFinished 关闭 running。T-241 将初始 prompt 收入同一 typed worker 路径，并新增 bounded paste decoder 与 wrapped-row viewport；streaming 时历史锚点稳定，回到底部才恢复 follow。macOS Button5 fallback 和整数 `KEY_ENTER` Alt-Enter 已修正；1192/62/25、PTY restore/signal/Page 与安装后 stable smoke 通过，真实物理 wheel PTY 自动化仍为 INCONCLUSIVE。TUI 不导入 ToolRegistry、ExecutionPolicy、EvidenceLedger、Finalization 或 session storage，不形成第二套领域语义。
 
 T-204 已完成 S5 readiness closure，结论为 typed `BLOCKED`，未选择实施切片、未进入阶段 B。新增 `zqylfinancebasemasterfccb090b` 与 `zqylcrclfinancemaster7b875cd3c` 后已证实：直接保理底层值为 `FACTOR_TYPE=4`，`104` 是云信融资 10 与直接保理 4 的组合码；放款完成是 `T_FINANCE_PROJECT.APPLY_STATUS=60`；云信 `XF0003` 显示为“拓展服务费”，计划费用经 `findDetailList` 映射到旧名 `expectApplySponsorTaxFee`，而 `YJ0001` 保荐商佣金是独立费用项。放款完成链路会向 payment 推送实际费用和部分主体/日期，但 payment 现有结构化字段与 JSON 参数仍不能形成完整待制单数据源，`BusinessPayer.finalAmount` 还是多费用合计而非 `XF0003` 单项。五个候选均缺至少一项 Owner、完整 data contract、write target、test entry 或 rollback boundary，因此未修改业务原目录。下一步不再扩展 LCA gate，而是补齐目标业务契约后重新进入 S5。项目状态暂只维护 Markdown，不同步 Excel。
 
@@ -196,7 +196,7 @@ T-213/T-214 已完成 S5-1 的 Codex 直接隔离交付。T-213 在上述 clean 
 | P5 | 安全与恢复增强 | 已完成并收口 | synthetic tool result、patch preview、回滚策略、非信任仓库提示、OMP 风格 approval model、approval prompt deadline cancel；真实小改复测通过。 |
 | P6 | 日用体验与默认工作流固化 | 已完成 MVP 版 | OMP 默认工作流本地化：system prompt、工具描述、轻量 runtime nudge。 |
 | P7 | 高级工程能力轻量版 | 已完成 MVP 版 | 已完成 OMP 风格 auto summary、多语言 LSP/light fallback、LSP 兼容别名、multi-root workspace roots 与工具观察提示、allowed-dir soft tool requirement、Markdown memory 启动注入、learn、可选 memory consolidation、authored skills discovery、综合压测记录、重复工具调用熔断、duplicate-tool forced-final steering、同文件切片读取漂移 guard、search_code 空搜索词跨路径 guard、path escape roots hint、LSP 空 query guard、Current task contract、Evidence Ledger、tool result pruning、todo steering、跨项目 env-file、用户级 `--state-dir` runtime state 分层、relevance gate、implementation-quality reviewer、safe new-file policy、no-edit final hygiene 和 path-scoped rules；DAP、subagents、完整 reviewer、AST edit、managed skills 继续后置。 |
-| P8 | 前端协议与交互基础 | 已完成 | T-076/T-077 完成 Event/Command Protocol 与 terminal-native frontend；T-219/T-220 补齐 dispatcher/streaming，T-234~T-239 在同一协议上完成独立 full-screen TUI。 |
+| P8 | 前端协议与交互基础 | 已完成 | T-076/T-077 完成 Event/Command Protocol 与 terminal-native frontend；T-219/T-220 补齐 dispatcher/streaming，T-234~T-241 在同一协议上完成独立 full-screen TUI、默认入口、输入与历史滚动收口。 |
 | P9 | 真实需求使用准备 | 已完成阶段性 MVP | 已完成项目边界分析、真实需求模板、企业项目只读源码验证、Java LSP 韧性、拓展服务费结算链路压测和服务范围复核；后续继续按真实需求推进设计/实现切片。 |
 | P10 | Intelligence Runtime 骨架 | 已完成 | 按 OMP 架构原则补单 Agent 内部的目标契约、工具选择队列、完成审计、两阶段计划和 reviewer；phase 通过显式 Protocol ports 协作，领域策略不回流 Runtime。 |
 | P11 | Runtime Ownership / Release Discipline | 已完成 MVP 版 | T-148 将 `agent.py` 从 3,638 行/113 methods 收为薄编排 facade；T-203 stable 时仍为 1,873 行/71 methods，连续 P12 修复没有回涨到架构阈值。 |
@@ -205,7 +205,7 @@ T-213/T-214 已完成 S5-1 的 Codex 直接隔离交付。T-213 在上述 clean 
 | P14 | Explicit Subagent Capability | Phase 1 已完成，扩展暂停 | T-223 证明小 fixture 的 typed handoff 可用，但真实三仓单样本没有收益且模型未选择 delegate；保留 default-off Explore，不扩 reviewer/implement、并发、写入、worktree、advisor 或默认自动调度。 |
 | P15 | Semantic Coding Tools | Phase 1 已完成并发布 T-228 stable | T-224/T-226 完成 external LSP rename 与 Code Action 的只读 preview，T-227 证明真实 Java Code Action 收益，T-228 收住 jdtls Eclipse metadata 副作用；复用同一 WorkspaceEdit 校验 Owner 和现有 patch/test/diff 写入闭环，不执行 command、server applyEdit 或 auto-apply。TS/Vue 因无 external server 保持 INCONCLUSIVE。 |
 | P16 | Ordinary Coding Reliability / Runtime State | 阶段性收口 | T-229/T-230 与 T-231~T-233 已覆盖 clean/dirty coding、stale write、同步中断、子进程回收和 typed non-delivery session continuation。 |
-| P17 | Independent Full-screen TUI | 已完成并发布 T-239 stable | T-234~T-239 完成显式 `--tui`、独立 Owner、单 UI 写者、bounded mailbox、同步 Runtime worker、focused interaction、cooperative cancellation、responsive rendering、PTY restore 和真实百炼 coding live；默认 chat 不变。 |
+| P17 | Independent Full-screen TUI | 已完成并发布 T-241 stable | T-234~T-241 完成独立 Owner、单 UI 写者、bounded mailbox、同步 Runtime worker、focused interaction、cooperative cancellation、responsive rendering、PTY restore、真实百炼 coding live、默认 `lca` 入口、LCA 首页字标、workspace completion、原子 paste 和 wrapped-row scrollback；显式 `--chat` 仍可用。 |
 
 ## 已完成功能
 
@@ -475,6 +475,8 @@ T-213/T-214 已完成 S5-1 的 Codex 直接隔离交付。T-213 在上述 clean 
 | T-237 | Focused Interaction / Shared Commands / Session UX | 已完成 | P17/Interaction | ask/approval、状态与 workspace 命令复用既有 Owner，避免 TUI 另造协议。 | request-id exactly-once interaction、draft preservation、timeout/late reject；非 local 命令复用 TerminalCommandRegistry；支持 palette、search、OSC52 copy 和 session continue。 |
 | T-238 | Cooperative Cancellation / Terminal Restoration | 已完成 | P17/Runtime Lifecycle | Ctrl-C 是 typed intent，不伪装线程强杀；子进程与终端必须可恢复。 | token 贯穿 provider/summary/reviewer/memory/explore/tool context，shell/test 进程组 TERM/KILL；normal/resize/SIGTERM/SIGHUP/SIGTSTP/Ctrl-C PTY matrix 通过。 |
 | T-239 | Immutable TUI Gate / Live / Stable Release | 已完成并发布 stable | P17/Product Validation | 从 clean detached candidate 验证完整模块、真实 provider 用户流与发布身份。 | commit `385be81`；1162/62/25、compileall/diff/help/chat、PTY matrix 全绿；fresh 百炼 TUI 自然完成 read/patch/test/diff/delivery。stable `20260717T133745Z-385be8183447-5263058e2b46`。 |
+| T-240 | Default TUI Entry / LCA Home / Workspace Completion | 已完成并发布 stable | P17/Product UX | `lca` 直接进入 TUI，空首页有 LCA 字标，typed completion 不破坏父命令。 | commit `e80e934`；1169/62/25、compileall/diff/help、PTY `/workspace list`、logo、restore/cancel 回归全绿。stable `20260717T141106Z-e80e9345f2fd-d1fd7322ac5c`。 |
+| T-241 | TUI Input / Scrollback Integrity | 已完成并发布 stable | P17/Product UX | 统一初始 prompt、bracketed paste、历史 viewport、滚轮与终端恢复，不向 Runtime 回流展示状态。 | commit `ebc2f50`；1192/62/25、compileall/diff/help/chat、56 focused TUI、immutable candidate 与安装后 PTY smoke 通过。64 KiB paste 原子且 fail closed；PageUp/PageDown、wrapped-row history、stream anchor、macOS wheel bitmask 与 Alt-Enter 回归已覆盖。stable `20260718T031104Z-ebc2f5040cc3-8d06c53405c8`。 |
 
 ## 风险清单
 
@@ -636,10 +638,10 @@ T-213/T-214 已完成 S5-1 的 Codex 直接隔离交付。T-213 在上述 clean 
 | 项目 | 结论 | 依据 |
 |---|---|---|
 | 主链路 | 通过 | 百炼真实小改复测已跑通 todo、dry_run、apply_patch、session allow、rollback、run_tests、git_diff。 |
-| 测试 | 分层通过 | P5 收口时 90 个 unittest；当前 T-239 stable 为 1162/62/25，另有 immutable non-delivery continuity、TUI reducer/mailbox/interaction/cancellation、PTY restore/resize/signal/Ctrl-C matrix 与一次真实百炼 full-screen coding live。 |
+| 测试 | 分层通过 | P5 收口时 90 个 unittest；当前 T-241 stable 为 1192/62/25，另有 immutable non-delivery continuity、TUI reducer/mailbox/interaction/cancellation/input/scrollback、PTY workspace command/restore/resize/signal/Ctrl-C/Page matrix 与一次真实百炼 full-screen coding live。 |
 | 日用入口 | 通过 | README 已补只读分析和小改任务命令模板。 |
 | 开放风险 | 可接受 | shell 仍非沙箱、prompt injection 仍需靠审批和封闭 VM；provider/model 专用 tokenizer、输出 reserve、managed skills、完整 reviewer 和完整 OMP ToolChoiceQueue 继续后置评估。 |
-| 下一阶段 | T-239 后按真实使用证据选题 | P16 continuity 与 P17 full-screen TUI 已收口。后续先用 stable 进行日常 coding，按跨场景可复现失败选择最小 Runtime/frontend 切片；不预设完整 async bus、mouse/plugin widget、auto-apply 或多 Agent。 |
+| 下一阶段 | T-241 stable 日用与证据门槛 | P16 continuity 与 P17 full-screen TUI 已收口。后续先用默认 `lca` stable 进行日常 coding，按跨场景可复现失败选择最小 Runtime/frontend 切片；不预设完整 async bus、plugin widget、auto-apply 或多 Agent。 |
 
 ## 推荐工作流
 
@@ -674,7 +676,7 @@ T-213/T-214 已完成 S5-1 的 Codex 直接隔离交付。T-213 在上述 clean 
 
 用户确认本文件后，建议按以下顺序继续：
 
-1. 使用 T-239 stable 的 `lca --tui` 做真实日常 coding，按可复现的 Runtime/frontend 失败选择下一窄批次；完整 async bus、mouse/plugin widget 和后台并发不作为默认下一步。
+1. 使用 T-241 stable 的 `lca` 做真实日常 coding，重点复核真实终端的 wheel/trackpad history 体验，并按可复现的 Runtime/frontend 失败选择下一窄批次；`lca --chat` 仅在需要 terminal-native 原生 scrollback 时使用，完整 async bus、plugin widget 和后台并发不作为默认下一步。
 2. 保留 T-214 隔离 workspace 和完整 diff，是否写回原 finance-base/payment 由用户单独确认；不得把隔离交付描述成生产已上线。
 3. 若进入生产集成，先在 Oracle JDK 8u121 和真实 Oracle/MyBatis 环境验证 DDL、事务、唯一键并发与现有 MQ 回放，再应用到目标分支。
 4. P14 保留 Phase 1 default-off Explore，只有后续多个真实任务出现稳定收益时才重启 reviewer/implement 评估；TUI 已完成但不与 MCP、Browser、多 Agent 或 auto-apply 横向捆绑扩展。
