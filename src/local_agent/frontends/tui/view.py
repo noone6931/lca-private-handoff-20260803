@@ -112,6 +112,17 @@ def page_viewport(viewport: TuiViewport, pages: int) -> TuiViewport:
     return scroll_viewport(viewport, pages * max(viewport.visible_rows - 1, 1))
 
 
+def wheel_viewport(viewport: TuiViewport, direction: int) -> TuiViewport:
+    """Move a useful fraction of the viewport for one wheel notch."""
+
+    step = max(viewport.visible_rows // 3, 3)
+    return scroll_viewport(viewport, step if direction > 0 else -step)
+
+
+def follow_viewport(viewport: TuiViewport) -> TuiViewport:
+    return replace(viewport, top=viewport.max_top, follow_bottom=True)
+
+
 def _header(state: TuiState, width: int) -> str:
     session = state.session_id[:8] if state.session_id else "new"
     activity = "RUNNING" if state.busy else "READY"
@@ -226,13 +237,15 @@ def _prompt(view: TuiView, width: int) -> tuple[str, int]:
 
 def _footer(state: TuiState, view: TuiView, viewport: TuiViewport, width: int) -> str:
     notice = view.notice or (f"dropped {state.dropped_messages} UI updates" if state.dropped_messages else "")
-    if viewport.total_rows:
+    if viewport.total_rows and not viewport.follow_bottom:
         start = viewport.top + 1
         end = min(viewport.top + viewport.visible_rows, viewport.total_rows)
-        history = f"history {start}-{end}/{viewport.total_rows}"
+        history = f"history {start}-{end}/{viewport.total_rows} | scroll down for latest"
     else:
-        history = "history 0/0"
-    keys = f"{history} | Enter send  PageUp/PageDown history  Ctrl-P commands  Ctrl-F search  Ctrl-C cancel  Ctrl-Q quit"
+        history = ""
+    keys = "Enter send  Ctrl-P commands  Ctrl-F search  Ctrl-C cancel  Ctrl-Q quit"
+    if history:
+        keys = f"{history} | {keys}"
     if view.search_query:
         notice = f"search: {view.search_query}" + (f" | {notice}" if notice else "")
     if notice:

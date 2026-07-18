@@ -92,6 +92,42 @@ class TuiControllerTests(unittest.TestCase):
         self.assertEqual(controller.view.viewport.top, controller.view.viewport.max_top)
         self.assertTrue(controller.view.viewport.follow_bottom)
 
+    def test_wheel_uses_viewport_fraction_and_arrow_fallback(self) -> None:
+        mailbox = TuiMailbox(capacity=8)
+        worker = _FakeWorker()
+        projector = TuiProjector()
+        for index in range(100):
+            projector.append_local("assistant", f"line {index}")
+        controller = TuiController(mailbox, projector, worker)  # type: ignore[arg-type]
+        controller.update_viewport(50, 20)
+        bottom = controller.view.viewport.top
+        expected_step = max(controller.view.viewport.visible_rows // 3, 3)
+
+        controller.handle_key("WHEEL_UP")
+        self.assertEqual(controller.view.viewport.top, bottom - expected_step)
+        controller.handle_key("UP")
+        self.assertEqual(controller.view.viewport.top, bottom - expected_step * 2)
+        controller.handle_key("DOWN")
+        self.assertEqual(controller.view.viewport.top, bottom - expected_step)
+
+    def test_submit_returns_historical_view_to_live_tail(self) -> None:
+        mailbox = TuiMailbox(capacity=8)
+        worker = _FakeWorker()
+        projector = TuiProjector()
+        for index in range(30):
+            projector.append_local("assistant", f"line {index}")
+        controller = TuiController(mailbox, projector, worker)  # type: ignore[arg-type]
+        controller.update_viewport(50, 10)
+        controller.handle_key("PAGE_UP")
+        self.assertFalse(controller.view.viewport.follow_bottom)
+
+        for character in "continue":
+            controller.handle_key(character)
+        controller.handle_key("ENTER")
+
+        self.assertTrue(controller.view.viewport.follow_bottom)
+        self.assertEqual(controller.view.viewport.top, controller.view.viewport.max_top)
+
     def test_stream_growth_keeps_history_anchor_until_user_returns_to_bottom(self) -> None:
         mailbox = TuiMailbox(capacity=8)
         worker = _FakeWorker()

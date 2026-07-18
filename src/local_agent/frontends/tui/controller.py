@@ -14,10 +14,11 @@ from .messages import TuiInteractionClosed
 from .messages import TuiInteractionPending
 from .messages import TuiWorkerFailed
 from .model import TuiProjector
+from .view import follow_viewport
 from .view import TuiView
 from .view import page_viewport
-from .view import scroll_viewport
 from .view import synchronize_viewport
+from .view import wheel_viewport
 from .worker import TuiWorker
 
 
@@ -148,9 +149,13 @@ class TuiController:
         elif key == "PAGE_DOWN":
             self._view = replace(self._view, viewport=page_viewport(self._view.viewport, 1))
         elif key == "WHEEL_UP":
-            self._view = replace(self._view, viewport=scroll_viewport(self._view.viewport, -3))
+            self._view = replace(self._view, viewport=wheel_viewport(self._view.viewport, -1))
         elif key == "WHEEL_DOWN":
-            self._view = replace(self._view, viewport=scroll_viewport(self._view.viewport, 3))
+            self._view = replace(self._view, viewport=wheel_viewport(self._view.viewport, 1))
+        elif key == "UP" and self._view.focus == TuiFocus.CHAT.value and not self._view.input_text:
+            self._view = replace(self._view, viewport=wheel_viewport(self._view.viewport, -1))
+        elif key == "DOWN" and self._view.focus == TuiFocus.CHAT.value and not self._view.input_text:
+            self._view = replace(self._view, viewport=wheel_viewport(self._view.viewport, 1))
         elif key == "RESIZE":
             self._sync_viewport()
         elif key == "LEFT":
@@ -159,6 +164,8 @@ class TuiController:
             self._view = replace(self._view, cursor=min(self._view.cursor + 1, len(self._view.input_text)))
         elif key == "HOME":
             self._view = replace(self._view, cursor=0)
+        elif key == "END" and self._view.focus == TuiFocus.CHAT.value and not self._view.input_text:
+            self._view = replace(self._view, viewport=follow_viewport(self._view.viewport))
         elif key == "END":
             self._view = replace(self._view, cursor=len(self._view.input_text))
         elif key == "BACKSPACE":
@@ -241,7 +248,14 @@ class TuiController:
                 self._submit_command(dispatched.command)
         else:
             self._submit_command(new_command("SubmitPrompt", {"prompt": text}))
-        self._view = replace(self._view, input_text="", cursor=0, palette=(), notice="")
+        self._view = replace(
+            self._view,
+            input_text="",
+            cursor=0,
+            palette=(),
+            notice="",
+            viewport=follow_viewport(self._view.viewport),
+        )
 
     def _submit_command(self, command) -> None:
         if not self._worker.submit(command):

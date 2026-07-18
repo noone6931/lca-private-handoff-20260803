@@ -12,8 +12,8 @@ from .input import TuiInputEvent
 from .view import render_frame
 
 
-_BRACKETED_PASTE_ENABLE = b"\x1b[?2004h"
-_BRACKETED_PASTE_DISABLE = b"\x1b[?2004l"
+_TERMINAL_MODES_ENABLE = b"\x1b[?1007h\x1b[?2004h"
+_TERMINAL_MODES_DISABLE = b"\x1b[?2004l\x1b[?1007l"
 _NCURSES_MOUSE_BUTTON_STRIDE = 6
 
 
@@ -183,12 +183,12 @@ class _TerminalModes:
 
     def resume(self) -> None:
         if not self._enabled:
-            self._write(_BRACKETED_PASTE_ENABLE)
+            self._write(_TERMINAL_MODES_ENABLE)
             self._enabled = True
 
     def suspend(self) -> None:
         if self._enabled:
-            self._write(_BRACKETED_PASTE_DISABLE)
+            self._write(_TERMINAL_MODES_DISABLE)
             self._enabled = False
 
     def _write(self, payload: bytes) -> None:

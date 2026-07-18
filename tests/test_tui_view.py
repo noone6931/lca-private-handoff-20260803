@@ -9,6 +9,7 @@ from local_agent.frontends.tui.text import cell_width
 from local_agent.frontends.tui.text import clip_cells
 from local_agent.frontends.tui.text import wrap_cells
 from local_agent.frontends.tui.view import TuiView
+from local_agent.frontends.tui.view import TuiViewport
 from local_agent.frontends.tui.view import render_frame
 
 
@@ -117,11 +118,20 @@ class TuiViewTests(unittest.TestCase):
                 TranscriptEntry("a2", "assistant", "final answer " * 40),
             )
         )
-        frame = render_frame(state, TuiView(), 48, 10)
+        live_frame = render_frame(state, TuiView(), 48, 10)
+        frame = render_frame(
+            state,
+            TuiView(viewport=TuiViewport(top=0, follow_bottom=False)),
+            48,
+            10,
+        )
 
+        self.assertNotIn("history ", live_frame.lines[-1])
         self.assertIn("history ", frame.lines[-1])
         self.assertRegex(frame.lines[-1], r"history \d+-\d+/\d+")
-        self.assertTrue(any("final answer" in line for line in frame.lines))
+        self.assertNotIn("PageUp", frame.lines[-1])
+        self.assertTrue(any("final answer" in line for line in live_frame.lines))
+        self.assertTrue(any("question" in line for line in frame.lines))
 
 
 if __name__ == "__main__":

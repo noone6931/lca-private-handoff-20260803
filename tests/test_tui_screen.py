@@ -50,7 +50,10 @@ class TuiScreenTests(unittest.TestCase):
                         if failure:
                             raise RuntimeError("boom")
                 payloads = [call.args[1] for call in write.call_args_list]
-                self.assertEqual(payloads, [b"\x1b[?2004h", b"\x1b[?2004l"])
+                self.assertEqual(
+                    payloads,
+                    [b"\x1b[?1007h\x1b[?2004h", b"\x1b[?2004l\x1b[?1007l"],
+                )
 
     def test_suspend_temporarily_restores_bracketed_paste_mode(self) -> None:
         modes = _TerminalModes(_Output())
@@ -76,7 +79,11 @@ class TuiScreenTests(unittest.TestCase):
 
         self.assertEqual(
             [call.args[1] for call in write.call_args_list],
-            [b"\x1b[?2004h", b"\x1b[?2004l", b"\x1b[?2004h"],
+            [
+                b"\x1b[?1007h\x1b[?2004h",
+                b"\x1b[?2004l\x1b[?1007l",
+                b"\x1b[?1007h\x1b[?2004h",
+            ],
         )
 
     def test_hup_and_term_exception_paths_restore_bracketed_paste_mode(self) -> None:
@@ -88,7 +95,7 @@ class TuiScreenTests(unittest.TestCase):
                     _TerminalSignalHandlers._interrupt(getattr(signal, signal_name), None)
             self.assertEqual(
                 [call.args[1] for call in write.call_args_list],
-                [b"\x1b[?2004h", b"\x1b[?2004l"],
+                [b"\x1b[?1007h\x1b[?2004h", b"\x1b[?2004l\x1b[?1007l"],
             )
 
     def test_mouse_wheel_maps_both_directions_without_platform_button5_constant(self) -> None:

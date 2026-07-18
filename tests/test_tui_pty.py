@@ -205,6 +205,46 @@ class TuiPtyTests(unittest.TestCase):
         self.assertEqual(process.returncode, 0, output.decode("utf-8", errors="replace"))
         self.assertEqual(after[3] & mask, before[3] & mask)
 
+    def test_x10_wheel_scrolls_history_without_page_keys(self) -> None:
+        master, slave = os.openpty()
+        self._set_size(slave, 18, 80)
+        process = subprocess.Popen(
+            [sys.executable, str(FIXTURE)],
+            stdin=slave,
+            stdout=slave,
+            stderr=slave,
+            env={**os.environ, "PYTHONPATH": str(ROOT / "src"), "TERM": "xterm-256color"},
+            close_fds=True,
+        )
+        output = bytearray()
+        wheel_up = b"\x1b[M\x60!!"
+        wheel_down = b"\x1b[M\x61!!"
+        try:
+            output.extend(self._read_until(master, b"LOCAL CODING AGENT", timeout=3))
+            os.write(master, b"/help\n/help\n")
+            output.extend(self._read_until(master, b"Commands:", timeout=3))
+            time.sleep(0.1)
+            output.extend(self._read_available(master))
+            os.write(master, wheel_up)
+            output.extend(self._read_until(master, b"history ", timeout=3))
+            for _ in range(20):
+                os.write(master, wheel_down)
+            os.write(master, b"/exit\n")
+            output.extend(self._drain_until_exit(master, process, timeout=3))
+            process.wait(timeout=1)
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait(timeout=2)
+            os.close(master)
+            os.close(slave)
+
+        rendered = output.decode("utf-8", errors="replace")
+        self.assertEqual(process.returncode, 0, rendered)
+        self.assertIn("history ", rendered)
+        self.assertIn("\x1b[?1007h", rendered)
+        self.assertIn("\x1b[?1007l", rendered)
+
     @staticmethod
     def _set_size(fd: int, rows: int, columns: int) -> None:
         import fcntl
