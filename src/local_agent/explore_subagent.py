@@ -7,8 +7,8 @@ from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any, Literal
 
-from .chat_runtime import call_chat_with_timeout
-from .llm import LlmError, LlmTimeoutError
+from .providers.deadline import call_chat_with_timeout
+from .providers.llm import LlmError, LlmTimeoutError
 from .patch.anchored import PatchError, resolve_workspace_path
 from .tools.base import Tool, ToolContext, ToolRegistry, ToolResult
 

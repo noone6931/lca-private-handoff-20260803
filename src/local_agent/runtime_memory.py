@@ -4,8 +4,8 @@ from __future__ import annotations
 import time
 from typing import Any, Protocol
 
-from .chat_runtime import call_chat_with_timeout
-from .llm import LlmError
+from .providers.deadline import call_chat_with_timeout
+from .providers.llm import LlmError
 from .memory_consolidation import MEMORY_CONSOLIDATION_INPUT_CHAR_LIMIT, MEMORY_CONSOLIDATION_OUTPUT_CHAR_LIMIT
 from .memory_consolidation import _append_consolidated_memory, _memory_consolidation_root, _messages_to_memory_transcript, _parse_memory_consolidation_response, _should_auto_consolidate_memory, _run_used_memory_write_tool
 

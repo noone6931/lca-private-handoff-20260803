@@ -27,7 +27,7 @@ from .compaction import summary_cache_key as _summary_cache_key
 from .compaction import summary_request_content as _summary_request_content
 from .compaction import tool_snippets as _tool_snippets
 from .compaction import truncate_recent_tool_outputs as _truncate_recent_tool_outputs
-from .chat_runtime import call_chat_with_timeout
+from .providers.deadline import call_chat_with_timeout
 from .command_dispatcher import CommandDispatcher
 from .config import AgentConfig
 from .config import normalize_approval_mode
@@ -39,10 +39,10 @@ from .evidence import first_search_result_paths
 from .evidence import evidence_root_for_path
 from .evidence import evidence_root_label
 from .finalization import FINAL_ANSWER_STEERING_HARD
-from .llm import LlmError, LlmTimeoutError, OpenAICompatibleClient
-from .provider_protocol import ProviderProtocolArtifact, provider_safe_assistant_message as _provider_safe_assistant_message
-from .provider_protocol import classify_provider_content_artifact, provider_allows_provisional_text
-from .provider_protocol import normalize_provider_dialect_message
+from .providers.llm import LlmError, LlmTimeoutError, OpenAICompatibleClient
+from .providers.protocol import ProviderProtocolArtifact, provider_safe_assistant_message as _provider_safe_assistant_message
+from .providers.protocol import classify_provider_content_artifact, provider_allows_provisional_text
+from .providers.protocol import normalize_provider_dialect_message
 from .lsp.client import close_all_clients
 from .negative_evidence import negative_claim_metrics as _negative_claim_metrics
 from .patch.anchored import display_workspace_path, PatchError, resolve_workspace_path

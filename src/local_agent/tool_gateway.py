@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from typing import Any, Mapping
 
-from .llm import LlmError, LlmTimeoutError
+from .providers.llm import LlmError, LlmTimeoutError
 from .patch.anchored import PatchError, display_workspace_path, resolve_workspace_path
 from .tools.base import ToolResult
 from .runtime_prompt import _parse_tool_arguments

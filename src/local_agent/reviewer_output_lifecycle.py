@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from copy import deepcopy
 from typing import Any, Literal
 
-from .provider_protocol import classify_provider_content_artifact
+from .providers.protocol import classify_provider_content_artifact
 from .read_only_reviewer import MAX_REVIEWER_FINDINGS
 from .read_only_reviewer import REVIEWER_FINDING_TOOL_NAME
 from .read_only_reviewer import REVIEWER_OUTPUT_TOOL_NAME

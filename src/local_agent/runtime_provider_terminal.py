@@ -4,11 +4,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol
 
-from .provider_protocol import ProviderProtocolArtifact
-from .provider_protocol import protocol_violation_message
-from .provider_protocol import protocol_violation_payload
-from .provider_terminal import assess_terminal_content
-from .provider_terminal import terminal_retry_message
+from .providers.protocol import ProviderProtocolArtifact
+from .providers.protocol import protocol_violation_message
+from .providers.protocol import protocol_violation_payload
+from .providers.terminal import assess_terminal_content
+from .providers.terminal import terminal_retry_message
 
 
 class ProviderTerminalRuntimePort(Protocol):

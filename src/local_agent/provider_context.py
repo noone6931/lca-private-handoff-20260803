@@ -8,7 +8,7 @@ import json
 import time
 from typing import Any, Protocol
 
-from .chat_runtime import call_chat_with_timeout
+from .providers.deadline import call_chat_with_timeout
 from .compaction import SUMMARY_INPUT_CHAR_LIMIT, SUMMARY_OUTPUT_CHAR_LIMIT, SUMMARY_REQUEST_TIMEOUT
 from .compaction import assistant_snippets as _assistant_snippets
 from .compaction import compaction_recent_messages as _compaction_recent_messages
@@ -27,7 +27,7 @@ from .compaction import summary_cache_key as _summary_cache_key
 from .compaction import summary_request_content as _summary_request_content
 from .compaction import tool_snippets as _tool_snippets
 from .compaction import truncate_recent_tool_outputs as _truncate_recent_tool_outputs
-from .llm import LlmError
+from .providers.llm import LlmError
 from .memory_consolidation import _messages_to_memory_transcript
 from .path_rules import candidate_paths_for_path_rules, matching_path_rule_context, render_path_rule_metadata
 from .planner import render_planner_explore_context

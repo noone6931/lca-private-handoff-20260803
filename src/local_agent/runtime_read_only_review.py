@@ -6,7 +6,7 @@ from typing import Any, Protocol
 
 from .document_consistency import validate_document_consistency_assessment
 from .explore_handoff import build_explore_handoff
-from .provider_protocol import classify_provider_content_artifact
+from .providers.protocol import classify_provider_content_artifact
 from .read_only_reviewer import candidate_claim_units
 from .read_only_reviewer import candidate_claim_projection_issues
 from .read_only_reviewer import MAX_REVIEWER_FINDINGS

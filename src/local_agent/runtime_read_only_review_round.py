@@ -8,10 +8,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
-from .chat_runtime import call_chat_with_timeout
+from .providers.deadline import call_chat_with_timeout
 from .document_consistency import is_document_consistency_rejection_code
 from .implementation_readiness import is_implementation_readiness_rejection_code
-from .llm import LlmError, LlmTimeoutError
+from .providers.llm import LlmError, LlmTimeoutError
 from .read_only_reviewer import MAX_REVIEWER_CAPACITY_DIRECTIVES
 from .read_only_reviewer import MAX_REVIEWER_FINDINGS
 from .read_only_reviewer import MAX_REVIEWER_OUTPUT_LIFECYCLE_ERRORS
@@ -21,7 +21,7 @@ from .read_only_reviewer import ReviewerResult
 from .read_only_reviewer import ReviewerValidationError
 from .read_only_reviewer import reviewer_output_tool_schemas
 from .read_only_reviewer import reviewer_repair_message
-from .provider_protocol import normalize_provider_dialect_message
+from .providers.protocol import normalize_provider_dialect_message
 from .reviewer_output_lifecycle import invalidated_document_finding_claim_ids
 from .reviewer_output_lifecycle import parse_reviewer_output_turn
 from .reviewer_output_lifecycle import reviewer_assistant_tool_message

@@ -35,9 +35,9 @@ OWNER_COMPLEXITY_CEILINGS = {
     "src/local_agent/execution_policy.py": 170,
     "src/local_agent/tools/base.py": 607,
     "src/local_agent/command_dispatcher.py": 221,
-    "src/local_agent/provider_stream.py": 340,
-    "src/local_agent/chat_runtime.py": 179,
-    "src/local_agent/llm.py": 226,
+    "src/local_agent/providers/stream.py": 340,
+    "src/local_agent/providers/deadline.py": 179,
+    "src/local_agent/providers/llm.py": 226,
     "src/local_agent/protocol/events.py": 228,
     "src/local_agent/frontends/terminal/renderer.py": 165,
     "src/local_agent/frontends/terminal/assistant.py": 100,
@@ -45,7 +45,7 @@ OWNER_COMPLEXITY_CEILINGS = {
     "src/local_agent/frontends/tui/markdown.py": 120,
     "src/local_agent/runtime/assistant_message.py": 170,
     "src/local_agent/runtime/run_output.py": 130,
-    "src/local_agent/provider_protocol.py": 379,
+    "src/local_agent/providers/protocol.py": 379,
     "src/local_agent/runtime_prompt.py": 490,
     "src/local_agent/run_collector.py": 668,
     "src/local_agent/explore_subagent.py": 561,
@@ -374,17 +374,17 @@ class ArchitectureBoundaryTests(unittest.TestCase):
             for path in production
             if "class _SseDecoder" in path.read_text(encoding="utf-8")
         ]
-        self.assertEqual(parser_owners, ["src/local_agent/provider_stream.py"])
+        self.assertEqual(parser_owners, ["src/local_agent/providers/stream.py"])
 
-        owner = (ROOT / "src/local_agent/provider_stream.py").read_text(encoding="utf-8")
-        llm = (ROOT / "src/local_agent/llm.py").read_text(encoding="utf-8")
+        owner = (ROOT / "src/local_agent/providers/stream.py").read_text(encoding="utf-8")
+        llm = (ROOT / "src/local_agent/providers/llm.py").read_text(encoding="utf-8")
         runtime = (ROOT / "src/local_agent/agent.py").read_text(encoding="utf-8")
         prompt = (ROOT / "src/local_agent/runtime_prompt.py").read_text(encoding="utf-8")
         renderer_path = ROOT / "src/local_agent/frontends/terminal/assistant.py"
         renderer = renderer_path.read_text(encoding="utf-8")
         self.assertNotIn("from .agent", owner)
         self.assertNotIn("from .runtime_", owner)
-        self.assertIn("from .provider_stream import iter_chat_completion_response", llm)
+        self.assertIn("from .stream import iter_chat_completion_response", llm)
         self.assertNotIn("class _SseDecoder", runtime)
         self.assertNotIn("data: [DONE]", runtime)
         self.assertEqual(runtime.count("use_stream=True"), 1)

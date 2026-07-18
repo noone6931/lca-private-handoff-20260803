@@ -15,7 +15,7 @@ from .frontends.tui import TuiMailbox
 from .frontends.tui import prepend_initial_prompt
 from .frontends.tui import run_tui
 from .frontends.tui import tui_is_supported
-from .llm import LlmError
+from .providers.llm import LlmError
 from .protocol.commands import CommandResult
 from .protocol.commands import new_command
 from .session.jsonl_store import SessionError

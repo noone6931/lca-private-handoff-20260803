@@ -17,7 +17,7 @@ from typing import Any, Iterable, Mapping
 from .agent import AgentRuntime
 from .config import AgentConfig
 from .patch.anchored import hash_text
-from .provider_protocol import classify_provider_content_artifact
+from .providers.protocol import classify_provider_content_artifact
 
 
 DEFAULT_TASKS_DIR = Path(__file__).resolve().parents[2] / "benchmarks" / "tasks"
