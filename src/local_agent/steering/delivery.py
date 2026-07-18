@@ -5,7 +5,7 @@ from ..completion_audit import render_completion_audit_message
 from ..evidence_status import content_has_evidence_status_label as _shared_content_has_evidence_status_label
 from ..review.patch import render_patch_review_message
 from ..review.patch import review_patch
-from ..task_contract import requires_no_edit_final_hygiene
+from ..workflows.contracts import requires_no_edit_final_hygiene
 from .models import *  # noqa: F403
 from .evidence import request_mentions_todo
 from .evidence import tool_names_since

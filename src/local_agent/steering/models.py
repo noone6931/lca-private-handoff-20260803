@@ -7,7 +7,7 @@ from enum import Enum
 from typing import Any, Protocol
 
 from ..requirement_evidence import RequirementEvidence
-from ..task_contract import RequirementContract
+from ..workflows.contracts import RequirementContract
 from ..tool_observation import ToolResultSummary
 from ..verification_plan import VerificationPlan
 from ..evidence_status import EVIDENCE_STATUS_LABELS

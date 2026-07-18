@@ -3,11 +3,11 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
-from ..tool_choice_queue import tool_choice_signature_count
-from ..tool_choice_queue import tool_choice_steering_identity
-from ..tool_choice_queue import tool_choice_steering_message
-from ..tool_choice_queue import tool_choice_steering_signature
-from ..workflow_profile import workflow_profile_for_run
+from ..workflows.tool_choice.queue import tool_choice_signature_count
+from ..workflows.tool_choice.queue import tool_choice_steering_identity
+from ..workflows.tool_choice.queue import tool_choice_steering_message
+from ..workflows.tool_choice.queue import tool_choice_steering_signature
+from ..workflows.profile import workflow_profile_for_run
 
 
 MAX_TOOL_CHOICE_QUEUE_STEERS_PER_SIGNATURE = 1

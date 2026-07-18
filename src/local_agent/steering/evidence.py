@@ -8,10 +8,10 @@ from ..negative_evidence import negative_claim_metrics
 from ..negative_evidence import render_negative_existence_issues
 from ..negative_evidence import unsupported_negative_existence_claims
 from ..negative_evidence import unsupported_unlocated_escalations
-from ..read_only_root_coverage import read_only_root_coverage
+from ..workflows.root_coverage import read_only_root_coverage
 from ..requirement_evidence import requirement_citation_examples
 from ..requirement_evidence import requirement_fact_citation_issues
-from ..task_contract import is_inspection_forbidden
+from ..workflows.contracts import is_inspection_forbidden
 from .models import *  # noqa: F403
 from .models import _EXPLICIT_TOOL_NON_EXECUTION
 

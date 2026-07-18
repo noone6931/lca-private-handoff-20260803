@@ -8,7 +8,7 @@ from pathlib import Path
 from .session.state import default_config_root
 from .session.state import resolve_state_root
 from .session.state import workspace_state_dir
-from .workflow_profile import normalize_workflow_profile_selector
+from .workflows.profile import normalize_workflow_profile_selector
 
 
 class ConfigError(RuntimeError):

@@ -46,7 +46,7 @@ from .providers.protocol import normalize_provider_dialect_message
 from .lsp.client import close_all_clients
 from .evidence.negative import negative_claim_metrics as _negative_claim_metrics
 from .patch.anchored import display_workspace_path, PatchError, resolve_workspace_path
-from .planner import render_planner_explore_context
+from .workflows.planner import render_planner_explore_context
 from .review.patch import review_input_summary
 from .review.patch import review_input_metadata
 from .workspace.path_rules import candidate_paths_for_path_rules
@@ -60,12 +60,12 @@ from .runtime.system_prompt import WORKFLOW_NUDGE
 from .run_context import RunContext
 from .session.evidence import SessionEvidenceCache
 from .session.evidence import query_identity as _session_evidence_query_identity
-from .soft_tool_requirement import advance_soft_tool_requirement
-from .soft_tool_requirement import initial_soft_tool_requirement
-from .soft_tool_requirement import observe_soft_tool_requirement
-from .soft_tool_requirement import SoftToolRequirement
-from .soft_tool_requirement import soft_tool_requirement_message
-from .soft_tool_requirement import soft_tool_requirement_stop_message
+from .workflows.soft_requirement import advance_soft_tool_requirement
+from .workflows.soft_requirement import initial_soft_tool_requirement
+from .workflows.soft_requirement import observe_soft_tool_requirement
+from .workflows.soft_requirement import SoftToolRequirement
+from .workflows.soft_requirement import soft_tool_requirement_message
+from .workflows.soft_requirement import soft_tool_requirement_stop_message
 from .workspace.startup import build_system_prompt
 from .workspace.startup import load_sticky_rules
 from .workspace.startup import workspace_roots_context
@@ -110,7 +110,7 @@ from .steering.tool_loop import ToolLoopSteeringRegistry
 from .steering.tool_loop import is_filename_search_misuse
 from .steering.termination import synthetic_tool_stop_message
 from .steering.termination import termination_message
-from .task_contract import generate_requirement_contract, render_contract_context, requires_no_edit_final_hygiene
+from .workflows.contracts import generate_requirement_contract, render_contract_context, requires_no_edit_final_hygiene
 from .test_planner import plan_narrow_test
 from .tools import create_default_registry, create_runtime_registry
 from .tools.base import ToolContext, ToolResult

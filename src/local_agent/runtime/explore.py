@@ -8,11 +8,11 @@ from typing import Any, Protocol
 
 from ..patch.anchored import PatchError
 from ..patch.anchored import resolve_workspace_path
-from ..read_only_explore import OBSERVATION_TOOLS
-from ..read_only_explore import ReadOnlyExploreDecision
-from ..read_only_explore import evaluate_read_only_explore
+from ..workflows.explore import OBSERVATION_TOOLS
+from ..workflows.explore import ReadOnlyExploreDecision
+from ..workflows.explore import evaluate_read_only_explore
 from ..tool_observation import ToolResultSummary
-from ..workflow_profile import workflow_read_only_explore_enabled
+from ..workflows.profile import workflow_read_only_explore_enabled
 
 
 class ReadOnlyExploreRuntimePort(Protocol):

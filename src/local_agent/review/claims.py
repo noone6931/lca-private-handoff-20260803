@@ -11,7 +11,7 @@ from .types import MAX_CLAIM_TOTAL_CHARS
 from .types import MAX_CLAIM_UNIT_CHARS
 from .types import MAX_CLAIM_UNITS
 from .types import MAX_TRANSPORT_RESIDUAL_PRUNE_CLAIMS
-from ..task_contract import RequirementContract
+from ..workflows.contracts import RequirementContract
 
 
 def should_review_read_only_candidate(contract: RequirementContract | None, request: str | None) -> bool:

@@ -14,9 +14,9 @@ from .negative import render_negative_existence_issues
 from .negative import unsupported_negative_existence_claims
 from .requirements import RequirementEvidence
 from .requirements import requirement_fact_citation_issues
-from ..task_contract import RequirementContract
-from ..tool_choice_queue import CODE_EVIDENCE_TOOL_NAMES
-from ..tool_choice_queue import DOCUMENT_ONLY_TOOL_NAMES
+from ..workflows.contracts import RequirementContract
+from ..workflows.tool_choice.queue import CODE_EVIDENCE_TOOL_NAMES
+from ..workflows.tool_choice.queue import DOCUMENT_ONLY_TOOL_NAMES
 from ..tool_observation import ToolResultSummary
 from .timeline import results_after_last_write
 from .timeline import successful_tool_after_last_write

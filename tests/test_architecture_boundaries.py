@@ -11,12 +11,12 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_PRODUCTION_MODULE_LINE_LIMIT = 900
 OWNER_COMPLEXITY_CEILINGS = {
-    "src/local_agent/tool_choice_queue.py": 185,
+    "src/local_agent/workflows/tool_choice/queue.py": 185,
     "src/local_agent/review/read_only.py": 42,
-    "src/local_agent/tool_choice_decision.py": 333,
-    "src/local_agent/tool_choice_read_only.py": 779,
-    "src/local_agent/tool_choice_implementation.py": 310,
-    "src/local_agent/tool_choice_task_classification.py": 69,
+    "src/local_agent/workflows/tool_choice/decision.py": 333,
+    "src/local_agent/workflows/tool_choice/read_only.py": 779,
+    "src/local_agent/workflows/tool_choice/implementation.py": 310,
+    "src/local_agent/workflows/tool_choice/classification.py": 69,
     "src/local_agent/review/types.py": 235,
     "src/local_agent/review/claims.py": 495,
     "src/local_agent/review/contract.py": 372,
@@ -30,7 +30,7 @@ OWNER_COMPLEXITY_CEILINGS = {
     "src/local_agent/tools/test_runner_policy.py": 217,
     "src/local_agent/steering/pre_review.py": 83,
     "src/local_agent/steering/final_answer.py": 59,
-    "src/local_agent/workflow_profile.py": 165,
+    "src/local_agent/workflows/profile.py": 165,
     "src/local_agent/runtime/workflow_profile.py": 44,
     "src/local_agent/execution_policy.py": 170,
     "src/local_agent/tools/base.py": 607,
@@ -48,7 +48,7 @@ OWNER_COMPLEXITY_CEILINGS = {
     "src/local_agent/providers/protocol.py": 379,
     "src/local_agent/runtime/prompt.py": 490,
     "src/local_agent/run_collector.py": 668,
-    "src/local_agent/explore_subagent.py": 561,
+    "src/local_agent/workflows/explore_subagent.py": 561,
     "src/local_agent/lsp/workspace_edit.py": 380,
     "src/local_agent/tools/lsp_rename.py": 187,
     "src/local_agent/tools/lsp_code_action.py": 430,
@@ -61,9 +61,9 @@ LEGACY_COMPLEXITY_DEBT_CEILINGS = {
     "src/local_agent/review/handoff.py": 991,
     "src/local_agent/benchmark.py": 989,
     "src/local_agent/steering/evidence.py": 985,
-    "src/local_agent/read_only_explore.py": 981,
+    "src/local_agent/workflows/explore.py": 981,
     "src/local_agent/review/document_consistency.py": 939,
-    "src/local_agent/task_contract.py": 935,
+    "src/local_agent/workflows/contracts.py": 935,
 }
 
 
@@ -148,10 +148,10 @@ class ArchitectureBoundaryTests(unittest.TestCase):
         self.assertNotIn("class ProviderContextMixin:", provider_context)
 
     def test_tool_choice_steering_helpers_live_with_queue_owner(self) -> None:
-        queue = (ROOT / "src/local_agent/tool_choice_queue.py").read_text(encoding="utf-8")
-        decision = (ROOT / "src/local_agent/tool_choice_decision.py").read_text(encoding="utf-8")
+        queue = (ROOT / "src/local_agent/workflows/tool_choice/queue.py").read_text(encoding="utf-8")
+        decision = (ROOT / "src/local_agent/workflows/tool_choice/decision.py").read_text(encoding="utf-8")
         gateway = (ROOT / "src/local_agent/tool_gateway.py").read_text(encoding="utf-8")
-        self.assertIn("from .tool_choice_decision import tool_choice_steering_message", queue)
+        self.assertIn("from .decision import tool_choice_steering_message", queue)
         self.assertIn("def tool_choice_steering_message", decision)
         self.assertIn("def tool_choice_steering_signature", decision)
         self.assertNotIn("def _tool_choice_steering_message", gateway)
@@ -185,7 +185,7 @@ class ArchitectureBoundaryTests(unittest.TestCase):
         self.assertIs(reviewer.parse_reviewer_payload, reviewer_validation.parse_reviewer_payload)
         self.assertIs(reviewer.reviewer_rewrite_message, reviewer_validation.reviewer_rewrite_message)
         self.assertIs(reviewer.rewrite_complies_with_review, reviewer_validation.rewrite_complies_with_review)
-        content = (ROOT / "src/local_agent/tool_choice_queue.py").read_text(encoding="utf-8")
+        content = (ROOT / "src/local_agent/workflows/tool_choice/queue.py").read_text(encoding="utf-8")
         self.assertLess(
             content.index("if is_inspection_forbidden(prompt):"),
             content.index("read_only_decision = evaluate_read_only_phase("),
@@ -196,54 +196,55 @@ class ArchitectureBoundaryTests(unittest.TestCase):
         )
 
     def test_split_owner_import_direction_is_acyclic_and_runtime_free(self) -> None:
-        split_modules = {
-            "tool_choice_queue",
-            "tool_choice_decision",
-            "tool_choice_read_only",
-            "tool_choice_implementation",
-            "tool_choice_task_classification",
-            "read_only_reviewer",
-            "read_only_reviewer_types",
-            "read_only_reviewer_claims",
-            "read_only_reviewer_contract",
-            "read_only_reviewer_validation",
-        }
-        edges: dict[str, set[str]] = {name: set() for name in split_modules}
-        for name in split_modules:
-            path = ROOT / f"src/local_agent/{name}.py"
-            tree = ast.parse(path.read_text(encoding="utf-8"))
-            for node in ast.walk(tree):
-                if not isinstance(node, ast.ImportFrom) or node.level != 1 or not node.module:
-                    continue
-                imported = node.module.split(".", 1)[0]
-                if imported in split_modules:
-                    edges[name].add(imported)
-                self.assertFalse(
-                    name not in {"tool_choice_queue", "read_only_reviewer"}
-                    and (imported in {"tool_choice_queue", "read_only_reviewer"} or imported.startswith("runtime_"))
-                )
-        visiting: set[str] = set()
-        visited: set[str] = set()
+        groups = (
+            {
+                "queue": "src/local_agent/workflows/tool_choice/queue.py",
+                "decision": "src/local_agent/workflows/tool_choice/decision.py",
+                "read_only": "src/local_agent/workflows/tool_choice/read_only.py",
+                "implementation": "src/local_agent/workflows/tool_choice/implementation.py",
+                "classification": "src/local_agent/workflows/tool_choice/classification.py",
+            },
+            {
+                "read_only": "src/local_agent/review/read_only.py",
+                "types": "src/local_agent/review/types.py",
+                "claims": "src/local_agent/review/claims.py",
+                "contract": "src/local_agent/review/contract.py",
+                "validation": "src/local_agent/review/validation.py",
+            },
+        )
+        for modules in groups:
+            edges: dict[str, set[str]] = {name: set() for name in modules}
+            for name, relative_path in modules.items():
+                tree = ast.parse((ROOT / relative_path).read_text(encoding="utf-8"))
+                for node in ast.walk(tree):
+                    if not isinstance(node, ast.ImportFrom) or node.level != 1 or not node.module:
+                        continue
+                    imported = node.module.split(".", 1)[0]
+                    if imported in modules:
+                        edges[name].add(imported)
+                    self.assertFalse(imported.startswith("runtime"))
+            visiting: set[str] = set()
+            visited: set[str] = set()
 
-        def visit(name: str) -> None:
-            if name in visited:
-                return
-            self.assertNotIn(name, visiting, f"split owner import cycle at {name}")
-            visiting.add(name)
-            for dependency in edges[name]:
-                visit(dependency)
-            visiting.remove(name)
-            visited.add(name)
+            def visit(name: str) -> None:
+                if name in visited:
+                    return
+                self.assertNotIn(name, visiting, f"split owner import cycle at {name}")
+                visiting.add(name)
+                for dependency in edges[name]:
+                    visit(dependency)
+                visiting.remove(name)
+                visited.add(name)
 
-        for name in split_modules:
-            visit(name)
+            for name in modules:
+                visit(name)
 
     def test_workflow_profile_owner_and_runtime_facade_have_one_way_dependencies(self) -> None:
-        owner = (ROOT / "src/local_agent/workflow_profile.py").read_text(encoding="utf-8")
+        owner = (ROOT / "src/local_agent/workflows/profile.py").read_text(encoding="utf-8")
         facade = (ROOT / "src/local_agent/runtime/workflow_profile.py").read_text(encoding="utf-8")
         runtime = (ROOT / "src/local_agent/agent.py").read_text(encoding="utf-8")
         self.assertNotIn("from .runtime_", owner)
-        self.assertIn("from ..workflow_profile import", facade)
+        self.assertIn("from ..workflows.profile import", facade)
         self.assertIn("from .review import ReadOnlyReviewPhase", facade)
         self.assertNotIn("implementation_readiness_required", runtime)
         self.assertNotIn("if self._config.workflow_profile", runtime)
@@ -410,7 +411,7 @@ class ArchitectureBoundaryTests(unittest.TestCase):
         self.assertNotIn("arguments", delta_source)
 
     def test_explore_subagent_is_opt_in_readonly_nonrecursive_and_runtime_thin(self) -> None:
-        owner = (ROOT / "src/local_agent/explore_subagent.py").read_text(encoding="utf-8")
+        owner = (ROOT / "src/local_agent/workflows/explore_subagent.py").read_text(encoding="utf-8")
         runtime = (ROOT / "src/local_agent/agent.py").read_text(encoding="utf-8")
         tools = importlib.import_module("local_agent.tools")
         subagent = importlib.import_module("local_agent.explore_subagent")
@@ -503,13 +504,13 @@ class ArchitectureBoundaryTests(unittest.TestCase):
 
     def test_runtime_strategy_owners_do_not_reintroduce_business_keyword_guards(self) -> None:
         strategy_files = (
-            ROOT / "src/local_agent/task_contract.py",
-            ROOT / "src/local_agent/tool_choice_queue.py",
-            ROOT / "src/local_agent/tool_choice_decision.py",
-            ROOT / "src/local_agent/tool_choice_read_only.py",
-            ROOT / "src/local_agent/tool_choice_implementation.py",
-            ROOT / "src/local_agent/tool_choice_task_classification.py",
-            ROOT / "src/local_agent/read_only_explore.py",
+            ROOT / "src/local_agent/workflows/contracts.py",
+            ROOT / "src/local_agent/workflows/tool_choice/queue.py",
+            ROOT / "src/local_agent/workflows/tool_choice/decision.py",
+            ROOT / "src/local_agent/workflows/tool_choice/read_only.py",
+            ROOT / "src/local_agent/workflows/tool_choice/implementation.py",
+            ROOT / "src/local_agent/workflows/tool_choice/classification.py",
+            ROOT / "src/local_agent/workflows/explore.py",
             ROOT / "src/local_agent/review/read_only.py",
             ROOT / "src/local_agent/review/claims.py",
             ROOT / "src/local_agent/review/contract.py",
@@ -519,7 +520,7 @@ class ArchitectureBoundaryTests(unittest.TestCase):
             ROOT / "src/local_agent/review/output_lifecycle.py",
             ROOT / "src/local_agent/steering/evidence.py",
             ROOT / "src/local_agent/review/readiness.py",
-            ROOT / "src/local_agent/workflow_profile.py",
+            ROOT / "src/local_agent/workflows/profile.py",
             ROOT / "src/local_agent/runtime/workflow_profile.py",
         )
         forbidden = re.compile(

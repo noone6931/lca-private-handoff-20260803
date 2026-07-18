@@ -4,8 +4,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Literal, Mapping, Protocol
 
-from ..tool_choice_directive import ToolChoiceDirectiveAction
-from ..tool_choice_queue import ToolChoiceDecision
+from ..workflows.tool_choice.directive import ToolChoiceDirectiveAction
+from ..workflows.tool_choice.queue import ToolChoiceDecision
 
 
 @dataclass(frozen=True)

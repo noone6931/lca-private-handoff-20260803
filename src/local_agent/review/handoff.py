@@ -20,9 +20,9 @@ from ..evidence.requirements import document_locator_excerpt
 from ..evidence.requirements import parse_document_line_range
 from ..evidence.requirements import parse_document_locators
 from ..evidence.requirements import RequirementEvidence
-from ..read_only_root_coverage import read_only_root_coverage
+from ..workflows.root_coverage import read_only_root_coverage
 from ..steering.final_answer import SourceEvidence
-from ..task_contract import RequirementContract
+from ..workflows.contracts import RequirementContract
 from ..tool_observation import ToolResultSummary
 
 

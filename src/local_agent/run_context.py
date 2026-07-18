@@ -12,22 +12,22 @@ from .finalization import FinalizationCoordinator
 from .finalization import MAX_FORCED_FINAL_ANSWER_CONTINUATIONS
 from .finalization import UnresolvedFinalAnswerGate
 from .run_collector import RunCollector
-from .soft_tool_requirement import SoftToolRequirement
+from .workflows.soft_requirement import SoftToolRequirement
 from .steering.tool_loop import ToolLoopSteeringRegistry
-from .task_contract import RequirementContract
-from .tool_choice_directive import ToolChoiceDirectiveOwner
-from .tool_choice_queue import ToolChoiceQueue
+from .workflows.contracts import RequirementContract
+from .workflows.tool_choice.directive import ToolChoiceDirectiveOwner
+from .workflows.tool_choice.queue import ToolChoiceQueue
 from .tool_observation import ToolResultSummary
 from .evidence.verification import VerificationPlan
 from .test_planner import TestPlan
 from .session.evidence import SessionEvidenceReuse
 from .session.continuity import PendingTaskContinuation
-from .temporary_tool_directive import DirectiveTransition
-from .temporary_tool_directive import TemporaryToolDirectiveOwner
+from .workflows.temporary_directive import DirectiveTransition
+from .workflows.temporary_directive import TemporaryToolDirectiveOwner
 from .review.read_only import ReadOnlyReviewState
 from .runtime.run_output import RunOutputLifecycle
-from .workflow_profile import WorkflowProfileResolution
-from .workflow_profile import resolve_workflow_profile
+from .workflows.profile import WorkflowProfileResolution
+from .workflows.profile import resolve_workflow_profile
 
 
 @dataclass

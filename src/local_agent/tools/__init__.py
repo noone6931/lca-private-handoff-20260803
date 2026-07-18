@@ -40,7 +40,7 @@ def create_runtime_registry(
     registry = base_registry or create_default_registry()
     if not enable_subagents:
         return registry
-    from ..explore_subagent import delegate_explore_tool
+    from ..workflows.explore_subagent import delegate_explore_tool
 
     child_registry = create_default_registry()
     return registry.extended(

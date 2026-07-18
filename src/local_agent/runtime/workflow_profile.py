@@ -5,8 +5,8 @@ from typing import Any
 
 from ..review.read_only import ReviewerPhaseOutcome
 from .review import ReadOnlyReviewPhase
-from ..workflow_profile import workflow_read_only_review_enabled
-from ..workflow_profile import workflow_safe_partial_enabled
+from ..workflows.profile import workflow_read_only_review_enabled
+from ..workflows.profile import workflow_safe_partial_enabled
 
 
 class WorkflowReadOnlyReviewPhase(ReadOnlyReviewPhase):

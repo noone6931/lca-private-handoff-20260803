@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, Protocol, TYPE_CHECKING
 
 from ..patch.anchored import PatchError, hash_text, resolve_workspace_path
-from ..task_contract import RequirementContract
+from ..workflows.contracts import RequirementContract
 from ..tools.files import session_patch_records
 from ..tools.git import capture_git_baseline
 from ..verification_timeline import effective_workspace_write_paths

@@ -12,7 +12,7 @@ from ..session.evidence import MAX_SESSION_EVIDENCE_JOURNAL_EVENTS
 from ..session.evidence import is_journal_safe_cached_evidence
 from ..session.evidence import serialize_cached_evidence_entry
 from ..test_planner import plan_narrow_test
-from ..tool_choice_queue import session_evidence_reuse_directive
+from ..workflows.tool_choice.queue import session_evidence_reuse_directive
 from ..tool_observation import ToolResultSummary
 from ..tools.base import ToolResult
 from ..tools.relevance import is_code_implementation_request, request_mentions_config_or_path

@@ -4,7 +4,7 @@ from typing import Any, Protocol
 
 from ..run_context import RunContext
 from ..steering.models import SteeringDecision
-from ..temporary_tool_directive import DirectiveTransition
+from ..workflows.temporary_directive import DirectiveTransition
 
 
 class RuntimeToolDirectivePort(Protocol):

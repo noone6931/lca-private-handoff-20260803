@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal, TYPE_CHECKING
 
-from ..task_contract import RequirementContract
+from ..workflows.contracts import RequirementContract
 from .timeline import results_after_last_write
 from .timeline import code_evidence_for_paths
 from .timeline import successful_nonempty_git_diff_after_last_write
