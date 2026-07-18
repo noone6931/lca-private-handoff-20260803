@@ -57,7 +57,7 @@ OWNER_COMPLEXITY_CEILINGS = {
 LEGACY_COMPLEXITY_DEBT_CEILINGS = {
     "src/local_agent/agent.py": 1792,
     "src/local_agent/tools/lsp.py": 1166,
-    "src/local_agent/completion_audit.py": 1093,
+    "src/local_agent/evidence/completion.py": 1093,
     "src/local_agent/explore_handoff.py": 991,
     "src/local_agent/benchmark.py": 989,
     "src/local_agent/steering/evidence.py": 985,
@@ -435,7 +435,7 @@ class ArchitectureBoundaryTests(unittest.TestCase):
         workspace_edit = (ROOT / "src/local_agent/lsp/workspace_edit.py").read_text(encoding="utf-8")
         rename_tool = (ROOT / "src/local_agent/tools/lsp_rename.py").read_text(encoding="utf-8")
         legacy_lsp = (ROOT / "src/local_agent/tools/lsp.py").read_text(encoding="utf-8")
-        verification = (ROOT / "src/local_agent/verification_plan.py").read_text(encoding="utf-8")
+        verification = (ROOT / "src/local_agent/evidence/verification.py").read_text(encoding="utf-8")
         runtime = (ROOT / "src/local_agent/agent.py").read_text(encoding="utf-8")
 
         registered = tools.create_default_registry()
@@ -455,7 +455,7 @@ class ArchitectureBoundaryTests(unittest.TestCase):
         owner = (ROOT / "src/local_agent/tools/lsp_code_action.py").read_text(encoding="utf-8")
         client = (ROOT / "src/local_agent/lsp/client.py").read_text(encoding="utf-8")
         legacy_lsp = (ROOT / "src/local_agent/tools/lsp.py").read_text(encoding="utf-8")
-        verification = (ROOT / "src/local_agent/verification_plan.py").read_text(encoding="utf-8")
+        verification = (ROOT / "src/local_agent/evidence/verification.py").read_text(encoding="utf-8")
         runtime = (ROOT / "src/local_agent/agent.py").read_text(encoding="utf-8")
         definitions = [
             path.relative_to(ROOT).as_posix()

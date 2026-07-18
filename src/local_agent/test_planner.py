@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Literal
 
 from .tool_observation import ToolResultSummary
-from .verification_timeline import last_workspace_write_index
+from .evidence.timeline import last_workspace_write_index
 
 
 TestBreadth = Literal["module", "project", "blocked"]

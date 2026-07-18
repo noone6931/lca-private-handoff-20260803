@@ -31,7 +31,7 @@ from .providers.llm import LlmError
 from .memory_consolidation import _messages_to_memory_transcript
 from .workspace.path_rules import candidate_paths_for_path_rules, matching_path_rule_context, render_path_rule_metadata
 from .planner import render_planner_explore_context
-from .requirement_evidence import render_pinned_requirement_evidence
+from .evidence.requirements import render_pinned_requirement_evidence
 from .runtime.prompt import _latest_user_content, _messages_with_runtime_context
 from .tools.base import VisionInspectionUnavailableError, tool_state_dir
 

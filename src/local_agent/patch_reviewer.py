@@ -6,8 +6,8 @@ from typing import Any, Literal, Mapping
 
 from .task_contract import RequirementContract
 from .tool_observation import ToolResultSummary
-from .verification_timeline import results_after_last_write
-from .verification_timeline import workspace_write_happened
+from .evidence.timeline import results_after_last_write
+from .evidence.timeline import workspace_write_happened
 
 
 ReviewSeverity = Literal["blocking", "warning"]

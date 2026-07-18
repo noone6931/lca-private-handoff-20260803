@@ -15,11 +15,11 @@ from .document_consistency import explicit_reconciliation_excerpt
 from .document_identity import canonical_root_identity
 from .document_identity import document_artifact_identity
 from .evidence import EvidenceRecord
-from .requirement_evidence import DocumentLocator
-from .requirement_evidence import document_locator_excerpt
-from .requirement_evidence import parse_document_line_range
-from .requirement_evidence import parse_document_locators
-from .requirement_evidence import RequirementEvidence
+from .evidence.requirements import DocumentLocator
+from .evidence.requirements import document_locator_excerpt
+from .evidence.requirements import parse_document_line_range
+from .evidence.requirements import parse_document_locators
+from .evidence.requirements import RequirementEvidence
 from .read_only_root_coverage import read_only_root_coverage
 from .steering.final_answer import SourceEvidence
 from .task_contract import RequirementContract

@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from .design_evidence import DesignEvidenceCoverageSteerer
+from .evidence.design import DesignEvidenceCoverageSteerer
 from .evidence import EvidenceLedger
 from .evidence import EvidenceRecord
 from .finalization import FINAL_ANSWER_STEERING_PRESENTATION
@@ -18,7 +18,7 @@ from .task_contract import RequirementContract
 from .tool_choice_directive import ToolChoiceDirectiveOwner
 from .tool_choice_queue import ToolChoiceQueue
 from .tool_observation import ToolResultSummary
-from .verification_plan import VerificationPlan
+from .evidence.verification import VerificationPlan
 from .test_planner import TestPlan
 from .session.evidence import SessionEvidenceReuse
 from .session.continuity import PendingTaskContinuation

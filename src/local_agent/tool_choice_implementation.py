@@ -12,11 +12,11 @@ from .tool_choice_decision import _successful_tool_result
 from .tool_choice_decision import has_code_evidence
 from .tool_observation import ToolResultSummary
 from .tool_choice_task_classification import is_implementation_task
-from .verification_timeline import last_workspace_write_index
-from .verification_timeline import result_changed_workspace
-from .verification_timeline import successful_tool_after_last_write
-from .verification_timeline import workspace_write_happened
-from .verification_timeline import WRITE_TOOL_NAMES
+from .evidence.timeline import last_workspace_write_index
+from .evidence.timeline import result_changed_workspace
+from .evidence.timeline import successful_tool_after_last_write
+from .evidence.timeline import workspace_write_happened
+from .evidence.timeline import WRITE_TOOL_NAMES
 
 
 CANDIDATE_STATE_TOOL_NAMES = frozenset(

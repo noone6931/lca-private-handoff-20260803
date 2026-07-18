@@ -39,7 +39,7 @@ from .tool_choice_read_only import _preferred_evidence_tools
 from .tool_choice_read_only import evaluate_read_only_phase
 from .tool_choice_task_classification import is_read_only_task
 from .tool_observation import ToolResultSummary
-from .verification_timeline import WRITE_TOOL_NAMES
+from .evidence.timeline import WRITE_TOOL_NAMES
 
 
 class RequiredToolGate:

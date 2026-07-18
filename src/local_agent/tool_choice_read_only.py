@@ -5,12 +5,12 @@ import re
 from collections.abc import Iterable
 from typing import Any
 
-from .design_evidence import missing_design_evidence_roots
+from .evidence.design import missing_design_evidence_roots
 from .document_artifacts import DocumentArtifactRequirement
 from .document_artifacts import document_artifact_coverage
 from .document_artifacts import document_material_targets
 from .inventory_contract import inventory_glob_arguments_for_roots, inventory_glob_call_hint
-from .negative_evidence import allowed_tools_for_negative_claims, parse_negative_evidence_claims, unsupported_negative_existence_claims
+from .evidence.negative import allowed_tools_for_negative_claims, parse_negative_evidence_claims, unsupported_negative_existence_claims
 from .read_only_explore import BOUNDED_EXPLORE_TOOLS
 from .read_only_explore import evaluate_read_only_explore
 from .tool_choice_decision import CODE_EVIDENCE_ALLOWED_TOOL_NAMES

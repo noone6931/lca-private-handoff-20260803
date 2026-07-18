@@ -5,17 +5,17 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
 
-from .patch.anchored import display_workspace_path
-from .patch.anchored import PatchError
-from .patch.anchored import resolve_workspace_path
-from .requirement_evidence import is_requirement_source_path
-from .requirement_evidence import RequirementEvidence
-from .requirement_evidence import update_requirement_evidence
-from .steering.final_answer import SourceEvidence
-from .tools.argument_normalization import normalize_compatibility_arguments
-from .tools.base import ToolResult
-from .tools.relevance import is_low_relevance_patch_path
-from .tools.relevance import path_matches_any
+from ..patch.anchored import display_workspace_path
+from ..patch.anchored import PatchError
+from ..patch.anchored import resolve_workspace_path
+from .requirements import is_requirement_source_path
+from .requirements import RequirementEvidence
+from .requirements import update_requirement_evidence
+from ..steering.final_answer import SourceEvidence
+from ..tools.argument_normalization import normalize_compatibility_arguments
+from ..tools.base import ToolResult
+from ..tools.relevance import is_low_relevance_patch_path
+from ..tools.relevance import path_matches_any
 
 
 MAX_RECORDS = 30

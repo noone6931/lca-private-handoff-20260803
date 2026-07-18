@@ -31,8 +31,8 @@ from .providers.deadline import call_chat_with_timeout
 from .command_dispatcher import CommandDispatcher
 from .config import AgentConfig
 from .config import normalize_approval_mode
-from .design_evidence import project_workspace_evidence_roots
-from .delivery_report import render_delivery_report
+from .evidence.design import project_workspace_evidence_roots
+from .evidence.delivery import render_delivery_report
 from .evidence import EvidenceRecord
 from .evidence import first_result_line_paths
 from .evidence import first_search_result_paths
@@ -44,7 +44,7 @@ from .providers.protocol import ProviderProtocolArtifact, provider_safe_assistan
 from .providers.protocol import classify_provider_content_artifact, provider_allows_provisional_text
 from .providers.protocol import normalize_provider_dialect_message
 from .lsp.client import close_all_clients
-from .negative_evidence import negative_claim_metrics as _negative_claim_metrics
+from .evidence.negative import negative_claim_metrics as _negative_claim_metrics
 from .patch.anchored import display_workspace_path, PatchError, resolve_workspace_path
 from .planner import render_planner_explore_context
 from .patch_reviewer import review_input_summary
@@ -53,7 +53,7 @@ from .workspace.path_rules import candidate_paths_for_path_rules
 from .workspace.path_rules import discover_path_scoped_rules
 from .workspace.path_rules import matching_path_rule_context
 from .workspace.path_rules import render_path_rule_metadata
-from .requirement_evidence import render_pinned_requirement_evidence
+from .evidence.requirements import render_pinned_requirement_evidence
 from .runtime.assistant_message import AssistantMessageLifecycle
 from .runtime.system_prompt import SYSTEM_PROMPT
 from .runtime.system_prompt import WORKFLOW_NUDGE
