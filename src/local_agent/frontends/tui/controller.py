@@ -590,12 +590,15 @@ class TuiController:
             or self._view.palette
         ):
             return False
+        sticky_visual_fallback = self._composer_preferred_column is not None
         history_cursor = self._view.cursor
-        if self._composer_preferred_column is not None:
+        if sticky_visual_fallback:
             history_cursor = 0 if direction < 0 else len(self._view.input_text)
         recalled = self._history.navigate(direction, self._view.input_text, history_cursor)
         if recalled is None:
             return False
+        if sticky_visual_fallback and recalled == self._view.input_text:
+            return True
         self._composer_preferred_column = None
         self._view = replace(self._view, input_text=recalled, cursor=len(recalled), notice="")
         return True

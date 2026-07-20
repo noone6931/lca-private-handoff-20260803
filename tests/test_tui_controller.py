@@ -147,6 +147,53 @@ class TuiControllerTests(unittest.TestCase):
         controller.handle_key("UP")
         self.assertEqual(controller.view.cursor, interior)
 
+    def test_oldest_soft_wrapped_history_stays_at_visual_top_without_looping(self) -> None:
+        history = ComposerHistory(None)
+        history.append("abcdefgh")
+        controller = TuiController(
+            TuiMailbox(capacity=8),
+            TuiProjector(),
+            _FakeWorker(),  # type: ignore[arg-type]
+            composer_history=history,
+        )
+        controller.update_viewport(8, 12)
+
+        controller.handle_key("UP")
+        controller.handle_key("UP")
+        visual_top = (controller.view.input_text, controller.view.cursor)
+        self.assertLess(controller.view.cursor, len(controller.view.input_text))
+
+        controller.handle_key("UP")
+        self.assertEqual((controller.view.input_text, controller.view.cursor), visual_top)
+        controller.handle_key("DOWN")
+        self.assertEqual(controller.view.input_text, "abcdefgh")
+        self.assertEqual(controller.view.cursor, len("abcdefgh"))
+
+    def test_same_text_history_fallback_keeps_visual_position_while_owner_advances(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "composer.jsonl"
+            path.write_text(
+                '{"v":1,"prompt":"older unique"}\n'
+                '{"v":1,"prompt":"abcdefgh"}\n'
+                '{"v":1,"prompt":"abcdefgh"}\n',
+                encoding="utf-8",
+            )
+            controller = TuiController(
+                TuiMailbox(capacity=8),
+                TuiProjector(),
+                _FakeWorker(),  # type: ignore[arg-type]
+                composer_history=ComposerHistory(path),
+            )
+            controller.update_viewport(8, 12)
+
+            controller.handle_key("UP")
+            controller.handle_key("UP")
+            visual_top = controller.view.cursor
+            controller.handle_key("UP")
+            self.assertEqual((controller.view.input_text, controller.view.cursor), ("abcdefgh", visual_top))
+            controller.handle_key("UP")
+            self.assertEqual(controller.view.input_text, "older unique")
+
     def test_initial_prompt_uses_typed_worker_boundary_once(self) -> None:
         mailbox = TuiMailbox(capacity=8)
         worker = _FakeWorker()
