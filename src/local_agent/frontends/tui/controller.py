@@ -2,9 +2,12 @@ from __future__ import annotations
 
 from dataclasses import replace
 from enum import StrEnum
+from pathlib import Path
 
 from ...protocol.commands import new_command
 from ...protocol.interactions import InteractionResult
+from ..composer_history import ComposerHistory
+from ..composer_history import composer_history_path
 from ..terminal.command_registry import TerminalCommandRegistry
 from .mailbox import TuiMailbox
 from .input import MAX_INPUT_BYTES
@@ -38,11 +41,13 @@ class TuiController:
         worker: TuiWorker,
         *,
         command_registry: TerminalCommandRegistry | None = None,
+        composer_history: ComposerHistory | None = None,
     ) -> None:
         self._mailbox = mailbox
         self._projector = projector
         self._worker = worker
         self._registry = command_registry or TerminalCommandRegistry()
+        self._history = composer_history or ComposerHistory(None)
         self._view = TuiView()
         self._pending_interaction: TuiInteractionPending | None = None
         self._exit_requested = False
@@ -104,8 +109,10 @@ class TuiController:
         text = prompt.strip()
         if not text or self._in_flight:
             return False
-        self._submit_command(new_command("SubmitPrompt", {"prompt": text}))
-        return self._in_flight > 0
+        submitted = self._submit_command(new_command("SubmitPrompt", {"prompt": text}))
+        if submitted:
+            self._history.append(text)
+        return submitted
 
     def update_viewport(self, width: int, height: int) -> None:
         self._viewport_size = (width, height)
@@ -152,10 +159,10 @@ class TuiController:
             self._view = replace(self._view, viewport=wheel_viewport(self._view.viewport, -1))
         elif key == "WHEEL_DOWN":
             self._view = replace(self._view, viewport=wheel_viewport(self._view.viewport, 1))
-        elif key == "UP" and self._view.focus == TuiFocus.CHAT.value and not self._view.input_text:
-            self._view = replace(self._view, viewport=wheel_viewport(self._view.viewport, -1))
-        elif key == "DOWN" and self._view.focus == TuiFocus.CHAT.value and not self._view.input_text:
-            self._view = replace(self._view, viewport=wheel_viewport(self._view.viewport, 1))
+        elif key == "UP" and self._recall_history(-1):
+            pass
+        elif key == "DOWN" and self._recall_history(1):
+            pass
         elif key == "RESIZE":
             self._sync_viewport()
         elif key == "LEFT":
@@ -247,7 +254,8 @@ class TuiController:
             elif dispatched.command is not None:
                 self._submit_command(dispatched.command)
         else:
-            self._submit_command(new_command("SubmitPrompt", {"prompt": text}))
+            if self._submit_command(new_command("SubmitPrompt", {"prompt": text})):
+                self._history.append(text)
         self._view = replace(
             self._view,
             input_text="",
@@ -257,21 +265,38 @@ class TuiController:
             viewport=follow_viewport(self._view.viewport),
         )
 
-    def _submit_command(self, command) -> None:
+    def _submit_command(self, command) -> bool:
         if not self._worker.submit(command):
             self._projector.append_local("error", "Runtime command queue is full.")
-            return
+            return False
         self._in_flight += 1
+        return True
 
     def _handle_command_result(self, completed: TuiCommandCompleted) -> None:
         result = completed.result
         if result.ok:
+            if completed.command.type == "MoveWorkspace":
+                self._rebind_history(result.payload.get("state_dir"))
             text = result.payload.get("text")
             if text is not None:
                 self._projector.append_local("system", str(text))
             return
         error = result.error_message or result.error_code or "Command failed."
         self._projector.append_local("error", error)
+
+    def _rebind_history(self, state_dir) -> None:
+        if not isinstance(state_dir, str) or not state_dir:
+            self._history.rebind(None)
+            self._view = replace(
+                self._view,
+                notice="Workspace moved without a composer history partition; persistence is disabled.",
+            )
+            return
+        if not self._history.rebind(composer_history_path(Path(state_dir))):
+            self._view = replace(
+                self._view,
+                notice="Workspace moved, but composer history persistence is unavailable.",
+            )
 
     def _resolve_interaction(self, result: InteractionResult) -> None:
         pending = self._pending_interaction
@@ -310,6 +335,7 @@ class TuiController:
         if self._view.focus == "search":
             self._close_search()
             return
+        self._history.reset_navigation()
         self._composer_before_search = (self._view.input_text, self._view.cursor)
         self._view = replace(
             self._view,
@@ -358,6 +384,7 @@ class TuiController:
             self._view = replace(self._view, notice="Input is limited to 64 KiB.")
             return
         updated = value[:cursor] + text + value[cursor:]
+        self._history.reset_navigation()
         palette = self._view.palette
         if updated.startswith("/") and not self._pending_interaction and self._view.focus == TuiFocus.CHAT.value:
             completions = self._registry.completions(updated[:cursor + len(text)])
@@ -384,6 +411,7 @@ class TuiController:
         if cursor <= 0:
             return
         value = self._view.input_text
+        self._history.reset_navigation()
         self._view = replace(self._view, input_text=value[:cursor - 1] + value[cursor:], cursor=cursor - 1)
 
     def _delete(self) -> None:
@@ -391,4 +419,19 @@ class TuiController:
         value = self._view.input_text
         if cursor >= len(value):
             return
+        self._history.reset_navigation()
         self._view = replace(self._view, input_text=value[:cursor] + value[cursor + 1:])
+
+    def _recall_history(self, direction: int) -> bool:
+        if (
+            self._view.focus != TuiFocus.CHAT.value
+            or self._pending_interaction is not None
+            or self._in_flight
+            or self._view.palette
+        ):
+            return False
+        recalled = self._history.navigate(direction, self._view.input_text, self._view.cursor)
+        if recalled is None:
+            return False
+        self._view = replace(self._view, input_text=recalled, cursor=len(recalled), notice="")
+        return True

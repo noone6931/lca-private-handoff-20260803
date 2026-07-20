@@ -53,6 +53,7 @@ OWNER_COMPLEXITY_CEILINGS = {
     "src/local_agent/frontends/terminal/assistant.py": 100,
     "src/local_agent/frontends/text.py": 60,
     "src/local_agent/frontends/tui/markdown.py": 120,
+    "src/local_agent/frontends/composer_history.py": 237,
     "src/local_agent/runtime/assistant_message.py": 170,
     "src/local_agent/runtime/run_output.py": 130,
     "src/local_agent/providers/protocol.py": 379,
@@ -385,14 +386,37 @@ class ArchitectureBoundaryTests(unittest.TestCase):
         self.assertNotIn("tool_choice", dispatcher)
         self.assertNotIn('"SessionFinished"', production)
 
-    def test_terminal_prompt_owner_exclusively_manages_persistent_history(self) -> None:
+    def test_shared_composer_history_is_the_only_persistent_prompt_owner(self) -> None:
         terminal = (ROOT / "src/local_agent/frontends/terminal/app.py").read_text(encoding="utf-8")
         prompt = (ROOT / "src/local_agent/frontends/terminal/prompt.py").read_text(encoding="utf-8")
+        controller = (ROOT / "src/local_agent/frontends/tui/controller.py").read_text(encoding="utf-8")
+        history = (ROOT / "src/local_agent/frontends/composer_history.py").read_text(encoding="utf-8")
+        cli = (ROOT / "src/local_agent/cli.py").read_text(encoding="utf-8")
         self.assertNotIn("PromptSession", terminal)
         self.assertNotIn("FileHistory", terminal)
         self.assertIn("from .prompt import build_terminal_prompt", terminal)
         self.assertIn("from prompt_toolkit import PromptSession", prompt)
-        self.assertIn("from prompt_toolkit.history import FileHistory", prompt)
+        self.assertNotIn("FileHistory", prompt)
+        self.assertIn("class ComposerHistory:", history)
+        self.assertIn("composer_history=history", cli)
+        self.assertIn("history.append(text)", terminal)
+        self.assertIn("self._history.append(text)", controller)
+        self.assertNotIn("write_text", terminal + prompt + controller)
+        for forbidden_owner in (
+            "AgentRuntime",
+            "EvidenceLedger",
+            "ToolChoiceQueue",
+            "SessionStore",
+            "runtime.commands",
+        ):
+            self.assertNotIn(forbidden_owner, history)
+        self.assertEqual(
+            sum(
+                "class ComposerHistory:" in path.read_text(encoding="utf-8")
+                for path in (ROOT / "src/local_agent/frontends").rglob("*.py")
+            ),
+            1,
+        )
 
     def test_tui_is_an_independent_single_writer_frontend(self) -> None:
         tui_root = ROOT / "src/local_agent/frontends/tui"

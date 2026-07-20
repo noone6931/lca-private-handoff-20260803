@@ -2,13 +2,18 @@ from __future__ import annotations
 
 import io
 from pathlib import Path
+import tempfile
 import unittest
 from contextlib import contextmanager
 from unittest.mock import patch
 
+from local_agent.frontends.composer_history import ComposerHistory
 from local_agent.frontends.terminal.app import run_terminal_chat, slash_command_completions
 from local_agent.frontends.terminal.prompt import TerminalHistoryRebindError
 from local_agent.frontends.terminal.renderer import TerminalEventSink
+from local_agent.frontends.tui.controller import TuiController
+from local_agent.frontends.tui.mailbox import TuiMailbox
+from local_agent.frontends.tui.model import TuiProjector
 from local_agent.protocol.commands import AgentCommand
 from local_agent.protocol.commands import CommandResult
 from local_agent.protocol.events import AgentEvent
@@ -104,6 +109,51 @@ class TerminalFrontendTests(unittest.TestCase):
         self.assertIn("approval summary", output.getvalue())
         self.assertEqual(output.getvalue().count("approval summary"), 1)
 
+    def test_terminal_chat_records_only_submitted_prompts_in_shared_history(self) -> None:
+        runtime = _FakeRuntime()
+        with tempfile.TemporaryDirectory() as tmp:
+            history = ComposerHistory(Path(tmp) / "history.jsonl")
+            code = run_terminal_chat(
+                runtime,  # type: ignore[arg-type]
+                composer_history=history,
+                input_stream=io.StringIO("/status\nhello\nhello\n/exit\n"),
+                output_stream=io.StringIO(),
+            )
+
+            self.assertEqual(code, 0)
+            self.assertEqual(history.snapshot.local_entries, ("hello",))
+
+    def test_terminal_submission_is_recalled_by_tui_from_the_same_jsonl_format(self) -> None:
+        runtime = _FakeRuntime()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "composer_history.jsonl"
+            terminal_history = ComposerHistory(path)
+            run_terminal_chat(
+                runtime,  # type: ignore[arg-type]
+                composer_history=terminal_history,
+                input_stream=io.StringIO("shared prompt\n/exit\n"),
+                output_stream=io.StringIO(),
+            )
+            tui_history = ComposerHistory(path)
+            controller = TuiController(
+                TuiMailbox(capacity=8),
+                TuiProjector(),
+                type(
+                    "Worker",
+                    (),
+                    {
+                        "submit": lambda self, command: True,
+                        "request_cancel": lambda self: True,
+                        "interaction_bridge": type("Bridge", (), {"resolve": lambda *args: True})(),
+                    },
+                )(),  # type: ignore[arg-type]
+                composer_history=tui_history,
+            )
+
+            controller.handle_key("UP")
+
+            self.assertEqual(controller.view.input_text, "shared prompt")
+
     def test_terminal_chat_keeps_help_and_exit_frontend_local(self) -> None:
         runtime = _FakeRuntime()
         input_stream = io.StringIO("/help\n/exit\n")
@@ -122,20 +172,20 @@ class TerminalFrontendTests(unittest.TestCase):
     def test_terminal_chat_rebinds_history_after_successful_workspace_move(self) -> None:
         runtime = _FakeRuntime()
         prompt = _RecordingPrompt()
-        initial_history = Path("/state/old-workspace/terminal_history")
+        history = ComposerHistory(None)
 
         with patch("local_agent.frontends.terminal.app.build_terminal_prompt", return_value=prompt) as build_prompt:
             code = run_terminal_chat(
                 runtime,  # type: ignore[arg-type]
-                history_path=initial_history,
+                composer_history=history,
                 input_stream=io.StringIO("/move /workspace/new\n/exit\n"),
                 output_stream=io.StringIO(),
             )
 
         self.assertEqual(code, 0)
-        build_prompt.assert_called_once_with(initial_history)
+        build_prompt.assert_called_once_with(history)
         self.assertEqual([command.type for command in runtime.submitted], ["MoveWorkspace"])
-        self.assertEqual(prompt.history_paths, [Path("/state/new-workspace/terminal_history")])
+        self.assertEqual(prompt.history_paths, [Path("/state/new-workspace/composer_history.jsonl")])
 
     def test_terminal_chat_keeps_running_when_moved_history_is_unavailable(self) -> None:
         runtime = _FakeRuntime()

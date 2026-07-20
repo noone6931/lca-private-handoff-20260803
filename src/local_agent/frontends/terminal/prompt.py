@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Protocol
 
+from ..composer_history import ComposerHistory
 from .command_registry import TerminalCommandCompletion
 from .command_registry import TerminalCommandRegistry
 
@@ -31,17 +32,15 @@ def is_slash_command_input(text: str) -> bool:
     return text.lstrip().startswith("/")
 
 
-def build_terminal_prompt(history_path: Path | None) -> TerminalPrompt:
+def build_terminal_prompt(history: ComposerHistory) -> TerminalPrompt:
     try:
         from prompt_toolkit import PromptSession
         from prompt_toolkit.completion import Completer, Completion
-        from prompt_toolkit.history import FileHistory
         from prompt_toolkit.key_binding import KeyBindings
     except ImportError:
-        return PlainTerminalPrompt()
+        return PlainTerminalPrompt(history)
 
-    def build_session(path: Path | None):
-        history = FileHistory(str(path)) if path is not None else None
+    def build_session(composer_history: ComposerHistory):
         bindings = KeyBindings()
 
         @bindings.add("escape", "enter")
@@ -51,6 +50,14 @@ def build_terminal_prompt(history_path: Path | None) -> TerminalPrompt:
         @bindings.add("enter")
         def _(event) -> None:
             event.app.current_buffer.validate_and_handle()
+
+        @bindings.add("up")
+        def _(event) -> None:
+            _navigate_buffer(composer_history, event.current_buffer, -1)
+
+        @bindings.add("down")
+        def _(event) -> None:
+            _navigate_buffer(composer_history, event.current_buffer, 1)
 
         class _SlashCommandCompleter(Completer):
             def get_completions(self, document, complete_event):
@@ -63,21 +70,20 @@ def build_terminal_prompt(history_path: Path | None) -> TerminalPrompt:
                     )
 
         return PromptSession(
-            history=history,
             multiline=True,
             key_bindings=bindings,
             completer=_SlashCommandCompleter(),
             complete_while_typing=True,
         )
 
-    return PromptToolkitTerminalPrompt(history_path, build_session)
+    return PromptToolkitTerminalPrompt(history, build_session)
 
 
 class PromptToolkitTerminalPrompt:
-    def __init__(self, history_path: Path | None, session_factory) -> None:
+    def __init__(self, history: ComposerHistory, session_factory) -> None:
+        self._history = history
         self._session_factory = session_factory
-        self._history_path = _canonical_history_path(history_path)
-        self._session = self._session_factory(self._history_path)
+        self._session = self._session_factory(self._history)
 
     def __call__(self, *, input_stream=None) -> str:
         if input_stream is not None:
@@ -88,23 +94,16 @@ class PromptToolkitTerminalPrompt:
         return self._session.prompt("> ")
 
     def rebind_history(self, history_path: Path | None) -> None:
-        next_path = _canonical_history_path(history_path)
-        if next_path == self._history_path:
-            return
-        try:
-            next_session = self._session_factory(next_path)
-        except (OSError, ValueError) as exc:
-            fallback_session = self._session_factory(None)
-            self._history_path = None
-            self._session = fallback_session
+        if not self._history.rebind(history_path) and history_path is not None:
             raise TerminalHistoryRebindError(
                 "Workspace moved, but persistent terminal history is disabled for this chat."
-            ) from exc
-        self._history_path = next_path
-        self._session = next_session
+            )
 
 
 class PlainTerminalPrompt:
+    def __init__(self, history: ComposerHistory) -> None:
+        self._history = history
+
     def __call__(self, *, input_stream=None) -> str:
         if input_stream is not None:
             line = input_stream.readline()
@@ -114,10 +113,20 @@ class PlainTerminalPrompt:
         return input("> ")
 
     def rebind_history(self, history_path: Path | None) -> None:
-        del history_path
+        if not self._history.rebind(history_path) and history_path is not None:
+            raise TerminalHistoryRebindError(
+                "Workspace moved, but persistent terminal history is disabled for this chat."
+            )
 
 
-def _canonical_history_path(history_path: Path | None) -> Path | None:
-    if history_path is None:
-        return None
-    return history_path.expanduser().resolve()
+def _navigate_buffer(history: ComposerHistory, buffer, direction: int) -> None:
+    text = buffer.text
+    recalled = history.navigate(direction, text, buffer.cursor_position)
+    if recalled is not None:
+        buffer.text = recalled
+        buffer.cursor_position = len(recalled)
+        return
+    if direction < 0:
+        buffer.cursor_up(count=1)
+    else:
+        buffer.cursor_down(count=1)

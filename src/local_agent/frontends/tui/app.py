@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 from collections.abc import Callable
 
+from ..composer_history import ComposerHistory
 from ..terminal.app import run_terminal_chat
 from .controller import TuiController
 from .mailbox import TuiMailbox
@@ -27,15 +28,22 @@ def run_tui(
     output_stream=None,
     screen_runner: Callable[[TuiController], int] | None = None,
     initial_prompt: str | None = None,
+    composer_history: ComposerHistory | None = None,
 ) -> int:
     """Run the inline TUI, falling back to the existing REPL on unsupported terminals."""
 
+    history = composer_history or ComposerHistory(None)
     if screen_runner is None and not tui_is_supported(input_stream=input_stream, output_stream=output_stream):
         print("Interactive TUI unavailable; using terminal chat.", file=output_stream or sys.stderr)
         prompt_input = prepend_initial_prompt(input_stream or sys.stdin, initial_prompt)
-        return run_terminal_chat(runtime, input_stream=prompt_input, output_stream=output_stream)
+        return run_terminal_chat(
+            runtime,
+            composer_history=history,
+            input_stream=prompt_input,
+            output_stream=output_stream,
+        )
     worker = TuiWorker(runtime, mailbox)
-    controller = TuiController(mailbox, TuiProjector(), worker)
+    controller = TuiController(mailbox, TuiProjector(), worker, composer_history=history)
     runner = screen_runner or run_inline_screen
     worker.start()
     try:

@@ -7,6 +7,8 @@ from typing import TextIO
 from .agent import AgentRuntime
 from .config import ConfigError, load_config
 from .frontends.terminal.app import run_terminal_chat
+from .frontends.composer_history import ComposerHistory
+from .frontends.composer_history import composer_history_path
 from .frontends.terminal.renderer import TerminalEventSink
 from .frontends.terminal.command_registry import TerminalCommandDispatch
 from .frontends.terminal.command_registry import TerminalCommandRegistry
@@ -197,16 +199,27 @@ def main(argv: list[str] | None = None) -> int:
         )
         if tui_active:
             assert tui_mailbox is not None
+            history = ComposerHistory(
+                composer_history_path(config.state_dir or config.workspace / ".local-agent")
+            )
             initial_prompt = " ".join(args.prompt) if args.tui and args.prompt else None
-            return run_tui(runtime, tui_mailbox, initial_prompt=initial_prompt)
+            return run_tui(
+                runtime,
+                tui_mailbox,
+                initial_prompt=initial_prompt,
+                composer_history=history,
+            )
         if chat_requested or not args.prompt or tui_requested:
+            history = ComposerHistory(
+                composer_history_path(config.state_dir or config.workspace / ".local-agent")
+            )
             if tui_requested:
                 print("Interactive TUI unavailable; using terminal chat.", file=sys.stderr)
             initial_prompt = " ".join(args.prompt) if (args.chat or args.tui) and args.prompt else None
             input_stream = prepend_initial_prompt(sys.stdin, initial_prompt) if initial_prompt else None
             return run_terminal_chat(
                 runtime,
-                history_path=(config.state_dir or config.workspace / ".local-agent") / "terminal_history",
+                composer_history=history,
                 input_stream=input_stream,
             )
         if args.prompt:

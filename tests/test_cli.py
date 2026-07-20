@@ -176,6 +176,10 @@ class CliTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(run_tui.call_count, 1)
         self.assertEqual(type(run_tui.call_args.args[1]).__name__, "TuiMailbox")
+        self.assertEqual(
+            run_tui.call_args.kwargs["composer_history"].path,
+            (config.state_dir / "composer_history.jsonl").resolve(),
+        )
 
     def test_explicit_tui_prompt_is_forwarded_to_typed_frontend(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -199,6 +203,10 @@ class CliTests(unittest.TestCase):
                 def consume_prompt(runtime, **kwargs) -> int:
                     del runtime
                     self.assertEqual(kwargs["input_stream"].readline(), "inspect fallback\n")
+                    self.assertEqual(
+                        kwargs["composer_history"].path,
+                        (config.state_dir / "composer_history.jsonl").resolve(),
+                    )
                     return 0
 
                 with (

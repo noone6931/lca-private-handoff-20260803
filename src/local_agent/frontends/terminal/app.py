@@ -7,6 +7,8 @@ from ...agent import AgentRuntime
 from ...protocol.commands import CommandResult
 from ...protocol.commands import new_command
 from ...platform.terminal import silenced_terminal_input
+from ..composer_history import ComposerHistory
+from ..composer_history import composer_history_path
 from .command_registry import TerminalCommandRegistry
 from .interactions import TerminalInteractionController
 from .prompt import TerminalHistoryRebindError
@@ -22,12 +24,13 @@ def run_terminal_chat(
     *,
     command_registry: TerminalCommandRegistry | None = None,
     interaction_controller: TerminalInteractionController | None = None,
-    history_path: Path | None = None,
+    composer_history: ComposerHistory | None = None,
     input_stream=None,
     output_stream=None,
 ) -> int:
     output = output_stream or sys.stdout
-    prompt = build_terminal_prompt(history_path)
+    history = composer_history or ComposerHistory(None)
+    prompt = build_terminal_prompt(history)
     registry = command_registry or TerminalCommandRegistry()
     interactions = interaction_controller or TerminalInteractionController(
         input_stream=input_stream,
@@ -62,6 +65,7 @@ def run_terminal_chat(
             try:
                 with silenced_terminal_input():
                     runtime.commands.dispatch(new_command("SubmitPrompt", {"prompt": text}))
+                history.append(text)
             except KeyboardInterrupt:
                 print("interrupted", file=output)
     finally:
@@ -101,6 +105,6 @@ def _rebind_history_after_workspace_move(
         print("warning: workspace moved without a terminal history partition; restart chat to rebind it.", file=output)
         return
     try:
-        prompt.rebind_history(Path(state_dir) / "terminal_history")
+        prompt.rebind_history(composer_history_path(Path(state_dir)))
     except TerminalHistoryRebindError as exc:
         print(f"warning: {exc}", file=output)

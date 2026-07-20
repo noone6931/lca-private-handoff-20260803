@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from pathlib import Path
+import tempfile
 import unittest
 
+from local_agent.frontends.composer_history import ComposerHistory
 from local_agent.frontends.tui.controller import TuiController
 from local_agent.frontends.tui.mailbox import TuiMailbox
 from local_agent.frontends.tui.messages import TuiCommandCompleted
@@ -38,7 +41,10 @@ class TuiControllerTests(unittest.TestCase):
     def test_plain_input_submits_typed_prompt_command(self) -> None:
         mailbox = TuiMailbox(capacity=8)
         worker = _FakeWorker()
-        controller = TuiController(mailbox, TuiProjector(), worker)  # type: ignore[arg-type]
+        history = ComposerHistory(None)
+        controller = TuiController(
+            mailbox, TuiProjector(), worker, composer_history=history  # type: ignore[arg-type]
+        )
 
         for character in "inspect":
             controller.handle_key(character)
@@ -47,6 +53,7 @@ class TuiControllerTests(unittest.TestCase):
         self.assertEqual([command.type for command in worker.submitted], ["SubmitPrompt"])
         self.assertEqual(worker.submitted[0].payload, {"prompt": "inspect"})
         self.assertEqual(controller.view.input_text, "")
+        self.assertEqual(history.snapshot.local_entries, ("inspect",))
 
     def test_multiline_paste_is_inserted_atomically_until_explicit_enter(self) -> None:
         mailbox = TuiMailbox(capacity=8)
@@ -92,7 +99,7 @@ class TuiControllerTests(unittest.TestCase):
         self.assertEqual(controller.view.viewport.top, controller.view.viewport.max_top)
         self.assertTrue(controller.view.viewport.follow_bottom)
 
-    def test_wheel_uses_viewport_fraction_and_arrow_fallback(self) -> None:
+    def test_wheel_scrolls_transcript_while_empty_arrows_are_reserved_for_history(self) -> None:
         mailbox = TuiMailbox(capacity=8)
         worker = _FakeWorker()
         projector = TuiProjector()
@@ -106,9 +113,85 @@ class TuiControllerTests(unittest.TestCase):
         controller.handle_key("WHEEL_UP")
         self.assertEqual(controller.view.viewport.top, bottom - expected_step)
         controller.handle_key("UP")
-        self.assertEqual(controller.view.viewport.top, bottom - expected_step * 2)
+        self.assertEqual(controller.view.viewport.top, bottom - expected_step)
         controller.handle_key("DOWN")
         self.assertEqual(controller.view.viewport.top, bottom - expected_step)
+
+    def test_empty_composer_recalls_history_and_down_restores_draft(self) -> None:
+        history = ComposerHistory(None)
+        history.append("older")
+        history.append("newer")
+        controller = TuiController(
+            TuiMailbox(capacity=8),
+            TuiProjector(),
+            _FakeWorker(),  # type: ignore[arg-type]
+            composer_history=history,
+        )
+
+        controller.handle_key("UP")
+        self.assertEqual(controller.view.input_text, "newer")
+        controller.handle_key("UP")
+        self.assertEqual(controller.view.input_text, "older")
+        controller.handle_key("DOWN")
+        self.assertEqual(controller.view.input_text, "newer")
+        controller.handle_key("DOWN")
+        self.assertEqual(controller.view.input_text, "")
+
+    def test_history_navigation_does_not_capture_multiline_interior_search_palette_or_inflight(self) -> None:
+        history = ComposerHistory(None)
+        history.append("saved")
+        worker = _FakeWorker()
+        controller = TuiController(
+            TuiMailbox(capacity=8),
+            TuiProjector(),
+            worker,  # type: ignore[arg-type]
+            composer_history=history,
+        )
+        controller.handle_key("UP")
+        controller.handle_key("LEFT")
+        controller.handle_key("UP")
+        self.assertEqual(controller.view.cursor, len("saved") - 1)
+
+        controller = TuiController(
+            TuiMailbox(capacity=8), TuiProjector(), worker, composer_history=history  # type: ignore[arg-type]
+        )
+        controller.handle_paste("one\ntwo")
+        controller.handle_key("UP")
+        self.assertEqual(controller.view.input_text, "one\ntwo")
+
+        controller = TuiController(
+            TuiMailbox(capacity=8), TuiProjector(), worker, composer_history=history  # type: ignore[arg-type]
+        )
+        controller.handle_key("CTRL_F")
+        controller.handle_key("UP")
+        self.assertEqual(controller.view.focus, "search")
+        controller.handle_key("ESC")
+        controller.handle_key("CTRL_P")
+        controller.handle_key("UP")
+        self.assertEqual(controller.view.input_text, "")
+        controller.handle_key("ESC")
+        controller.submit_initial_prompt("submitted")
+        controller.handle_key("UP")
+        self.assertEqual(controller.view.input_text, "")
+
+    def test_only_successfully_queued_prompts_enter_tui_history(self) -> None:
+        class FullWorker(_FakeWorker):
+            def submit(self, command) -> bool:
+                self.submitted.append(command)
+                return False
+
+        history = ComposerHistory(None)
+        controller = TuiController(
+            TuiMailbox(capacity=8),
+            TuiProjector(),
+            FullWorker(),  # type: ignore[arg-type]
+            composer_history=history,
+        )
+        for character in "not queued":
+            controller.handle_key(character)
+        controller.handle_key("ENTER")
+
+        self.assertEqual(history.snapshot.local_entries, ())
 
     def test_submit_returns_historical_view_to_live_tail(self) -> None:
         mailbox = TuiMailbox(capacity=8)
@@ -197,7 +280,10 @@ class TuiControllerTests(unittest.TestCase):
     def test_help_and_exit_stay_frontend_local(self) -> None:
         mailbox = TuiMailbox(capacity=8)
         worker = _FakeWorker()
-        controller = TuiController(mailbox, TuiProjector(), worker)  # type: ignore[arg-type]
+        history = ComposerHistory(None)
+        controller = TuiController(
+            mailbox, TuiProjector(), worker, composer_history=history  # type: ignore[arg-type]
+        )
 
         for character in "/help":
             controller.handle_key(character)
@@ -210,6 +296,7 @@ class TuiControllerTests(unittest.TestCase):
             controller.handle_key(character)
         controller.handle_key("ENTER")
         self.assertTrue(controller.exit_requested)
+        self.assertEqual(history.snapshot.local_entries, ())
 
     def test_status_command_routes_through_runtime_and_renders_typed_result(self) -> None:
         mailbox = TuiMailbox(capacity=8)
@@ -258,6 +345,120 @@ class TuiControllerTests(unittest.TestCase):
         controller.handle_key("ENTER")
         self.assertEqual([command.type for command in worker.submitted], ["ListWorkspaceRoots"])
 
+    def test_workspace_move_rebinds_history_only_from_successful_typed_result(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            history = ComposerHistory(root / "old" / "composer_history.jsonl")
+            history.append("old prompt")
+            mailbox = TuiMailbox(capacity=8)
+            worker = _FakeWorker()
+            controller = TuiController(
+                mailbox,
+                TuiProjector(),
+                worker,  # type: ignore[arg-type]
+                composer_history=history,
+            )
+            for character in "/move /new":
+                controller.handle_key(character)
+            controller.handle_key("ENTER")
+            command = worker.submitted[-1]
+
+            mailbox.put(
+                TuiCommandCompleted(
+                    command,
+                    CommandResult(
+                        command.command_id,
+                        "s1",
+                        None,
+                        "ok",
+                        {"text": "moved", "state_dir": str(root / "new")},
+                    ),
+                )
+            )
+            controller.poll()
+
+            self.assertEqual(history.path, (root / "new" / "composer_history.jsonl").resolve())
+            self.assertEqual(history.snapshot.local_entries, ())
+
+    def test_failed_or_missing_move_does_not_retain_a_stale_history_partition(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            history = ComposerHistory(root / "old" / "composer_history.jsonl")
+            mailbox = TuiMailbox(capacity=8)
+            worker = _FakeWorker()
+            controller = TuiController(
+                mailbox,
+                TuiProjector(),
+                worker,  # type: ignore[arg-type]
+                composer_history=history,
+            )
+            for character in "/move /new":
+                controller.handle_key(character)
+            controller.handle_key("ENTER")
+            command = worker.submitted[-1]
+            old_path = history.path
+            mailbox.put(
+                TuiCommandCompleted(
+                    command,
+                    CommandResult(command.command_id, "s1", None, "error", {}, "move_failed", "failed"),
+                )
+            )
+            controller.poll()
+            self.assertEqual(history.path, old_path)
+
+            for character in "/move /new":
+                controller.handle_key(character)
+            controller.handle_key("ENTER")
+            missing_command = worker.submitted[-1]
+            mailbox.put(
+                TuiCommandCompleted(
+                    missing_command,
+                    CommandResult(missing_command.command_id, "s1", None, "ok", {"text": "moved"}),
+                )
+            )
+            controller.poll()
+            self.assertIsNone(history.path)
+            self.assertFalse(history.snapshot.persistence_enabled)
+
+    def test_unavailable_move_partition_clears_local_history_and_disables_persistence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            blocked_state = root / "blocked-state"
+            blocked_state.write_text("not a directory", encoding="utf-8")
+            history = ComposerHistory(root / "old" / "composer_history.jsonl")
+            history.append("stale local")
+            mailbox = TuiMailbox(capacity=8)
+            worker = _FakeWorker()
+            controller = TuiController(
+                mailbox,
+                TuiProjector(),
+                worker,  # type: ignore[arg-type]
+                composer_history=history,
+            )
+            for character in "/move /blocked":
+                controller.handle_key(character)
+            controller.handle_key("ENTER")
+            command = worker.submitted[-1]
+            mailbox.put(
+                TuiCommandCompleted(
+                    command,
+                    CommandResult(
+                        command.command_id,
+                        "s1",
+                        None,
+                        "ok",
+                        {"text": "moved", "state_dir": str(blocked_state)},
+                    ),
+                )
+            )
+
+            controller.poll()
+
+            self.assertIsNone(history.path)
+            self.assertEqual(history.snapshot.local_entries, ())
+            self.assertFalse(history.snapshot.persistence_enabled)
+            self.assertIn("unavailable", controller.view.notice)
+
     def test_interaction_focus_prevents_slash_command_dispatch(self) -> None:
         mailbox = TuiMailbox(capacity=8)
         worker = _FakeWorker()
@@ -280,6 +481,26 @@ class TuiControllerTests(unittest.TestCase):
         controller.handle_key("ENTER")
         self.assertEqual(worker.interaction_bridge.resolved[0][1].status, "cancelled")
         self.assertEqual(controller.view.focus, "chat")
+
+    def test_ask_and_approval_answers_never_enter_prompt_history(self) -> None:
+        for kind in ("ask", "approval"):
+            with self.subTest(kind=kind):
+                mailbox = TuiMailbox(capacity=8)
+                worker = _FakeWorker()
+                history = ComposerHistory(None)
+                controller = TuiController(
+                    mailbox,
+                    TuiProjector(),
+                    worker,  # type: ignore[arg-type]
+                    composer_history=history,
+                )
+                mailbox.put(TuiInteractionPending("i1", InteractionRequest(kind, "Continue?")))
+                controller.poll()
+                for character in "yes":
+                    controller.handle_key(character)
+                controller.handle_key("ENTER")
+
+                self.assertEqual(history.snapshot.local_entries, ())
 
     def test_command_palette_selects_without_dispatching_until_next_enter(self) -> None:
         mailbox = TuiMailbox(capacity=8)
