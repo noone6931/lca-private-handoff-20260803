@@ -8,6 +8,7 @@ from typing import Any
 
 from .base import Tool, ToolContext, ToolResult
 from .files import session_patch_records
+from .process_environment import build_child_process_environment
 from .relevance import is_code_implementation_request
 from .relevance import is_low_relevance_patch_path
 from .relevance import is_source_code_path
@@ -17,6 +18,14 @@ MAX_DIFF_SUMMARY_FILES = 12
 MAX_DIFF_SUMMARY_HUNKS_PER_FILE = 4
 MAX_DIFF_SUMMARY_LINES_PER_KIND = 3
 MAX_DIFF_SUMMARY_LINE_CHARS = 120
+_GIT_HELPER_ENVIRONMENT_KEY_FOLDS = frozenset(
+    key.casefold()
+    for key in (
+        "GIT_CONFIG_COUNT",
+        "GIT_CONFIG_PARAMETERS",
+        "GIT_EXTERNAL_DIFF",
+    )
+)
 
 
 @dataclass
@@ -80,7 +89,10 @@ def git_diff(args: dict[str, Any], context: ToolContext) -> ToolResult:
     raw_diff = content
     content = _with_diff_summary(content)
     content = _with_attribution_note(content, args, context)
-    return ToolResult(_with_diff_reviewer_note(content, context, raw_diff=raw_diff))
+    return ToolResult(
+        _with_diff_reviewer_note(content, context, raw_diff=raw_diff),
+        metadata=result.metadata,
+    )
 
 
 def capture_git_baseline(workspace: str | PathLike[str]) -> dict[str, Any]:
@@ -132,6 +144,8 @@ def _git(context: ToolContext, args: list[str]) -> ToolResult:
     metadata = {
         "git_probe_root": str(context.workspace),
         "git_repository": False if is_not_repository else not is_error if not is_error else None,
+        "external_process": "git",
+        "sandboxed": False,
     }
     if is_not_repository:
         output = (
@@ -144,14 +158,27 @@ def _git(context: ToolContext, args: list[str]) -> ToolResult:
 
 
 def _git_raw(workspace: str | PathLike[str], args: list[str]) -> subprocess.CompletedProcess[str]:
+    environment = {
+        key: value
+        for key, value in build_child_process_environment().values.items()
+        if key.casefold() not in _GIT_HELPER_ENVIRONMENT_KEY_FOLDS
+    }
     return subprocess.run(
-        ["git", *args],
+        _git_command(args),
         cwd=workspace,
+        env=environment,
         text=True,
         capture_output=True,
         timeout=30,
         check=False,
     )
+
+
+def _git_command(args: list[str]) -> list[str]:
+    command = ["git", "--no-optional-locks", "-c", "core.fsmonitor=false"]
+    if args and args[0] == "diff":
+        return [*command, "diff", "--no-ext-diff", "--no-textconv", *args[1:]]
+    return [*command, *args]
 
 
 def _with_diff_summary(content: str) -> str:

@@ -13,6 +13,7 @@ from local_agent.patch.anchored import display_workspace_path
 from local_agent.patch.anchored import resolve_workspace_path
 
 from .base import Tool, ToolContext, ToolResult
+from .process_environment import build_child_process_environment
 
 SKIPPED_DIRS = {".git", ".local-agent", ".mypy_cache", ".pytest_cache", ".ruff_cache", ".venv", "__pycache__"}
 DEFAULT_GLOB_LIMIT = 200
@@ -411,6 +412,7 @@ def search_code(args: dict[str, Any], context: ToolContext) -> ToolResult:
     search_path = _rg_search_path(path, context)
     command = [
         "rg",
+        "--no-config",
         "--line-number",
         "--column",
         "--color",
@@ -428,16 +430,25 @@ def search_code(args: dict[str, Any], context: ToolContext) -> ToolResult:
         completed = subprocess.run(
             command,
             cwd=context.workspace,
+            env=dict(build_child_process_environment().values),
             text=True,
             capture_output=True,
             timeout=20,
             check=False,
         )
     except FileNotFoundError:
-        return ToolResult("ripgrep is not installed. Please install rg in the VM image.", is_error=True)
+        return ToolResult(
+            "ripgrep is not installed. Please install rg in the VM image.",
+            is_error=True,
+            metadata={"external_process": "ripgrep", "sandboxed": False},
+        )
     if completed.returncode not in {0, 1}:
         output = completed.stderr or completed.stdout or f"rg failed with exit code {completed.returncode}."
-        return ToolResult(output[:20000], is_error=True)
+        return ToolResult(
+            output[:20000],
+            is_error=True,
+            metadata={"external_process": "ripgrep", "sandboxed": False},
+        )
     if not completed.stdout:
         content = "No matches."
         if _is_primary_root_listing(raw_path) and context.allowed_dirs:
@@ -451,6 +462,8 @@ def search_code(args: dict[str, Any], context: ToolContext) -> ToolResult:
                 "path": str(path),
                 "complete": True,
                 "truncated": False,
+                "external_process": "ripgrep",
+                "sandboxed": False,
             },
         )
     output = _normalize_search_output_paths(completed.stdout, context.workspace)
@@ -476,6 +489,8 @@ def search_code(args: dict[str, Any], context: ToolContext) -> ToolResult:
             "line_truncated_count": line_truncated_count,
             "column_limit": MAX_SEARCH_LINE_COLUMNS,
             "negative_evidence_type": "incomplete" if truncated else "content_match",
+            "external_process": "ripgrep",
+            "sandboxed": False,
         },
     )
 

@@ -119,6 +119,17 @@ def _resolved_import_targets(path: Path) -> list[tuple[int, str]]:
 
 
 class ArchitectureBoundaryTests(unittest.TestCase):
+    def test_read_helper_containment_stays_with_git_search_process_owners(self) -> None:
+        git_owner = (ROOT / "src/local_agent/tools/git.py").read_text(encoding="utf-8")
+        search_owner = (ROOT / "src/local_agent/tools/search.py").read_text(encoding="utf-8")
+        agent = (ROOT / "src/local_agent/agent.py").read_text(encoding="utf-8")
+        for marker in ("--no-optional-locks", "core.fsmonitor=false", "--no-ext-diff", "--no-textconv"):
+            self.assertIn(marker, git_owner)
+        self.assertIn("--no-config", search_owner)
+        self.assertIn("build_child_process_environment", git_owner)
+        self.assertIn("build_child_process_environment", search_owner)
+        self.assertNotIn("read_helper", agent)
+
     def test_process_capture_is_bounded_binary_and_owned_outside_shell_runtime(self) -> None:
         capture = (ROOT / "src/local_agent/tools/process_output.py").read_text(encoding="utf-8")
         runtime = (ROOT / "src/local_agent/tools/process_runtime.py").read_text(encoding="utf-8")
