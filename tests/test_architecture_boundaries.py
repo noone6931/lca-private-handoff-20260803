@@ -39,7 +39,7 @@ OWNER_COMPLEXITY_CEILINGS = {
     "src/local_agent/tools/shell.py": 355,
     "src/local_agent/tools/process_environment.py": 64,
     "src/local_agent/tools/process_output.py": 250,
-    "src/local_agent/tools/process_runtime.py": 195,
+    "src/local_agent/tools/process_runtime.py": 201,
     "src/local_agent/tools/test_runner_policy.py": 217,
     "src/local_agent/steering/pre_review.py": 83,
     "src/local_agent/steering/final_answer.py": 59,
@@ -128,6 +128,7 @@ class ArchitectureBoundaryTests(unittest.TestCase):
         self.assertIn("class BoundedByteCapture:", capture)
         self.assertNotIn("communicate(", runtime)
         self.assertNotIn("text=True", runtime)
+        self.assertEqual(runtime.count("if progress == 0:"), 2)
         self.assertNotIn("[:30000]", shell)
         self.assertNotIn("process_output", agent)
 

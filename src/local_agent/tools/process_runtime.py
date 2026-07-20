@@ -29,21 +29,24 @@ class _PipeCapture:
     capture: BoundedByteCapture
     eof: bool = False
 
-    def drain(self) -> None:
+    def drain(self) -> int:
         if self.eof:
-            return
+            return 0
+        drained_bytes = 0
         for _ in range(_PIPE_CHUNKS_PER_SWEEP):
             try:
                 chunk = os.read(self.stream.fileno(), PROCESS_PIPE_READ_CHUNK_BYTES)
             except BlockingIOError:
-                return
+                return drained_bytes
             except InterruptedError:
                 continue
             if not chunk:
                 self.eof = True
                 self.stream.close()
-                return
+                return drained_bytes
             self.capture.push(chunk)
+            drained_bytes += len(chunk)
+        return drained_bytes
 
     def close(self) -> None:
         if not self.eof:
@@ -62,9 +65,10 @@ class _ProcessPipes:
     def eof(self) -> bool:
         return self._stdout.eof and self._stderr.eof
 
-    def drain(self) -> None:
-        self._stdout.drain()
-        self._stderr.drain()
+    def drain(self) -> int:
+        stdout_bytes = self._stdout.drain()
+        stderr_bytes = self._stderr.drain()
+        return stdout_bytes + stderr_bytes
 
     def close(self) -> None:
         self._stdout.close()
@@ -106,14 +110,15 @@ def run_process(
             if cancel_event is not None and cancel_event.is_set():
                 _terminate_process(process, pipes)
                 raise RunCancelled("Run cancelled while a local process was active.")
-            pipes.drain()
+            progress = pipes.drain()
             if process.poll() is not None and pipes.eof:
                 capture = pipes.finish()
                 return CapturedCompletedProcess(command, process.returncode, capture)
             if time.monotonic() >= deadline:
                 capture = _terminate_process(process, pipes)
                 raise CapturedTimeoutExpired(command, timeout, capture)
-            time.sleep(_PROCESS_POLL_SECONDS)
+            if progress == 0:
+                time.sleep(_PROCESS_POLL_SECONDS)
     except (RunCancelled, subprocess.TimeoutExpired):
         raise
     except BaseException:
@@ -165,12 +170,13 @@ def _wait_for_process_and_pipes(
 ) -> bool:
     deadline = time.monotonic() + timeout
     while True:
-        pipes.drain()
+        progress = pipes.drain()
         if process.poll() is not None and pipes.eof:
             return True
         if time.monotonic() >= deadline:
             return False
-        time.sleep(_PROCESS_POLL_SECONDS)
+        if progress == 0:
+            time.sleep(_PROCESS_POLL_SECONDS)
 
 
 def _signal_process(process: subprocess.Popen[bytes], signum: signal.Signals) -> None:

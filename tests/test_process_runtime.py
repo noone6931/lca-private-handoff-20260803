@@ -11,11 +11,96 @@ from pathlib import Path
 from unittest.mock import patch
 
 from local_agent.cancellation import RunCancelled
+from local_agent.tools.process_output import PROCESS_PIPE_READ_CHUNK_BYTES
 from local_agent.tools.process_output import PROCESS_STREAM_CAPTURE_LIMIT_BYTES
+from local_agent.tools.process_runtime import _PIPE_CHUNKS_PER_SWEEP
+from local_agent.tools.process_runtime import _ProcessPipes
+from local_agent.tools.process_runtime import _wait_for_process_and_pipes
 from local_agent.tools.process_runtime import run_process
 
 
 class ProcessRuntimeTests(unittest.TestCase):
+    def test_pipe_sweep_reports_progress_and_keeps_streams_fair(self) -> None:
+        class FakeStream:
+            def __init__(self, file_descriptor: int) -> None:
+                self._file_descriptor = file_descriptor
+
+            def fileno(self) -> int:
+                return self._file_descriptor
+
+            def close(self) -> None:
+                pass
+
+        reads = {10: 0, 11: 0}
+
+        def read_chunk(file_descriptor: int, size: int) -> bytes:
+            reads[file_descriptor] += 1
+            return b"x" * size
+
+        with (
+            patch("local_agent.tools.process_runtime.os.set_blocking"),
+            patch("local_agent.tools.process_runtime.os.read", side_effect=read_chunk),
+        ):
+            pipes = _ProcessPipes(FakeStream(10), FakeStream(11))
+            progress = pipes.drain()
+
+        expected_reads = _PIPE_CHUNKS_PER_SWEEP
+        self.assertEqual(reads, {10: expected_reads, 11: expected_reads})
+        self.assertEqual(progress, 2 * expected_reads * PROCESS_PIPE_READ_CHUNK_BYTES)
+
+    def test_wait_continues_draining_progress_without_poll_sleep(self) -> None:
+        class FloodThenEofPipes:
+            eof = False
+            calls = 0
+
+            def drain(self) -> int:
+                self.calls += 1
+                if self.calls == 1:
+                    return 64 * 1024
+                self.eof = True
+                return 0
+
+        class ExitedProcess:
+            @staticmethod
+            def poll() -> int:
+                return 0
+
+        pipes = FloodThenEofPipes()
+        with patch("local_agent.tools.process_runtime.time.sleep") as sleep:
+            complete = _wait_for_process_and_pipes(ExitedProcess(), pipes, 1.0)
+
+        self.assertTrue(complete)
+        self.assertEqual(pipes.calls, 2)
+        sleep.assert_not_called()
+
+    def test_wait_backs_off_only_when_pipe_sweep_is_idle(self) -> None:
+        class IdleThenEofPipes:
+            eof = False
+            calls = 0
+
+            def drain(self) -> int:
+                self.calls += 1
+                return 0
+
+        class ExitingProcess:
+            calls = 0
+
+            def poll(self) -> int | None:
+                self.calls += 1
+                return None if self.calls == 1 else 0
+
+        pipes = IdleThenEofPipes()
+
+        def finish_during_sleep(_seconds: float) -> None:
+            pipes.eof = True
+
+        with patch("local_agent.tools.process_runtime.time.sleep", side_effect=finish_during_sleep) as sleep:
+            complete = _wait_for_process_and_pipes(ExitingProcess(), pipes, 1.0)
+
+        self.assertTrue(complete)
+        self.assertEqual(pipes.calls, 2)
+        sleep.assert_called_once_with(0.01)
+
     def test_completed_process_preserves_output_and_nonzero_exit(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             command = [
