@@ -28,19 +28,74 @@ class _FakeBridge:
 
 
 class _FakeWorker:
-    def __init__(self) -> None:
+    def __init__(self, *, cancel_result: bool = True) -> None:
         self.submitted = []
         self.interaction_bridge = _FakeBridge()
+        self.cancel_result = cancel_result
 
     def submit(self, command) -> bool:
         self.submitted.append(command)
         return True
 
     def request_cancel(self) -> bool:
-        return True
+        return self.cancel_result
 
 
 class TuiControllerTests(unittest.TestCase):
+    def test_ctrl_c_after_worker_completion_is_queued_restores_follow_up(self) -> None:
+        mailbox = TuiMailbox(capacity=8)
+        worker = _FakeWorker(cancel_result=False)
+        history = ComposerHistory(None)
+        controller = TuiController(
+            mailbox, TuiProjector(), worker, composer_history=history  # type: ignore[arg-type]
+        )
+        controller.submit_initial_prompt("first")
+        first = worker.submitted[0]
+        controller.handle_paste("second\nturn")
+        controller.handle_key("ENTER")
+        mailbox.put(
+            TuiCommandCompleted(
+                first,
+                CommandResult(first.command_id, "s1", "r1", "ok", {"text": "first done"}),
+            )
+        )
+
+        controller.handle_key("CTRL_C")
+        self.assertIn("already closing", controller.view.notice)
+        controller.poll()
+
+        self.assertEqual(len(worker.submitted), 1)
+        self.assertEqual(controller.view.input_text, "second\nturn")
+        self.assertEqual(controller.view.cursor, len("second\nturn"))
+        self.assertEqual(controller.view.queued_prompt_bytes, 0)
+        self.assertEqual(history.snapshot.local_entries, ("first",))
+
+    def test_ctrl_c_closing_race_without_queue_and_non_prompt_command_have_no_follow_up_effect(self) -> None:
+        mailbox = TuiMailbox(capacity=8)
+        prompt_worker = _FakeWorker(cancel_result=False)
+        prompt = TuiController(mailbox, TuiProjector(), prompt_worker)  # type: ignore[arg-type]
+        prompt.submit_initial_prompt("first")
+        first = prompt_worker.submitted[0]
+        mailbox.put(
+            TuiCommandCompleted(
+                first,
+                CommandResult(first.command_id, "s1", "r1", "ok", {"text": "done"}),
+            )
+        )
+        prompt.handle_key("CTRL_C")
+        self.assertEqual(prompt.view.notice, "Run is already closing.")
+        prompt.poll()
+        self.assertEqual(len(prompt_worker.submitted), 1)
+        self.assertEqual(prompt.view.input_text, "")
+        self.assertEqual(prompt.view.queued_prompt_bytes, 0)
+
+        command_mailbox = TuiMailbox(capacity=8)
+        command_worker = _FakeWorker(cancel_result=False)
+        command = TuiController(command_mailbox, TuiProjector(), command_worker)  # type: ignore[arg-type]
+        self.assertTrue(command._submit_command(new_command("GetStatus", {})))
+        command.handle_key("CTRL_C")
+        self.assertEqual(command.view.notice, "Run is starting; press Ctrl-C again to cancel.")
+
     def test_inflight_prompt_queues_without_early_runtime_history_or_transcript_then_drains_once(self) -> None:
         mailbox = TuiMailbox(capacity=8)
         worker = _FakeWorker()

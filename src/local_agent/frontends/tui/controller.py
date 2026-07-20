@@ -157,9 +157,20 @@ class TuiController:
         elif key in {"ESC", "CTRL_C"} and self._pending_interaction is not None:
             self._resolve_interaction(InteractionResult("cancelled"))
         elif key == "CTRL_C" and self._in_flight:
-            if self._worker.request_cancel():
+            active_prompt = bool(self._prompt_command_ids)
+            cancel_requested = self._worker.request_cancel()
+            if active_prompt:
                 self._restore_pending_after_run = True
+            if cancel_requested:
                 self._view = replace(self._view, notice="Cancellation requested; waiting for Runtime closure.")
+            elif active_prompt:
+                notice = "Run is already closing."
+                if self._pending_prompts.pending is not None:
+                    notice = "Run is already closing; the queued follow-up will be restored."
+                self._view = replace(
+                    self._view,
+                    notice=notice,
+                )
             else:
                 self._view = replace(self._view, notice="Run is starting; press Ctrl-C again to cancel.")
         elif key == "ESC" and self._view.palette:
