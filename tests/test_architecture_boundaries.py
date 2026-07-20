@@ -385,6 +385,15 @@ class ArchitectureBoundaryTests(unittest.TestCase):
         self.assertNotIn("tool_choice", dispatcher)
         self.assertNotIn('"SessionFinished"', production)
 
+    def test_terminal_prompt_owner_exclusively_manages_persistent_history(self) -> None:
+        terminal = (ROOT / "src/local_agent/frontends/terminal/app.py").read_text(encoding="utf-8")
+        prompt = (ROOT / "src/local_agent/frontends/terminal/prompt.py").read_text(encoding="utf-8")
+        self.assertNotIn("PromptSession", terminal)
+        self.assertNotIn("FileHistory", terminal)
+        self.assertIn("from .prompt import build_terminal_prompt", terminal)
+        self.assertIn("from prompt_toolkit import PromptSession", prompt)
+        self.assertIn("from prompt_toolkit.history import FileHistory", prompt)
+
     def test_tui_is_an_independent_single_writer_frontend(self) -> None:
         tui_root = ROOT / "src/local_agent/frontends/tui"
         production = {

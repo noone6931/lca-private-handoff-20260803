@@ -36,6 +36,7 @@ class _Runtime:
         self._is_running = False
         self._last_run_summary = None
         self._session = _Session()
+        self._state_dir = Path("/state/original")
         self.calls: list[tuple[str, str | None]] = []
 
     def _run_prompt(self, prompt: str) -> str:
@@ -92,6 +93,7 @@ class _Runtime:
 
     def move_workspace(self, raw_path: str) -> Path:
         self.calls.append(("move", raw_path))
+        self._state_dir = Path("/state/moved")
         return Path(raw_path)
 
     def set_session_approval_mode(self, mode: str) -> None:
@@ -248,6 +250,16 @@ class CommandDispatcherTests(unittest.TestCase):
         self.assertTrue(result.ok)
         self.assertEqual(result.payload, {"text": "approval"})
         self.assertEqual(runtime.calls, [("deny", "shell")])
+        self.assertEqual(sink.events, [])
+
+    def test_move_workspace_returns_new_typed_state_partition(self) -> None:
+        dispatcher, runtime, sink = _dispatcher()
+
+        result = dispatcher.dispatch(new_command("MoveWorkspace", {"path": "/workspace/new"}))
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.payload, {"state_dir": "/state/moved", "text": "workspace"})
+        self.assertEqual(runtime.calls, [("move", "/workspace/new")])
         self.assertEqual(sink.events, [])
 
 

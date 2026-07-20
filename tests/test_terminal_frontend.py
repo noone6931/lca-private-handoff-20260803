@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import io
+from pathlib import Path
 import unittest
 from contextlib import contextmanager
 from unittest.mock import patch
 
 from local_agent.frontends.terminal.app import run_terminal_chat, slash_command_completions
+from local_agent.frontends.terminal.prompt import TerminalHistoryRebindError
 from local_agent.frontends.terminal.renderer import TerminalEventSink
 from local_agent.protocol.commands import AgentCommand
 from local_agent.protocol.commands import CommandResult
@@ -19,8 +21,32 @@ class _FakeRuntime:
 
     def dispatch(self, command: AgentCommand) -> CommandResult:
         self.submitted.append(command)
-        payload = {"text": "approval summary"} if command.type == "GetApproval" else {"content": "done"}
+        if command.type == "GetApproval":
+            payload = {"text": "approval summary"}
+        elif command.type == "MoveWorkspace":
+            payload = {"text": "workspace roots", "state_dir": "/state/new-workspace"}
+        else:
+            payload = {"content": "done"}
         return CommandResult(command.command_id, "s1", "r1", "ok", payload)
+
+
+class _RecordingPrompt:
+    def __init__(self, *, rebind_error: bool = False) -> None:
+        self.history_paths: list[Path | None] = []
+        self.rebind_error = rebind_error
+
+    def __call__(self, *, input_stream=None) -> str:
+        line = input_stream.readline()
+        if line == "":
+            raise EOFError
+        return line
+
+    def rebind_history(self, history_path: Path | None) -> None:
+        self.history_paths.append(history_path)
+        if self.rebind_error:
+            raise TerminalHistoryRebindError(
+                "Workspace moved, but persistent terminal history is disabled for this chat."
+            )
 
 
 class TerminalFrontendTests(unittest.TestCase):
@@ -92,6 +118,79 @@ class TerminalFrontendTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("Commands:", output.getvalue())
         self.assertEqual(runtime.submitted, [])
+
+    def test_terminal_chat_rebinds_history_after_successful_workspace_move(self) -> None:
+        runtime = _FakeRuntime()
+        prompt = _RecordingPrompt()
+        initial_history = Path("/state/old-workspace/terminal_history")
+
+        with patch("local_agent.frontends.terminal.app.build_terminal_prompt", return_value=prompt) as build_prompt:
+            code = run_terminal_chat(
+                runtime,  # type: ignore[arg-type]
+                history_path=initial_history,
+                input_stream=io.StringIO("/move /workspace/new\n/exit\n"),
+                output_stream=io.StringIO(),
+            )
+
+        self.assertEqual(code, 0)
+        build_prompt.assert_called_once_with(initial_history)
+        self.assertEqual([command.type for command in runtime.submitted], ["MoveWorkspace"])
+        self.assertEqual(prompt.history_paths, [Path("/state/new-workspace/terminal_history")])
+
+    def test_terminal_chat_keeps_running_when_moved_history_is_unavailable(self) -> None:
+        runtime = _FakeRuntime()
+        prompt = _RecordingPrompt(rebind_error=True)
+        output = io.StringIO()
+
+        with patch("local_agent.frontends.terminal.app.build_terminal_prompt", return_value=prompt):
+            code = run_terminal_chat(
+                runtime,  # type: ignore[arg-type]
+                input_stream=io.StringIO("/move /workspace/new\n/exit\n"),
+                output_stream=output,
+            )
+
+        self.assertEqual(code, 0)
+        self.assertIn("persistent terminal history is disabled", output.getvalue())
+
+    def test_terminal_chat_does_not_rebind_history_after_failed_workspace_move(self) -> None:
+        class _FailedMoveRuntime(_FakeRuntime):
+            def dispatch(self, command: AgentCommand) -> CommandResult:
+                self.submitted.append(command)
+                return CommandResult(command.command_id, "s1", None, "error", {}, "move_failed", "failed")
+
+        runtime = _FailedMoveRuntime()
+        prompt = _RecordingPrompt()
+
+        with patch("local_agent.frontends.terminal.app.build_terminal_prompt", return_value=prompt):
+            code = run_terminal_chat(
+                runtime,  # type: ignore[arg-type]
+                input_stream=io.StringIO("/move /workspace/new\n/exit\n"),
+                output_stream=io.StringIO(),
+            )
+
+        self.assertEqual(code, 0)
+        self.assertEqual(prompt.history_paths, [])
+
+    def test_terminal_chat_disables_old_history_when_move_result_has_no_partition(self) -> None:
+        class _MissingPartitionRuntime(_FakeRuntime):
+            def dispatch(self, command: AgentCommand) -> CommandResult:
+                self.submitted.append(command)
+                return CommandResult(command.command_id, "s1", "r1", "ok", {"text": "workspace roots"})
+
+        runtime = _MissingPartitionRuntime()
+        prompt = _RecordingPrompt()
+        output = io.StringIO()
+
+        with patch("local_agent.frontends.terminal.app.build_terminal_prompt", return_value=prompt):
+            code = run_terminal_chat(
+                runtime,  # type: ignore[arg-type]
+                input_stream=io.StringIO("/move /workspace/new\n/exit\n"),
+                output_stream=output,
+            )
+
+        self.assertEqual(code, 0)
+        self.assertEqual(prompt.history_paths, [None])
+        self.assertIn("without a terminal history partition", output.getvalue())
 
     def test_terminal_chat_silences_input_echo_while_runtime_runs(self) -> None:
         runtime = _FakeRuntime()

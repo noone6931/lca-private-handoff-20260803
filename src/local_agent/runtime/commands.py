@@ -19,6 +19,7 @@ class RuntimeCommandPort(Protocol):
     _is_running: bool
     _last_run_summary: dict[str, Any] | None
     _session: _SessionWriter
+    _state_dir: Path
     def _run_prompt(self, prompt: str) -> str: ...
     def _finish_run_summary(self, reason: str) -> dict[str, Any]: ...
     def approval_summary(self) -> str: ...
@@ -140,6 +141,7 @@ class CommandDispatcher:
         runtime = self._runtime
         command_type = command.type
         payload = command.payload
+        result_payload: dict[str, Any] = {}
         if command_type == "GetStatus":
             text = runtime.status_summary()
         elif command_type == "ListTools":
@@ -169,9 +171,10 @@ class CommandDispatcher:
         elif command_type == "MoveWorkspace":
             runtime.move_workspace(str(payload["path"]))
             text = runtime.workspace_summary()
+            result_payload["state_dir"] = str(runtime._state_dir)
         else:
             return self._error(command, "unsupported_command", f"Unsupported command type: {command_type}")
-        return CommandResult(command.command_id, self._session_id, None, "ok", {"text": text})
+        return CommandResult(command.command_id, self._session_id, None, "ok", result_payload | {"text": text})
 
     def _ensure_failed_turn(self, reason: str, content: str) -> None:
         if self._events.turn_finished_payload is not None:

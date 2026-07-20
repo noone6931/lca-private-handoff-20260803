@@ -7,24 +7,14 @@ from ...agent import AgentRuntime
 from ...protocol.commands import CommandResult
 from ...protocol.commands import new_command
 from ...platform.terminal import silenced_terminal_input
-from .command_registry import TerminalCommandCompletion
 from .command_registry import TerminalCommandRegistry
 from .interactions import TerminalInteractionController
+from .prompt import TerminalHistoryRebindError
+from .prompt import TerminalPrompt
+from .prompt import build_terminal_prompt
+from .prompt import is_slash_command_input
+from .prompt import slash_command_completions
 from .renderer import TerminalEventSink
-
-
-def slash_command_completions(text_before_cursor: str) -> tuple[TerminalCommandCompletion, ...]:
-    """Return command completions only while the user is entering a slash command."""
-
-    if not is_slash_command_input(text_before_cursor):
-        return ()
-    return TerminalCommandRegistry().completions(text_before_cursor)
-
-
-def is_slash_command_input(text: str) -> bool:
-    """Return whether slash-command completion applies to the current chat input."""
-
-    return text.lstrip().startswith("/")
 
 
 def run_terminal_chat(
@@ -37,7 +27,7 @@ def run_terminal_chat(
     output_stream=None,
 ) -> int:
     output = output_stream or sys.stdout
-    prompt = _build_prompt(history_path)
+    prompt = build_terminal_prompt(history_path)
     registry = command_registry or TerminalCommandRegistry()
     interactions = interaction_controller or TerminalInteractionController(
         input_stream=input_stream,
@@ -65,7 +55,9 @@ def run_terminal_chat(
                 if dispatched.exit_requested:
                     return 0
                 if dispatched.command is not None:
-                    _render_command_result(runtime.commands.dispatch(dispatched.command), output)
+                    result = runtime.commands.dispatch(dispatched.command)
+                    _render_command_result(result, output)
+                    _rebind_history_after_workspace_move(prompt, dispatched.command.type, result, output)
                 continue
             try:
                 with silenced_terminal_input():
@@ -95,59 +87,20 @@ def _print_lines(lines: tuple[str, ...], output) -> None:
         print(line, file=output)
 
 
-def _build_prompt(history_path: Path | None):
+def _rebind_history_after_workspace_move(
+    prompt: TerminalPrompt,
+    command_type: str,
+    result: CommandResult,
+    output,
+) -> None:
+    if command_type != "MoveWorkspace" or not result.ok:
+        return
+    state_dir = result.payload.get("state_dir")
+    if not isinstance(state_dir, str) or not state_dir:
+        prompt.rebind_history(None)
+        print("warning: workspace moved without a terminal history partition; restart chat to rebind it.", file=output)
+        return
     try:
-        from prompt_toolkit.completion import Completer, Completion
-        from prompt_toolkit import PromptSession
-        from prompt_toolkit.history import FileHistory
-        from prompt_toolkit.key_binding import KeyBindings
-    except ImportError:
-        return _PlainPrompt()
-    history = FileHistory(str(history_path)) if history_path is not None else None
-    bindings = KeyBindings()
-
-    @bindings.add("escape", "enter")
-    def _(event) -> None:
-        event.current_buffer.insert_text("\n")
-
-    @bindings.add("enter")
-    def _(event) -> None:
-        event.app.current_buffer.validate_and_handle()
-
-    class _SlashCommandCompleter(Completer):
-        def get_completions(self, document, complete_event):
-            del complete_event
-            for candidate in slash_command_completions(document.text_before_cursor):
-                yield Completion(
-                    candidate.text,
-                    start_position=candidate.start_position,
-                    display_meta=candidate.description,
-                )
-
-    session = PromptSession(
-        history=history,
-        multiline=True,
-        key_bindings=bindings,
-        completer=_SlashCommandCompleter(),
-        complete_while_typing=True,
-    )
-
-    def prompt(*, input_stream=None) -> str:
-        if input_stream is not None:
-            line = input_stream.readline()
-            if line == "":
-                raise EOFError
-            return line
-        return session.prompt("> ")
-
-    return prompt
-
-
-class _PlainPrompt:
-    def __call__(self, *, input_stream=None) -> str:
-        if input_stream is not None:
-            line = input_stream.readline()
-            if line == "":
-                raise EOFError
-            return line
-        return input("> ")
+        prompt.rebind_history(Path(state_dir) / "terminal_history")
+    except TerminalHistoryRebindError as exc:
+        print(f"warning: {exc}", file=output)
