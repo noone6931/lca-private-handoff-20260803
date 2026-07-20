@@ -5,10 +5,73 @@ import signal
 import subprocess
 import time
 from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
+from typing import BinaryIO
 
 from ..protocol.cancellation import CancellationSignal
 from ..protocol.cancellation import RunCancelled
+from .process_output import BoundedByteCapture
+from .process_output import CapturedCompletedProcess
+from .process_output import CapturedTimeoutExpired
+from .process_output import PROCESS_PIPE_READ_CHUNK_BYTES
+from .process_output import ProcessOutputCapture
+
+
+_PROCESS_POLL_SECONDS = 0.01
+_PIPE_CHUNKS_PER_SWEEP = 4
+_TERMINATE_GRACE_SECONDS = 0.5
+
+
+@dataclass
+class _PipeCapture:
+    stream: BinaryIO
+    capture: BoundedByteCapture
+    eof: bool = False
+
+    def drain(self) -> None:
+        if self.eof:
+            return
+        for _ in range(_PIPE_CHUNKS_PER_SWEEP):
+            try:
+                chunk = os.read(self.stream.fileno(), PROCESS_PIPE_READ_CHUNK_BYTES)
+            except BlockingIOError:
+                return
+            except InterruptedError:
+                continue
+            if not chunk:
+                self.eof = True
+                self.stream.close()
+                return
+            self.capture.push(chunk)
+
+    def close(self) -> None:
+        if not self.eof:
+            self.eof = True
+            self.stream.close()
+
+
+class _ProcessPipes:
+    def __init__(self, stdout: BinaryIO, stderr: BinaryIO) -> None:
+        os.set_blocking(stdout.fileno(), False)
+        os.set_blocking(stderr.fileno(), False)
+        self._stdout = _PipeCapture(stdout, BoundedByteCapture())
+        self._stderr = _PipeCapture(stderr, BoundedByteCapture())
+
+    @property
+    def eof(self) -> bool:
+        return self._stdout.eof and self._stderr.eof
+
+    def drain(self) -> None:
+        self._stdout.drain()
+        self._stderr.drain()
+
+    def close(self) -> None:
+        self._stdout.close()
+        self._stderr.close()
+
+    def finish(self) -> ProcessOutputCapture:
+        return ProcessOutputCapture(self._stdout.capture.finish(), self._stderr.capture.finish())
 
 
 def run_process(
@@ -20,82 +83,97 @@ def run_process(
     cancel_event: CancellationSignal | None,
     env: Mapping[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    """Run a subprocess in one bounded process-group lifecycle."""
+    """Run a subprocess with bounded binary output and one process-group lifecycle."""
 
     process = subprocess.Popen(
         command,
         cwd=cwd,
         env=env,
         shell=shell,
-        text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         start_new_session=os.name == "posix",
     )
+    assert process.stdout is not None and process.stderr is not None
+    try:
+        pipes = _ProcessPipes(process.stdout, process.stderr)
+    except BaseException:
+        _abort_process_startup(process)
+        raise
     deadline = time.monotonic() + timeout
-    last_stdout: str | None = None
-    last_stderr: str | None = None
-    while True:
-        if cancel_event is not None and cancel_event.is_set():
-            _terminate_process(process)
-            raise RunCancelled("Run cancelled while a local process was active.")
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            stdout, stderr = _terminate_process(process)
-            raise subprocess.TimeoutExpired(
-                command,
-                timeout,
-                output=stdout if stdout is not None else last_stdout,
-                stderr=stderr if stderr is not None else last_stderr,
-            )
-        try:
-            stdout, stderr = process.communicate(timeout=min(remaining, 0.05))
-        except subprocess.TimeoutExpired as exc:
-            if isinstance(exc.stdout, str):
-                last_stdout = exc.stdout
-            if isinstance(exc.stderr, str):
-                last_stderr = exc.stderr
-            continue
-        return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
+    try:
+        while True:
+            if cancel_event is not None and cancel_event.is_set():
+                _terminate_process(process, pipes)
+                raise RunCancelled("Run cancelled while a local process was active.")
+            pipes.drain()
+            if process.poll() is not None and pipes.eof:
+                capture = pipes.finish()
+                return CapturedCompletedProcess(command, process.returncode, capture)
+            if time.monotonic() >= deadline:
+                capture = _terminate_process(process, pipes)
+                raise CapturedTimeoutExpired(command, timeout, capture)
+            time.sleep(_PROCESS_POLL_SECONDS)
+    except (RunCancelled, subprocess.TimeoutExpired):
+        raise
+    except BaseException:
+        _terminate_process(process, pipes)
+        raise
 
 
-def _terminate_process(process: subprocess.Popen[str]) -> tuple[str | None, str | None]:
+def _terminate_process(process: subprocess.Popen[bytes], pipes: _ProcessPipes) -> ProcessOutputCapture:
     if os.name == "posix":
         _signal_process(process, signal.SIGTERM)
     elif process.poll() is None:
         process.terminate()
-    try:
-        stdout, stderr = process.communicate(timeout=0.5)
-    except subprocess.TimeoutExpired as exc:
-        stdout = exc.stdout if isinstance(exc.stdout, str) else None
-        stderr = exc.stderr if isinstance(exc.stderr, str) else None
-        if os.name == "posix":
-            _signal_process(process, signal.SIGKILL)
-        elif process.poll() is None:
-            process.kill()
-        try:
-            final_stdout, final_stderr = process.communicate(timeout=0.5)
-        except subprocess.TimeoutExpired as final_exc:
-            final_stdout = final_exc.stdout if isinstance(final_exc.stdout, str) else stdout
-            final_stderr = final_exc.stderr if isinstance(final_exc.stderr, str) else stderr
-            _close_process_pipes(process)
-            try:
-                process.wait(timeout=0.1)
-            except subprocess.TimeoutExpired:
-                pass
-        return final_stdout, final_stderr
-    if os.name == "posix" and _process_group_exists(process.pid):
+    complete = _wait_for_process_and_pipes(process, pipes, _TERMINATE_GRACE_SECONDS)
+    group_alive = os.name == "posix" and _process_group_exists(process.pid)
+    if group_alive:
         _signal_process(process, signal.SIGKILL)
-    return stdout, stderr
+    elif os.name != "posix" and process.poll() is None:
+        process.kill()
+    if not complete or group_alive:
+        _wait_for_process_and_pipes(process, pipes, _TERMINATE_GRACE_SECONDS)
+    pipes.drain()
+    pipes.close()
+    if process.poll() is None:
+        try:
+            process.wait(timeout=0.1)
+        except subprocess.TimeoutExpired:
+            pass
+    return pipes.finish()
 
 
-def _close_process_pipes(process: subprocess.Popen[str]) -> None:
+def _abort_process_startup(process: subprocess.Popen[bytes]) -> None:
+    if os.name == "posix":
+        _signal_process(process, signal.SIGKILL)
+    elif process.poll() is None:
+        process.kill()
     for stream in (process.stdout, process.stderr):
         if stream is not None:
             stream.close()
+    try:
+        process.wait(timeout=0.1)
+    except subprocess.TimeoutExpired:
+        pass
 
 
-def _signal_process(process: subprocess.Popen[str], signum: signal.Signals) -> None:
+def _wait_for_process_and_pipes(
+    process: subprocess.Popen[bytes],
+    pipes: _ProcessPipes,
+    timeout: float,
+) -> bool:
+    deadline = time.monotonic() + timeout
+    while True:
+        pipes.drain()
+        if process.poll() is not None and pipes.eof:
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(_PROCESS_POLL_SECONDS)
+
+
+def _signal_process(process: subprocess.Popen[bytes], signum: signal.Signals) -> None:
     if os.name == "posix":
         try:
             os.killpg(process.pid, signum)

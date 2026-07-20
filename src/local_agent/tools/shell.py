@@ -12,6 +12,7 @@ from local_agent.patch.anchored import PatchError, resolve_workspace_path
 
 from .base import Tool, ToolContext, ToolResult
 from .process_environment import build_child_process_environment
+from .process_output import process_tool_result as _process_tool_result
 from .process_runtime import run_process as _run_process
 from .test_runner_policy import resolve_test_runner, test_environment_denial_reason
 from .test_runner_policy import test_runner_denial_reason as _test_runner_denial_reason
@@ -227,21 +228,19 @@ def _run_test_process(
             cancel_event=context.cancel_event,
         )
     except subprocess.TimeoutExpired as exc:
-        output = f"Test command timed out after {timeout} seconds."
-        if exc.stdout:
-            output += f"\n[stdout]\n{exc.stdout}"
-        if exc.stderr:
-            output += f"\n[stderr]\n{exc.stderr}"
-        return ToolResult(output[:30000], is_error=True, metadata=metadata)
+        return _process_tool_result(
+            exc,
+            terminal_line=f"[timeout] Test command timed out after {timeout} seconds.",
+            is_error=True,
+            metadata=metadata,
+            label_stdout=True,
+        )
     except OSError as exc:
         return ToolResult(f"Test runner could not be started: {exc}", is_error=True, metadata=metadata)
-    output = completed.stdout
-    if completed.stderr:
-        output += "\n[stderr]\n" + completed.stderr
-    output += f"\n[exit_code] {completed.returncode}"
     status = "succeeded" if completed.returncode == 0 else "failed"
-    return ToolResult(
-        output[:30000],
+    return _process_tool_result(
+        completed,
+        terminal_line=f"[exit_code] {completed.returncode}",
         is_error=completed.returncode != 0,
         metadata=_test_metadata(
             command,
@@ -321,17 +320,17 @@ def _run_command(command: str, args: dict[str, Any], context: ToolContext, *, de
             cancel_event=context.cancel_event,
         )
     except subprocess.TimeoutExpired as exc:
-        output = f"Command timed out after {timeout} seconds."
-        if exc.stdout:
-            output += f"\n[stdout]\n{exc.stdout}"
-        if exc.stderr:
-            output += f"\n[stderr]\n{exc.stderr}"
-        return ToolResult(output[:30000], is_error=True)
-    output = completed.stdout
-    if completed.stderr:
-        output += "\n[stderr]\n" + completed.stderr
-    output += f"\n[exit_code] {completed.returncode}"
-    return ToolResult(output[:30000], is_error=completed.returncode != 0)
+        return _process_tool_result(
+            exc,
+            terminal_line=f"[timeout] Command timed out after {timeout} seconds.",
+            is_error=True,
+            label_stdout=True,
+        )
+    return _process_tool_result(
+        completed,
+        terminal_line=f"[exit_code] {completed.returncode}",
+        is_error=completed.returncode != 0,
+    )
 
 
 def _dangerous_command_reason(command: str) -> str | None:

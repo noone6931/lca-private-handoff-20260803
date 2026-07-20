@@ -2062,6 +2062,9 @@ class ToolTests(unittest.TestCase):
         self.assertEqual(result.metadata["execution_capability"], "exec")
         self.assertFalse(result.metadata["sandboxed"])
         self.assertIn("repository-controlled", result.metadata["trust_boundary"])
+        self.assertFalse(result.metadata["output_truncated"])
+        self.assertEqual(result.metadata["output_capture"]["stderr"]["dropped_bytes"], 0)
+        self.assertNotIn("output", result.metadata["output_capture"]["stdout"])
 
     def test_run_tests_propagates_real_python_test_failure(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

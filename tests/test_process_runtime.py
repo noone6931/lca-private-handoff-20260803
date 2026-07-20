@@ -11,6 +11,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from local_agent.cancellation import RunCancelled
+from local_agent.tools.process_output import PROCESS_STREAM_CAPTURE_LIMIT_BYTES
 from local_agent.tools.process_runtime import run_process
 
 
@@ -36,6 +37,82 @@ class ProcessRuntimeTests(unittest.TestCase):
         self.assertEqual(result.stdout, "out\n")
         self.assertEqual(result.stderr, "err\n")
         signal_process.assert_not_called()
+
+    def test_large_dual_stream_capture_is_bounded_and_does_not_deadlock(self) -> None:
+        stdout_bytes = PROCESS_STREAM_CAPTURE_LIMIT_BYTES + 8192
+        stderr_bytes = PROCESS_STREAM_CAPTURE_LIMIT_BYTES + 16384
+        code = (
+            "import sys; "
+            f"sys.stdout.buffer.write(b'A' * {stdout_bytes}); sys.stdout.buffer.flush(); "
+            f"sys.stderr.buffer.write(b'B' * {stderr_bytes}); sys.stderr.buffer.flush()"
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            result = run_process(
+                [sys.executable, "-c", code],
+                cwd=Path(tmp),
+                shell=False,
+                timeout=5,
+                cancel_event=None,
+            )
+
+        capture = result.output_capture
+        self.assertEqual(capture.stdout.summary.observed_bytes, stdout_bytes)
+        self.assertEqual(capture.stderr.summary.observed_bytes, stderr_bytes)
+        self.assertEqual(capture.stdout.summary.captured_bytes, PROCESS_STREAM_CAPTURE_LIMIT_BYTES)
+        self.assertEqual(capture.stderr.summary.captured_bytes, PROCESS_STREAM_CAPTURE_LIMIT_BYTES)
+        self.assertEqual(capture.stdout.summary.dropped_bytes, 8192)
+        self.assertEqual(capture.stderr.summary.dropped_bytes, 16384)
+        self.assertTrue(capture.truncated)
+        self.assertTrue(result.stdout.startswith("A" * 32))
+        self.assertTrue(result.stdout.endswith("A" * 32))
+        self.assertTrue(result.stderr.startswith("B" * 32))
+        self.assertTrue(result.stderr.endswith("B" * 32))
+
+    def test_timeout_exposes_bounded_capture_on_timeout_expired_protocol(self) -> None:
+        emitted = PROCESS_STREAM_CAPTURE_LIMIT_BYTES + 4096
+        code = (
+            "import sys,time; "
+            f"sys.stdout.buffer.write(b'X' * {emitted}); sys.stdout.buffer.flush(); time.sleep(5)"
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(subprocess.TimeoutExpired) as raised:
+                run_process(
+                    [sys.executable, "-c", code],
+                    cwd=Path(tmp),
+                    shell=False,
+                    timeout=0.2,
+                    cancel_event=None,
+                )
+
+        capture = raised.exception.output_capture
+        self.assertEqual(capture.stdout.summary.observed_bytes, emitted)
+        self.assertEqual(capture.stdout.summary.captured_bytes, PROCESS_STREAM_CAPTURE_LIMIT_BYTES)
+        self.assertEqual(capture.stdout.summary.dropped_bytes, 4096)
+        self.assertEqual(raised.exception.stdout, capture.stdout.text)
+        self.assertLess(len(raised.exception.stdout), emitted)
+
+    @unittest.skipUnless(os.name == "posix", "startup cleanup characterization requires POSIX")
+    def test_pipe_setup_failure_terminates_started_process_without_side_effect(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            marker = workspace / "late-startup.txt"
+            code = "import pathlib,sys,time; time.sleep(0.4); pathlib.Path(sys.argv[1]).write_text('late')"
+
+            with patch("local_agent.tools.process_runtime.os.set_blocking", side_effect=RuntimeError("setup failed")):
+                with self.assertRaisesRegex(RuntimeError, "setup failed"):
+                    run_process(
+                        [sys.executable, "-c", code, str(marker)],
+                        cwd=workspace,
+                        shell=False,
+                        timeout=5,
+                        cancel_event=None,
+                    )
+            time.sleep(0.5)
+            marker_exists = marker.exists()
+
+        self.assertFalse(marker_exists)
 
     @unittest.skipUnless(os.name == "posix", "process-group characterization requires POSIX")
     def test_timeout_without_cancel_signal_terminates_grandchild_process_group(self) -> None:

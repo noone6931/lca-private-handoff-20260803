@@ -36,9 +36,10 @@ OWNER_COMPLEXITY_CEILINGS = {
     "src/local_agent/runtime/review.py": 643,
     "src/local_agent/runtime/review_round.py": 452,
     "src/local_agent/review/safe_partial.py": 446,
-    "src/local_agent/tools/shell.py": 357,
+    "src/local_agent/tools/shell.py": 355,
     "src/local_agent/tools/process_environment.py": 64,
-    "src/local_agent/tools/process_runtime.py": 117,
+    "src/local_agent/tools/process_output.py": 250,
+    "src/local_agent/tools/process_runtime.py": 195,
     "src/local_agent/tools/test_runner_policy.py": 217,
     "src/local_agent/steering/pre_review.py": 83,
     "src/local_agent/steering/final_answer.py": 59,
@@ -118,6 +119,18 @@ def _resolved_import_targets(path: Path) -> list[tuple[int, str]]:
 
 
 class ArchitectureBoundaryTests(unittest.TestCase):
+    def test_process_capture_is_bounded_binary_and_owned_outside_shell_runtime(self) -> None:
+        capture = (ROOT / "src/local_agent/tools/process_output.py").read_text(encoding="utf-8")
+        runtime = (ROOT / "src/local_agent/tools/process_runtime.py").read_text(encoding="utf-8")
+        shell = (ROOT / "src/local_agent/tools/shell.py").read_text(encoding="utf-8")
+        agent = (ROOT / "src/local_agent/agent.py").read_text(encoding="utf-8")
+        self.assertIn("PROCESS_TOTAL_CAPTURE_LIMIT_BYTES", capture)
+        self.assertIn("class BoundedByteCapture:", capture)
+        self.assertNotIn("communicate(", runtime)
+        self.assertNotIn("text=True", runtime)
+        self.assertNotIn("[:30000]", shell)
+        self.assertNotIn("process_output", agent)
+
     def test_session_task_continuity_is_typed_and_owned_outside_runtime(self) -> None:
         owner = (ROOT / "src/local_agent/session/continuity.py").read_text(encoding="utf-8")
         runtime = (ROOT / "src/local_agent/agent.py").read_text(encoding="utf-8")
