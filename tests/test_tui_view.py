@@ -206,6 +206,52 @@ print("中文👩‍💻")
         self.assertIn("cursor-tail", frame.lines[-2])
         self.assertLess(frame.cursor_x, 24)
 
+    def test_multiline_composer_uses_physical_rows_and_true_visual_cursor(self) -> None:
+        text = "first line\nsecond line"
+        frame = render_frame(
+            TuiState(transcript=(TranscriptEntry("a1", "assistant", "body"),)),
+            TuiView(input_text=text, cursor=text.index("second") + 3),
+            24,
+            10,
+        )
+
+        rendered = "\n".join(frame.lines)
+        self.assertIn("> first line", rendered)
+        self.assertIn("| second line", rendered)
+        self.assertNotIn("first line\\nsecond line", rendered)
+        self.assertEqual(frame.lines[frame.cursor_y].strip(), "| second line")
+        self.assertEqual(frame.cursor_x, len("| sec"))
+
+    def test_small_viewport_clamps_composer_and_preserves_header_body_footer(self) -> None:
+        state = TuiState(transcript=(TranscriptEntry("a1", "assistant", "body remains"),))
+        view = TuiView(
+            input_text="\n".join(f"line-{index}" for index in range(10)),
+            cursor=69,
+            palette=tuple(f"command {index}" for index in range(8)),
+        )
+
+        frame = render_frame(state, view, 30, 6)
+
+        self.assertEqual(len(frame.lines), 6)
+        self.assertIn("LCA", frame.lines[0])
+        self.assertEqual(frame.lines[1].strip(), "")
+        self.assertIn("command 0", frame.lines[2])
+        self.assertIn("Enter send", frame.lines[-1])
+        self.assertLess(frame.cursor_y, len(frame.lines) - 1)
+
+    def test_inline_and_full_frames_share_composer_height_and_cursor_projection(self) -> None:
+        text = "alpha beta gamma\ndelta"
+        view = TuiView(input_text=text, cursor=len(text))
+
+        full = render_frame(TuiState(), view, 16, 12)
+        inline = render_inline_frame(TuiState(), view, 16, 12)
+
+        full_prompt = tuple(line.rstrip() for line in full.lines if line.startswith(("> ", "| ")))
+        inline_prompt = tuple(line.rstrip() for line in inline.lines if line.startswith(("> ", "| ")))
+        self.assertEqual(full_prompt, inline_prompt)
+        self.assertEqual(full.cursor_x, inline.cursor_x)
+        self.assertEqual(full.lines[full.cursor_y].rstrip(), inline.lines[inline.cursor_y].rstrip())
+
     def test_long_single_message_and_multiple_turns_expose_history_position(self) -> None:
         state = TuiState(
             transcript=(

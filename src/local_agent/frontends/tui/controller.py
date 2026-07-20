@@ -9,6 +9,7 @@ from ...protocol.interactions import InteractionResult
 from ..composer_history import ComposerHistory
 from ..composer_history import composer_history_path
 from ..terminal.command_registry import TerminalCommandRegistry
+from .composer_layout import move_composer_cursor_vertical
 from .history_search import ComposerHistorySearch
 from .history_search import HistorySearchView
 from .mailbox import TuiMailbox
@@ -59,6 +60,7 @@ class TuiController:
         self._composer_before_interaction: tuple[str, int] | None = None
         self._clipboard_text: str | None = None
         self._viewport_size: tuple[int, int] | None = None
+        self._composer_preferred_column: int | None = None
 
     @property
     def state(self):
@@ -87,6 +89,7 @@ class TuiController:
                     self._cancel_history_search()
                 self._pending_interaction = message
                 self._composer_before_interaction = (self._view.input_text, self._view.cursor)
+                self._composer_preferred_column = None
                 focus = TuiFocus.ASK if message.request.kind == "ask" else TuiFocus.APPROVAL
                 self._view = replace(
                     self._view,
@@ -145,6 +148,7 @@ class TuiController:
             else:
                 self._view = replace(self._view, notice="Run is starting; press Ctrl-C again to cancel.")
         elif key == "ESC" and self._view.palette:
+            self._composer_preferred_column = None
             self._view = replace(self._view, palette=())
         elif key == "ESC" and (self._view.focus == "search" or self._view.search_query):
             self._close_search()
@@ -172,6 +176,10 @@ class TuiController:
             self._move_history_search(-1)
         elif key == "DOWN" and self._view.focus == "history_search":
             self._move_history_search(1)
+        elif key == "UP" and self._move_composer_vertical(-1):
+            pass
+        elif key == "DOWN" and self._move_composer_vertical(1):
+            pass
         elif key == "UP" and self._recall_history(-1):
             pass
         elif key == "DOWN" and self._recall_history(1):
@@ -179,14 +187,18 @@ class TuiController:
         elif key == "RESIZE":
             self._sync_viewport()
         elif key == "LEFT":
+            self._composer_preferred_column = None
             self._view = replace(self._view, cursor=max(self._view.cursor - 1, 0))
         elif key == "RIGHT":
+            self._composer_preferred_column = None
             self._view = replace(self._view, cursor=min(self._view.cursor + 1, len(self._view.input_text)))
         elif key == "HOME":
+            self._composer_preferred_column = None
             self._view = replace(self._view, cursor=0)
         elif key == "END" and self._view.focus == TuiFocus.CHAT.value and not self._view.input_text:
             self._view = replace(self._view, viewport=follow_viewport(self._view.viewport))
         elif key == "END":
+            self._composer_preferred_column = None
             self._view = replace(self._view, cursor=len(self._view.input_text))
         elif key == "BACKSPACE":
             self._backspace()
@@ -208,6 +220,7 @@ class TuiController:
             matches = sum(query.casefold() in entry.text.casefold() for entry in self.state.transcript) if query else 0
             draft, cursor = self._composer_before_search or ("", 0)
             self._composer_before_search = None
+            self._composer_preferred_column = None
             self._view = replace(
                 self._view,
                 focus=TuiFocus.CHAT.value,
@@ -228,6 +241,7 @@ class TuiController:
                     + self._view.input_text[self._view.cursor:]
                 )
                 if self._view.input_text != selected:
+                    self._composer_preferred_column = None
                     self._view = replace(
                         self._view,
                         input_text=selected,
@@ -238,6 +252,7 @@ class TuiController:
             else:
                 selected = self._view.palette[self._view.palette_index].split("  ", 1)[0]
                 if self._view.input_text != selected:
+                    self._composer_preferred_column = None
                     self._view = replace(self._view, input_text=selected, cursor=len(selected), palette=())
                     return
             self._view = replace(self._view, palette=())
@@ -280,6 +295,7 @@ class TuiController:
             notice="",
             viewport=follow_viewport(self._view.viewport),
         )
+        self._composer_preferred_column = None
 
     def _submit_command(self, command) -> bool:
         if not self._worker.submit(command):
@@ -291,6 +307,7 @@ class TuiController:
     def _handle_command_result(self, completed: TuiCommandCompleted) -> None:
         result = completed.result
         if completed.command.type == "MoveWorkspace":
+            self._composer_preferred_column = None
             self._reset_history_search_for_rebind()
         if result.ok:
             if completed.command.type == "MoveWorkspace":
@@ -326,6 +343,7 @@ class TuiController:
         draft, cursor = self._composer_before_interaction or ("", 0)
         self._composer_before_interaction = None
         self._pending_interaction = None
+        self._composer_preferred_column = None
         self._view = replace(
             self._view,
             focus=TuiFocus.CHAT.value,
@@ -339,6 +357,7 @@ class TuiController:
     def _toggle_palette(self) -> None:
         if self._pending_interaction is not None or self._view.focus in {"search", "history_search"}:
             return
+        self._composer_preferred_column = None
         if self._view.palette:
             self._view = replace(self._view, palette=())
             return
@@ -355,6 +374,7 @@ class TuiController:
             return
         self._history.reset_navigation()
         self._composer_before_search = (self._view.input_text, self._view.cursor)
+        self._composer_preferred_column = None
         self._view = replace(
             self._view,
             focus="search",
@@ -367,6 +387,7 @@ class TuiController:
     def _close_search(self) -> None:
         draft, cursor = self._composer_before_search or (self._view.input_text, self._view.cursor)
         self._composer_before_search = None
+        self._composer_preferred_column = None
         self._view = replace(
             self._view,
             focus=TuiFocus.CHAT.value,
@@ -389,6 +410,7 @@ class TuiController:
         ):
             return
         self._history.reset_navigation()
+        self._composer_preferred_column = None
         state = self._history_search.open(
             self._history.snapshot,
             self._view.input_text,
@@ -420,6 +442,7 @@ class TuiController:
         if match is None:
             self._view = replace(self._view, notice="No matching composer history entry.")
             return
+        self._composer_preferred_column = None
         self._view = replace(
             self._view,
             focus=TuiFocus.CHAT.value,
@@ -434,6 +457,7 @@ class TuiController:
 
     def _cancel_history_search(self) -> None:
         draft, cursor = self._history_search.cancel()
+        self._composer_preferred_column = None
         self._view = replace(
             self._view,
             focus=TuiFocus.CHAT.value,
@@ -459,6 +483,7 @@ class TuiController:
                 history_search_status="inactive",
             )
         self._history.reset_navigation()
+        self._composer_preferred_column = None
 
     def _copy_last_answer(self) -> None:
         answer = next(
@@ -490,6 +515,7 @@ class TuiController:
             self._update_history_search_query(updated, cursor + len(text))
             return
         self._history.reset_navigation()
+        self._composer_preferred_column = None
         palette = self._view.palette
         if updated.startswith("/") and not self._pending_interaction and self._view.focus == TuiFocus.CHAT.value:
             completions = self._registry.completions(updated[:cursor + len(text)])
@@ -520,6 +546,7 @@ class TuiController:
             self._update_history_search_query(value[:cursor - 1] + value[cursor:], cursor - 1)
             return
         self._history.reset_navigation()
+        self._composer_preferred_column = None
         self._view = replace(self._view, input_text=value[:cursor - 1] + value[cursor:], cursor=cursor - 1)
 
     def _delete(self) -> None:
@@ -531,7 +558,29 @@ class TuiController:
             self._update_history_search_query(value[:cursor] + value[cursor + 1:], cursor)
             return
         self._history.reset_navigation()
+        self._composer_preferred_column = None
         self._view = replace(self._view, input_text=value[:cursor] + value[cursor + 1:])
+
+    def _move_composer_vertical(self, direction: int) -> bool:
+        if (
+            self._view.focus != TuiFocus.CHAT.value
+            or self._pending_interaction is not None
+            or self._view.palette
+        ):
+            return False
+        width = self._viewport_size[0] if self._viewport_size is not None else 80
+        movement = move_composer_cursor_vertical(
+            self._view.input_text,
+            self._view.cursor,
+            width,
+            direction,
+            self._composer_preferred_column,
+        )
+        if not movement.moved:
+            return False
+        self._composer_preferred_column = movement.preferred_column
+        self._view = replace(self._view, cursor=movement.cursor)
+        return True
 
     def _recall_history(self, direction: int) -> bool:
         if (
@@ -541,9 +590,13 @@ class TuiController:
             or self._view.palette
         ):
             return False
-        recalled = self._history.navigate(direction, self._view.input_text, self._view.cursor)
+        history_cursor = self._view.cursor
+        if self._composer_preferred_column is not None:
+            history_cursor = 0 if direction < 0 else len(self._view.input_text)
+        recalled = self._history.navigate(direction, self._view.input_text, history_cursor)
         if recalled is None:
             return False
+        self._composer_preferred_column = None
         self._view = replace(self._view, input_text=recalled, cursor=len(recalled), notice="")
         return True
 

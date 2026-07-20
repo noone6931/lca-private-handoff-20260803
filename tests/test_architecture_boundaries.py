@@ -55,6 +55,7 @@ OWNER_COMPLEXITY_CEILINGS = {
     "src/local_agent/frontends/tui/markdown.py": 120,
     "src/local_agent/frontends/composer_history.py": 237,
     "src/local_agent/frontends/tui/history_search.py": 130,
+    "src/local_agent/frontends/tui/composer_layout.py": 183,
     "src/local_agent/runtime/assistant_message.py": 170,
     "src/local_agent/runtime/run_output.py": 130,
     "src/local_agent/providers/protocol.py": 379,
@@ -435,6 +436,35 @@ class ArchitectureBoundaryTests(unittest.TestCase):
             "re.compile",
         ):
             self.assertNotIn(forbidden, search)
+
+    def test_tui_multiline_composer_has_one_pure_layout_owner(self) -> None:
+        layout_path = ROOT / "src/local_agent/frontends/tui/composer_layout.py"
+        layout = layout_path.read_text(encoding="utf-8")
+        view = (ROOT / "src/local_agent/frontends/tui/view.py").read_text(encoding="utf-8")
+        controller = (ROOT / "src/local_agent/frontends/tui/controller.py").read_text(encoding="utf-8")
+        self.assertIn("class ComposerLayout:", layout)
+        self.assertIn("def layout_composer(", layout)
+        self.assertIn("def move_composer_cursor_vertical(", layout)
+        self.assertIn("MAX_COMPOSER_ROWS = 6", layout)
+        self.assertIn("from .composer_layout import layout_composer", view)
+        self.assertIn("from .composer_layout import move_composer_cursor_vertical", controller)
+        self.assertEqual(
+            sum(
+                "class ComposerLayout:" in path.read_text(encoding="utf-8")
+                for path in (ROOT / "src/local_agent/frontends/tui").glob("*.py")
+            ),
+            1,
+        )
+        for forbidden in (
+            "AgentRuntime",
+            "EvidenceLedger",
+            "SessionStore",
+            "ToolChoiceQueue",
+            "runtime.commands",
+            "write_text",
+            "open(",
+        ):
+            self.assertNotIn(forbidden, layout)
 
     def test_tui_is_an_independent_single_writer_frontend(self) -> None:
         tui_root = ROOT / "src/local_agent/frontends/tui"

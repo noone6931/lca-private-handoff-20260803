@@ -68,6 +68,85 @@ class TuiControllerTests(unittest.TestCase):
         controller.handle_key("ENTER")
         self.assertEqual(worker.submitted[0].payload, {"prompt": "first\nsecond\nthird"})
 
+    def test_alt_enter_inserts_newline_and_enter_submits_multiline_payload_once(self) -> None:
+        worker = _FakeWorker()
+        controller = TuiController(TuiMailbox(capacity=8), TuiProjector(), worker)  # type: ignore[arg-type]
+
+        for character in "first":
+            controller.handle_key(character)
+        controller.handle_key("ALT_ENTER")
+        for character in "second":
+            controller.handle_key(character)
+
+        self.assertEqual(worker.submitted, [])
+        self.assertEqual(controller.view.input_text, "first\nsecond")
+        controller.handle_key("ENTER")
+        self.assertEqual(len(worker.submitted), 1)
+        self.assertEqual(worker.submitted[0].payload, {"prompt": "first\nsecond"})
+
+    def test_up_down_move_visual_rows_before_history_recall(self) -> None:
+        history = ComposerHistory(None)
+        history.append("saved history")
+        controller = TuiController(
+            TuiMailbox(capacity=8),
+            TuiProjector(),
+            _FakeWorker(),  # type: ignore[arg-type]
+            composer_history=history,
+        )
+        controller.update_viewport(8, 12)
+        controller.handle_paste("abcdefgh")
+
+        controller.handle_key("UP")
+        self.assertEqual(controller.view.input_text, "abcdefgh")
+        self.assertLess(controller.view.cursor, len("abcdefgh"))
+        visual_cursor = controller.view.cursor
+        controller.handle_key("UP")
+        self.assertEqual(controller.view.cursor, visual_cursor)
+        self.assertEqual(controller.view.input_text, "abcdefgh")
+        controller.handle_key("DOWN")
+        self.assertEqual(controller.view.cursor, len("abcdefgh"))
+
+    def test_vertical_navigation_keeps_preferred_cell_across_short_line(self) -> None:
+        controller = TuiController(TuiMailbox(capacity=8), TuiProjector(), _FakeWorker())  # type: ignore[arg-type]
+        controller.update_viewport(30, 12)
+        text = "123456\nx\n123456"
+        controller.handle_paste(text)
+
+        controller.handle_key("UP")
+        self.assertEqual(controller.view.cursor, text.index("x") + 1)
+        controller.handle_key("UP")
+        self.assertEqual(controller.view.cursor, 6)
+        controller.handle_key("DOWN")
+        controller.handle_key("BACKSPACE")
+        controller.handle_key("DOWN")
+        self.assertEqual(controller.view.cursor, controller.view.input_text.rindex("123456"))
+
+    def test_soft_wrapped_recalled_entry_reaches_older_history_only_at_visual_top(self) -> None:
+        history = ComposerHistory(None)
+        history.append("older prompt")
+        history.append("abcdefgh")
+        controller = TuiController(
+            TuiMailbox(capacity=8),
+            TuiProjector(),
+            _FakeWorker(),  # type: ignore[arg-type]
+            composer_history=history,
+        )
+        controller.update_viewport(8, 12)
+
+        controller.handle_key("UP")
+        self.assertEqual(controller.view.input_text, "abcdefgh")
+        controller.handle_key("UP")
+        self.assertEqual(controller.view.input_text, "abcdefgh")
+        self.assertLess(controller.view.cursor, len("abcdefgh"))
+        controller.handle_key("UP")
+        self.assertEqual(controller.view.input_text, "older prompt")
+
+        controller.update_viewport(30, 12)
+        controller.handle_key("LEFT")
+        interior = controller.view.cursor
+        controller.handle_key("UP")
+        self.assertEqual(controller.view.cursor, interior)
+
     def test_initial_prompt_uses_typed_worker_boundary_once(self) -> None:
         mailbox = TuiMailbox(capacity=8)
         worker = _FakeWorker()
@@ -539,8 +618,10 @@ class TuiControllerTests(unittest.TestCase):
         projector.append_local("assistant", "alpha result")
         projector.append_local("assistant", "beta result")
         controller = TuiController(mailbox, projector, worker)  # type: ignore[arg-type]
-        for character in "draft":
-            controller.handle_key(character)
+        controller.handle_paste("draft\nsecond")
+        controller.handle_key("LEFT")
+        controller.handle_key("LEFT")
+        expected_draft = (controller.view.input_text, controller.view.cursor)
 
         controller.handle_key("CTRL_F")
         for character in "alpha":
@@ -548,7 +629,7 @@ class TuiControllerTests(unittest.TestCase):
         controller.handle_key("ENTER")
 
         self.assertEqual(controller.view.search_query, "alpha")
-        self.assertEqual(controller.view.input_text, "draft")
+        self.assertEqual((controller.view.input_text, controller.view.cursor), expected_draft)
         self.assertIn("1 transcript match", controller.view.notice)
         controller.handle_key("ESC")
         self.assertEqual(controller.view.search_query, "")

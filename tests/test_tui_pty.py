@@ -18,6 +18,53 @@ FIXTURE = ROOT / "tests/fixtures/tui_pty_app.py"
 
 @unittest.skipUnless(os.name == "posix", "PTY smoke requires a POSIX terminal")
 class TuiPtyTests(unittest.TestCase):
+    def test_two_line_composer_renders_and_submits_once_across_resize(self) -> None:
+        master, slave = os.openpty()
+        before = termios.tcgetattr(slave)
+        self._set_size(slave, 16, 60)
+        process = subprocess.Popen(
+            [sys.executable, str(FIXTURE)],
+            stdin=slave,
+            stdout=slave,
+            stderr=slave,
+            env={**os.environ, "PYTHONPATH": str(ROOT / "src"), "TERM": "xterm-256color"},
+            close_fds=True,
+        )
+        output = bytearray()
+        before_submit = b""
+        try:
+            output.extend(self._read_until(master, b"LOCAL CODING AGENT", timeout=3))
+            os.write(master, b"first\x1b\nsecond")
+            time.sleep(0.2)
+            before_submit = self._read_available(master)
+            self.assertNotIn(b"SUBMITTED:", before_submit)
+            self.assertIn(b"| second", before_submit)
+            self._set_size(slave, 12, 40)
+            process.send_signal(signal.SIGWINCH)
+            time.sleep(0.1)
+            output.extend(before_submit)
+            output.extend(self._read_available(master))
+            os.write(master, b"\n")
+            output.extend(self._read_until(master, b"SUBMITTED:'first\\nsecond'", timeout=3))
+            os.write(master, b"/exit\n")
+            output.extend(self._drain_until_exit(master, process, timeout=3))
+            process.wait(timeout=1)
+            after = termios.tcgetattr(slave)
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait(timeout=2)
+            os.close(master)
+            os.close(slave)
+
+        rendered = output.decode("utf-8", errors="replace")
+        mask = termios.ECHO | termios.ICANON
+        self.assertEqual(process.returncode, 0, rendered)
+        self.assertEqual(rendered.count("SUBMITTED:'first\\nsecond'"), 1)
+        self.assertEqual(after[3] & mask, before[3] & mask)
+        self.assertNotIn("\x1b[?1049h", rendered)
+        self.assertNotIn("\x1b[3J", rendered)
+
     def test_ctrl_r_accepts_history_match_without_submitting_until_second_enter(self) -> None:
         master, slave = os.openpty()
         self._set_size(slave, 24, 100)

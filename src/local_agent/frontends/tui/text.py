@@ -61,6 +61,12 @@ def wrap_cells(text: str, width: int) -> tuple[str, ...]:
     return tuple(wrapped)
 
 
+def display_clusters(text: str) -> Iterator[str]:
+    """Expose the shared terminal grapheme approximation to layout owners."""
+
+    yield from _display_clusters(text)
+
+
 def wrap_line_cells(text: str, width: int, *, continuation_indent: str = "") -> tuple[str, ...]:
     """Wrap one logical line without splitting terminal grapheme clusters."""
 

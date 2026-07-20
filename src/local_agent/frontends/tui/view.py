@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from dataclasses import field
 from dataclasses import replace
 
+from .composer_layout import layout_composer
+from .composer_layout import MAX_COMPOSER_ROWS
 from .markdown import render_markdown_source
 from .model import TranscriptEntry
 from .model import TuiState
@@ -51,6 +53,13 @@ class TuiFrame:
     accent_rows: tuple[int, ...] = ()
 
 
+@dataclass(frozen=True)
+class _ComposerProjection:
+    rows: tuple[str, ...]
+    cursor_row: int
+    cursor_col: int
+
+
 _LCA_LOGO = (
     " _        ____      _    ",
     "| |      / ___|    / \\   ",
@@ -68,23 +77,24 @@ def render_frame(state: TuiState, view: TuiView, width: int, height: int) -> Tui
     header = _header(state, width)
     viewport = synchronize_viewport(state, view, width, height)
     footer = _footer(state, view, viewport, width)
-    palette_rows = min(len(view.palette), 5) if view.palette else 0
-    prompt_rows = 2 if view.interaction_prompt else 1
-    body_height = max(height - 2 - prompt_rows - palette_rows, 1)
+    interaction_rows = 1 if view.interaction_prompt else 0
+    palette_rows = _palette_row_count(view, height, interaction_rows)
+    composer = _composer_projection(view, width, height, palette_rows, interaction_rows)
+    body_height = max(height - 2 - interaction_rows - len(composer.rows) - palette_rows, 1)
     body = _body(state, width, body_height, viewport.top, view.search_query)
     palette = _palette(view, width, palette_rows)
-    prompt, cursor_x = _prompt(view, width)
     lines = [header, *body, *palette]
     if view.interaction_prompt:
         lines.append(pad_cells(clip_cells(view.interaction_prompt, width, marker="..."), width))
-    lines.append(prompt)
+    composer_start = len(lines)
+    lines.extend(composer.rows)
     lines.append(footer)
     lines = [pad_cells(line, width) for line in lines[:height]]
     while len(lines) < height:
         lines.insert(-1, " " * width)
-    cursor_y = min(len(lines) - 2, height - 2)
+    cursor_y = min(composer_start + composer.cursor_row, height - 2)
     accent_rows = tuple(index for index, line in enumerate(lines) if line.strip() in _LCA_ACCENTS)
-    return TuiFrame(tuple(lines), cursor_y, min(cursor_x, width - 1), accent_rows)
+    return TuiFrame(tuple(lines), cursor_y, min(composer.cursor_col, width - 1), accent_rows)
 
 
 def render_inline_frame(state: TuiState, view: TuiView, width: int, height: int) -> TuiFrame:
@@ -93,9 +103,10 @@ def render_inline_frame(state: TuiState, view: TuiView, width: int, height: int)
     width = max(width, 20)
     height = max(height, 6)
     interaction_rows = 1 if view.interaction_prompt else 0
-    palette_rows = min(len(view.palette), 5, max(height - interaction_rows - 3, 0)) if view.palette else 0
-    fixed_rows = 1 + palette_rows + interaction_rows + 2
-    content_height = max(height - fixed_rows, 0)
+    palette_rows = _palette_row_count(view, height, interaction_rows)
+    composer = _composer_projection(view, width, height, palette_rows, interaction_rows)
+    fixed_rows = 2 + palette_rows + interaction_rows + len(composer.rows)
+    content_height = max(height - fixed_rows, 1)
     provisional = tuple(entry for entry in state.transcript if entry.provisional)
     if not state.transcript and not view.search_query:
         content = list(_welcome_lines(width, content_height))
@@ -110,19 +121,24 @@ def render_inline_frame(state: TuiState, view: TuiView, width: int, height: int)
     lines = [_header(state, width), *content, *_palette(view, width, palette_rows)]
     if view.interaction_prompt:
         lines.append(pad_cells(clip_cells(view.interaction_prompt, width, marker="..."), width))
-    prompt, cursor_x = _prompt(view, width)
-    cursor_y = len(lines)
-    lines.extend((prompt, _footer(state, view, TuiViewport(), width)))
+    cursor_y = len(lines) + composer.cursor_row
+    lines.extend((*composer.rows, _footer(state, view, TuiViewport(), width)))
     accent_rows = tuple(index for index, line in enumerate(lines) if line.strip() in _LCA_ACCENTS)
-    return TuiFrame(tuple(lines[:height]), min(cursor_y, height - 2), min(cursor_x, width - 1), accent_rows)
+    return TuiFrame(
+        tuple(lines[:height]),
+        min(cursor_y, height - 2),
+        min(composer.cursor_col, width - 1),
+        accent_rows,
+    )
 
 
 def synchronize_viewport(state: TuiState, view: TuiView, width: int, height: int) -> TuiViewport:
     safe_width = max(width, 20)
     safe_height = max(height, 6)
-    palette_rows = min(len(view.palette), 5) if view.palette else 0
-    prompt_rows = 2 if view.interaction_prompt else 1
-    visible_rows = max(safe_height - 2 - prompt_rows - palette_rows, 1)
+    interaction_rows = 1 if view.interaction_prompt else 0
+    palette_rows = _palette_row_count(view, safe_height, interaction_rows)
+    composer = _composer_projection(view, safe_width, safe_height, palette_rows, interaction_rows)
+    visible_rows = max(safe_height - 2 - interaction_rows - len(composer.rows) - palette_rows, 1)
     transcript_width = _transcript_width(safe_width)
     entries = _filtered_entries(state, view.search_query)
     total_rows = len(transcript_lines(entries, transcript_width)) if state.transcript or view.search_query else 0
@@ -280,7 +296,32 @@ def _palette(view: TuiView, width: int, rows: int) -> tuple[str, ...]:
     return tuple(result)
 
 
-def _prompt(view: TuiView, width: int) -> tuple[str, int]:
+def _palette_row_count(view: TuiView, height: int, interaction_rows: int) -> int:
+    if not view.palette:
+        return 0
+    # Reserve header, footer, one transcript row, and one composer row.
+    return min(len(view.palette), 5, max(height - interaction_rows - 4, 0))
+
+
+def _composer_projection(
+    view: TuiView,
+    width: int,
+    height: int,
+    palette_rows: int,
+    interaction_rows: int,
+) -> _ComposerProjection:
+    if view.focus == "chat":
+        row_budget = min(
+            MAX_COMPOSER_ROWS,
+            max(height - 2 - palette_rows - interaction_rows - 1, 1),
+        )
+        layout = layout_composer(view.input_text, view.cursor, width, row_budget)
+        return _ComposerProjection(layout.rows, layout.cursor_row, layout.cursor_col)
+    prompt, cursor_col = _single_line_prompt(view, width)
+    return _ComposerProjection((prompt,), 0, cursor_col)
+
+
+def _single_line_prompt(view: TuiView, width: int) -> tuple[str, int]:
     label = {
         "approval": "approve> ",
         "ask": "answer> ",

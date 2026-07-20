@@ -142,6 +142,30 @@ class TuiNativeRendererTests(unittest.TestCase):
 
         self.assertEqual(_cursor_row_after_reflow(frame, 80, 20), 5)
 
+    def test_multiline_composer_stays_in_mutable_tail_and_shrinks_cleanly(self) -> None:
+        chunks = []
+
+        def write(_fd, payload):
+            chunks.append(payload)
+            return len(payload)
+
+        renderer = NativeScrollbackRenderer(_Output())
+        state = TuiState(transcript=(TranscriptEntry("a1", "assistant", "settled"),))
+        with patch("local_agent.frontends.tui.native_renderer.os.write", side_effect=write):
+            renderer.render(state, TuiView(input_text="first\nsecond", cursor=12), 24, 12)
+            renderer.render(state, TuiView(input_text="short", cursor=5), 24, 12)
+            renderer.render(state, TuiView(input_text="short", cursor=5), 18, 8)
+
+        rendered = b"".join(chunks)
+        self.assertEqual(rendered.count("• settled".encode()), 1)
+        self.assertIn(b"> first", rendered)
+        self.assertIn(b"| second", rendered)
+        self.assertIn(b"\x1b[J", rendered)
+        self.assertNotIn(b"\\n", rendered)
+        self.assertNotIn(b"\x1b[?1049h", rendered)
+        self.assertNotIn(b"\x1b[?1007h", rendered)
+        self.assertNotIn(b"\x1b[3J", rendered)
+
 
 if __name__ == "__main__":
     unittest.main()
