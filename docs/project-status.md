@@ -34,13 +34,15 @@ LCA、OMP 与 Codex 的当前源码级对照和路线校正见 `docs/lca-omp-cod
 
 ## 当前进度
 
-当前 stable 为 T-251：release `20260720T070510Z-97b55254c736-02dc6c3184a2`，revision `97b55254c736d2acf1eaccb7fb45b250dcc89a37`，digest `02dc6c3184a221efb8c6ddd13a27385549ba88232dc11e92b04af67dbb21b482`；clean detached Python 3.14 release gate 通过 1307/1307 unittest、compileall 和 diff-check，独立门禁另通过 62/62 deterministic benchmark、34/34 architecture checks、140/140 focused TUI、11/11 PTY、CLI help/chat 与 immutable follow-up queue matrix。T-247/T-248 统一输入历史并增加 bounded Ctrl-R search，T-249 完成 responsive multiline composer；T-251 新增纯前端、内存单槽 `PendingPromptQueue`，active turn 中的非空非 slash CHAT 只先进入槽位，首 turn 正常闭合后才沿现有 typed worker 路径启动独立下一 turn。队列不进入 Runtime、session、evidence、memory 或 stable transcript，Runtime、ExecutionPolicy、TaskContract、finalization 和 `agent.py` 均未改动。
+当前 stable 为 T-253：release `20260720T090532Z-992ab8f44e7c-53cad3b4ecfa`，revision `992ab8f44e7c2da2fd926c436e2c1de0c3d0ef12`，digest `53cad3b4ecfae9e5bdff52fab22b37a35213eb74f38dfd9789a62154a6914ccc`；clean detached Python 3.14 publish gate 通过 1315/1315 unittest（1 skip）、compileall 和 diff-check，独立门禁另通过 62/62 deterministic benchmark、34/34 architecture checks、139/139 focused process/tool tests、CLI help/chat 与 immutable child-env/process-lifecycle matrix。T-253 在 Tool process Owner 中统一 child-only 环境构造与本地进程生命周期：provider credential exact/mixed-case key 不进入 child，普通工具链变量保留，parent `os.environ` 不变；POSIX timeout/cancel 会收束完整 process group，包括 leader 已退出但 descendant 仍持 pipe 的场景。该能力仍明确标记 `sandboxed=false`，不是 OS filesystem/network sandbox。
 
 T-250 已完成 T-249 stable 的 multiline TUI 日用收益门槛。fresh Python fixture 的三行 Alt-Enter prompt 在 composer、session user event 和 `0600` history 中精确保留，只有一个 SubmitPrompt/TurnStarted/RunSummary/TurnFinished；唯一百炼请求因 DNS/provider environment 在首个 LLM request 失败，tool calls 为 0，终态诚实为 `provider_error` / `delivered=false`，fixture 没有源码 diff，stable/main 身份不变。真实 read/patch/test/diff 收益因此为 INCONCLUSIVE；未发现自动提交、输入改写、重复 settled output、权限越权、假交付或 identity 污染，不重跑 provider、不修改 Harness，也不给大猛发开发任务。P17 当前阶段据此收口，后续回到普通 coding 的真实收益与可靠性观察。
 
 T-251 已完成并发布。默认 TUI 在 active prompt 期间支持一个 next-turn follow-up：排队时不提前创建第二个 `SubmitPrompt`、history、Turn 或 session 记录，slot full 保留新 draft，Alt-Up 可取回原文，取消与 worker failure 恢复 composer。独立 review 发现并修复 completion 已进入 mailbox、UI 仍显示 active 时 Ctrl-C 意图会被自动 drain 越过的竞态；immutable loopback fake-provider 样本证明 mid-state 只有首 turn，闭合后两轮分别形成精确的 SubmitPrompt/TurnStarted/RunSummary/TurnFinished，multiline payload 与 `0600` history 保留 newline，normal screen 无 `1049h`/`1007h`/ED3。队列有意不持久化、不做 mid-turn steer/preempt 或多槽；强制进程退出会丢弃内存槽，正常 active Ctrl-Q 则拒绝退出。
 
 T-252 已完成 T-251 stable 的 follow-up queue 日用收益门槛。默认 stable、fresh 只读 Python fixture、state 和结果目录边界均通过；两条 CHAT prompt 在 `0600` history 与 session 中保留精确文本和内部 newline，形成两组配对的 SubmitPrompt/TurnStarted/RunSummary/TurnFinished，均为 `delivered=false`，fixture hash、main 与 stable identity 前后不变，终端未见 `1049h`/`1007h`/ED3。唯一百炼样本的两次请求分别在 77ms 和 60ms 因 DNS/provider error 结束，第二条 prompt 因首 turn 过快而成为普通独立 turn，没有自然进入 active follow-up queue；文件读取、真实答案收益和 active Ctrl-Q 因此均为 INCONCLUSIVE。未发现自动/重复提交、提前 session/history、payload 改写、权限越权、假交付或 terminal/identity 污染；不重跑 provider、不修改 Harness，也不给大猛发开发任务。
+
+T-253 已完成并发布 P18 Execution Isolation Phase 1。`process_environment.py` 是唯一 child environment Owner，只过滤三类 provider credential 的 exact/mixed-case key，并用 `setdefault` 提供 pager、noninteractive Git、unbuffered Python 与 no-color defaults；非 provider/toolchain 环境保持可用，parent 环境不变。`process_runtime.py` 统一 shell/run_tests 的 Popen、timeout、cooperative cancellation 和 POSIX process-group TERM/KILL 生命周期；Windows 仍只承诺直接 child。小牙 immutable 黑盒复算正确 digest，1315/62/34 与 focused gate 全绿，并证明 timeout descendant、leader-exit pipe、cooperative cancel 的 marker 均不落盘。公共 `run_tests` schema 不暴露 `environment` override，额外参数在 child 启动前 typed fail closed，marker absent 且 metadata 为空。输出仍是完整内存捕获后 30k 展示截断，外部进程也仍非 OS sandbox；下一窄阶段优先 bounded streaming/output capture，再评估真实平台 sandbox。
 
 T-219/T-220 已完成并发布。Codex 以 `CodexThread.submit(Op)`、唯一 submission loop、`next_event()` 和 response stream 建立双向 Runtime 边界，OMP 由 agent loop 消费 provider stream 并产出 turn/message/tool 生命周期；LCA 采用 Python 同步渐进路径：CommandDispatcher 统一消费 prompt/status/workspace/approval，Provider Stream Owner 解析同一次 OpenAI-compatible SSE/JSON 响应，text delta 与 tool argument delta 分离，只有完整合法 tool call 才能进入 ToolRegistry。`AssistantDelta` 与最终 `AssistantMessage` 共享 message/command/run identity；百炼 in-band XML 不泄漏、不执行。T-239 已在该协议上增加独立同步 TUI worker 和 cooperative cancellation；完整 async bus 与 OS sandbox 仍未冒充实现。
 
@@ -665,10 +667,10 @@ T-213/T-214 已完成 S5-1 的 Codex 直接隔离交付。T-213 在上述 clean 
 | 项目 | 结论 | 依据 |
 |---|---|---|
 | 主链路 | 通过 | 百炼真实小改复测已跑通 todo、dry_run、apply_patch、session allow、rollback、run_tests、git_diff。 |
-| 测试 | 分层通过 | P5 收口时 90 个 unittest；当前 T-251 stable 为 1307/62/34，另有 140 focused TUI、11 PTY、immutable non-delivery continuity、AssistantMessage/CLI smoke、package dependency/import-cycle/compat API、history/search/multiline/follow-up queue matrix。T-250/T-252 的唯一百炼样本均因 DNS/provider environment 记为 INCONCLUSIVE，不冒充 live coding/queue 收益通过。 |
+| 测试 | 分层通过 | P5 收口时 90 个 unittest；当前 T-253 stable 为 1315/62/34，另有 139 focused process/tool tests、immutable child-env/process-lifecycle、non-delivery continuity、AssistantMessage/CLI smoke、package dependency/import-cycle/compat API 与 history/search/multiline/follow-up queue matrix。T-250/T-252 的唯一百炼样本均因 DNS/provider environment 记为 INCONCLUSIVE，不冒充 live coding/queue 收益通过。 |
 | 日用入口 | 通过 | README 已补只读分析和小改任务命令模板。 |
 | 开放风险 | 可接受 | shell 仍非沙箱、prompt injection 仍需靠审批和封闭 VM；provider/model 专用 tokenizer、输出 reserve、managed skills、完整 reviewer 和完整 OMP ToolChoiceQueue 继续后置评估。 |
-| 下一阶段 | 普通 coding 稳定版日用观察 | P11 package ownership、P16 continuity 与 P17 output/multiline/follow-up queue lifecycle 已收口。T-250/T-252 的 provider/DNS 失败不触发 Harness 修改；后续由真实 coding 的通用可复现证据决定下一窄批次。 |
+| 下一阶段 | P18 bounded streaming/output capture | T-253 已收口 child environment 与 process-group lifecycle，但输出仍先完整驻留内存再截断展示。下一批只处理有界捕获、stdout/stderr 协议和取消/超时一致性，不把 env filtering 冒充 sandbox，也不顺带扩 Queue/gate/reviewer。 |
 
 ## 推荐工作流
 
@@ -703,7 +705,7 @@ T-213/T-214 已完成 S5-1 的 Codex 直接隔离交付。T-213 在上述 clean 
 
 用户确认本文件后，建议按以下顺序继续：
 
-1. 使用 T-251 stable 的 `lca` 做真实日常 coding；P17 当前阶段不再横向扩功能，重点记录跨场景可复现的 Runtime、工具、权限、证据或交付缺陷。provider/DNS 恢复前不重复 T-250/T-252 同类 live。`lca --chat` 继续提供更轻量的 terminal-native frontend。
+1. 使用 T-253 stable 的 `lca` 做真实日常 coding；P17 当前阶段不再横向扩功能。P18 下一窄批次优先 bounded streaming/output capture，保留现有 stdout/stderr、timeout/cancel、ToolResult 与 approval 语义；真实 OS sandbox 另行评估。provider/DNS 恢复前不重复 T-250/T-252 同类 live。
 2. 保留 T-214 隔离 workspace 和完整 diff，是否写回原 finance-base/payment 由用户单独确认；不得把隔离交付描述成生产已上线。
 3. 若进入生产集成，先在 Oracle JDK 8u121 和真实 Oracle/MyBatis 环境验证 DDL、事务、唯一键并发与现有 MQ 回放，再应用到目标分支。
 4. P14 保留 Phase 1 default-off Explore，只有后续多个真实任务出现稳定收益时才重启 reviewer/implement 评估；TUI 已完成但不与 MCP、Browser、多 Agent 或 auto-apply 横向捆绑扩展。
