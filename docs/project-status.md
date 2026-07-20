@@ -36,6 +36,8 @@ LCA、OMP 与 Codex 的当前源码级对照和路线校正见 `docs/lca-omp-cod
 
 当前 stable 为 T-249：release `20260720T054528Z-694a7fee3d5c-67e4c5bbb08b`，revision `694a7fee3d5cb6c7e9831b298027dc9721bb24a1`，digest `67e4c5bbb08bbd8a152d036d6f62807cc1c50e974c0bd170e1c44b32954cc512`；clean detached Python 3.14 release gate 通过 1292/1292 unittest、compileall 和 diff-check，独立门禁另通过 62/62 deterministic benchmark、33/33 architecture checks、134/134 focused TUI、9/9 PTY、CLI help/chat 与 immutable multiline/history matrix。T-247/T-248 将默认 TUI 与 `--chat` 的输入历史统一到唯一 `ComposerHistory` Owner，并增加只消费 bounded snapshot 的 Ctrl-R search；T-249 在独立纯前端 `composer_layout.py` 中加入最多 6 行的 physical-newline/display-cell soft-wrap 布局、真实 cursor y/x 和 visual-row-first Up/Down。Alt-Enter 与 bracketed paste 保留内部 newline，Enter 仍只提交一次；composer 不进入 normal-screen scrollback，Runtime、Queue、evidence、finalization 和 `agent.py` 均未改动。
 
+T-250 已完成 T-249 stable 的 multiline TUI 日用收益门槛。fresh Python fixture 的三行 Alt-Enter prompt 在 composer、session user event 和 `0600` history 中精确保留，只有一个 SubmitPrompt/TurnStarted/RunSummary/TurnFinished；唯一百炼请求因 DNS/provider environment 在首个 LLM request 失败，tool calls 为 0，终态诚实为 `provider_error` / `delivered=false`，fixture 没有源码 diff，stable/main 身份不变。真实 read/patch/test/diff 收益因此为 INCONCLUSIVE；未发现自动提交、输入改写、重复 settled output、权限越权、假交付或 identity 污染，不重跑 provider、不修改 Harness，也不给大猛发开发任务。P17 当前阶段据此收口，后续回到普通 coding 的真实收益与可靠性观察。
+
 T-219/T-220 已完成并发布。Codex 以 `CodexThread.submit(Op)`、唯一 submission loop、`next_event()` 和 response stream 建立双向 Runtime 边界，OMP 由 agent loop 消费 provider stream 并产出 turn/message/tool 生命周期；LCA 采用 Python 同步渐进路径：CommandDispatcher 统一消费 prompt/status/workspace/approval，Provider Stream Owner 解析同一次 OpenAI-compatible SSE/JSON 响应，text delta 与 tool argument delta 分离，只有完整合法 tool call 才能进入 ToolRegistry。`AssistantDelta` 与最终 `AssistantMessage` 共享 message/command/run identity；百炼 in-band XML 不泄漏、不执行。T-239 已在该协议上增加独立同步 TUI worker 和 cooperative cancellation；完整 async bus 与 OS sandbox 仍未冒充实现。
 
 T-221 已完成 T-220 immutable stable 的 S6-S10 黑盒批次。S6A 在首轮读取后由外部合法修改并提交新 baseline，第二轮会重读当前文件并保留外部改动；S6C 拒绝两次 patch 后零写入、测试仍失败且终态 `delivered=false`；S7 跨进程恢复同一 session/目标/todo 并完成 patch/test/diff；S8 的 always-ask、write、yolo + per-tool deny 均未越权，未验证写入不会被冒充完成；S9 第二轮变更验收条件后实现和测试均以最新条件为准。所有用户 turn 恰好一个 TurnStarted/RunSummary/TurnFinished，无 raw XML。S6B 首次 patch 直接通过测试，因此“测试失败后再修复”子项为 INCONCLUSIVE，不通过重复刷样本或新增 Harness gate 强行关闭。
@@ -497,6 +499,7 @@ T-213/T-214 已完成 S5-1 的 Codex 直接隔离交付。T-213 在上述 clean 
 | T-247 | Shared Composer History / Default TUI Recall | 已完成并发布 stable | P11/P17/Frontend Boundary | 默认 TUI 与 `--chat` 应共享同一 workspace-specific prompt history，且不能把 slash、interaction、工具或 provider 内容写入 Runtime/历史。 | commit `44c91fe`；唯一 `ComposerHistory` Owner 使用 0600 bounded JSONL，支持跨进程 Up/Down recall、dedupe、malformed fail closed 与 typed `/move` rebind。1253/62/31、69 focused、7 PTY、immutable TUI/terminal matrix 与 clean publish gate 通过；stable `20260720T023119Z-44c91fe11f98-ccae309a201f`。 |
 | T-248 | Bounded TUI Composer History Search / Ctrl-R Phase 1 | 已完成并发布 stable | P11/P17/Frontend Boundary | 多条 workspace history 只能逐次 Up 定位，默认 TUI 缺少不提交、可取消的 bounded reverse search。 | commit `6432d86`；独立 `ComposerHistorySearch` 只消费 immutable snapshot，支持 casefold literal、newest-first exact unique、accept-not-submit、draft restore 和 rebind reset。1270/62/32、167 focused、8 PTY、immutable candidate matrix 与 clean publish gate 通过；stable `20260720T031116Z-6432d8692d43-c80f5169dcf2`。 |
 | T-249 | Responsive Multiline TUI Composer Phase 1 | 已完成并发布 stable | P17/Product UX | 单行 composer 不能自然显示/编辑 multiline prompt，Up/Down 也不能在 visual rows 内移动。 | commits `8148aae`、`694a7fe`；独立 `composer_layout.py` 提供最多 6 行 display-cell layout、真实 cursor 和 visual-row-first navigation，Alt-Enter/paste 保留 newline，normal-screen 不提交 draft。1292/62/33、134 focused、9 PTY、immutable matrix 与 clean publish gate 通过；stable `20260720T054528Z-694a7fee3d5c-67e4c5bbb08b`。 |
+| T-250 | T-249 Stable Multiline TUI Daily Coding Benefit Gate | 已完成；TUI PASS，真实 coding INCONCLUSIVE | P17/Product Validation | 用发布后的默认 TUI 验证 multiline prompt、历史、Turn lifecycle 和一次真实 coding 收益。 | 三行 prompt/session/history 精确一致，单次提交和 `delivered=false` 生命周期正确；provider DNS 在首请求失败，tool calls 0，fixture 零源码 diff。无 blocker，不重跑 provider、不改 Harness，P17 当前阶段收口。 |
 
 ## 风险清单
 
@@ -661,7 +664,7 @@ T-213/T-214 已完成 S5-1 的 Codex 直接隔离交付。T-213 在上述 clean 
 | 测试 | 分层通过 | P5 收口时 90 个 unittest；当前 T-249 stable 为 1292/62/33，另有 immutable non-delivery continuity、TUI reducer/mailbox/interaction/cancellation/multiline input/native scrollback、AssistantMessage/CLI smoke、package dependency/import-cycle/compat API、history/search matrix、PTY workspace command/restore/resize/signal/Ctrl-C 与一次真实百炼 TUI coding live。 |
 | 日用入口 | 通过 | README 已补只读分析和小改任务命令模板。 |
 | 开放风险 | 可接受 | shell 仍非沙箱、prompt injection 仍需靠审批和封闭 VM；provider/model 专用 tokenizer、输出 reserve、managed skills、完整 reviewer 和完整 OMP ToolChoiceQueue 继续后置评估。 |
-| 下一阶段 | T-249 stable 日用观察 | P11 package ownership、workspace migration/history partition、P16 continuity 与 P17 output/multiline TUI lifecycle 已收口。后续先用默认 `lca` stable 进行日常 coding，观察 multiline composer、不同终端的 native scrollback、resize reflow 与 search overlay；不把 Rust/TypeScript 实现直接搬进 Python。 |
+| 下一阶段 | 普通 coding 稳定版日用观察 | P11 package ownership、P16 continuity 与 P17 output/multiline TUI lifecycle 已收口。T-250 的 provider/DNS 失败不触发 Harness 修改；后续由真实 coding 的通用可复现证据决定下一窄批次。 |
 
 ## 推荐工作流
 
@@ -696,7 +699,7 @@ T-213/T-214 已完成 S5-1 的 Codex 直接隔离交付。T-213 在上述 clean 
 
 用户确认本文件后，建议按以下顺序继续：
 
-1. 使用 T-249 stable 的 `lca` 做真实日常 coding，直接用 wheel/trackpad 浏览终端原生 scrollback；重点观察 multiline composer、history/search 分区、不同终端的 resize reflow、overlay 返回和长流式回答。`lca --chat` 继续提供更轻量的 terminal-native frontend。
+1. 使用 T-249 stable 的 `lca` 做真实日常 coding；P17 当前阶段不再横向扩功能，重点记录跨场景可复现的 Runtime、工具、权限、证据或交付缺陷。provider/DNS 恢复前不重复 T-250 同类 live。`lca --chat` 继续提供更轻量的 terminal-native frontend。
 2. 保留 T-214 隔离 workspace 和完整 diff，是否写回原 finance-base/payment 由用户单独确认；不得把隔离交付描述成生产已上线。
 3. 若进入生产集成，先在 Oracle JDK 8u121 和真实 Oracle/MyBatis 环境验证 DDL、事务、唯一键并发与现有 MQ 回放，再应用到目标分支。
 4. P14 保留 Phase 1 default-off Explore，只有后续多个真实任务出现稳定收益时才重启 reviewer/implement 评估；TUI 已完成但不与 MCP、Browser、多 Agent 或 auto-apply 横向捆绑扩展。

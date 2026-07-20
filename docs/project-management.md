@@ -17,7 +17,7 @@ python3 scripts/sync_project_excel.py
 | 字段 | 当前值 | 说明 |
 |---|---|---|
 | 最终目标 | 个人本地编程助手 Agent | 本地优先、封闭 VM 可用、只访问指定 AI API，能读代码、搜代码、改代码、跑测试、生成 diff、沉淀项目记忆。 |
-| 当前阶段 | P11/P17 架构与 TUI 输入生命周期已收口 | 当前 stable 为 T-249 `20260720T054528Z-694a7fee3d5c-67e4c5bbb08b`。T-245 将平铺实现迁入 owner packages 并锁住依赖方向；T-246~T-248 收口共享 history 与 bounded Ctrl-R search，T-249 增加纯前端 responsive multiline composer。P14 扩展和 P15 auto-apply 继续冻结。 |
+| 当前阶段 | P17 当前阶段收口，回到普通 coding 可靠性观察 | 当前 stable 为 T-249 `20260720T054528Z-694a7fee3d5c-67e4c5bbb08b`。T-250 证明 multiline 输入、session/history payload、单 Turn 生命周期与零污染边界通过；唯一真实 coding case 因 provider DNS 在首请求失败，收益记 INCONCLUSIVE，不据此修改 Harness。P14 扩展和 P15 auto-apply 继续冻结。 |
 | 推荐入口 | `lca` 或 `./agent` | 连接 POSIX TTY 时进入 normal-screen TUI，wheel/trackpad 使用终端原生历史；`lca --chat` / `lca chat` 使用轻量 terminal-native chat，非 TTY 自动回退。 |
 | Token 配置 | 环境变量 / `--env-file` / `.env` | 优先级为真实环境变量、显式 env-file、用户级 `${AGENT_CONFIG_DIR:-~/.config/local-coding-agent}/.env`、workspace `.env`；stable snapshot 不携带密钥。 |
 | 测试数 | T-249 stable 1292/62/33 | clean detached release gate 通过 1292 unittest、compileall、diff-check；62 benchmark、33 architecture、134 focused TUI、9 PTY、CLI help/chat 与 immutable multiline/history matrix 通过。Excel 按用户要求不生成。 |
@@ -367,6 +367,7 @@ python3 scripts/sync_project_excel.py
 | T-247 | P1 | P11/P17 | Shared Composer History / Default TUI Recall | 已完成并发布 stable | 用户默认 TUI history 需求、Codex `ChatComposerHistory`、OMP editor/HistoryStorage、immutable black-box | `frontends/composer_history.py` 成为 TUI 与 `--chat` 唯一 history Owner；同步有界 JSONL 只记录成功提交的 CHAT prompt，Up/Down、wheel/Page、search/interaction 生命周期分离，`/move` 只按 typed `state_dir` 重绑定并清理 stale state。 | commit `44c91fe`；1253/62/31、69 focused history、7 PTY、compileall/diff/help/chat、TUI/terminal 跨进程 recall 与 workspace partition matrix 全绿。stable `20260720T023119Z-44c91fe11f98-ccae309a201f`。 |
 | T-248 | P1 | P11/P17 | Bounded TUI Composer History Search / Ctrl-R Phase 1 | 已完成并发布 stable | Codex `HistorySearchState`、OMP history search/editor、T-247 stable Ctrl-R benefit baseline | `frontends/tui/history_search.py` 只消费 `ComposerHistory.snapshot`，提供 casefold literal、newest-first exact unique、accept-not-submit、cancel restore 和 rebind reset；空 query/search state 不写 history/Runtime。 | commit `6432d86`；1270/62/32、167 focused TUI/history、8 PTY、compileall/diff/help/chat 与 immutable Ctrl-R matrix 全绿。stable `20260720T031116Z-6432d8692d43-c80f5169dcf2`。 |
 | T-249 | P1 | P17 | Responsive Multiline TUI Composer Phase 1 | 已完成并发布 stable | Codex textarea/chat composer、OMP editor visual-line wrap/vertical cursor、T-248 stable multiline benefit baseline | 独立纯前端 `composer_layout.py` 按 physical newline 与 display-cell soft wrap 生成最多 6 行布局；Alt-Enter/paste 保留内部 newline，Up/Down visual-row 优先并保持 preferred column，到边界才回落共享 history。normal-screen 只提交 settled transcript，不提交 composer。 | commits `8148aae`、`694a7fe`；1292/62/33、134 focused TUI、9 PTY、compileall/diff/help/chat 与 immutable multiline/history matrix 全绿。stable `20260720T054528Z-694a7fee3d5c-67e4c5bbb08b`。 |
+| T-250 | P1 | P17 | T-249 Stable Multiline TUI Daily Coding Benefit Gate | 已完成；TUI PASS，真实 coding INCONCLUSIVE | 默认 stable、fresh Python fixture、一次真实百炼 case、小牙黑盒 | Alt-Enter 三行 prompt 在 composer、session 与 `0600` history 中精确保留，Enter 只提交一次，Turn/RunSummary/TurnFinished 各一且 `delivered=false`；fixture 零源码 diff，stable/main 边界不变。唯一 provider 请求因 DNS 失败，tool calls 为 0，read/patch/test/diff 收益未覆盖。 | 不重跑 provider、不改 Harness、不给大猛发任务；P17 当前阶段收口，后续回到普通 coding 的真实收益与可靠性观察。 |
 
 ## 风险与决策
 
@@ -516,7 +517,7 @@ python3 scripts/sync_project_excel.py
 | 已关闭风险 | T-203 已关闭 S4 安全失败不可行动风险 | T-192~T-196 live 不再释放不可靠 owner/资料结论；T-202 合并重复控制生命周期；T-203 将被拒候选转为完整 typed BLOCKED，三次 S4 hard/usability 均通过。 | 保留现有 gate，不新增 transport/repair 层；run 1 的 provider schema/error 只记残余 telemetry，避免再次陷入局部补丁。 |
 | reviewer 决策 | 首次 isolated review + deterministic closure | T-193 后不再以 fresh second reviewer pass 作为终止条件；S2 reviewer revise 后 closure accepted，S3 reviewer pass。 | 真实 patch 质量仍由 implementation/delivery reviewer 链路处理；Advisor/Subagent 后置。 |
 | ToolChoiceQueue 决策 | 已做裁剪版 MiniToolChoiceQueue | 当前覆盖只读证据、需求文档前置读取、写后测试/diff hygiene；不做完整多队列/并发/子任务调度 | 后续若仍出现关键工具不用/乱用，再扩展 queue 规则；若出现 patch/总结质量不稳，补 reviewer。 |
-| 下一步 | T-249 stable 日用观察 | 使用默认 `lca` 跑真实 coding，继续观察 multiline composer、不同终端的 native scrollback、resize reflow、history/search overlay 与长回答；只有跨场景可复现问题才进入下一窄批次。 | 不直接搬 Rust/TypeScript 实现；完整 async bus、external editor/undo、worktree manager、auto-apply、多 Agent 和 plugin widgets 继续由收益证据驱动。 |
+| 下一步 | 普通 coding 稳定版日用观察 | T-250 未发现 TUI/Runtime blocker；后续使用默认 `lca` 跑真实 coding，只有跨场景可复现问题才进入下一窄批次。provider/DNS 恢复前不重复同类 live 刷样本。 | 不直接搬 Rust/TypeScript 实现；完整 async bus、external editor/undo、worktree manager、auto-apply、多 Agent 和 plugin widgets 继续由收益证据驱动。 |
 
 ## P7 综合压测问题
 
@@ -565,7 +566,7 @@ python3 scripts/sync_project_excel.py
 | 测试 | 分层通过 | P5 收口时 90 个 unittest；当前 T-249 stable 为 1292/62/33，另有 non-delivery continuity、TUI reducer/mailbox/interaction/cancellation/multiline input/normal-screen scrollback、AssistantMessage/CLI smoke、package dependency/import-cycle/compat API、history/search matrix、PTY workspace command/restore/resize/signal/Ctrl-C 与真实百炼 TUI coding live；T-214 业务 compile 983/667、focused JUnit 4/17。 |
 | 日用入口 | 通过 | README 已补只读分析和小改任务命令模板。 |
 | 开放风险 | 可接受 | shell 仍非沙箱、prompt injection 仍需靠审批和封闭 VM；provider/model 专用 tokenizer、输出 reserve、managed skills、完整 reviewer 和完整 OMP ToolChoiceQueue 继续后置评估。 |
-| 下一阶段 | T-249 stable 日用观察 | P11 package ownership、workspace migration/history partition、P16 continuity 与 P17 multiline TUI/output lifecycle 已收口；下一批先做真实日用和 Codex/OMP 增量偏差审计。完整 async bus 继续受 R-036 约束，生产应用仍单独走 Oracle/VM 门禁。 |
+| 下一阶段 | 普通 coding 稳定版日用观察 | P11 package ownership、P16 continuity 与 P17 multiline TUI/output lifecycle 已收口；T-250 的 provider/DNS 失败不触发 Harness 修改。下一批由真实 coding 的通用可复现证据决定。完整 async bus 继续受 R-036 约束，生产应用仍单独走 Oracle/VM 门禁。 |
 
 ## 推荐工作流
 
