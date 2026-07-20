@@ -1,6 +1,6 @@
 # Local Coding Agent 项目状态
 
-更新时间：2026-07-18
+更新时间：2026-07-20
 
 本文档是开发 `local-coding-agent` 时给参与开发的人和协作 Agent 读取的项目管理基线。`docs/local-coding-agent-project-management.xlsx` 继续作为人工查看的表格视图；本 Markdown 文件作为后续开发时优先读取的项目状态、路线、Todo 和决策来源。它不是 LCA 运行时自己的 memory 或用户项目记忆。
 
@@ -34,7 +34,7 @@ LCA、OMP 与 Codex 的当前源码级对照和路线校正见 `docs/lca-omp-cod
 
 ## 当前进度
 
-当前 stable 为 T-245：release `20260718T051636Z-f5bfd0ec49bf-78e1b0da38af`，revision `f5bfd0ec49bfcc8478140a1fa045c6693f78b6b3`，digest `78e1b0da38af2372d5aef0bc9876acbb6b03ef09edb7af2ed82a9521b6c28383`；clean detached Python 3.14 release gate 通过 1224/1224 unittest、compileall 和 diff-check，独立门禁另通过 62/62 deterministic benchmark、30/30 architecture checks、31 项 CLI/TUI/AssistantMessage smoke 与安装后 stable launcher smoke。`lca` 无参数且连接 POSIX TTY 时默认进入 normal-screen TUI，空 transcript 显示响应式 LCA 首页字标；settled transcript 进入终端原生 scrollback，provisional/activity/composer 留在 mutable tail。T-245 同时完成 `src/local_agent` 的 owner package 收口：根目录只保留 `agent.py`、`cli.py`、`config.py` 三个真实入口，其余为小于等于 64 行的兼容 facade；实现包不再反向依赖 facade，tools/providers 不再依赖 runtime/frontend，运行时 import SCC 为 0。
+当前 stable 为 T-246：release `20260720T005344Z-3204845748b6-9917c67500fc`，revision `3204845748b6c640a8c18b1cde62d79f35044558`，digest `9917c67500fc67494894e0d2e8444563b8763d4b1f6360f1847affa627a1105d`；clean detached Python 3.14 release gate 通过 1232/1232 unittest、compileall 和 diff-check，独立门禁另通过 62/62 deterministic benchmark、31/31 architecture checks、CLI help 与真实 `/move -> /status -> /exit` terminal chat smoke。T-246 将 terminal prompt/history 收入独立 Owner；`MoveWorkspace` 成功后由 typed `CommandResult.payload.state_dir` 切换 workspace-specific 持久历史分区，失败时保持原分区，缺失或不可用的新分区会 fail closed 为本轮无持久历史，避免新 workspace 输入污染旧分区。`agent.py`、Queue、evidence、finalization 与 TUI renderer 均未改动。
 
 T-219/T-220 已完成并发布。Codex 以 `CodexThread.submit(Op)`、唯一 submission loop、`next_event()` 和 response stream 建立双向 Runtime 边界，OMP 由 agent loop 消费 provider stream 并产出 turn/message/tool 生命周期；LCA 采用 Python 同步渐进路径：CommandDispatcher 统一消费 prompt/status/workspace/approval，Provider Stream Owner 解析同一次 OpenAI-compatible SSE/JSON 响应，text delta 与 tool argument delta 分离，只有完整合法 tool call 才能进入 ToolRegistry。`AssistantDelta` 与最终 `AssistantMessage` 共享 message/command/run identity；百炼 in-band XML 不泄漏、不执行。T-239 已在该协议上增加独立同步 TUI worker 和 cooperative cancellation；完整 async bus 与 OS sandbox 仍未冒充实现。
 
@@ -65,6 +65,8 @@ T-234~T-243 已完成独立 TUI 模块并发布。实现先对照 Codex 单 UI �
 T-244 已完成回答输出生命周期和产品身份收口。Provider text 只经 AssistantMessage lifecycle 进入前端，provisional/final/run output 保持 command/run/message correlation；source-backed Markdown、role markers、terminal control/bidi sanitation 和 LCA 品牌身份均由前端 owner 处理，不改写模型语义或把展示文本回流 Runtime。normal-screen renderer 保持终端原生 scrollback，不恢复 curses transcript viewport。
 
 T-245 已完成 Codex/OMP 风格目录与依赖方向收口。`providers/runtime/session/workspace/evidence/review/workflows/tools/memory/frontends/lsp/patch/steering/devtools` 承担真实 owner，根目录旧模块只保留兼容导出；`protocol/cancellation.py` 和 `platform/terminal.py` 分别成为跨边界 cancellation 与 terminal focus 单一 owner。独立 review 首轮发现 10 个实现模块仍穿过根 facade、tools 反向依赖 frontend/runtime，以及 `agent.py` 残留 guard 文案/evidence metadata；R1 全部删除并新增全局门禁。`agent.py` 从 1789 行/71 methods 降为 1632 行/63 methods，保持 turn composition root，不机械拆成新上帝包。
+
+T-246 已完成 terminal history partition rebinding。Codex 的 composer history owner 将跨会话持久条目与本轮本地输入分账，OMP 的 HistoryStorage 将 prompt 与 cwd/session identity 绑定；LCA 保留更窄的 workspace-partitioned file history。新 `frontends/terminal/prompt.py` 独占 `PromptSession`/`FileHistory` 创建与重绑定，frontend 只消费 Runtime command boundary 返回的 typed state partition，不读取 Runtime 私有状态。成功 `/move` 原子切换后续持久历史，失败不切换；协议缺失或目标 history 初始化失败时禁用本轮持久化并继续 chat，不复制旧 history、不新增 session/workflow 语义。
 
 T-204 已完成 S5 readiness closure，结论为 typed `BLOCKED`，未选择实施切片、未进入阶段 B。新增 `zqylfinancebasemasterfccb090b` 与 `zqylcrclfinancemaster7b875cd3c` 后已证实：直接保理底层值为 `FACTOR_TYPE=4`，`104` 是云信融资 10 与直接保理 4 的组合码；放款完成是 `T_FINANCE_PROJECT.APPLY_STATUS=60`；云信 `XF0003` 显示为“拓展服务费”，计划费用经 `findDetailList` 映射到旧名 `expectApplySponsorTaxFee`，而 `YJ0001` 保荐商佣金是独立费用项。放款完成链路会向 payment 推送实际费用和部分主体/日期，但 payment 现有结构化字段与 JSON 参数仍不能形成完整待制单数据源，`BusinessPayer.finalAmount` 还是多费用合计而非 `XF0003` 单项。五个候选均缺至少一项 Owner、完整 data contract、write target、test entry 或 rollback boundary，因此未修改业务原目录。下一步不再扩展 LCA gate，而是补齐目标业务契约后重新进入 S5。项目状态暂只维护 Markdown，不同步 Excel。
 
@@ -203,7 +205,7 @@ T-213/T-214 已完成 S5-1 的 Codex 直接隔离交付。T-213 在上述 clean 
 | P8 | 前端协议与交互基础 | 已完成 | T-076/T-077 完成 Event/Command Protocol 与 terminal-native frontend；T-219/T-220 补齐 dispatcher/streaming，T-234~T-244 在同一协议上完成独立 TUI、默认入口、输入、normal-screen native scrollback 和 AssistantMessage 输出生命周期。 |
 | P9 | 真实需求使用准备 | 已完成阶段性 MVP | 已完成项目边界分析、真实需求模板、企业项目只读源码验证、Java LSP 韧性、拓展服务费结算链路压测和服务范围复核；后续继续按真实需求推进设计/实现切片。 |
 | P10 | Intelligence Runtime 骨架 | 已完成 | 按 OMP 架构原则补单 Agent 内部的目标契约、工具选择队列、完成审计、两阶段计划和 reviewer；phase 通过显式 Protocol ports 协作，领域策略不回流 Runtime。 |
-| P11 | Runtime Ownership / Release Discipline | 已完成并发布 T-245 stable | T-245 将真实 owner 收入 `providers/runtime/session/workspace/evidence/review/workflows/tools/memory/frontends/lsp/patch/steering/devtools`，根目录只保留 3 个真实入口和小于等于 64 行的兼容 facade；实现包不反向依赖 facade，tools/providers 不依赖 runtime/frontend，运行时 import SCC 为 0。`agent.py` 现为 1,632 行/63 methods。 |
+| P11 | Runtime Ownership / Release Discipline | 已完成并发布 T-246 stable | T-245 将真实 owner 收入职责 packages 并锁住依赖方向；T-246 进一步把 terminal persistent history 收入独立 Prompt Owner，以 typed command result 在 `/move` 后重绑定 workspace state partition。`agent.py` 保持 1,632 行/63 methods。 |
 | P12 | Read-only Convergence Closure | 已完成并发布 T-203 stable | T-201 完成 Owner 拆分和全 production complexity ratchet，T-202 合并重复控制生命周期，T-203 用 typed terminal assembly 产品化安全失败；950/61/13 与三次 S4 hard/usability 验收通过。 |
 | P13 | Codex-first Product Runtime | 已完成阶段性 MVP | T-215 profile、T-217 ExecutionPolicy、T-218 semantic-boundary correction、T-219 Command/Event/Turn、T-220 provider streaming 与 T-221 S6-S10 黑盒验收均已完成；hard safety、连续性、权限、需求变更和交付审计通过。 |
 | P14 | Explicit Subagent Capability | Phase 1 已完成，扩展暂停 | T-223 证明小 fixture 的 typed handoff 可用，但真实三仓单样本没有收益且模型未选择 delegate；保留 default-off Explore，不扩 reviewer/implement、并发、写入、worktree、advisor 或默认自动调度。 |
@@ -485,6 +487,7 @@ T-213/T-214 已完成 S5-1 的 Codex 直接隔离交付。T-213 在上述 clean 
 | T-243 | Normal-screen Native Scrollback Renderer | 已完成并发布 stable | P17/Product UX | 以 Codex/OMP committed-history/live-tail 边界替换 curses 主 transcript，不直接搬 Rust/TypeScript。 | commit `4271172`；stable rows commit once，provisional/activity/composer 是 mutable tail；主屏零 alternate enter、零 mouse capture、零 ED3，search overlay 成对恢复。1203/62/25、94 focused candidate matrix 与安装后 PTY/termios smoke 全绿。stable `20260718T035333Z-4271172e8d36-fab5ff2b17ed`。 |
 | T-244 | Assistant Output Lifecycle / LCA Identity Closure | 已完成并发布 stable | P17/Frontend | 把模型原始语义、协议事实和前端展示彻底分层，同时补齐 LCA 产品身份与终端安全渲染。 | commit `2f68e7a`；Provider text 仅经 AssistantMessage lifecycle 投影，provisional/final/run output correlation 完整；source-backed Markdown、role markers、terminal control/bidi sanitation 和 LCA identity 由前端 owner 持有。1219/62/25 与 immutable TUI/CLI matrix 通过；stable `20260718T043254Z-2f68e7a408a5-8092fe6e61f5`。 |
 | T-245 | Codex/OMP Package Ownership Architecture | 已完成并发布 stable | P11/Architecture | 将长期平铺在 `src/local_agent` 的领域 owner 收入明确 package，并锁住向内依赖方向、兼容 API 和单一生命周期 owner。 | commits `57f03ab`~`f5bfd0e`；根目录只保留 `agent.py`、`cli.py`、`config.py` 三个真实入口，其余为小兼容 facade；实现包不反向依赖 facade，tools/providers 不依赖 runtime/frontend，cancellation/terminal focus 各有单一 owner，运行时 import SCC 为 0。1224/62/30、31 项 CLI/TUI/AssistantMessage smoke 与 clean detached publish gate 全绿；stable `20260718T051636Z-f5bfd0ec49bf-78e1b0da38af`。 |
+| T-246 | Terminal History Partition Rebinding | 已完成并发布 stable | P11/Frontend Boundary | `/move` 后只切换 terminal chat 的 workspace-specific persistent input history，不复制旧分区，不改变 Runtime session/conversation lifecycle。 | commit `3204845`；独立 Prompt Owner 持有 `PromptSession`/`FileHistory`，Runtime command result 返回 typed `state_dir`。成功 move 重绑定，失败保持，缺失/不可用分区 fail closed 为无持久历史。1232/62/31、compileall/diff/help 与 clean detached `/move` chat smoke 全绿；stable `20260720T005344Z-3204845748b6-9917c67500fc`。 |
 
 ## 风险清单
 
@@ -646,10 +649,10 @@ T-213/T-214 已完成 S5-1 的 Codex 直接隔离交付。T-213 在上述 clean 
 | 项目 | 结论 | 依据 |
 |---|---|---|
 | 主链路 | 通过 | 百炼真实小改复测已跑通 todo、dry_run、apply_patch、session allow、rollback、run_tests、git_diff。 |
-| 测试 | 分层通过 | P5 收口时 90 个 unittest；当前 T-245 stable 为 1224/62/30，另有 immutable non-delivery continuity、TUI reducer/mailbox/interaction/cancellation/input/native scrollback、AssistantMessage/CLI smoke、package dependency/import-cycle/compat API matrix、PTY workspace command/restore/resize/signal/Ctrl-C/search overlay 与一次真实百炼 TUI coding live。 |
+| 测试 | 分层通过 | P5 收口时 90 个 unittest；当前 T-246 stable 为 1232/62/31，另有 immutable non-delivery continuity、TUI reducer/mailbox/interaction/cancellation/input/native scrollback、AssistantMessage/CLI smoke、package dependency/import-cycle/compat API、terminal history rebind matrix、PTY workspace command/restore/resize/signal/Ctrl-C/search overlay 与一次真实百炼 TUI coding live。 |
 | 日用入口 | 通过 | README 已补只读分析和小改任务命令模板。 |
 | 开放风险 | 可接受 | shell 仍非沙箱、prompt injection 仍需靠审批和封闭 VM；provider/model 专用 tokenizer、输出 reserve、managed skills、完整 reviewer 和完整 OMP ToolChoiceQueue 继续后置评估。 |
-| 下一阶段 | T-245 stable 日用观察 | P11 package ownership、P16 continuity 与 P17 output/TUI lifecycle 已收口。后续先用默认 `lca` stable 进行日常 coding，观察真实 owner 边界、兼容 facade、不同终端的 native scrollback、resize reflow 与 search overlay；不把 Rust/TypeScript 实现直接搬进 Python。 |
+| 下一阶段 | T-246 stable 日用观察 | P11 package ownership、workspace migration/history partition、P16 continuity 与 P17 output/TUI lifecycle 已收口。后续先用默认 `lca` stable 进行日常 coding，观察 `/move` 后 history partition、不同终端的 native scrollback、resize reflow 与 search overlay；不把 Rust/TypeScript 实现直接搬进 Python。 |
 
 ## 推荐工作流
 
@@ -684,7 +687,7 @@ T-213/T-214 已完成 S5-1 的 Codex 直接隔离交付。T-213 在上述 clean 
 
 用户确认本文件后，建议按以下顺序继续：
 
-1. 使用 T-245 stable 的 `lca` 做真实日常 coding，直接用 wheel/trackpad 浏览终端原生 scrollback；重点观察 package owner/兼容 facade、不同终端的 resize reflow、搜索 overlay 返回和长流式回答。`lca --chat` 继续提供更轻量的 terminal-native frontend。
+1. 使用 T-246 stable 的 `lca` 做真实日常 coding，直接用 wheel/trackpad 浏览终端原生 scrollback；重点观察 `/move` 后 terminal history 分区、不同终端的 resize reflow、搜索 overlay 返回和长流式回答。`lca --chat` 继续提供更轻量的 terminal-native frontend。
 2. 保留 T-214 隔离 workspace 和完整 diff，是否写回原 finance-base/payment 由用户单独确认；不得把隔离交付描述成生产已上线。
 3. 若进入生产集成，先在 Oracle JDK 8u121 和真实 Oracle/MyBatis 环境验证 DDL、事务、唯一键并发与现有 MQ 回放，再应用到目标分支。
 4. P14 保留 Phase 1 default-off Explore，只有后续多个真实任务出现稳定收益时才重启 reviewer/implement 评估；TUI 已完成但不与 MCP、Browser、多 Agent 或 auto-apply 横向捆绑扩展。
