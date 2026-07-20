@@ -17,10 +17,10 @@ python3 scripts/sync_project_excel.py
 | 字段 | 当前值 | 说明 |
 |---|---|---|
 | 最终目标 | 个人本地编程助手 Agent | 本地优先、封闭 VM 可用、只访问指定 AI API，能读代码、搜代码、改代码、跑测试、生成 diff、沉淀项目记忆。 |
-| 当前阶段 | P18 Execution Isolation Phase 1 已发布，进入 bounded output capture | 当前 stable 为 T-253 `20260720T090532Z-992ab8f44e7c-53cad3b4ecfa`。child-only credential containment、parent env 不变、POSIX timeout/cancel process-group 收束与 leader-exit pipe 场景通过 immutable gate；能力仍明确 `sandboxed=false`。下一窄批次只处理 bounded streaming/output capture，再单独评估真实平台 sandbox。 |
+| 当前阶段 | P18 bounded output capture 已发布，进入 platform sandbox evaluation | 当前 stable 为 T-254 `20260720T095706Z-b9669b3c8cc8-64e4e6b92602`。child env、POSIX process-group 与 bounded stdout/stderr capture 通过 immutable gate；能力仍明确 `sandboxed=false`。下一窄批次先定义平台 sandbox 威胁模型与本机能力，再决定实现。 |
 | 推荐入口 | `lca` 或 `./agent` | 连接 POSIX TTY 时进入 normal-screen TUI，wheel/trackpad 使用终端原生历史；`lca --chat` / `lca chat` 使用轻量 terminal-native chat，非 TTY 自动回退。 |
 | Token 配置 | 环境变量 / `--env-file` / `.env` | 优先级为真实环境变量、显式 env-file、用户级 `${AGENT_CONFIG_DIR:-~/.config/local-coding-agent}/.env`、workspace `.env`；stable snapshot 不携带密钥。 |
-| 测试数 | T-253 stable 1315/62/34 | clean detached release gate 通过 1315 unittest（1 skip）、compileall、diff-check；62 benchmark、34 architecture、139 focused process/tool tests、CLI help/chat 与 immutable child-env/process-lifecycle matrix 通过。Excel 按用户要求不生成。 |
+| 测试数 | T-254 stable 1329/62/35 | clean detached release gate 通过 1329 unittest（1 skip）、compileall、diff-check；62 benchmark、35 architecture、183 focused process/tool/architecture tests、CLI help/chat 与 32-case immutable bounded-output/process matrix 通过。Excel 按用户要求不生成。 |
 | 三方架构对照 | 已完成 2026-07-16 基线 | 见 `docs/lca-omp-codex-architecture-comparison-2026-07-16.md`；目标修正为 OMP/Codex 级通用底座 + LCA 企业工作流，不以完整复制 OMP platform 为 KPI。 |
 | 默认 budget_seconds | 600 | 单次任务默认 10 分钟墙钟预算；`--budget-seconds 0` 可关闭。 |
 | 默认 max_steps | 0 | 表示不限步；仅在用户显式设置时作为防失控保险丝。 |
@@ -35,7 +35,7 @@ python3 scripts/sync_project_excel.py
 | 默认工作流落地 | 已完成 MVP 版 | system prompt + tool descriptions + runtime workflow reminder 已落地，用户不需要每次手写工具顺序。 |
 | LSP / Light fallback | 已完成 MVP 版 | `lsp_symbols` / `lsp_workspace_symbols` / `lsp_document_symbols` / `lsp_definition` / `lsp_references` / `lsp_diagnostics` / `lsp_status`，覆盖 Python、Java、JavaScript、TypeScript、Vue；默认可用则外部 LSP，不可用则 light fallback。 |
 | Multi-root workspace | 已完成 MVP 版 | `--allow-dir` / `AGENT_ALLOWED_DIRS` 支持显式授权额外目录给文件、搜索、LSP、patch 工具；system prompt 和 `list_files`/path-not-found 等工具观察会列出 primary workspace 和 allowed dirs；需求/文档类任务会先用 soft tool requirement 要求读取 allowed-dir 文档；shell/git/显式项目 memory/skills 仍锚定 `--cwd`，session/todo/patch logs 和默认 consolidation memory 走 state dir。 |
-| Stable / Dev release channels | 已完成 MVP 版 | `lca` 指向已验证的不可变 source snapshot，`lca-dev` 指向当前源码；当前 stable 为 T-253 `20260720T090532Z-992ab8f44e7c-53cad3b4ecfa`，revision `992ab8f44e7c2da2fd926c436e2c1de0c3d0ef12`，digest `53cad3b4ecfae9e5bdff52fab22b37a35213eb74f38dfd9789a62154a6914ccc`。`lca-release publish` 先跑离线 gate 再原子 promote，失败保留旧 stable。 |
+| Stable / Dev release channels | 已完成 MVP 版 | `lca` 指向已验证的不可变 source snapshot，`lca-dev` 指向当前源码；当前 stable 为 T-254 `20260720T095706Z-b9669b3c8cc8-64e4e6b92602`，revision `b9669b3c8cc89c6b425ceebb7c1bb55830cc630d`，digest `64e4e6b92602fb5b7af28ca6f07f2c55322bedffb43fb9bdf8746ea5a19ced6a`。`lca-release publish` 先跑离线 gate 再原子 promote，失败保留旧 stable。 |
 | Workflow Profiles | 已完成 Phase 1 | `auto` 依据 typed `RequirementContract` 解析 `coding`、`enterprise-evidence`、`readiness-audit`；缺 contract 时 optional heavy hooks 全关闭。 | profile 不改变 task kind、tool schema、approval 或 workspace；不强制 `apply_patch`，通过 Session、`ContextUpdated`、RunSummary 和 `/status` 审计。 |
 | Path-scoped rules | 已完成 MVP 版 | 每个 canonical workspace root 可定义 `.local-agent/rules/*.md`；每轮只注入轻量 metadata，用户或工具路径命中时才注入对应规则正文，规则不改变工具权限。 |
 | Offline benchmark / eval | 已完成 MVP 版 | `benchmarks/tasks` 的隔离 fixture 默认使用 deterministic fake provider 跑真实 Runtime，并输出 JSON/Markdown 结果；`--live` 才显式使用外部 provider。 |
@@ -77,7 +77,7 @@ python3 scripts/sync_project_excel.py
 | P15 | Semantic Coding Tools | LSP rename preview、Code Action preview 与外部 LSP 进程边界 | Phase 1 已收口 | 55% | T-224/T-226 preview 已发布，T-227/T-228 证明真实 Java 收益并收住 Eclipse metadata；auto-apply、第二 writer、更多 LSP 特例继续冻结。 |
 | P16 | Ordinary Coding Reliability / Runtime State | 跨语言自然读改测 diff、同 session 最新需求、dirty worktree、状态归属与同步中断恢复 | 阶段性收口 | 70% | T-229/T-230 与 T-231-T-233 已覆盖 clean/dirty coding、stale write、同步中断、子进程回收和 typed non-delivery session continuation；后续由新的跨场景失败证据决定下一窄批次。 |
 | P17 | Independent Terminal TUI | 独立多前端边界、响应式终端 UI、交互、取消、PTY 恢复与真实 coding 可用性 | 已完成并发布 T-251 stable | 100% | T-234~T-251 已发布；默认 `lca`、normal-screen native scrollback、AssistantMessage correlation、共享 composer recall、bounded Ctrl-R search、responsive multiline composer 与单槽 next-turn follow-up queue 已收口。T-252 无 blocker但受 DNS 影响，真实 queue 收益 INCONCLUSIVE；不据此继续扩 TUI。 |
-| P18 | Execution Isolation / Process Runtime | child environment、process-group lifecycle、有界输出与真实 sandbox 分账 | Phase 1 已发布 T-253 stable | 35% | T-253 已完成 credential containment、parent env 保持、timeout/cancel group termination 与 leader-exit pipe closure；当前仍是 `sandboxed=false`，输出仍完整捕获后截断展示。下一步是 bounded streaming/output capture，真实 OS sandbox 后置独立评估。 |
+| P18 | Execution Isolation / Process Runtime | child environment、process-group lifecycle、有界输出与真实 sandbox 分账 | Bounded capture 已发布 T-254 stable | 55% | T-253 完成 credential/process lifecycle；T-254 完成每流 256 KiB、总 512 KiB 的持续 drain、typed truncation 计数、head/tail 与 bounded display。当前仍是 `sandboxed=false`；真实 OS filesystem/network sandbox 后置独立评估。 |
 
 ## 已完成功能
 
@@ -372,6 +372,7 @@ python3 scripts/sync_project_excel.py
 | T-251 | P1 | P17 | Bounded TUI Follow-up Queue Phase 1 | 已完成并发布 stable | Codex input queue/turn、OMP follow-up queue、独立 review、immutable loopback black-box | 独立纯前端 `PendingPromptQueue` 只保留一个 next-turn CHAT；active 时不提前写 Runtime/history/session/transcript，正常闭合后经现有 worker 启动独立 turn，slot full/Alt-Up/cancel/failure 均有界。R1 修复 completion mailbox 与 Ctrl-C 竞态。 | commits `9ba4e1f`、`97b5525`；1307/62/34、140 focused、11 PTY、compileall/diff/help/chat 全绿；真实 fake-provider 样本两轮 lifecycle 精确、multiline payload 保真。stable `20260720T070510Z-97b55254c736-02dc6c3184a2`。 |
 | T-252 | P1 | P16/P17 | T-251 Stable Follow-up Queue Daily Benefit Gate | 已完成；边界 PASS，真实收益 INCONCLUSIVE | 默认 stable、fresh 只读 Python fixture、一次真实百炼 case、小牙黑盒与小红独立复核 | 两条 CHAT prompt 在 `0600` history/session 中保留精确文本与 newline，形成两组配对 lifecycle 且 `delivered=false`；fixture hash、main/stable identity 与 terminal control 边界不变。两次 provider 请求分别在 77ms/60ms 因 DNS 失败，第二 prompt 未自然进入 active queue，read/answer/active Ctrl-Q 收益未覆盖。 | 无自动/重复提交、提前 history/session、payload 改写、越权、假交付或 identity 污染；不重跑 provider、不改 Harness、不给大猛任务。P17 收口，主线转普通 coding 可靠性观察。 |
 | T-253 | P0 | P18 | Child Environment / Process Runtime Isolation Phase 1 | 已完成并发布 stable | Codex child env/approval/process runtime、OMP noninteractive env/abort/timeout、独立 review 与 immutable black-box | `process_environment.py` 独占 child-only credential filtering/defaults，`process_runtime.py` 统一 Popen 与 POSIX process-group timeout/cancel；普通工具链 env 保留，parent env 不变。公共 `run_tests` 不接受 `environment`，额外参数在 child 启动前 typed fail closed。能力仍为 `sandboxed=false`。 | commit `992ab8f`；1315/62/34、139 focused、compileall/diff/help/chat 全绿；timeout descendant、leader-exit pipe、cooperative cancel marker 均 absent。stable `20260720T090532Z-992ab8f44e7c-53cad3b4ecfa`，digest `53cad3b4ecfae9e5bdff52fab22b37a35213eb74f38dfd9789a62154a6914ccc`。 |
+| T-254 | P0 | P18 | Bounded Process Output Capture Phase 1 / Facade Cleanup | 已完成并发布 stable | Codex process output lifecycle、OMP terminal OutputSink、T-253 stable characterization、独立 review 与 immutable black-box | `process_output.py` 独占 binary stdout/stderr capture，每流 256 KiB、总 512 KiB，保留 head/tail 与 typed observed/captured/dropped/truncated；display 继续独立限制 30k。R1 仅在无 drain progress 时 backoff。删除 19 个无任何引用的 root compatibility facade，保留仍有调用方的兼容入口。能力仍为 `sandboxed=false`。 | commits `2da8d1c`、`20dfdf4`、`b9669b3`；1329/62/35、183 focused、compileall/diff/help/chat 与 32-case immutable matrix 全绿。8 MiB + 8 MiB 双流 shell 0.123s、run_tests 0.215s；stable `20260720T095706Z-b9669b3c8cc8-64e4e6b92602`，digest `64e4e6b92602fb5b7af28ca6f07f2c55322bedffb43fb9bdf8746ea5a19ced6a`。 |
 
 ## 风险与决策
 
@@ -521,7 +522,7 @@ python3 scripts/sync_project_excel.py
 | 已关闭风险 | T-203 已关闭 S4 安全失败不可行动风险 | T-192~T-196 live 不再释放不可靠 owner/资料结论；T-202 合并重复控制生命周期；T-203 将被拒候选转为完整 typed BLOCKED，三次 S4 hard/usability 均通过。 | 保留现有 gate，不新增 transport/repair 层；run 1 的 provider schema/error 只记残余 telemetry，避免再次陷入局部补丁。 |
 | reviewer 决策 | 首次 isolated review + deterministic closure | T-193 后不再以 fresh second reviewer pass 作为终止条件；S2 reviewer revise 后 closure accepted，S3 reviewer pass。 | 真实 patch 质量仍由 implementation/delivery reviewer 链路处理；Advisor/Subagent 后置。 |
 | ToolChoiceQueue 决策 | 已做裁剪版 MiniToolChoiceQueue | 当前覆盖只读证据、需求文档前置读取、写后测试/diff hygiene；不做完整多队列/并发/子任务调度 | 后续若仍出现关键工具不用/乱用，再扩展 queue 规则；若出现 patch/总结质量不稳，补 reviewer。 |
-| 下一步 | P18 bounded streaming/output capture | 使用默认 T-253 `lca` 保持日常 coding 观察，同时在 Process Runtime Owner 内收口 stdout/stderr 有界捕获、timeout/cancel 与 ToolResult 协议；不把 env filtering 命名为 sandbox，不顺带扩 Queue/gate/reviewer。 | 不直接搬 Rust/TypeScript 实现；真实 filesystem/network sandbox、完整 async bus、external editor/undo、worktree manager、auto-apply、多 Agent 和 plugin widgets 继续独立评估。 |
+| 下一步 | P18 platform sandbox evaluation | 使用默认 T-254 `lca` 保持日常 coding 观察；先对照 Codex/OMP 的 approval/sandbox/process 边界，定义 filesystem/network/process 威胁模型与本机可用能力，再决定最小实现。不把 env filtering 或 bounded capture 命名为 sandbox，不顺带扩 Queue/gate/reviewer。 | 不直接搬 Rust/TypeScript 实现；完整 async bus、external editor/undo、worktree manager、auto-apply、多 Agent 和 plugin widgets 继续独立评估。 |
 
 ## P7 综合压测问题
 
@@ -567,10 +568,10 @@ python3 scripts/sync_project_excel.py
 | 项目 | 结论 | 依据 |
 |---|---|---|
 | 主链路 | 通过 | 百炼真实小改复测已跑通 todo、dry_run、apply_patch、session allow、rollback、run_tests、git_diff。 |
-| 测试 | 分层通过 | P5 收口时 90 个 unittest；当前 T-253 stable 为 1315/62/34，另有 139 focused process/tool tests、child-env/process-lifecycle、non-delivery continuity、AssistantMessage/CLI smoke、package dependency/import-cycle/compat API、history/search/multiline/follow-up queue matrix；T-250/T-252 真实百炼收益因 DNS 记 INCONCLUSIVE；T-214 业务 compile 983/667、focused JUnit 4/17。 |
+| 测试 | 分层通过 | P5 收口时 90 个 unittest；当前 T-254 stable 为 1329/62/35，另有 183 focused process/tool/architecture tests、32-case bounded-output/process matrix、child-env/process-lifecycle、non-delivery continuity、AssistantMessage/CLI smoke 与 history/search/multiline/follow-up queue matrix；T-250/T-252 真实百炼收益因 DNS 记 INCONCLUSIVE；T-214 业务 compile 983/667、focused JUnit 4/17。 |
 | 日用入口 | 通过 | README 已补只读分析和小改任务命令模板。 |
 | 开放风险 | 可接受 | shell 仍非沙箱、prompt injection 仍需靠审批和封闭 VM；provider/model 专用 tokenizer、输出 reserve、managed skills、完整 reviewer 和完整 OMP ToolChoiceQueue 继续后置评估。 |
-| 下一阶段 | P18 bounded streaming/output capture | T-253 已收口 child env 与 process-group lifecycle；下一批只处理完整输出先驻留内存的 residual，并保持现有 stdout/stderr、exit、timeout/cancel、approval 与 `sandboxed=false` 真相。真实 OS sandbox、完整 async bus 与生产 Oracle/VM 门禁继续分账。 |
+| 下一阶段 | P18 platform sandbox evaluation | T-254 已收口 child env、process-group lifecycle 与 bounded output capture。下一批先做真实 OS filesystem/network sandbox 的平台能力与威胁模型评估，现有能力继续保持 `sandboxed=false` 真相；完整 async bus 与生产 Oracle/VM 门禁继续分账。 |
 
 ## 推荐工作流
 
