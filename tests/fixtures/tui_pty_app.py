@@ -24,6 +24,15 @@ class _Commands:
             )
         if command.type == "SubmitPrompt":
             prompt = str(command.payload.get("prompt", ""))
+            if prompt == "slow":
+                time.sleep(0.35)
+                return CommandResult(
+                    command.command_id,
+                    "fixture-session",
+                    "fixture-run-slow",
+                    "ok",
+                    {"text": "SUBMITTED:'slow'"},
+                )
             if prompt != "wait":
                 return CommandResult(
                     command.command_id,

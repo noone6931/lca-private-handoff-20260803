@@ -56,6 +56,7 @@ OWNER_COMPLEXITY_CEILINGS = {
     "src/local_agent/frontends/composer_history.py": 237,
     "src/local_agent/frontends/tui/history_search.py": 130,
     "src/local_agent/frontends/tui/composer_layout.py": 183,
+    "src/local_agent/frontends/tui/pending_prompt.py": 58,
     "src/local_agent/runtime/assistant_message.py": 170,
     "src/local_agent/runtime/run_output.py": 130,
     "src/local_agent/providers/protocol.py": 379,
@@ -465,6 +466,30 @@ class ArchitectureBoundaryTests(unittest.TestCase):
             "open(",
         ):
             self.assertNotIn(forbidden, layout)
+
+    def test_tui_pending_prompt_queue_is_one_pure_frontend_single_slot_owner(self) -> None:
+        owner = (ROOT / "src/local_agent/frontends/tui/pending_prompt.py").read_text(encoding="utf-8")
+        controller = (ROOT / "src/local_agent/frontends/tui/controller.py").read_text(encoding="utf-8")
+        self.assertIn("class PendingPromptQueue:", owner)
+        self.assertIn("self._pending: PendingPrompt | None", owner)
+        self.assertIn("self._pending_prompts = PendingPromptQueue()", controller)
+        self.assertEqual(
+            sum(
+                "class PendingPromptQueue:" in path.read_text(encoding="utf-8")
+                for path in (ROOT / "src/local_agent/frontends/tui").glob("*.py")
+            ),
+            1,
+        )
+        for forbidden in (
+            "AgentRuntime",
+            "EvidenceLedger",
+            "SessionStore",
+            "runtime.commands",
+            "write_text",
+            "open(",
+            "json",
+        ):
+            self.assertNotIn(forbidden, owner)
 
     def test_tui_is_an_independent_single_writer_frontend(self) -> None:
         tui_root = ROOT / "src/local_agent/frontends/tui"

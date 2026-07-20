@@ -43,6 +43,7 @@ class TuiView:
     history_search_position: int = 0
     history_search_count: int = 0
     history_search_status: str = "inactive"
+    queued_prompt_bytes: int = 0
 
 
 @dataclass(frozen=True)
@@ -370,6 +371,9 @@ def _footer(state: TuiState, view: TuiView, viewport: TuiViewport, width: int) -
                 f"history search {view.history_search_position}/{view.history_search_count}: {match}"
             )
         notice = history_search + (f" | {notice}" if notice else "")
+    if view.queued_prompt_bytes:
+        queued = f"follow-up queued ({view.queued_prompt_bytes} bytes; Alt-Up restores)"
+        notice = queued + (f" | {notice}" if notice else "")
     if notice:
         keys = f"{notice} | {keys}"
     return clip_cells(keys, width, marker="...")

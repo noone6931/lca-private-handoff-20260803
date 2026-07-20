@@ -10,7 +10,9 @@ from local_agent.frontends.tui.mailbox import TuiMailbox
 from local_agent.frontends.tui.messages import TuiCommandCompleted
 from local_agent.frontends.tui.messages import TuiInteractionPending
 from local_agent.frontends.tui.messages import TuiEvent
+from local_agent.frontends.tui.messages import TuiWorkerFailed
 from local_agent.frontends.tui.model import TuiProjector
+from local_agent.frontends.tui.view import render_frame
 from local_agent.protocol.commands import CommandResult
 from local_agent.protocol.commands import new_command
 from local_agent.protocol.interactions import InteractionRequest
@@ -39,6 +41,168 @@ class _FakeWorker:
 
 
 class TuiControllerTests(unittest.TestCase):
+    def test_inflight_prompt_queues_without_early_runtime_history_or_transcript_then_drains_once(self) -> None:
+        mailbox = TuiMailbox(capacity=8)
+        worker = _FakeWorker()
+        history = ComposerHistory(None)
+        projector = TuiProjector()
+        controller = TuiController(mailbox, projector, worker, composer_history=history)  # type: ignore[arg-type]
+
+        controller.handle_paste("first")
+        controller.handle_key("ENTER")
+        first = worker.submitted[0]
+        controller.handle_paste("second\nturn")
+        controller.handle_key("ENTER")
+
+        self.assertEqual(len(worker.submitted), 1)
+        self.assertEqual(history.snapshot.local_entries, ("first",))
+        self.assertEqual(projector.state.transcript, ())
+        self.assertEqual(controller.view.input_text, "")
+        self.assertEqual(controller.view.queued_prompt_bytes, len("second\nturn"))
+
+        mailbox.put(
+            TuiCommandCompleted(
+                first,
+                CommandResult(first.command_id, "s1", "r1", "ok", {"text": "first done"}),
+            )
+        )
+        controller.poll()
+
+        self.assertEqual(len(worker.submitted), 2)
+        second = worker.submitted[1]
+        self.assertEqual(second.type, "SubmitPrompt")
+        self.assertEqual(second.payload, {"prompt": "second\nturn"})
+        self.assertNotEqual(second.command_id, first.command_id)
+        self.assertEqual(history.snapshot.local_entries, ("first", "second\nturn"))
+        self.assertEqual(controller.view.queued_prompt_bytes, 0)
+
+        mailbox.put(
+            TuiCommandCompleted(
+                second,
+                CommandResult(second.command_id, "s1", "r2", "ok", {"text": "second done"}),
+            )
+        )
+        controller.poll()
+        self.assertEqual(len(worker.submitted), 2)
+
+    def test_slot_full_and_slash_input_do_not_overwrite_or_dispatch(self) -> None:
+        worker = _FakeWorker()
+        history = ComposerHistory(None)
+        controller = TuiController(
+            TuiMailbox(capacity=8), TuiProjector(), worker, composer_history=history  # type: ignore[arg-type]
+        )
+        controller.submit_initial_prompt("active")
+        controller.handle_paste("queued")
+        controller.handle_key("ENTER")
+        controller.handle_paste("kept draft")
+        controller.handle_key("ENTER")
+
+        self.assertEqual(controller.view.input_text, "kept draft")
+        self.assertIn("already queued", controller.view.notice)
+        self.assertEqual(len(worker.submitted), 1)
+        controller.handle_key("CTRL_C")
+
+        slash = TuiController(TuiMailbox(capacity=8), TuiProjector(), _FakeWorker())  # type: ignore[arg-type]
+        slash.submit_initial_prompt("active")
+        slash.handle_paste("/status")
+        slash.handle_key("ENTER")
+        self.assertEqual(slash.view.input_text, "/status")
+        self.assertEqual(slash.view.queued_prompt_bytes, 0)
+        self.assertIn("not queued", slash.view.notice)
+
+    def test_alt_up_restores_exact_multiline_queue_and_falls_back_to_visual_up(self) -> None:
+        worker = _FakeWorker()
+        controller = TuiController(TuiMailbox(capacity=8), TuiProjector(), worker)  # type: ignore[arg-type]
+        controller.update_viewport(8, 12)
+        controller.submit_initial_prompt("active")
+        queued = "PRIVATE\ntext\u202e\x1b[31m"
+        controller.handle_paste(queued)
+        controller.handle_key("ENTER")
+
+        rendered = "\n".join(render_frame(controller.state, controller.view, 100, 12).lines)
+        self.assertNotIn("PRIVATE", rendered)
+        self.assertNotIn("\x1b", rendered)
+
+        controller.handle_key("ALT_UP")
+        self.assertEqual(controller.view.input_text, queued)
+        self.assertEqual(controller.view.cursor, len(queued))
+        self.assertEqual(controller.view.queued_prompt_bytes, 0)
+
+        controller.handle_key("ALT_UP")
+        self.assertLess(controller.view.cursor, len(controller.view.input_text))
+
+    def test_cancel_and_worker_failure_restore_without_auto_submit(self) -> None:
+        for completion in ("cancelled", "failed"):
+            with self.subTest(completion=completion):
+                mailbox = TuiMailbox(capacity=8)
+                worker = _FakeWorker()
+                history = ComposerHistory(None)
+                controller = TuiController(
+                    mailbox, TuiProjector(), worker, composer_history=history  # type: ignore[arg-type]
+                )
+                controller.submit_initial_prompt("active")
+                first = worker.submitted[0]
+                controller.handle_paste("follow\nup")
+                controller.handle_key("ENTER")
+                if completion == "cancelled":
+                    controller.handle_key("CTRL_C")
+                    mailbox.put(
+                        TuiCommandCompleted(
+                            first,
+                            CommandResult(first.command_id, "s1", "r1", "ok", {"text": "cancelled"}),
+                        )
+                    )
+                else:
+                    mailbox.put(TuiWorkerFailed(first, "RuntimeError"))
+                controller.poll()
+
+                self.assertEqual(len(worker.submitted), 1)
+                self.assertEqual(controller.view.input_text, "follow\nup")
+                self.assertEqual(controller.view.cursor, len("follow\nup"))
+                self.assertEqual(controller.view.queued_prompt_bytes, 0)
+                self.assertEqual(history.snapshot.local_entries, ("active",))
+
+    def test_non_prompt_runtime_command_does_not_enable_follow_up_queue(self) -> None:
+        worker = _FakeWorker()
+        controller = TuiController(TuiMailbox(capacity=8), TuiProjector(), worker)  # type: ignore[arg-type]
+        self.assertTrue(controller._submit_command(new_command("GetStatus", {})))
+        controller.handle_paste("draft")
+        controller.handle_key("ENTER")
+
+        self.assertEqual(controller.view.input_text, "draft")
+        self.assertEqual(controller.view.queued_prompt_bytes, 0)
+        self.assertEqual(len(worker.submitted), 1)
+
+    def test_interaction_search_and_palette_never_admit_follow_up_prompts(self) -> None:
+        search_worker = _FakeWorker()
+        search = TuiController(TuiMailbox(capacity=8), TuiProjector(), search_worker)  # type: ignore[arg-type]
+        search.submit_initial_prompt("active")
+        search.handle_key("CTRL_F")
+        search.handle_paste("needle")
+        search.handle_key("ENTER")
+        self.assertEqual(search.view.queued_prompt_bytes, 0)
+        self.assertEqual(len(search_worker.submitted), 1)
+
+        palette_worker = _FakeWorker()
+        palette = TuiController(TuiMailbox(capacity=8), TuiProjector(), palette_worker)  # type: ignore[arg-type]
+        palette.submit_initial_prompt("active")
+        palette.handle_key("CTRL_P")
+        palette.handle_key("ENTER")
+        self.assertEqual(palette.view.queued_prompt_bytes, 0)
+        self.assertEqual(len(palette_worker.submitted), 1)
+
+        mailbox = TuiMailbox(capacity=8)
+        interaction_worker = _FakeWorker()
+        interaction = TuiController(mailbox, TuiProjector(), interaction_worker)  # type: ignore[arg-type]
+        interaction.submit_initial_prompt("active")
+        mailbox.put(TuiInteractionPending("i1", InteractionRequest("ask", "Which?")))
+        interaction.poll()
+        interaction.handle_paste("answer")
+        interaction.handle_key("ENTER")
+        self.assertEqual(interaction.view.queued_prompt_bytes, 0)
+        self.assertEqual(len(interaction_worker.submitted), 1)
+        self.assertEqual(len(interaction_worker.interaction_bridge.resolved), 1)
+
     def test_plain_input_submits_typed_prompt_command(self) -> None:
         mailbox = TuiMailbox(capacity=8)
         worker = _FakeWorker()

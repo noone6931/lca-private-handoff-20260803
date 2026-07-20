@@ -16,6 +16,19 @@ from local_agent.frontends.tui.view import transcript_lines
 
 
 class TuiViewTests(unittest.TestCase):
+    def test_queued_follow_up_footer_is_bounded_metadata_not_prompt_text(self) -> None:
+        frame = render_frame(
+            TuiState(),
+            TuiView(queued_prompt_bytes=42),
+            100,
+            10,
+        )
+        footer = frame.lines[-1]
+
+        self.assertIn("follow-up queued (42 bytes; Alt-Up restores)", footer)
+        self.assertNotIn("queued prompt contents", footer)
+        self.assertNotIn("\x1b", footer)
+
     def test_unicode_width_and_wrapping_are_cell_bounded(self) -> None:
         self.assertEqual(cell_width("A中"), 3)
         self.assertEqual(clip_cells("A中文", 4), "A中")

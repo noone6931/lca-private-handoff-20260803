@@ -14,6 +14,8 @@ _INCOMPLETE_PASTE_SECONDS = 2.0
 _NORMAL_PREFIX_SECONDS = 0.1
 
 _TERMINAL_KEY_SEQUENCES = {
+    "\x1b[1;3A": "ALT_UP",
+    "\x1b\x1b[A": "ALT_UP",
     "\x1b[A": "UP",
     "\x1b[B": "DOWN",
     "\x1b[C": "RIGHT",

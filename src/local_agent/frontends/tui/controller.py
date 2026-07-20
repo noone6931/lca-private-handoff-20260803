@@ -20,6 +20,8 @@ from .messages import TuiInteractionClosed
 from .messages import TuiInteractionPending
 from .messages import TuiWorkerFailed
 from .model import TuiProjector
+from .pending_prompt import PendingPrompt
+from .pending_prompt import PendingPromptQueue
 from .view import follow_viewport
 from .view import TuiView
 from .view import page_viewport
@@ -52,15 +54,18 @@ class TuiController:
         self._registry = command_registry or TerminalCommandRegistry()
         self._history = composer_history or ComposerHistory(None)
         self._history_search = ComposerHistorySearch()
+        self._pending_prompts = PendingPromptQueue()
         self._view = TuiView()
         self._pending_interaction: TuiInteractionPending | None = None
         self._exit_requested = False
         self._in_flight = 0
+        self._prompt_command_ids: set[str] = set()
         self._composer_before_search: tuple[str, int] | None = None
         self._composer_before_interaction: tuple[str, int] | None = None
         self._clipboard_text: str | None = None
         self._viewport_size: tuple[int, int] | None = None
         self._composer_preferred_column: int | None = None
+        self._restore_pending_after_run = False
 
     @property
     def state(self):
@@ -105,11 +110,20 @@ class TuiController:
                     self._clear_interaction(notice=f"Interaction {message.status}.")
             elif isinstance(message, TuiCommandCompleted):
                 self._in_flight = max(self._in_flight - 1, 0)
+                self._prompt_command_ids.discard(message.command.command_id)
                 self._handle_command_result(message)
+                if message.command.type == "SubmitPrompt":
+                    if self._restore_pending_after_run or not message.result.ok:
+                        self._restore_pending_to_composer("Follow-up restored after the run did not complete normally.")
+                    else:
+                        self._drain_pending_prompt()
             elif isinstance(message, TuiWorkerFailed):
                 self._in_flight = max(self._in_flight - 1, 0)
+                self._prompt_command_ids.discard(message.command.command_id)
                 self._projector.append_local("error", f"Runtime worker failed: {message.error_kind}")
                 self._projector.set_status("error")
+                if message.command.type == "SubmitPrompt":
+                    self._restore_pending_to_composer("Follow-up restored after the Runtime worker failed.")
         self._sync_viewport()
         return len(messages)
 
@@ -144,6 +158,7 @@ class TuiController:
             self._resolve_interaction(InteractionResult("cancelled"))
         elif key == "CTRL_C" and self._in_flight:
             if self._worker.request_cancel():
+                self._restore_pending_after_run = True
                 self._view = replace(self._view, notice="Cancellation requested; waiting for Runtime closure.")
             else:
                 self._view = replace(self._view, notice="Run is starting; press Ctrl-C again to cancel.")
@@ -176,6 +191,10 @@ class TuiController:
             self._move_history_search(-1)
         elif key == "DOWN" and self._view.focus == "history_search":
             self._move_history_search(1)
+        elif key == "ALT_UP" and self._restore_queued_prompt():
+            pass
+        elif key == "ALT_UP" and self._move_composer_vertical(-1):
+            pass
         elif key == "UP" and self._move_composer_vertical(-1):
             pass
         elif key == "DOWN" and self._move_composer_vertical(1):
@@ -271,7 +290,31 @@ class TuiController:
                 self._resolve_interaction(InteractionResult("answered", text))
             return
         if self._in_flight:
-            self._view = replace(self._view, notice="A run is active; the composer draft was kept.")
+            if not self._prompt_command_ids:
+                self._view = replace(self._view, notice="A Runtime command is active; the composer draft was kept.")
+                return
+            if text.startswith("/"):
+                self._view = replace(self._view, notice="Slash commands are not queued while a run is active.")
+                return
+            status = self._pending_prompts.admit(text)
+            if status == "full":
+                self._view = replace(self._view, notice="A follow-up is already queued; the composer draft was kept.")
+                return
+            if status == "too_large":
+                self._view = replace(self._view, notice="Follow-up exceeds the 64 KiB input limit.")
+                return
+            if status != "admitted":
+                return
+            self._sync_pending_view()
+            self._view = replace(
+                self._view,
+                input_text="",
+                cursor=0,
+                palette=(),
+                notice="Follow-up queued for the next turn.",
+                viewport=follow_viewport(self._view.viewport),
+            )
+            self._composer_preferred_column = None
             return
         if text.startswith("/"):
             dispatched = self._registry.dispatch(text)
@@ -302,7 +345,63 @@ class TuiController:
             self._projector.append_local("error", "Runtime command queue is full.")
             return False
         self._in_flight += 1
+        if command.type == "SubmitPrompt":
+            self._prompt_command_ids.add(command.command_id)
         return True
+
+    def _drain_pending_prompt(self) -> None:
+        pending = self._pending_prompts.take()
+        self._sync_pending_view()
+        self._restore_pending_after_run = False
+        if pending is None:
+            return
+        if self._submit_command(new_command("SubmitPrompt", {"prompt": pending.text})):
+            self._history.append(pending.text)
+            self._view = replace(self._view, notice="Queued follow-up started.")
+            return
+        self._restore_prompt_to_composer(pending, "Queued follow-up could not start and was restored.")
+
+    def _restore_queued_prompt(self) -> bool:
+        if self._pending_prompts.pending is None:
+            return False
+        if self._view.focus != TuiFocus.CHAT.value or self._pending_interaction is not None or self._view.palette:
+            return False
+        if self._view.input_text:
+            self._view = replace(self._view, notice="Clear the current draft before restoring the queued follow-up.")
+            return True
+        pending = self._pending_prompts.take()
+        self._sync_pending_view()
+        if pending is None:
+            return False
+        self._restore_prompt_to_composer(pending, "Queued follow-up restored to the composer.")
+        return True
+
+    def _restore_pending_to_composer(self, notice: str) -> None:
+        self._restore_pending_after_run = False
+        pending = self._pending_prompts.take()
+        self._sync_pending_view()
+        if pending is not None:
+            self._restore_prompt_to_composer(pending, notice)
+
+    def _restore_prompt_to_composer(self, pending: PendingPrompt, notice: str) -> None:
+        if self._view.input_text:
+            self._pending_prompts.restore(pending)
+            self._sync_pending_view()
+            self._view = replace(self._view, notice=f"{notice} Clear the current draft to retrieve it with Alt-Up.")
+            return
+        self._history.reset_navigation()
+        self._composer_preferred_column = None
+        self._view = replace(
+            self._view,
+            input_text=pending.text,
+            cursor=len(pending.text),
+            palette=(),
+            notice=notice,
+        )
+
+    def _sync_pending_view(self) -> None:
+        pending = self._pending_prompts.pending
+        self._view = replace(self._view, queued_prompt_bytes=pending.byte_count if pending else 0)
 
     def _handle_command_result(self, completed: TuiCommandCompleted) -> None:
         result = completed.result

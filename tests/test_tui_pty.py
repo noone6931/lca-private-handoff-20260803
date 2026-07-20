@@ -18,6 +18,84 @@ FIXTURE = ROOT / "tests/fixtures/tui_pty_app.py"
 
 @unittest.skipUnless(os.name == "posix", "PTY smoke requires a POSIX terminal")
 class TuiPtyTests(unittest.TestCase):
+    def test_follow_up_queues_during_slow_turn_then_starts_exactly_once(self) -> None:
+        master, slave = os.openpty()
+        before = termios.tcgetattr(slave)
+        self._set_size(slave, 24, 120)
+        process = subprocess.Popen(
+            [sys.executable, str(FIXTURE)],
+            stdin=slave,
+            stdout=slave,
+            stderr=slave,
+            env={**os.environ, "PYTHONPATH": str(ROOT / "src"), "TERM": "xterm-256color"},
+            close_fds=True,
+        )
+        output = bytearray()
+        try:
+            output.extend(self._read_until(master, b"LOCAL CODING AGENT", timeout=3))
+            os.write(master, b"slow\nfollow-up\n")
+            output.extend(self._read_until(master, b"follow-up queued", timeout=2))
+            output.extend(self._read_until(master, b"SUBMITTED:'follow-up'", timeout=4))
+            os.write(master, b"/exit\n")
+            output.extend(self._drain_until_exit(master, process, timeout=3))
+            process.wait(timeout=1)
+            after = termios.tcgetattr(slave)
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait(timeout=2)
+            os.close(master)
+            os.close(slave)
+
+        rendered = output.decode("utf-8", errors="replace")
+        mask = termios.ECHO | termios.ICANON
+        self.assertEqual(process.returncode, 0, rendered)
+        self.assertEqual(rendered.count("SUBMITTED:'slow'"), 1)
+        self.assertEqual(rendered.count("SUBMITTED:'follow-up'"), 1)
+        self.assertEqual(after[3] & mask, before[3] & mask)
+        self.assertNotIn("\x1b[?1049h", rendered)
+        self.assertNotIn("\x1b[?1007h", rendered)
+        self.assertNotIn("\x1b[3J", rendered)
+
+    def test_cancelled_turn_restores_follow_up_without_running_it(self) -> None:
+        master, slave = os.openpty()
+        before = termios.tcgetattr(slave)
+        self._set_size(slave, 24, 120)
+        process = subprocess.Popen(
+            [sys.executable, str(FIXTURE)],
+            stdin=slave,
+            stdout=slave,
+            stderr=slave,
+            env={**os.environ, "PYTHONPATH": str(ROOT / "src"), "TERM": "xterm-256color"},
+            close_fds=True,
+        )
+        output = bytearray()
+        try:
+            output.extend(self._read_until(master, b"LOCAL CODING AGENT", timeout=3))
+            os.write(master, b"wait\nfollow-up\n")
+            output.extend(self._read_until(master, b"follow-up queued", timeout=2))
+            process.send_signal(signal.SIGINT)
+            output.extend(self._read_until(master, b"Follow-up restored", timeout=3))
+            os.write(master, b"\x11")
+            output.extend(self._drain_until_exit(master, process, timeout=3))
+            process.wait(timeout=1)
+            after = termios.tcgetattr(slave)
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait(timeout=2)
+            os.close(master)
+            os.close(slave)
+
+        rendered = output.decode("utf-8", errors="replace")
+        mask = termios.ECHO | termios.ICANON
+        self.assertEqual(process.returncode, 0, rendered)
+        self.assertNotIn("SUBMITTED:'follow-up'", rendered)
+        self.assertEqual(after[3] & mask, before[3] & mask)
+        self.assertNotIn("\x1b[?1049h", rendered)
+        self.assertNotIn("\x1b[?1007h", rendered)
+        self.assertNotIn("\x1b[3J", rendered)
+
     def test_two_line_composer_renders_and_submits_once_across_resize(self) -> None:
         master, slave = os.openpty()
         before = termios.tcgetattr(slave)
