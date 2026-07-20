@@ -11,6 +11,7 @@ from typing import Any
 from local_agent.patch.anchored import PatchError, resolve_workspace_path
 
 from .base import Tool, ToolContext, ToolResult
+from .process_environment import build_child_process_environment
 from .process_runtime import run_process as _run_process
 from .test_runner_policy import resolve_test_runner, test_environment_denial_reason
 from .test_runner_policy import test_runner_denial_reason as _test_runner_denial_reason
@@ -146,7 +147,7 @@ def _parse_test_command(command: object) -> tuple[tuple[dict[str, str], tuple[st
     if not tokens:
         return None, "run_tests command must contain a test runner."
 
-    environment = dict(os.environ)
+    environment = dict(build_child_process_environment().values)
     explicit_environment: dict[str, str] = {}
     index = 0
     while index < len(tokens):
@@ -220,7 +221,7 @@ def _run_test_process(
         completed = _run_process(
             list(argv),
             cwd=working_directory,
-            env={**os.environ, **environment},
+            env=build_child_process_environment(overrides=environment).values,
             shell=False,
             timeout=timeout,
             cancel_event=context.cancel_event,
@@ -314,6 +315,7 @@ def _run_command(command: str, args: dict[str, Any], context: ToolContext, *, de
         completed = _run_process(
             command,
             cwd=context.workspace,
+            env=build_child_process_environment().values,
             shell=True,
             timeout=timeout,
             cancel_event=context.cancel_event,

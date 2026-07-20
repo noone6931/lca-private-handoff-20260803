@@ -4,6 +4,7 @@ import os
 import signal
 import subprocess
 import time
+from collections.abc import Mapping
 from pathlib import Path
 
 from ..protocol.cancellation import CancellationSignal
@@ -15,23 +16,12 @@ def run_process(
     *,
     cwd: Path,
     shell: bool,
-    timeout: int,
+    timeout: float,
     cancel_event: CancellationSignal | None,
-    env: dict[str, str] | None = None,
+    env: Mapping[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    """Run a subprocess with the legacy path unless cooperative cancellation is active."""
+    """Run a subprocess in one bounded process-group lifecycle."""
 
-    if cancel_event is None:
-        return subprocess.run(
-            command,
-            cwd=cwd,
-            env=env,
-            shell=shell,
-            text=True,
-            capture_output=True,
-            timeout=timeout,
-            check=False,
-        )
     process = subprocess.Popen(
         command,
         cwd=cwd,
@@ -46,17 +36,17 @@ def run_process(
     last_stdout: str | None = None
     last_stderr: str | None = None
     while True:
-        if cancel_event.is_set():
+        if cancel_event is not None and cancel_event.is_set():
             _terminate_process(process)
             raise RunCancelled("Run cancelled while a local process was active.")
         remaining = deadline - time.monotonic()
         if remaining <= 0:
-            _terminate_process(process)
+            stdout, stderr = _terminate_process(process)
             raise subprocess.TimeoutExpired(
                 command,
                 timeout,
-                output=last_stdout,
-                stderr=last_stderr,
+                output=stdout if stdout is not None else last_stdout,
+                stderr=stderr if stderr is not None else last_stderr,
             )
         try:
             stdout, stderr = process.communicate(timeout=min(remaining, 0.05))
@@ -69,18 +59,40 @@ def run_process(
         return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
 
 
-def _terminate_process(process: subprocess.Popen[str]) -> None:
-    if process.poll() is not None:
-        return
-    _signal_process(process, signal.SIGTERM)
+def _terminate_process(process: subprocess.Popen[str]) -> tuple[str | None, str | None]:
+    if os.name == "posix":
+        _signal_process(process, signal.SIGTERM)
+    elif process.poll() is None:
+        process.terminate()
     try:
-        process.communicate(timeout=0.5)
-    except subprocess.TimeoutExpired:
+        stdout, stderr = process.communicate(timeout=0.5)
+    except subprocess.TimeoutExpired as exc:
+        stdout = exc.stdout if isinstance(exc.stdout, str) else None
+        stderr = exc.stderr if isinstance(exc.stderr, str) else None
         if os.name == "posix":
             _signal_process(process, signal.SIGKILL)
-        else:
+        elif process.poll() is None:
             process.kill()
-        process.communicate()
+        try:
+            final_stdout, final_stderr = process.communicate(timeout=0.5)
+        except subprocess.TimeoutExpired as final_exc:
+            final_stdout = final_exc.stdout if isinstance(final_exc.stdout, str) else stdout
+            final_stderr = final_exc.stderr if isinstance(final_exc.stderr, str) else stderr
+            _close_process_pipes(process)
+            try:
+                process.wait(timeout=0.1)
+            except subprocess.TimeoutExpired:
+                pass
+        return final_stdout, final_stderr
+    if os.name == "posix" and _process_group_exists(process.pid):
+        _signal_process(process, signal.SIGKILL)
+    return stdout, stderr
+
+
+def _close_process_pipes(process: subprocess.Popen[str]) -> None:
+    for stream in (process.stdout, process.stderr):
+        if stream is not None:
+            stream.close()
 
 
 def _signal_process(process: subprocess.Popen[str], signum: signal.Signals) -> None:
@@ -93,3 +105,13 @@ def _signal_process(process: subprocess.Popen[str], signum: signal.Signals) -> N
         process.terminate()
     else:
         process.kill()
+
+
+def _process_group_exists(process_group_id: int) -> bool:
+    try:
+        os.killpg(process_group_id, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True

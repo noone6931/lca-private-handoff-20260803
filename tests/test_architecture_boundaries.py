@@ -37,6 +37,8 @@ OWNER_COMPLEXITY_CEILINGS = {
     "src/local_agent/runtime/review_round.py": 452,
     "src/local_agent/review/safe_partial.py": 446,
     "src/local_agent/tools/shell.py": 357,
+    "src/local_agent/tools/process_environment.py": 64,
+    "src/local_agent/tools/process_runtime.py": 117,
     "src/local_agent/tools/test_runner_policy.py": 217,
     "src/local_agent/steering/pre_review.py": 83,
     "src/local_agent/steering/final_answer.py": 59,

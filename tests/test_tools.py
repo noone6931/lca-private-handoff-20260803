@@ -2129,7 +2129,7 @@ class ToolTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp).resolve()
             context = ToolContext(workspace=workspace, approval_mode="yolo")
-            with patch("local_agent.tools.shell.subprocess.run") as mocked_run:
+            with patch("local_agent.tools.shell._run_process") as mocked_run:
                 for assignment in environments:
                     with self.subTest(assignment=assignment):
                         result = run_tests({"command": f"{assignment} python3 -m unittest"}, context)
@@ -2261,7 +2261,7 @@ class ToolTests(unittest.TestCase):
                 target.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
                 target.chmod(0o755)
             with patch("local_agent.tools.test_runner_policy.shutil.which", return_value="/usr/bin/true"):
-                with patch("local_agent.tools.shell.subprocess.run", return_value=completed) as mocked_run:
+                with patch("local_agent.tools.shell._run_process", return_value=completed) as mocked_run:
                     for command in commands:
                         with self.subTest(command=command):
                             result = run_tests(
@@ -2403,7 +2403,7 @@ class ToolTests(unittest.TestCase):
                 deadline_monotonic=110.0,
             )
             with patch("local_agent.tools.shell.time.monotonic", return_value=100.0):
-                with patch("local_agent.tools.shell.subprocess.run", side_effect=fake_run):
+                with patch("local_agent.tools.shell._run_process", side_effect=fake_run):
                     result = run_shell({"command": "echo ok", "timeout": 600}, context)
 
         self.assertFalse(result.is_error)
