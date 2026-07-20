@@ -18,6 +18,48 @@ FIXTURE = ROOT / "tests/fixtures/tui_pty_app.py"
 
 @unittest.skipUnless(os.name == "posix", "PTY smoke requires a POSIX terminal")
 class TuiPtyTests(unittest.TestCase):
+    def test_ctrl_r_accepts_history_match_without_submitting_until_second_enter(self) -> None:
+        master, slave = os.openpty()
+        self._set_size(slave, 24, 100)
+        process = subprocess.Popen(
+            [sys.executable, str(FIXTURE)],
+            stdin=slave,
+            stdout=slave,
+            stderr=slave,
+            env={**os.environ, "PYTHONPATH": str(ROOT / "src"), "TERM": "xterm-256color"},
+            close_fds=True,
+        )
+        output = bytearray()
+        intermediate = b""
+        try:
+            output.extend(self._read_until(master, b"LOCAL CODING AGENT", timeout=3))
+            os.write(master, b"history needle\n")
+            output.extend(self._read_until(master, b"SUBMITTED:'history needle'", timeout=3))
+            time.sleep(0.1)
+            output.extend(self._read_available(master))
+            os.write(master, b"\x12needle")
+            output.extend(self._read_until(master, b"history search 1/1", timeout=3))
+            os.write(master, b"\n")
+            time.sleep(0.15)
+            intermediate = self._read_available(master)
+            self.assertNotIn(b"SUBMITTED:'history needle'", intermediate)
+            os.write(master, b"\n")
+            output.extend(intermediate)
+            output.extend(self._read_until(master, b"SUBMITTED:'history needle'", timeout=3))
+            os.write(master, b"/exit\n")
+            output.extend(self._drain_until_exit(master, process, timeout=3))
+            process.wait(timeout=1)
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait(timeout=2)
+            os.close(master)
+            os.close(slave)
+
+        rendered = output.decode("utf-8", errors="replace")
+        self.assertEqual(process.returncode, 0, rendered)
+        self.assertGreaterEqual(rendered.count("SUBMITTED:'history needle'"), 2)
+
     def test_initial_prompt_and_fragmented_multiline_paste_are_submitted_once(self) -> None:
         master, slave = os.openpty()
         self._set_size(slave, 24, 100)

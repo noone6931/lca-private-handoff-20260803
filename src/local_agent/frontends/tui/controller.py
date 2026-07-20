@@ -9,6 +9,8 @@ from ...protocol.interactions import InteractionResult
 from ..composer_history import ComposerHistory
 from ..composer_history import composer_history_path
 from ..terminal.command_registry import TerminalCommandRegistry
+from .history_search import ComposerHistorySearch
+from .history_search import HistorySearchView
 from .mailbox import TuiMailbox
 from .input import MAX_INPUT_BYTES
 from .messages import TuiCommandCompleted
@@ -48,6 +50,7 @@ class TuiController:
         self._worker = worker
         self._registry = command_registry or TerminalCommandRegistry()
         self._history = composer_history or ComposerHistory(None)
+        self._history_search = ComposerHistorySearch()
         self._view = TuiView()
         self._pending_interaction: TuiInteractionPending | None = None
         self._exit_requested = False
@@ -80,6 +83,8 @@ class TuiController:
             if isinstance(message, TuiEvent):
                 self._projector.apply(message, dropped_messages=self._mailbox.dropped_count)
             elif isinstance(message, TuiInteractionPending):
+                if self._view.focus == "history_search":
+                    self._cancel_history_search()
                 self._pending_interaction = message
                 self._composer_before_interaction = (self._view.input_text, self._view.cursor)
                 focus = TuiFocus.ASK if message.request.kind == "ask" else TuiFocus.APPROVAL
@@ -130,6 +135,8 @@ class TuiController:
                 self._view = replace(self._view, notice="A run or interaction is active; cancel it before quitting.")
             else:
                 self._exit_requested = True
+        elif key in {"ESC", "CTRL_C"} and self._view.focus == "history_search":
+            self._cancel_history_search()
         elif key in {"ESC", "CTRL_C"} and self._pending_interaction is not None:
             self._resolve_interaction(InteractionResult("cancelled"))
         elif key == "CTRL_C" and self._in_flight:
@@ -141,6 +148,8 @@ class TuiController:
             self._view = replace(self._view, palette=())
         elif key == "ESC" and (self._view.focus == "search" or self._view.search_query):
             self._close_search()
+        elif key == "CTRL_R":
+            self._toggle_history_search()
         elif key == "CTRL_P":
             self._toggle_palette()
         elif key == "CTRL_F":
@@ -159,6 +168,10 @@ class TuiController:
             self._view = replace(self._view, viewport=wheel_viewport(self._view.viewport, -1))
         elif key == "WHEEL_DOWN":
             self._view = replace(self._view, viewport=wheel_viewport(self._view.viewport, 1))
+        elif key == "UP" and self._view.focus == "history_search":
+            self._move_history_search(-1)
+        elif key == "DOWN" and self._view.focus == "history_search":
+            self._move_history_search(1)
         elif key == "UP" and self._recall_history(-1):
             pass
         elif key == "DOWN" and self._recall_history(1):
@@ -187,6 +200,9 @@ class TuiController:
             self._insert(key)
 
     def _submit_input(self) -> None:
+        if self._view.focus == "history_search":
+            self._accept_history_search()
+            return
         if self._view.focus == "search":
             query = self._view.input_text.strip()
             matches = sum(query.casefold() in entry.text.casefold() for entry in self.state.transcript) if query else 0
@@ -274,6 +290,8 @@ class TuiController:
 
     def _handle_command_result(self, completed: TuiCommandCompleted) -> None:
         result = completed.result
+        if completed.command.type == "MoveWorkspace":
+            self._reset_history_search_for_rebind()
         if result.ok:
             if completed.command.type == "MoveWorkspace":
                 self._rebind_history(result.payload.get("state_dir"))
@@ -319,7 +337,7 @@ class TuiController:
         )
 
     def _toggle_palette(self) -> None:
-        if self._pending_interaction is not None or self._view.focus == "search":
+        if self._pending_interaction is not None or self._view.focus in {"search", "history_search"}:
             return
         if self._view.palette:
             self._view = replace(self._view, palette=())
@@ -330,7 +348,7 @@ class TuiController:
         self._view = replace(self._view, palette=candidates, palette_index=0)
 
     def _toggle_search(self) -> None:
-        if self._pending_interaction is not None:
+        if self._pending_interaction is not None or self._view.focus == "history_search":
             return
         if self._view.focus == "search":
             self._close_search()
@@ -358,6 +376,90 @@ class TuiController:
             notice="",
         )
 
+    def _toggle_history_search(self) -> None:
+        if self._view.focus == "history_search":
+            self._move_history_search(-1)
+            return
+        if (
+            self._view.focus != TuiFocus.CHAT.value
+            or self._pending_interaction is not None
+            or self._in_flight
+            or self._view.palette
+            or self._view.search_query
+        ):
+            return
+        self._history.reset_navigation()
+        state = self._history_search.open(
+            self._history.snapshot,
+            self._view.input_text,
+            self._view.cursor,
+        )
+        self._view = replace(
+            self._view,
+            focus="history_search",
+            input_text=state.query,
+            cursor=len(state.query),
+            palette=(),
+            notice="Enter accepts a match; Esc restores the composer draft.",
+            history_search_match=state.match_preview,
+            history_search_position=state.position,
+            history_search_count=state.match_count,
+            history_search_status=state.status,
+        )
+
+    def _move_history_search(self, direction: int) -> None:
+        state = (
+            self._history_search.move_older()
+            if direction < 0
+            else self._history_search.move_newer()
+        )
+        self._project_history_search(state)
+
+    def _accept_history_search(self) -> None:
+        match = self._history_search.accept()
+        if match is None:
+            self._view = replace(self._view, notice="No matching composer history entry.")
+            return
+        self._view = replace(
+            self._view,
+            focus=TuiFocus.CHAT.value,
+            input_text=match,
+            cursor=len(match),
+            notice="History match accepted; press Enter to submit.",
+            history_search_match="",
+            history_search_position=0,
+            history_search_count=0,
+            history_search_status="inactive",
+        )
+
+    def _cancel_history_search(self) -> None:
+        draft, cursor = self._history_search.cancel()
+        self._view = replace(
+            self._view,
+            focus=TuiFocus.CHAT.value,
+            input_text=draft,
+            cursor=cursor,
+            notice="",
+            history_search_match="",
+            history_search_position=0,
+            history_search_count=0,
+            history_search_status="inactive",
+        )
+
+    def _reset_history_search_for_rebind(self) -> None:
+        if self._view.focus == "history_search":
+            self._cancel_history_search()
+        else:
+            self._history_search.reset()
+            self._view = replace(
+                self._view,
+                history_search_match="",
+                history_search_position=0,
+                history_search_count=0,
+                history_search_status="inactive",
+            )
+        self._history.reset_navigation()
+
     def _copy_last_answer(self) -> None:
         answer = next(
             (
@@ -384,6 +486,9 @@ class TuiController:
             self._view = replace(self._view, notice="Input is limited to 64 KiB.")
             return
         updated = value[:cursor] + text + value[cursor:]
+        if self._view.focus == "history_search":
+            self._update_history_search_query(updated, cursor + len(text))
+            return
         self._history.reset_navigation()
         palette = self._view.palette
         if updated.startswith("/") and not self._pending_interaction and self._view.focus == TuiFocus.CHAT.value:
@@ -411,6 +516,9 @@ class TuiController:
         if cursor <= 0:
             return
         value = self._view.input_text
+        if self._view.focus == "history_search":
+            self._update_history_search_query(value[:cursor - 1] + value[cursor:], cursor - 1)
+            return
         self._history.reset_navigation()
         self._view = replace(self._view, input_text=value[:cursor - 1] + value[cursor:], cursor=cursor - 1)
 
@@ -418,6 +526,9 @@ class TuiController:
         cursor = self._view.cursor
         value = self._view.input_text
         if cursor >= len(value):
+            return
+        if self._view.focus == "history_search":
+            self._update_history_search_query(value[:cursor] + value[cursor + 1:], cursor)
             return
         self._history.reset_navigation()
         self._view = replace(self._view, input_text=value[:cursor] + value[cursor + 1:])
@@ -435,3 +546,22 @@ class TuiController:
             return False
         self._view = replace(self._view, input_text=recalled, cursor=len(recalled), notice="")
         return True
+
+    def _update_history_search_query(self, query: str, cursor: int) -> None:
+        if not self._history_search.update_query(query):
+            self._view = replace(self._view, notice="History search query is limited to 4 KiB.")
+            return
+        state = self._history_search.view
+        self._project_history_search(state, cursor=cursor)
+
+    def _project_history_search(self, state: HistorySearchView, *, cursor: int | None = None) -> None:
+        self._view = replace(
+            self._view,
+            input_text=state.query,
+            cursor=len(state.query) if cursor is None else min(max(cursor, 0), len(state.query)),
+            history_search_match=state.match_preview,
+            history_search_position=state.position,
+            history_search_count=state.match_count,
+            history_search_status=state.status,
+            notice="",
+        )

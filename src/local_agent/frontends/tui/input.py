@@ -225,6 +225,7 @@ class BracketedPasteDecoder:
                 "\x06": "CTRL_F",
                 "\x10": "CTRL_P",
                 "\x11": "CTRL_Q",
+                "\x12": "CTRL_R",
                 "\x19": "CTRL_Y",
                 "\x7f": "BACKSPACE",
                 "\b": "BACKSPACE",

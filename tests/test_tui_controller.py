@@ -12,6 +12,7 @@ from local_agent.frontends.tui.messages import TuiInteractionPending
 from local_agent.frontends.tui.messages import TuiEvent
 from local_agent.frontends.tui.model import TuiProjector
 from local_agent.protocol.commands import CommandResult
+from local_agent.protocol.commands import new_command
 from local_agent.protocol.interactions import InteractionRequest
 
 
@@ -551,6 +552,189 @@ class TuiControllerTests(unittest.TestCase):
         self.assertIn("1 transcript match", controller.view.notice)
         controller.handle_key("ESC")
         self.assertEqual(controller.view.search_query, "")
+
+    def test_ctrl_r_search_accepts_without_submit_then_explicit_enter_submits(self) -> None:
+        history = ComposerHistory(None)
+        history.append("alpha older")
+        history.append("alpha newest")
+        worker = _FakeWorker()
+        controller = TuiController(
+            TuiMailbox(capacity=8),
+            TuiProjector(),
+            worker,  # type: ignore[arg-type]
+            composer_history=history,
+        )
+        controller.handle_paste("multi\nline draft")
+        controller.handle_key("LEFT")
+        draft_cursor = controller.view.cursor
+
+        controller.handle_key("CTRL_R")
+        controller.handle_paste("ALPX")
+        controller.handle_key("BACKSPACE")
+        controller.handle_key("h")
+        controller.handle_key("a")
+        self.assertEqual(controller.view.history_search_match, "alpha newest")
+        controller.handle_key("CTRL_R")
+        self.assertEqual(controller.view.history_search_match, "alpha older")
+        controller.handle_key("DOWN")
+        self.assertEqual(controller.view.history_search_match, "alpha newest")
+        controller.handle_key("UP")
+        controller.handle_key("ENTER")
+
+        self.assertEqual(controller.view.focus, "chat")
+        self.assertEqual(controller.view.input_text, "alpha older")
+        self.assertEqual(worker.submitted, [])
+        controller.handle_key("ENTER")
+        self.assertEqual(worker.submitted[0].payload, {"prompt": "alpha older"})
+        self.assertEqual(history.snapshot.local_entries[-1], "alpha older")
+        self.assertNotEqual(draft_cursor, len("multi\nline draft"))
+
+    def test_history_search_cancel_restores_multiline_draft_and_interior_cursor(self) -> None:
+        history = ComposerHistory(None)
+        history.append("saved prompt")
+        controller = TuiController(
+            TuiMailbox(capacity=8),
+            TuiProjector(),
+            _FakeWorker(),  # type: ignore[arg-type]
+            composer_history=history,
+        )
+        controller.handle_paste("first\nsecond")
+        for _ in range(3):
+            controller.handle_key("LEFT")
+        expected = (controller.view.input_text, controller.view.cursor)
+        controller.handle_key("CTRL_R")
+        controller.handle_paste("saved")
+        controller.handle_key("CTRL_C")
+
+        self.assertEqual((controller.view.input_text, controller.view.cursor), expected)
+        self.assertEqual(controller.view.focus, "chat")
+        self.assertEqual(controller.view.history_search_status, "inactive")
+
+    def test_history_search_guards_palette_transcript_search_interaction_and_inflight(self) -> None:
+        history = ComposerHistory(None)
+        history.append("saved")
+
+        palette = TuiController(
+            TuiMailbox(capacity=8), TuiProjector(), _FakeWorker(), composer_history=history  # type: ignore[arg-type]
+        )
+        palette.handle_key("CTRL_P")
+        palette.handle_key("CTRL_R")
+        self.assertTrue(palette.view.palette)
+        self.assertEqual(palette.view.focus, "chat")
+
+        transcript = TuiController(
+            TuiMailbox(capacity=8), TuiProjector(), _FakeWorker(), composer_history=history  # type: ignore[arg-type]
+        )
+        transcript.handle_key("CTRL_F")
+        transcript.handle_key("CTRL_R")
+        self.assertEqual(transcript.view.focus, "search")
+
+        mailbox = TuiMailbox(capacity=8)
+        interaction = TuiController(
+            mailbox, TuiProjector(), _FakeWorker(), composer_history=history  # type: ignore[arg-type]
+        )
+        mailbox.put(TuiInteractionPending("i1", InteractionRequest("ask", "Which?")))
+        interaction.poll()
+        interaction.handle_key("CTRL_R")
+        self.assertEqual(interaction.view.focus, "ask")
+
+        inflight = TuiController(
+            TuiMailbox(capacity=8), TuiProjector(), _FakeWorker(), composer_history=history  # type: ignore[arg-type]
+        )
+        inflight.submit_initial_prompt("running")
+        inflight.handle_key("CTRL_R")
+        self.assertEqual(inflight.view.focus, "chat")
+
+    def test_history_search_keeps_wheel_and_page_bound_to_transcript(self) -> None:
+        history = ComposerHistory(None)
+        history.append("saved")
+        projector = TuiProjector()
+        for index in range(80):
+            projector.append_local("assistant", f"line {index}")
+        controller = TuiController(
+            TuiMailbox(capacity=8), projector, _FakeWorker(), composer_history=history  # type: ignore[arg-type]
+        )
+        controller.update_viewport(50, 12)
+        bottom = controller.view.viewport.top
+        controller.handle_key("CTRL_R")
+        controller.handle_key("WHEEL_UP")
+        wheel_top = controller.view.viewport.top
+        controller.handle_key("PAGE_UP")
+
+        self.assertLess(wheel_top, bottom)
+        self.assertLess(controller.view.viewport.top, wheel_top)
+        self.assertEqual(controller.view.focus, "history_search")
+
+    def test_history_search_does_not_append_or_write_until_accepted_prompt_is_submitted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "history.jsonl"
+            history = ComposerHistory(path)
+            history.append("persisted prompt")
+            before = path.read_bytes()
+            controller = TuiController(
+                TuiMailbox(capacity=8),
+                TuiProjector(),
+                _FakeWorker(),  # type: ignore[arg-type]
+                composer_history=history,
+            )
+            controller.handle_key("CTRL_R")
+            controller.handle_paste("persisted")
+            controller.handle_key("UP")
+            controller.handle_key("DOWN")
+            controller.handle_key("ESC")
+
+            self.assertEqual(path.read_bytes(), before)
+            self.assertEqual(history.snapshot.local_entries, ("persisted prompt",))
+
+    def test_workspace_rebind_result_clears_active_search_for_success_failure_and_missing_target(self) -> None:
+        for status, payload in (
+            ("error", {}),
+            ("ok", {}),
+            ("ok", {"state_dir": ""}),
+        ):
+            with self.subTest(status=status, payload=payload), tempfile.TemporaryDirectory() as tmp:
+                history = ComposerHistory(Path(tmp) / "history.jsonl")
+                history.append("saved")
+                mailbox = TuiMailbox(capacity=8)
+                controller = TuiController(
+                    mailbox,
+                    TuiProjector(),
+                    _FakeWorker(),  # type: ignore[arg-type]
+                    composer_history=history,
+                )
+                controller.handle_paste("draft")
+                controller.handle_key("CTRL_R")
+                controller.handle_paste("saved")
+                command = new_command("MoveWorkspace", {"path": "/new"})
+                mailbox.put(
+                    TuiCommandCompleted(
+                        command,
+                        CommandResult(command.command_id, "s1", None, status, payload, "failed", "failed"),
+                    )
+                )
+                controller.poll()
+
+                self.assertEqual(controller.view.focus, "chat")
+                self.assertEqual(controller.view.input_text, "draft")
+                self.assertEqual(controller.view.history_search_status, "inactive")
+
+    def test_pending_interaction_closes_history_search_before_borrowing_composer(self) -> None:
+        history = ComposerHistory(None)
+        history.append("saved")
+        mailbox = TuiMailbox(capacity=8)
+        controller = TuiController(
+            mailbox, TuiProjector(), _FakeWorker(), composer_history=history  # type: ignore[arg-type]
+        )
+        controller.handle_paste("draft")
+        controller.handle_key("CTRL_R")
+        controller.handle_paste("saved")
+        mailbox.put(TuiInteractionPending("i1", InteractionRequest("approval", "Continue?")))
+        controller.poll()
+        controller.handle_key("ESC")
+
+        self.assertEqual(controller.view.focus, "chat")
+        self.assertEqual(controller.view.input_text, "draft")
+        self.assertEqual(controller.view.history_search_status, "inactive")
 
     def test_copy_uses_only_completed_assistant_answer(self) -> None:
         mailbox = TuiMailbox(capacity=8)

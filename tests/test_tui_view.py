@@ -156,6 +156,45 @@ print("中文👩‍💻")
         self.assertIn("Allow shell?", frame.lines[-3])
         self.assertIn("approve> y", frame.lines[-2])
 
+    def test_history_search_footer_is_bounded_and_sanitizes_match_preview(self) -> None:
+        frame = render_frame(
+            TuiState(),
+            TuiView(
+                input_text="qu\x1b\u202eery",
+                cursor=8,
+                focus="history_search",
+                history_search_match="safe\x1b[31m\u202eevil\nnext" + "x" * 200,
+                history_search_position=2,
+                history_search_count=3,
+                history_search_status="match",
+            ),
+            80,
+            8,
+        )
+
+        rendered = "\n".join(frame.lines)
+        self.assertIn("history> query", rendered)
+        self.assertIn("history search 2/3", rendered)
+        self.assertNotIn("\x1b", rendered)
+        self.assertNotIn("\u202e", rendered)
+        self.assertTrue(all(cell_width(line) == 80 for line in frame.lines))
+
+    def test_empty_history_search_does_not_render_any_history_entry(self) -> None:
+        frame = render_frame(
+            TuiState(),
+            TuiView(
+                focus="history_search",
+                history_search_match="must not render",
+                history_search_status="empty",
+            ),
+            80,
+            8,
+        )
+
+        rendered = "\n".join(frame.lines)
+        self.assertIn("history search: type a query", rendered)
+        self.assertNotIn("must not render", rendered)
+
     def test_long_composer_keeps_text_near_cursor_visible(self) -> None:
         frame = render_frame(
             TuiState(),

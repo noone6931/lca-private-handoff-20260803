@@ -69,6 +69,14 @@ class TuiInputTests(unittest.TestCase):
             [("key", "LEFT")],
         )
 
+    def test_ctrl_r_has_a_typed_history_search_mapping(self) -> None:
+        decoder = BracketedPasteDecoder()
+
+        self.assertEqual(
+            [(event.kind, event.value) for event in decoder.feed("\x12")],
+            [("key", "CTRL_R")],
+        )
+
     def test_incomplete_timeout_tracks_idle_time_not_total_paste_duration(self) -> None:
         now = [0.0]
         decoder = BracketedPasteDecoder(incomplete_seconds=1.0, clock=lambda: now[0])

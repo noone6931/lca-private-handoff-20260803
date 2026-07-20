@@ -54,6 +54,7 @@ OWNER_COMPLEXITY_CEILINGS = {
     "src/local_agent/frontends/text.py": 60,
     "src/local_agent/frontends/tui/markdown.py": 120,
     "src/local_agent/frontends/composer_history.py": 237,
+    "src/local_agent/frontends/tui/history_search.py": 130,
     "src/local_agent/runtime/assistant_message.py": 170,
     "src/local_agent/runtime/run_output.py": 130,
     "src/local_agent/providers/protocol.py": 379,
@@ -417,6 +418,23 @@ class ArchitectureBoundaryTests(unittest.TestCase):
             ),
             1,
         )
+
+    def test_tui_history_search_is_pure_frontend_state_over_composer_snapshot(self) -> None:
+        search = (ROOT / "src/local_agent/frontends/tui/history_search.py").read_text(encoding="utf-8")
+        controller = (ROOT / "src/local_agent/frontends/tui/controller.py").read_text(encoding="utf-8")
+        self.assertIn("from ..composer_history import HistorySnapshot", search)
+        self.assertIn("class ComposerHistorySearch:", search)
+        self.assertIn("self._history.snapshot", controller)
+        for forbidden in (
+            "AgentRuntime",
+            "EvidenceLedger",
+            "SessionStore",
+            "runtime.commands",
+            "write_text",
+            "json",
+            "re.compile",
+        ):
+            self.assertNotIn(forbidden, search)
 
     def test_tui_is_an_independent_single_writer_frontend(self) -> None:
         tui_root = ROOT / "src/local_agent/frontends/tui"

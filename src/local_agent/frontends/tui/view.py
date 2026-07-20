@@ -11,6 +11,7 @@ from .text import cell_width
 from .text import clip_cells
 from .text import pad_cells
 from .text import tail_cells
+from ..text import sanitize_terminal_text
 
 
 @dataclass(frozen=True)
@@ -36,6 +37,10 @@ class TuiView:
     viewport: TuiViewport = field(default_factory=TuiViewport)
     notice: str = ""
     search_query: str = ""
+    history_search_match: str = ""
+    history_search_position: int = 0
+    history_search_count: int = 0
+    history_search_status: str = "inactive"
 
 
 @dataclass(frozen=True)
@@ -276,9 +281,19 @@ def _palette(view: TuiView, width: int, rows: int) -> tuple[str, ...]:
 
 
 def _prompt(view: TuiView, width: int) -> tuple[str, int]:
-    label = {"approval": "approve> ", "ask": "answer> ", "search": "search> "}.get(view.focus, "> ")
-    before_cursor = view.input_text[:view.cursor].replace("\n", "\\n")
-    after_cursor = view.input_text[view.cursor:].replace("\n", "\\n")
+    label = {
+        "approval": "approve> ",
+        "ask": "answer> ",
+        "search": "search> ",
+        "history_search": "history> ",
+    }.get(view.focus, "> ")
+    before_cursor = view.input_text[:view.cursor]
+    after_cursor = view.input_text[view.cursor:]
+    if view.focus == "history_search":
+        before_cursor = sanitize_terminal_text(before_cursor)
+        after_cursor = sanitize_terminal_text(after_cursor)
+    before_cursor = before_cursor.replace("\n", "\\n")
+    after_cursor = after_cursor.replace("\n", "\\n")
     available = max(width - cell_width(label), 1)
     if cell_width(before_cursor) >= available:
         visible_before = tail_cells(before_cursor, max(available - 1, 0))
@@ -303,6 +318,17 @@ def _footer(state: TuiState, view: TuiView, viewport: TuiViewport, width: int) -
         keys = f"{history} | {keys}"
     if view.search_query:
         notice = f"search: {view.search_query}" + (f" | {notice}" if notice else "")
+    if view.focus == "history_search":
+        if view.history_search_status == "empty":
+            history_search = "history search: type a query"
+        elif view.history_search_status == "no_match":
+            history_search = "history search: no matches"
+        else:
+            match = sanitize_terminal_text(view.history_search_match).replace("\n", "\\n")
+            history_search = (
+                f"history search {view.history_search_position}/{view.history_search_count}: {match}"
+            )
+        notice = history_search + (f" | {notice}" if notice else "")
     if notice:
         keys = f"{notice} | {keys}"
     return clip_cells(keys, width, marker="...")
