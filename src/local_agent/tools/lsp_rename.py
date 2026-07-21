@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from local_agent.lsp import config as lsp_config
+from local_agent.lsp.config import server_identity
 from local_agent.lsp.client import LspClientError, get_client
 from local_agent.lsp.workspace_edit import MAX_WORKSPACE_FILE_BYTES
 from local_agent.lsp.workspace_edit import MAX_WORKSPACE_PREVIEW_BYTES
@@ -12,6 +13,7 @@ from local_agent.lsp.workspace_edit import WorkspaceEditError
 from local_agent.lsp.workspace_edit import build_workspace_edit_preview
 from local_agent.lsp.workspace_edit import exact_symbol_position
 from local_agent.lsp.workspace_edit_store import WorkspaceEditPlanScope
+from local_agent.lsp.workspace_edit_store import WorkspaceEditPlanProvenance
 from local_agent.lsp.workspace_edit_store import WorkspaceEditPlanStoreError
 from local_agent.lsp.workspace_edit_store import default_workspace_edit_plan_store
 from local_agent.patch.anchored import PatchError, display_workspace_path, resolve_workspace_path
@@ -28,7 +30,7 @@ def lsp_rename_tools() -> list[Tool]:
             description=(
                 "Preview a semantic symbol rename from one external LSP server without writing files. "
                 "Locate the symbol exactly by 1-indexed line and occurrence, then read the affected files "
-                "and use apply_patch separately for any approved change."
+                "before applying its opaque exact plan through the normal write approval boundary."
             ),
             input_schema={
                 "type": "object",
@@ -98,6 +100,17 @@ def _lsp_rename_preview(arguments: dict[str, Any], context: ToolContext) -> Tool
     if project_root is None:
         return ToolResult("The selected LSP server has no project root for this file.", is_error=True)
     try:
+        scope = WorkspaceEditPlanScope.create(
+            session_id=context.session_id,
+            run_id=context.run_id,
+            workspace=context.workspace,
+            allowed_roots=context.allowed_dirs,
+        )
+        provenance = WorkspaceEditPlanProvenance.create(
+            target_path=path,
+            project_root=project_root,
+            server=server_identity(selected),
+        )
         client = get_client(selected, project_root)
         workspace_edit = client.rename(
             path,
@@ -113,12 +126,8 @@ def _lsp_rename_preview(arguments: dict[str, Any], context: ToolContext) -> Tool
         stored = default_workspace_edit_plan_store().register(
             preview,
             source="rename",
-            scope=WorkspaceEditPlanScope.create(
-                session_id=context.session_id,
-                run_id=context.run_id,
-                workspace=context.workspace,
-                allowed_roots=context.allowed_dirs,
-            ),
+            scope=scope,
+            provenance=provenance,
         )
     except WorkspaceEditError as exc:
         return ToolResult(f"LSP rename preview failed: {exc}", is_error=True)
@@ -139,7 +148,7 @@ def _lsp_rename_preview(arguments: dict[str, Any], context: ToolContext) -> Tool
         f"Target occurrences on line: {match_count}",
         f"Files: {len(display_paths)}; edits: {preview.edit_count}",
         f"Apply plan: {stored.plan_id}",
-        f"Plan digest: {preview.digest}",
+        f"Plan digest: {stored.digest}",
         "Candidate files:",
         *(f"- {candidate}" for candidate in display_paths),
         "",
@@ -150,12 +159,7 @@ def _lsp_rename_preview(arguments: dict[str, Any], context: ToolContext) -> Tool
     if len(content.encode("utf-8")) > MAX_WORKSPACE_PREVIEW_BYTES:
         default_workspace_edit_plan_store().consume(
             stored.plan_id,
-            scope=WorkspaceEditPlanScope.create(
-                session_id=context.session_id,
-                run_id=context.run_id,
-                workspace=context.workspace,
-                allowed_roots=context.allowed_dirs,
-            ),
+            scope=scope,
         )
         return ToolResult(
             f"LSP rename preview exceeds the {MAX_WORKSPACE_PREVIEW_BYTES}-byte complete output limit.",
@@ -173,8 +177,10 @@ def _lsp_rename_preview(arguments: dict[str, Any], context: ToolContext) -> Tool
             "file_count": len(display_paths),
             "edit_count": preview.edit_count,
             "plan_id": stored.plan_id,
-            "plan_digest": preview.digest,
+            "plan_digest": stored.digest,
             "plan_source": stored.source,
+            "provenance_digest": stored.provenance.digest,
+            "server_fingerprint": stored.provenance.server.fingerprint,
         },
     )
 

@@ -16,6 +16,7 @@ from local_agent.patch.anchored import resolve_workspace_path
 from local_agent.patch.transaction import ExistingTextFileChange
 from local_agent.patch.transaction import TextTransactionResult
 from local_agent.patch.transaction import apply_existing_text_transaction
+from local_agent.patch.transaction import restore_existing_text_transaction
 
 from .base import Tool, ToolContext, ToolResult, VisionInspectionUnavailableError, tool_state_dir
 
@@ -417,18 +418,29 @@ def patch_file(args: dict[str, Any], context: ToolContext) -> ToolResult:
             f"New tag after apply would be: {result.new_tag}\n\n{result.diff}",
             metadata=range_metadata,
         )
-    patch_id = _record_patch(
-        context=context,
-        path=display_workspace_path(context.workspace, path, context.allowed_dirs),
-        before_text=before_text,
-        before_tag=before_tag,
-        after_tag=result.new_tag,
-        diff=result.diff,
-    )
+    display_path = display_workspace_path(context.workspace, path, context.allowed_dirs)
+    journal_change = ExistingTextFileChange.create(path, result.before_bytes, result.after_bytes)
+    try:
+        patch_id = _record_patch(
+            context=context,
+            path=display_path,
+            before_text=before_text,
+            before_tag=before_tag,
+            after_tag=result.new_tag,
+            diff=result.diff,
+        )
+    except OSError:
+        recovery = restore_existing_text_transaction((journal_change,), error_kind="patch_journal_failed")
+        return _transaction_failure_result(
+            recovery,
+            context=context,
+            operation="apply_patch journal",
+            transaction_paths=(path,),
+        )
     return ToolResult(
         f"{tag_note}{range_note}Applied patch. Patch id: {patch_id}. New tag: {result.new_tag}\n\n{result.diff}",
         metadata={
-            "changed_path": display_workspace_path(context.workspace, path, context.allowed_dirs),
+            "changed_path": display_path,
             **range_metadata,
         },
     )
@@ -513,7 +525,17 @@ def rollback_patch(args: dict[str, Any], context: ToolContext) -> ToolResult:
             transaction_paths=(path,),
             rollback_changes=rollback_changes,
         )
-    _record_rollback(context, str(record["id"]))
+    try:
+        _record_rollback(context, str(record["id"]))
+    except OSError:
+        recovery = restore_existing_text_transaction(rollback_changes, error_kind="patch_journal_failed")
+        return _transaction_failure_result(
+            recovery,
+            context=context,
+            operation="rollback journal",
+            transaction_paths=(path,),
+            rollback_changes=rollback_changes,
+        )
     diff = "".join(
         difflib.unified_diff(
             current_text.splitlines(keepends=True),
@@ -567,7 +589,18 @@ def _rollback_text_transaction(record: dict[str, Any], context: ToolContext) -> 
             transaction_paths=tuple(change.path for change in changes),
             rollback_changes=tuple(changes),
         )
-    _record_rollback(context, str(record["id"]))
+    try:
+        _record_rollback(context, str(record["id"]))
+    except OSError:
+        rollback_changes = tuple(changes)
+        recovery = restore_existing_text_transaction(rollback_changes, error_kind="patch_journal_failed")
+        return _transaction_failure_result(
+            recovery,
+            context=context,
+            operation="rollback journal",
+            transaction_paths=tuple(change.path for change in rollback_changes),
+            rollback_changes=rollback_changes,
+        )
     diff = "".join(
         "".join(
             difflib.unified_diff(
@@ -689,6 +722,10 @@ def record_workspace_edit_patch(
     source: str,
     plan_id: str,
     plan_digest: str,
+    provenance_digest: str,
+    server_name: str,
+    server_fingerprint: str,
+    project_root: Path,
     files: tuple[Any, ...],
     diff: str,
 ) -> str:
@@ -719,6 +756,10 @@ def record_workspace_edit_patch(
             "source": source,
             "plan_id": plan_id,
             "plan_digest": plan_digest,
+            "provenance_digest": provenance_digest,
+            "server": server_name,
+            "server_fingerprint": server_fingerprint,
+            "project_root": display_workspace_path(context.workspace, project_root, context.allowed_dirs),
             "files": entries,
             "diff": diff,
         },
@@ -758,9 +799,9 @@ def _transaction_failure_result(
             "workspace_changed": transaction.workspace_changed,
             "changed_paths": changed_paths,
             "transaction_paths": all_paths,
-            "effective_changed_paths": changed_paths if operation != "rollback" else _rollback_residual_paths(
-                context, rollback_changes
-            ),
+            "effective_changed_paths": _rollback_residual_paths(context, rollback_changes)
+            if rollback_changes
+            else changed_paths,
             "transaction_status": transaction.status,
             "workspace_state": state,
             "error_kind": transaction.error_kind,

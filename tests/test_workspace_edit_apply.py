@@ -3,14 +3,19 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+from contextlib import nullcontext
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from local_agent.agent import AgentRuntime
 from local_agent.config import AgentConfig
 from local_agent.evidence.timeline import effective_workspace_write_paths
 from local_agent.evidence.timeline import result_changed_workspace
+from local_agent.lsp.config import LspProcessEnvironment
+from local_agent.lsp.config import LspServerConfig
+from local_agent.lsp.config import server_identity
 from local_agent.lsp.workspace_edit import build_workspace_edit_preview
+from local_agent.lsp.workspace_edit_store import WorkspaceEditPlanProvenance
 from local_agent.lsp.workspace_edit_store import WorkspaceEditPlanScope
 from local_agent.lsp.workspace_edit_store import WorkspaceEditPlanStore
 from local_agent.lsp.workspace_edit_store import WorkspaceEditPlanStoreError
@@ -34,6 +39,16 @@ def _edit(start: int, end: int, new_text: str) -> dict[str, object]:
 
 
 class ApplyWorkspaceEditTests(unittest.TestCase):
+    def _server(self, *, command: tuple[str, ...] = ("/usr/bin/test-lsp",)) -> LspServerConfig:
+        return LspServerConfig(
+            name="test-lsp",
+            command=command,
+            file_types=(".py",),
+            root_markers=("project.marker",),
+            language_id="python",
+            process_environment=LspProcessEnvironment(append=(("TOOLCHAIN", "one"),)),
+        )
+
     def _context(self, workspace: Path, *, state_dir: Path | None = None, **overrides) -> ToolContext:
         values = {
             "workspace": workspace,
@@ -60,11 +75,32 @@ class ApplyWorkspaceEditTests(unittest.TestCase):
             allowed_roots=context.allowed_dirs,
             project_root=context.workspace,
         )
-        return store.register(plan, source="rename", scope=self._scope(context))
+        return store.register(
+            plan,
+            source="rename",
+            scope=self._scope(context),
+            provenance=WorkspaceEditPlanProvenance.create(
+                target_path=paths[0],
+                project_root=context.workspace,
+                server=server_identity(self._server()),
+            ),
+        )
 
-    def _execute(self, store: WorkspaceEditPlanStore, context: ToolContext, plan_id: str):
+    def _execute(
+        self,
+        store: WorkspaceEditPlanStore,
+        context: ToolContext,
+        plan_id: str,
+        *,
+        validate_provenance: bool = False,
+    ):
         registry = ToolRegistry(workspace_edit_tools())
-        with patch("local_agent.tools.workspace_edit.default_workspace_edit_plan_store", return_value=store):
+        validation = (
+            patch("local_agent.tools.workspace_edit._plan_authorization_error", return_value=None)
+            if not validate_provenance
+            else nullcontext()
+        )
+        with patch("local_agent.tools.workspace_edit.default_workspace_edit_plan_store", return_value=store), validation:
             return registry.execute("apply_workspace_edit", {"plan_id": plan_id}, context)
 
     def test_two_file_apply_is_one_shot_journaled_and_rollback_is_transactional(self) -> None:
@@ -86,7 +122,9 @@ class ApplyWorkspaceEditTests(unittest.TestCase):
             self.assertEqual(second.read_bytes(), b"\xef\xbb\xbfnew\n")
             self.assertEqual(result.metadata["source"], "rename")
             self.assertEqual(result.metadata["plan_id"], stored.plan_id)
-            self.assertEqual(result.metadata["plan_digest"], stored.plan.digest)
+            self.assertEqual(result.metadata["plan_digest"], stored.digest)
+            self.assertEqual(result.metadata["provenance_digest"], stored.provenance.digest)
+            self.assertEqual(result.metadata["server_fingerprint"], stored.provenance.server.fingerprint)
             self.assertEqual(result.metadata["changed_paths"], ["first.py", "second.py"])
             self.assertTrue(result.metadata["workspace_changed"])
             transaction_id = result.metadata["transaction_id"]
@@ -99,6 +137,9 @@ class ApplyWorkspaceEditTests(unittest.TestCase):
             record = json.loads(journal.read_text(encoding="utf-8").splitlines()[0])
             self.assertEqual(record["transaction_id"], transaction_id)
             self.assertEqual(record["source"], "rename")
+            self.assertEqual(record["plan_digest"], stored.digest)
+            self.assertEqual(record["provenance_digest"], stored.provenance.digest)
+            self.assertEqual(record["server_fingerprint"], stored.provenance.server.fingerprint)
             self.assertEqual([item["path"] for item in record["files"]], ["first.py", "second.py"])
             self.assertTrue(all("before_text" in item and "after_text" in item for item in record["files"]))
             self.assertEqual(_session_patch_paths(context), {"first.py", "second.py"})
@@ -160,6 +201,167 @@ class ApplyWorkspaceEditTests(unittest.TestCase):
             self.assertEqual(first.read_text(encoding="utf-8"), "old\n")
             self.assertEqual(second.read_text(encoding="utf-8"), "external\n")
             self.assertEqual(store.get(stored.plan_id, scope=self._scope(context)), stored)
+
+    def test_apply_revalidates_project_and_complete_server_identity_without_lsp_request(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            (root / "project.marker").write_text("root\n", encoding="utf-8")
+            target = root / "main.py"
+            target.write_text("old\n", encoding="utf-8")
+            context = self._context(root)
+            store = WorkspaceEditPlanStore()
+            stored = self._register(store, context, (target,))
+
+            with (
+                patch("local_agent.tools.workspace_edit.lsp_config.external_lsp_enabled", return_value=True),
+                patch(
+                    "local_agent.tools.workspace_edit.lsp_config.servers_for_path",
+                    return_value=[self._server(command=("/different/server",))],
+                ),
+            ):
+                drift = self._execute(store, context, stored.plan_id, validate_provenance=True)
+            self.assertTrue(drift.is_error)
+            self.assertIn("server identity changed", drift.content)
+            self.assertEqual(target.read_text(encoding="utf-8"), "old\n")
+
+            other_root = root / "other"
+            other_root.mkdir()
+            with (
+                patch("local_agent.tools.workspace_edit.lsp_config.external_lsp_enabled", return_value=True),
+                patch("local_agent.tools.workspace_edit.lsp_config.servers_for_path", return_value=[self._server()]),
+                patch("local_agent.tools.workspace_edit.lsp_config.root_for_path", return_value=other_root),
+            ):
+                root_drift = self._execute(store, context, stored.plan_id, validate_provenance=True)
+            self.assertTrue(root_drift.is_error)
+            self.assertIn("project root changed", root_drift.content)
+            self.assertEqual(target.read_text(encoding="utf-8"), "old\n")
+
+            failing_root = Mock()
+            failing_root.resolve.side_effect = OSError("controlled resolve failure")
+            with (
+                patch("local_agent.tools.workspace_edit.lsp_config.external_lsp_enabled", return_value=True),
+                patch("local_agent.tools.workspace_edit.lsp_config.servers_for_path", return_value=[self._server()]),
+                patch("local_agent.tools.workspace_edit.lsp_config.root_for_path", return_value=failing_root),
+            ):
+                root_error = self._execute(store, context, stored.plan_id, validate_provenance=True)
+            self.assertTrue(root_error.is_error)
+            self.assertIn("can no longer be resolved safely", root_error.content)
+            self.assertFalse(root_error.metadata["workspace_changed"])
+            self.assertEqual(target.read_text(encoding="utf-8"), "old\n")
+
+            with (
+                patch("local_agent.tools.workspace_edit.lsp_config.external_lsp_enabled", return_value=True),
+                patch("local_agent.tools.workspace_edit.lsp_config.servers_for_path", return_value=[self._server()]),
+                patch("local_agent.tools.workspace_edit.lsp_config.root_for_path", return_value=root),
+            ):
+                applied = self._execute(store, context, stored.plan_id, validate_provenance=True)
+            self.assertFalse(applied.is_error, applied.content)
+            self.assertEqual(target.read_text(encoding="utf-8"), "new\n")
+
+    def test_apply_requires_nonanonymous_scope(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            target = root / "main.py"
+            target.write_text("old\n", encoding="utf-8")
+            context = self._context(root)
+            store = WorkspaceEditPlanStore()
+            stored = self._register(store, context, (target,))
+
+            result = self._execute(store, self._context(root, run_id=None), stored.plan_id)
+
+            self.assertTrue(result.is_error)
+            self.assertEqual(result.metadata["error_kind"], "plan_scope_missing")
+            self.assertEqual(target.read_text(encoding="utf-8"), "old\n")
+
+            unavailable = Mock()
+            unavailable.expanduser.return_value.resolve.side_effect = OSError("controlled failure")
+            invalid = self._execute(
+                store,
+                self._context(root, allowed_dirs=(unavailable,)),
+                stored.plan_id,
+            )
+            self.assertTrue(invalid.is_error)
+            self.assertEqual(invalid.metadata["error_kind"], "plan_scope_invalid")
+            self.assertFalse(invalid.metadata["workspace_changed"])
+            self.assertNotIn("controlled failure", invalid.content)
+            self.assertEqual(target.read_text(encoding="utf-8"), "old\n")
+
+    def test_workspace_edit_journal_failure_restores_and_retains_plan(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            first = root / "first.py"
+            second = root / "second.py"
+            first.write_text("old\n", encoding="utf-8")
+            second.write_text("old\n", encoding="utf-8")
+            context = self._context(root)
+            store = WorkspaceEditPlanStore()
+            stored = self._register(store, context, (first, second))
+
+            with patch("local_agent.tools.workspace_edit.record_workspace_edit_patch", side_effect=OSError("full")):
+                result = self._execute(store, context, stored.plan_id)
+
+            self.assertTrue(result.is_error)
+            self.assertEqual(result.metadata["workspace_state"], "restored")
+            self.assertEqual(result.metadata["transaction_status"], "rolled_back")
+            self.assertFalse(result.metadata["workspace_changed"])
+            self.assertEqual(result.metadata["changed_paths"], [])
+            self.assertEqual((first.read_text(), second.read_text()), ("old\n", "old\n"))
+            self.assertEqual(store.get(stored.plan_id, scope=self._scope(context)), stored)
+
+    def test_workspace_edit_journal_failure_partial_inverse_reports_final_residual(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            first = root / "first.py"
+            second = root / "second.py"
+            first.write_text("old\n", encoding="utf-8")
+            second.write_text("old\n", encoding="utf-8")
+            context = self._context(root)
+            store = WorkspaceEditPlanStore()
+            stored = self._register(store, context, (first, second))
+            calls = 0
+
+            def partial_inverse(path: Path, content: bytes) -> None:
+                nonlocal calls
+                calls += 1
+                if calls in {4, 5}:
+                    raise OSError("controlled inverse failure")
+                path.write_bytes(content)
+
+            with (
+                patch("local_agent.tools.workspace_edit.record_workspace_edit_patch", side_effect=OSError("full")),
+                patch("local_agent.patch.transaction._write_bytes", side_effect=partial_inverse),
+            ):
+                result = self._execute(store, context, stored.plan_id)
+
+            self.assertTrue(result.is_error)
+            self.assertEqual(result.metadata["workspace_state"], "indeterminate")
+            self.assertTrue(result.metadata["workspace_changed"])
+            self.assertEqual(result.metadata["changed_paths"], ["second.py"])
+            self.assertEqual((first.read_text(), second.read_text()), ("old\n", "new\n"))
+            with self.assertRaises(WorkspaceEditPlanStoreError):
+                store.get(stored.plan_id, scope=self._scope(context))
+
+    def test_workspace_edit_journal_failure_concurrent_drift_is_not_hidden_by_inverse_stale(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            target = root / "main.py"
+            target.write_text("old\n", encoding="utf-8")
+            context = self._context(root)
+            store = WorkspaceEditPlanStore()
+            stored = self._register(store, context, (target,))
+
+            def drift_then_fail(**_kwargs) -> str:
+                target.write_text("external\n", encoding="utf-8")
+                raise OSError("concurrent drift")
+
+            with patch("local_agent.tools.workspace_edit.record_workspace_edit_patch", side_effect=drift_then_fail):
+                result = self._execute(store, context, stored.plan_id)
+
+            self.assertTrue(result.is_error)
+            self.assertEqual(result.metadata["transaction_status"], "rollback_failed")
+            self.assertTrue(result.metadata["workspace_changed"])
+            self.assertEqual(result.metadata["changed_paths"], ["main.py"])
+            self.assertEqual(target.read_text(encoding="utf-8"), "external\n")
 
     def test_commit_failure_restores_and_compensation_failure_reports_partial_truth(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -246,6 +448,69 @@ class ApplyWorkspaceEditTests(unittest.TestCase):
                 ToolResultSummary("rollback_patch", partial.content, is_error=True, metadata=partial.metadata),
             ]
             self.assertEqual(effective_workspace_write_paths(summaries), ("second.py",))
+
+    def test_multifile_rollback_journal_failure_restores_prior_transaction_and_keeps_record_active(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            state = root / "state"
+            first = root / "first.py"
+            second = root / "second.py"
+            first.write_text("old\n", encoding="utf-8")
+            second.write_text("old\n", encoding="utf-8")
+            context = self._context(root, state_dir=state)
+            store = WorkspaceEditPlanStore()
+            stored = self._register(store, context, (first, second))
+            applied = self._execute(store, context, stored.plan_id)
+            self.assertFalse(applied.is_error, applied.content)
+
+            with patch("local_agent.tools.files._record_rollback", side_effect=OSError("journal unavailable")):
+                failed = rollback_patch({"patch_id": applied.metadata["transaction_id"]}, context)
+
+            self.assertTrue(failed.is_error)
+            self.assertEqual(failed.metadata["workspace_state"], "restored")
+            self.assertFalse(failed.metadata["workspace_changed"])
+            self.assertEqual((first.read_text(), second.read_text()), ("new\n", "new\n"))
+            retried = rollback_patch({"patch_id": applied.metadata["transaction_id"]}, context)
+            self.assertFalse(retried.is_error, retried.content)
+            self.assertEqual((first.read_text(), second.read_text()), ("old\n", "old\n"))
+
+    def test_multifile_rollback_journal_partial_truth_separates_operation_and_effective_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            state = root / "state"
+            first = root / "first.py"
+            second = root / "second.py"
+            first.write_text("old\n", encoding="utf-8")
+            second.write_text("old\n", encoding="utf-8")
+            context = self._context(root, state_dir=state)
+            store = WorkspaceEditPlanStore()
+            stored = self._register(store, context, (first, second))
+            applied = self._execute(store, context, stored.plan_id)
+            self.assertFalse(applied.is_error, applied.content)
+            calls = 0
+
+            def partial_inverse(path: Path, content: bytes) -> None:
+                nonlocal calls
+                calls += 1
+                if calls in {4, 5}:
+                    raise OSError("controlled inverse failure")
+                path.write_bytes(content)
+
+            with (
+                patch("local_agent.tools.files._record_rollback", side_effect=OSError("journal unavailable")),
+                patch("local_agent.patch.transaction._write_bytes", side_effect=partial_inverse),
+            ):
+                failed = rollback_patch({"patch_id": applied.metadata["transaction_id"]}, context)
+
+            self.assertTrue(failed.is_error)
+            self.assertEqual((first.read_text(), second.read_text()), ("new\n", "old\n"))
+            self.assertEqual(failed.metadata["changed_paths"], ["second.py"])
+            self.assertEqual(failed.metadata["effective_changed_paths"], ["first.py"])
+            summaries = [
+                ToolResultSummary("apply_workspace_edit", metadata=applied.metadata),
+                ToolResultSummary("rollback_patch", failed.content, is_error=True, metadata=failed.metadata),
+            ]
+            self.assertEqual(effective_workspace_write_paths(summaries), ("first.py",))
 
     def test_multifile_truth_reaches_timeline_and_test_planner(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -70,11 +70,14 @@ OWNER_COMPLEXITY_CEILINGS = {
     "src/local_agent/platform/terminal.py": 122,
     "src/local_agent/protocol/cancellation.py": 66,
     "src/local_agent/workflows/explore_subagent.py": 561,
-    "src/local_agent/lsp/workspace_edit.py": 440,
-    "src/local_agent/lsp/workspace_edit_store.py": 114,
-    "src/local_agent/patch/transaction.py": 160,
-    "src/local_agent/tools/workspace_edit.py": 164,
-    "src/local_agent/tools/lsp_rename.py": 216,
+    "src/local_agent/lsp/config.py": 226,
+    "src/local_agent/lsp/workspace_edit.py": 472,
+    "src/local_agent/lsp/workspace_edit_store.py": 225,
+    "src/local_agent/patch/anchored.py": 322,
+    "src/local_agent/patch/transaction.py": 179,
+    "src/local_agent/tools/files.py": 897,
+    "src/local_agent/tools/workspace_edit.py": 230,
+    "src/local_agent/tools/lsp_rename.py": 222,
     "src/local_agent/tools/lsp_code_action.py": 430,
     "src/local_agent/session/continuity.py": 288,
 }
@@ -691,6 +694,7 @@ class ArchitectureBoundaryTests(unittest.TestCase):
         tools = importlib.import_module("local_agent.tools")
         parser = (ROOT / "src/local_agent/lsp/workspace_edit.py").read_text(encoding="utf-8")
         store = (ROOT / "src/local_agent/lsp/workspace_edit_store.py").read_text(encoding="utf-8")
+        config = (ROOT / "src/local_agent/lsp/config.py").read_text(encoding="utf-8")
         writer = (ROOT / "src/local_agent/patch/transaction.py").read_text(encoding="utf-8")
         apply_tool = (ROOT / "src/local_agent/tools/workspace_edit.py").read_text(encoding="utf-8")
         anchored = (ROOT / "src/local_agent/patch/anchored.py").read_text(encoding="utf-8")
@@ -707,7 +711,10 @@ class ArchitectureBoundaryTests(unittest.TestCase):
         self.assertFalse(schema["function"]["parameters"]["additionalProperties"])
         self.assertEqual(production.count("def _parse_workspace_edit("), 1)
         self.assertIn("class WorkspaceEditPlanStore:", store)
+        self.assertIn("class WorkspaceEditPlanProvenance:", store)
+        self.assertIn("def server_identity(", config)
         self.assertIn("class ExistingTextFileChange:", writer)
+        self.assertIn("def restore_existing_text_transaction(", writer)
         self.assertEqual(writer.count("def _write_bytes("), 1)
         self.assertNotIn("write_bytes", apply_tool)
         self.assertNotIn("write_text", apply_tool)
@@ -718,6 +725,8 @@ class ArchitectureBoundaryTests(unittest.TestCase):
         self.assertIn('"applied": False', client)
         self.assertNotIn("apply_workspace_edit", runtime)
         self.assertNotIn("ExecutionPolicy", apply_tool)
+        self.assertNotIn("get_client", apply_tool)
+        self.assertNotIn(".rename(", apply_tool)
 
     def test_lsp_code_action_preview_has_one_owner_and_cannot_execute_or_write(self) -> None:
         tools = importlib.import_module("local_agent.tools")

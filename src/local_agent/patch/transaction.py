@@ -72,6 +72,25 @@ def apply_existing_text_transaction(
     )
 
 
+def restore_existing_text_transaction(
+    changes: Sequence[ExistingTextFileChange],
+    *,
+    error_kind: str,
+) -> TextTransactionResult:
+    """Restore an original transaction, then measure net state against its before images."""
+
+    original = tuple(changes)
+    inverse = tuple(
+        ExistingTextFileChange.create(change.path, change.after_bytes, change.before_bytes)
+        for change in original
+    )
+    apply_existing_text_transaction(inverse)
+    residual = _changed_paths(original)
+    if residual:
+        return TextTransactionResult("rollback_failed", True, residual, error_kind)
+    return TextTransactionResult("rolled_back", False, (), error_kind)
+
+
 def _validate_changes(
     changes: Sequence[ExistingTextFileChange],
 ) -> tuple[tuple[ExistingTextFileChange, ...], str | None]:

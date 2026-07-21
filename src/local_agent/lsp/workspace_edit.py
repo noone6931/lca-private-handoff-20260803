@@ -13,6 +13,8 @@ MAX_WORKSPACE_EDIT_FILES = 50
 MAX_WORKSPACE_EDITS = 500
 MAX_WORKSPACE_FILE_BYTES = 2 * 1024 * 1024
 MAX_WORKSPACE_TOTAL_BYTES = 16 * 1024 * 1024
+MAX_WORKSPACE_EDIT_REPLACEMENT_BYTES = 2 * 1024 * 1024
+MAX_WORKSPACE_REPLACEMENT_BYTES = 16 * 1024 * 1024
 MAX_WORKSPACE_PREVIEW_BYTES = 96 * 1024
 
 
@@ -53,12 +55,6 @@ class WorkspaceEditPlan:
     @property
     def paths(self) -> tuple[Path, ...]:
         return tuple(file.path for file in self.files)
-
-    @property
-    def stored_bytes(self) -> int:
-        return sum(len(file.before_bytes) + len(file.after_bytes) for file in self.files) + len(
-            self.unified_diff.encode("utf-8")
-        )
 
 
 WorkspaceEditPreview = WorkspaceEditPlan
@@ -233,6 +229,7 @@ def _parse_workspace_edit(
         if len(changes) > MAX_WORKSPACE_EDIT_FILES:
             raise WorkspaceEditError(f"WorkspaceEdit exceeds the {MAX_WORKSPACE_EDIT_FILES}-file preview limit.")
         edit_count = 0
+        replacement_bytes = 0
         for uri, raw_edits in changes.items():
             path = _path_from_uri(
                 uri,
@@ -242,10 +239,18 @@ def _parse_workspace_edit(
             )
             if path in parsed:
                 raise WorkspaceEditError("WorkspaceEdit contains duplicate canonical target files.")
-            edits = _parse_text_edits(raw_edits)
+            edits, edit_bytes = _parse_text_edits(
+                raw_edits,
+                remaining_replacement_bytes=MAX_WORKSPACE_REPLACEMENT_BYTES - replacement_bytes,
+            )
             edit_count += len(edits)
+            replacement_bytes += edit_bytes
             if edit_count > MAX_WORKSPACE_EDITS:
                 raise WorkspaceEditError(f"WorkspaceEdit exceeds the {MAX_WORKSPACE_EDITS}-edit preview limit.")
+            if replacement_bytes > MAX_WORKSPACE_REPLACEMENT_BYTES:
+                raise WorkspaceEditError(
+                    f"WorkspaceEdit exceeds the {MAX_WORKSPACE_REPLACEMENT_BYTES}-byte replacement limit."
+                )
             parsed[path] = edits
         return parsed
 
@@ -255,6 +260,7 @@ def _parse_workspace_edit(
     if len(document_changes) > MAX_WORKSPACE_EDITS:
         raise WorkspaceEditError(f"WorkspaceEdit exceeds the {MAX_WORKSPACE_EDITS}-entry preview limit.")
     edit_count = 0
+    replacement_bytes = 0
     for item in document_changes:
         if not isinstance(item, dict) or set(item) != {"textDocument", "edits"}:
             raise WorkspaceEditError("Only textDocument edit entries are supported in documentChanges.")
@@ -272,29 +278,55 @@ def _parse_workspace_edit(
         )
         if path in parsed:
             raise WorkspaceEditError("WorkspaceEdit contains duplicate canonical target files.")
-        edits = _parse_text_edits(item["edits"])
+        edits, edit_bytes = _parse_text_edits(
+            item["edits"],
+            remaining_replacement_bytes=MAX_WORKSPACE_REPLACEMENT_BYTES - replacement_bytes,
+        )
         edit_count += len(edits)
+        replacement_bytes += edit_bytes
         if edit_count > MAX_WORKSPACE_EDITS:
             raise WorkspaceEditError(f"WorkspaceEdit exceeds the {MAX_WORKSPACE_EDITS}-edit preview limit.")
+        if replacement_bytes > MAX_WORKSPACE_REPLACEMENT_BYTES:
+            raise WorkspaceEditError(
+                f"WorkspaceEdit exceeds the {MAX_WORKSPACE_REPLACEMENT_BYTES}-byte replacement limit."
+            )
         parsed[path] = edits
         if len(parsed) > MAX_WORKSPACE_EDIT_FILES:
             raise WorkspaceEditError(f"WorkspaceEdit exceeds the {MAX_WORKSPACE_EDIT_FILES}-file preview limit.")
     return parsed
 
 
-def _parse_text_edits(value: Any) -> list[_TextEdit]:
+def _parse_text_edits(
+    value: Any,
+    *,
+    remaining_replacement_bytes: int,
+) -> tuple[list[_TextEdit], int]:
     if not isinstance(value, list):
         raise WorkspaceEditError("Text edits must be an array.")
     if len(value) > MAX_WORKSPACE_EDITS:
         raise WorkspaceEditError(f"WorkspaceEdit exceeds the {MAX_WORKSPACE_EDITS}-edit preview limit.")
     result: list[_TextEdit] = []
+    replacement_bytes = 0
     for item in value:
         if not isinstance(item, dict) or set(item) != {"range", "newText"}:
             raise WorkspaceEditError("Only plain TextEdit objects are supported.")
         if not isinstance(item["newText"], str):
             raise WorkspaceEditError("TextEdit.newText must be a string.")
+        new_text_bytes = len(item["newText"].encode("utf-8"))
+        if new_text_bytes > MAX_WORKSPACE_EDIT_REPLACEMENT_BYTES:
+            raise WorkspaceEditError(
+                f"TextEdit.newText exceeds the {MAX_WORKSPACE_EDIT_REPLACEMENT_BYTES}-byte replacement limit."
+            )
+        replacement_bytes += new_text_bytes
+        if (
+            replacement_bytes > MAX_WORKSPACE_REPLACEMENT_BYTES
+            or replacement_bytes > remaining_replacement_bytes
+        ):
+            raise WorkspaceEditError(
+                f"WorkspaceEdit exceeds the {MAX_WORKSPACE_REPLACEMENT_BYTES}-byte replacement limit."
+            )
         result.append(_TextEdit(range=_parse_range(item["range"]), new_text=item["newText"]))
-    return result
+    return result, replacement_bytes
 
 
 def _parse_range(value: Any) -> LspRange:

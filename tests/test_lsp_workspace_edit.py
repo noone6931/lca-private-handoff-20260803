@@ -8,8 +8,10 @@ from unittest.mock import patch
 
 from local_agent.lsp.workspace_edit import MAX_WORKSPACE_EDITS
 from local_agent.lsp.workspace_edit import MAX_WORKSPACE_EDIT_FILES
+from local_agent.lsp.workspace_edit import MAX_WORKSPACE_EDIT_REPLACEMENT_BYTES
 from local_agent.lsp.workspace_edit import MAX_WORKSPACE_FILE_BYTES
 from local_agent.lsp.workspace_edit import MAX_WORKSPACE_PREVIEW_BYTES
+from local_agent.lsp.workspace_edit import MAX_WORKSPACE_REPLACEMENT_BYTES
 from local_agent.lsp.workspace_edit import MAX_WORKSPACE_TOTAL_BYTES
 from local_agent.lsp.workspace_edit import WorkspaceEditError
 from local_agent.lsp.workspace_edit import build_workspace_edit_preview
@@ -287,6 +289,51 @@ class WorkspaceEditPreviewTests(unittest.TestCase):
                     self._preview(workspace, {"changes": {target.as_uri(): [_edit(0, 0, 0, 1, "b")]}})
             self.assertLess(MAX_WORKSPACE_PREVIEW_BYTES, 100_000)
             self.assertLess(MAX_WORKSPACE_TOTAL_BYTES, MAX_WORKSPACE_FILE_BYTES * MAX_WORKSPACE_EDIT_FILES)
+
+    def test_changes_rejects_oversized_single_replacement_before_preview(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            target = workspace / "main.java"
+            target.write_text("old\n", encoding="utf-8")
+            original = target.read_bytes()
+
+            with patch("local_agent.lsp.workspace_edit.MAX_WORKSPACE_EDIT_REPLACEMENT_BYTES", 3):
+                with self.assertRaisesRegex(WorkspaceEditError, "TextEdit.newText.*replacement limit"):
+                    self._preview(
+                        workspace,
+                        {"changes": {target.as_uri(): [_edit(0, 0, 0, 3, "four")] }},
+                    )
+
+            self.assertEqual(target.read_bytes(), original)
+            self.assertGreater(MAX_WORKSPACE_EDIT_REPLACEMENT_BYTES, 0)
+
+    def test_document_changes_rejects_cumulative_replacement_before_preview(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            target = workspace / "main.java"
+            target.write_text("old old\n", encoding="utf-8")
+            original = target.read_bytes()
+            payload = {
+                "documentChanges": [
+                    {
+                        "textDocument": {"uri": target.as_uri(), "version": 1},
+                        "edits": [
+                            _edit(0, 0, 0, 3, "four"),
+                            _edit(0, 4, 0, 7, "four"),
+                        ],
+                    },
+                ]
+            }
+
+            with patch("local_agent.lsp.workspace_edit.MAX_WORKSPACE_EDIT_REPLACEMENT_BYTES", 8):
+                with patch("local_agent.lsp.workspace_edit.MAX_WORKSPACE_REPLACEMENT_BYTES", 6):
+                    with patch("local_agent.lsp.workspace_edit._apply_edits") as apply_edits:
+                        with self.assertRaisesRegex(WorkspaceEditError, "WorkspaceEdit.*replacement limit"):
+                            self._preview(workspace, payload)
+                        apply_edits.assert_not_called()
+
+            self.assertEqual(target.read_bytes(), original)
+            self.assertGreater(MAX_WORKSPACE_REPLACEMENT_BYTES, MAX_WORKSPACE_EDIT_REPLACEMENT_BYTES)
 
 
 if __name__ == "__main__":

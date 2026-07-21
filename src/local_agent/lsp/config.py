@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import shlex
 import shutil
@@ -33,6 +35,40 @@ class LspServerConfig:
                 "process_environment",
                 LspProcessEnvironment(append=(*append, containment)),
             )
+
+
+@dataclass(frozen=True)
+class LspServerIdentity:
+    name: str
+    command: tuple[str, ...]
+    file_types: tuple[str, ...]
+    root_markers: tuple[str, ...]
+    language_id: str
+    process_environment: tuple[tuple[str, str], ...]
+    fingerprint: str
+
+
+def server_identity(server: LspServerConfig) -> LspServerIdentity:
+    payload = {
+        "name": server.name,
+        "command": list(server.command),
+        "file_types": list(server.file_types),
+        "root_markers": list(server.root_markers),
+        "language_id": server.language_id,
+        "process_environment": [list(item) for item in server.process_environment.append],
+    }
+    fingerprint = hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+    ).hexdigest()
+    return LspServerIdentity(
+        name=server.name,
+        command=server.command,
+        file_types=server.file_types,
+        root_markers=server.root_markers,
+        language_id=server.language_id,
+        process_environment=server.process_environment.append,
+        fingerprint=fingerprint,
+    )
 
 
 LSP_MODE_ENV = "AGENT_LSP_MODE"

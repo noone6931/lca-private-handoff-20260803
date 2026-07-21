@@ -24,6 +24,8 @@ class PatchResult:
     new_tag: str
     effective_start_line: int
     effective_end_line: int
+    before_bytes: bytes
+    after_bytes: bytes
 
 
 def hash_text(text: str) -> str:
@@ -124,6 +126,8 @@ def apply_anchored_patch(
         new_tag=hash_text(persisted),
         effective_start_line=start_line,
         effective_end_line=end_line,
+        before_bytes=raw_original_bytes,
+        after_bytes=persisted.encode("utf-8"),
     )
 
 

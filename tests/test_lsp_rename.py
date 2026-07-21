@@ -7,6 +7,7 @@ from unittest.mock import Mock, patch
 
 from local_agent.lsp.client import LspClientError, StdioLspClient
 from local_agent.lsp.config import LspServerConfig
+from local_agent.lsp.workspace_edit_store import WorkspaceEditPlanStoreError
 from local_agent.tools import create_default_registry
 from local_agent.tools.base import ToolContext, ToolRegistry
 from local_agent.tools.lsp_rename import lsp_rename_tools
@@ -55,7 +56,12 @@ class LspRenamePreviewToolTests(unittest.TestCase):
             return registry.execute(
                 "lsp_rename_preview",
                 arguments,
-                context or ToolContext(workspace=workspace, approval_mode="yolo"),
+                context or ToolContext(
+                    workspace=workspace,
+                    approval_mode="yolo",
+                    session_id="session-1",
+                    run_id="run-1",
+                ),
             )
 
     def test_schema_is_read_only_and_registered_in_normal_coding_registry(self) -> None:
@@ -137,9 +143,55 @@ class LspRenamePreviewToolTests(unittest.TestCase):
             self.assertEqual(result.metadata["file_count"], 2)
             self.assertRegex(result.metadata["plan_id"], r"^wep_[0-9a-f]{32}$")
             self.assertEqual(len(result.metadata["plan_digest"]), 64)
+            self.assertEqual(len(result.metadata["provenance_digest"]), 64)
+            self.assertEqual(len(result.metadata["server_fingerprint"]), 64)
             self.assertEqual(result.metadata["plan_source"], "rename")
             self.assertEqual({path: path.read_bytes() for path in (first, second)}, before)
             self.assertFalse((workspace / ".local-agent").exists())
+
+    def test_missing_session_or_run_fails_before_lsp_request(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            target = workspace / "main.py"
+            target.write_text("old\n", encoding="utf-8")
+            response = {"changes": {target.as_uri(): [{
+                "range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 3}},
+                "newText": "fresh",
+            }]}}
+            for session_id, run_id in ((None, "run"), ("session", None)):
+                client = _RenameClient(response)
+                result = self._execute(
+                    workspace,
+                    {"path": "main.py", "line": 1, "symbol": "old", "new_name": "fresh"},
+                    client=client,
+                    context=ToolContext(
+                        workspace=workspace,
+                        approval_mode="yolo",
+                        session_id=session_id,
+                        run_id=run_id,
+                    ),
+                )
+                self.assertTrue(result.is_error)
+                self.assertIn("active session and run", result.content)
+                self.assertEqual(client.calls, [])
+
+            client = _RenameClient(response)
+            with patch(
+                "local_agent.tools.lsp_rename.WorkspaceEditPlanScope.create",
+                side_effect=WorkspaceEditPlanStoreError(
+                    "plan_scope_invalid",
+                    "WorkspaceEdit plan scope cannot be resolved safely.",
+                ),
+            ):
+                invalid = self._execute(
+                    workspace,
+                    {"path": "main.py", "line": 1, "symbol": "old", "new_name": "fresh"},
+                    client=client,
+                )
+            self.assertTrue(invalid.is_error)
+            self.assertIn("cannot be resolved safely", invalid.content)
+            self.assertEqual(client.calls, [])
+            self.assertEqual(target.read_text(encoding="utf-8"), "old\n")
 
     def test_external_server_is_required_and_selection_is_unambiguous(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -9,8 +9,12 @@ from unittest.mock import patch
 from local_agent.patch.transaction import ExistingTextFileChange
 from local_agent.patch.transaction import apply_existing_text_transaction
 from local_agent.patch.anchored import hash_text
+from local_agent.evidence.timeline import result_changed_workspace
 from local_agent.tools.base import ToolContext
 from local_agent.tools.files import patch_file
+from local_agent.tools.files import rollback_patch
+from local_agent.tools.files import session_patch_records
+from local_agent.tools.observation import ToolResultSummary
 
 
 class ExistingTextTransactionTests(unittest.TestCase):
@@ -186,6 +190,111 @@ class ExistingTextTransactionTests(unittest.TestCase):
             self.assertEqual(result.metadata["changed_paths"], ["main.py"])
             self.assertEqual(result.metadata["workspace_state"], "indeterminate")
             self.assertEqual(target.read_text(), "new\n")
+
+    def test_apply_patch_journal_failure_restores_with_typed_no_net_write(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            target = root / "main.py"
+            target.write_text("old\n", encoding="utf-8")
+            context = ToolContext(root, "yolo", state_dir=root / "state", session_id="session")
+
+            with patch("local_agent.tools.files._record_patch", side_effect=OSError("journal unavailable")):
+                result = patch_file(_patch_args("old\n", "new"), context)
+
+            self.assertTrue(result.is_error)
+            self.assertEqual(result.metadata["workspace_state"], "restored")
+            self.assertEqual(result.metadata["error_kind"], "patch_journal_failed")
+            self.assertFalse(result.metadata["workspace_changed"])
+            self.assertEqual(result.metadata["changed_paths"], [])
+            self.assertEqual(target.read_text(encoding="utf-8"), "old\n")
+            self.assertFalse(result_changed_workspace(_summary("apply_patch", result)))
+
+    def test_apply_patch_journal_failure_concurrent_drift_reports_final_residual(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            target = root / "main.py"
+            target.write_text("old\n", encoding="utf-8")
+            context = ToolContext(root, "yolo", state_dir=root / "state", session_id="session")
+
+            def drift_then_fail(**_kwargs) -> str:
+                target.write_text("external\n", encoding="utf-8")
+                raise OSError("journal unavailable")
+
+            with patch("local_agent.tools.files._record_patch", side_effect=drift_then_fail):
+                result = patch_file(_patch_args("old\n", "new"), context)
+
+            self.assertTrue(result.is_error)
+            self.assertEqual(result.metadata["workspace_state"], "indeterminate")
+            self.assertTrue(result.metadata["workspace_changed"])
+            self.assertEqual(result.metadata["changed_paths"], ["main.py"])
+            self.assertEqual(target.read_text(encoding="utf-8"), "external\n")
+            self.assertTrue(result_changed_workspace(_summary("apply_patch", result)))
+
+    def test_single_file_rollback_journal_failure_restores_prior_apply_and_keeps_record_active(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            target = root / "main.py"
+            target.write_text("old\n", encoding="utf-8")
+            context = ToolContext(root, "yolo", state_dir=root / "state", session_id="session")
+            applied = patch_file(_patch_args("old\n", "new"), context)
+            self.assertFalse(applied.is_error, applied.content)
+            patch_id = str(session_patch_records(context)[0]["id"])
+
+            with patch("local_agent.tools.files._record_rollback", side_effect=OSError("journal unavailable")):
+                failed = rollback_patch({"patch_id": patch_id}, context)
+
+            self.assertTrue(failed.is_error)
+            self.assertEqual(failed.metadata["workspace_state"], "restored")
+            self.assertFalse(failed.metadata["workspace_changed"])
+            self.assertEqual(target.read_text(encoding="utf-8"), "new\n")
+            retried = rollback_patch({"patch_id": patch_id}, context)
+            self.assertFalse(retried.is_error, retried.content)
+            self.assertEqual(target.read_text(encoding="utf-8"), "old\n")
+
+    def test_single_file_rollback_journal_failure_concurrent_drift_reports_truth(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            target = root / "main.py"
+            target.write_text("old\n", encoding="utf-8")
+            context = ToolContext(root, "yolo", state_dir=root / "state", session_id="session")
+            applied = patch_file(_patch_args("old\n", "new"), context)
+            self.assertFalse(applied.is_error, applied.content)
+            patch_id = str(session_patch_records(context)[0]["id"])
+
+            def drift_then_fail(*_args, **_kwargs) -> None:
+                target.write_text("external\n", encoding="utf-8")
+                raise OSError("journal unavailable")
+
+            with patch("local_agent.tools.files._record_rollback", side_effect=drift_then_fail):
+                failed = rollback_patch({"patch_id": patch_id}, context)
+
+            self.assertTrue(failed.is_error)
+            self.assertEqual(failed.metadata["workspace_state"], "indeterminate")
+            self.assertTrue(failed.metadata["workspace_changed"])
+            self.assertEqual(failed.metadata["changed_paths"], ["main.py"])
+            self.assertEqual(failed.metadata["effective_changed_paths"], ["main.py"])
+            self.assertEqual(target.read_text(encoding="utf-8"), "external\n")
+            self.assertTrue(result_changed_workspace(_summary("rollback_patch", failed)))
+
+
+def _patch_args(before: str, after: str) -> dict[str, object]:
+    return {
+        "path": "main.py",
+        "tag": hash_text(before),
+        "start_line": 1,
+        "end_line": 1,
+        "old_text": before.rstrip("\n"),
+        "new_text": after,
+    }
+
+
+def _summary(name: str, result) -> ToolResultSummary:
+    return ToolResultSummary(
+        name,
+        result.content,
+        is_error=result.is_error,
+        metadata=result.metadata,
+    )
 
 
 if __name__ == "__main__":
