@@ -1,6 +1,6 @@
 # Local Coding Agent 项目状态
 
-更新时间：2026-07-20
+更新时间：2026-07-21
 
 本文档是开发 `local-coding-agent` 时给参与开发的人和协作 Agent 读取的项目管理基线。`docs/local-coding-agent-project-management.xlsx` 继续作为人工查看的表格视图；本 Markdown 文件作为后续开发时优先读取的项目状态、路线、Todo 和决策来源。它不是 LCA 运行时自己的 memory 或用户项目记忆。
 
@@ -26,7 +26,7 @@ LCA、OMP 与 Codex 的当前源码级对照和路线校正见 `docs/lca-omp-cod
 第一阶段仍暂不做：
 
 - 多 Agent 并行。
-- DAP / LSP 自动应用类重构能力（rename apply、code action apply）。
+- DAP，以及任意 LSP command、server-side apply 或自动应用类重构能力。
 - Browser 工具。
 - 自动联网搜索。
 - 远程仓库控制。
@@ -34,7 +34,7 @@ LCA、OMP 与 Codex 的当前源码级对照和路线校正见 `docs/lca-omp-cod
 
 ## 当前进度
 
-当前 stable 为 T-257：release `20260721T024937Z-bd9a6b3d0aee-88d16f923b80`，revision `bd9a6b3d0aeec085540601cfd7b23c9b2e4bee47`，digest `88d16f923b80b9afcdf93ffd88393bfc5d82acefecb9181d16065b65edd02449`；clean detached publish gate 通过 1352/1352 unittest（1 skip）、compileall 和 diff-check，独立门禁另通过 62/62 deterministic benchmark、37/37 architecture checks、75/75 focused LSP tests、CLI help/chat 与 9/9 immutable fake-LSP matrix。T-257 关闭 external LSP 的 workspace-local 隐式 executable、provider credential 继承及 POSIX descendant lifecycle 缺口，同时保留正常 external symbols/definition/references/diagnostics/status、rename 和 Code Action preview；这仍是协议级 external-process containment，不是 OS filesystem/network sandbox。
+当前 stable 为 T-259：release `20260721T074504Z-73b169c5f690-63428407dec3`，revision `73b169c5f6904e0c55e3430f36f56c7c14370262`，digest `63428407dec37f223d73917d7081ce150a988a3327d7e6c0c73012e548d8dc9b`；clean detached Python 3.11 publish gate 通过 1400 unittest（1 skip）、compileall 和 diff-check，独立门禁另通过 62/62 deterministic benchmark、39/39 architecture checks、CLI help/chat、真实 JDTLS multi-file matrix，以及 immutable candidate 121/121 focused black-box tests。T-259 在 T-224/T-228 的只读语义 preview 上增加显式批准、plan-id-only 的 text-only WorkspaceEdit apply，同时保持单一 parser、plan store、workspace transaction、patch journal 和 approval Owner。Command、edit+command、resource operation、changeAnnotations、server `workspace/applyEdit` 与自动应用继续 fail closed；这不是 OS sandbox，也不是任意 LSP 执行入口。
 
 T-250 已完成 T-249 stable 的 multiline TUI 日用收益门槛。fresh Python fixture 的三行 Alt-Enter prompt 在 composer、session user event 和 `0600` history 中精确保留，只有一个 SubmitPrompt/TurnStarted/RunSummary/TurnFinished；唯一百炼请求因 DNS/provider environment 在首个 LLM request 失败，tool calls 为 0，终态诚实为 `provider_error` / `delivered=false`，fixture 没有源码 diff，stable/main 身份不变。真实 read/patch/test/diff 收益因此为 INCONCLUSIVE；未发现自动提交、输入改写、重复 settled output、权限越权、假交付或 identity 污染，不重跑 provider、不修改 Harness，也不给大猛发开发任务。P17 当前阶段据此收口，后续回到普通 coding 的真实收益与可靠性观察。
 
@@ -53,6 +53,8 @@ T-256 已完成并发布 P18 Git/Ripgrep Read-tier Helper Containment Phase 1。
 T-257 已完成并发布 P18 External LSP Execution Containment Phase 1。默认 server 只从 `PATH` 解析，canonical executable 位于 workspace 内或经 `PATH` symlink 指向 workspace 时 unavailable/fallback；只有 `AGENT_LSP_*_COMMAND` 的 absolute command[0] 可显式授权 workspace executable。LSP child 复用 `build_child_process_environment`，typed append 不能重新注入 provider credential，parent、toolchain、六项 noninteractive defaults 与 JDTLS `JAVA_TOOL_OPTIONS` false-last 保持。POSIX child 独立 process group，initialize/transport timeout/EOF/reader failure 与正常 close 统一走幂等 TERM/wait/KILL/wait，leader 已退出仍收束 descendant；Windows 只承诺 direct child。独立 verifier 在 immutable candidate 上 9/9 PASS、26 个 server PID 最终存活 0，main/stable/candidate 零污染；小牙再次停在 approval，诚实记 verifier-environment INCONCLUSIVE。没有新增 Runtime/policy/lifecycle tree、watcher、cleanup 或 sandbox 声明；下一窄批次才进入 macOS-only opt-in Seatbelt Phase 1，Linux/Windows 保持 unsupported/NO-GO。
 
 T-258 macOS-only Opt-in Seatbelt Sandbox Phase 1 已按 verifier-protocol NO-GO 收口，未发布新 stable。初版 commit `64d64c6` 的静态 profile 在真实 kernel matrix 中能限制 workspace/sibling/network/descendant，但独立 review 证明 `sandbox-exec` wrapper 成功 `Popen` 不能证明 profile 已应用：故意破坏 profile 时真实命令未启动、wrapper 返回 65，metadata 仍误报 `sandboxed=true`；合法 child 同样可返回 65，因此不能用 exit code 或 output 判别。原契约禁止 preflight、握手、结果扫描和第二 lifecycle，在该边界内没有 deterministic applied truth，错误机制已由 `372c068` 完整回退。回退树与 T-257 状态提交 `41d215b` 等同，复验 1352 unittest（1 skip）、62 benchmark、37 architecture、compileall/diff/help/chat 全绿；stable 继续保持 T-257，现有外部进程仍如实 `sandboxed=false`。macOS Seatbelt 后续只有在先定义可审计的 applied-truth 协议并单独评审后才能重启，Linux/Windows 继续 unsupported/NO-GO。
+
+T-259 已完成并发布 P15 Semantic Coding Tools Phase 2。`lsp/workspace_edit.py` 继续独占 text-only WorkspaceEdit 解析和预算校验，`workspace_edit_store.py` 保存 session/run/workspace/project/server 绑定的 immutable plan，`patch/transaction.py` 是 existing-file 多文件同步写入与最终 residual truth Owner，`patch/journal.py` 以同目录 temp + flush/fsync + 单次 `os.replace` 提供确定的 journal commit boundary。`apply_workspace_edit` 只接受 `plan_id` 并经过既有 write-tier approval；apply 前重新校验 server/project identity 和每个 before hash，任一 stale 整批零写。同步失败补偿已写文件，journal 失败会恢复并保留可重试 plan；没有宣称跨文件 crash-atomic。真实 JDTLS 证明 2 文件/2 edit rename、journal failure restore/retry、正常 apply 后 `javac=0`、rollback residual 为空、fresh-client stale 零写及项目根 metadata 零落盘。独立 candidate verifier 完成 121/121、schema/approval/apply/stale/reject 与前后身份 PASS，`residual_subagents=0`；小牙 approval 环境仍为 INCONCLUSIVE。TypeScript/Vue 因本机无可运行 server 继续 unsupported/INCONCLUSIVE；同一长寿命 LSP client 在 LCA 外部 apply/rollback 后未发送 `didChange`，再次 rename 可能需要重建 client，作为 lifecycle 残余记录，不扩大本批机制。
 
 后续只读 Seatbelt Applied-Truth Protocol Feasibility Phase 0 已独立复核并正式判定长期 NO-GO/unsupported，不分配新 T 编号。Codex 的 macOS adapter 只把 argv 改写为 `/usr/bin/sandbox-exec` 并按所选 `SandboxType` 投影产品状态；真实 wrapper 在自身进程中 `sandbox_compile_*`、`sandbox_apply` 成功后才 `execvp`，父进程没有 kernel applied acknowledgement。公开 `sandbox_init` 已 deprecated、只作用于当前进程且公开 flag 只支持 named profile；公开 `spawn.h`、Python `Popen` / `os.posix_spawn` 均没有 Seatbelt profile attribute，`sandbox_check` 也不能在目标 exec 前证明完整 profile。即使使用本机导出的私有 `posix_spawnattr_setmacpolicyinfo_np`，受控 probe 中有效 `no-write` 与无效 profile 都返回 `spawn_rc=0` 和 PID；前者由 kernel 拒绝写入，后者在 command 未执行前终止，因此 spawn 成功仍不等于 applied，child signal/exit/output 也不能消除歧义。独立 verifier 确认 Codex/OMP/LCA Owner 分账、`src/tests` 相对 `41d215b` 零 diff、用户 dirty 不变并以 `residual_subagents=0` 闭合。除非未来出现受支持的公开 API，能在目标 exec 前向同一个 `Popen` Owner 同步返回 profile apply 失败，否则不重启 macOS Seatbelt；封闭 VM/容器继续是需要真实 OS 隔离时的外部边界。
 
@@ -235,7 +237,7 @@ T-213/T-214 已完成 S5-1 的 Codex 直接隔离交付。T-213 在上述 clean 
 | P12 | Read-only Convergence Closure | 已完成并发布 T-203 stable | T-201 完成 Owner 拆分和全 production complexity ratchet，T-202 合并重复控制生命周期，T-203 用 typed terminal assembly 产品化安全失败；950/61/13 与三次 S4 hard/usability 验收通过。 |
 | P13 | Codex-first Product Runtime | 已完成阶段性 MVP | T-215 profile、T-217 ExecutionPolicy、T-218 semantic-boundary correction、T-219 Command/Event/Turn、T-220 provider streaming 与 T-221 S6-S10 黑盒验收均已完成；hard safety、连续性、权限、需求变更和交付审计通过。 |
 | P14 | Explicit Subagent Capability | Phase 1 已完成，扩展暂停 | T-223 证明小 fixture 的 typed handoff 可用，但真实三仓单样本没有收益且模型未选择 delegate；保留 default-off Explore，不扩 reviewer/implement、并发、写入、worktree、advisor 或默认自动调度。 |
-| P15 | Semantic Coding Tools | Phase 1 已完成并发布 T-228 stable | T-224/T-226 完成 external LSP rename 与 Code Action 的只读 preview，T-227 证明真实 Java Code Action 收益，T-228 收住 jdtls Eclipse metadata 副作用；复用同一 WorkspaceEdit 校验 Owner 和现有 patch/test/diff 写入闭环，不执行 command、server applyEdit 或 auto-apply。TS/Vue 因无 external server 保持 INCONCLUSIVE。 |
+| P15 | Semantic Coding Tools | Phase 2 已完成并发布 T-259 stable | T-224/T-226 完成 external LSP rename 与 Code Action 的只读 preview，T-227/T-228 证明 Java 收益并收住 jdtls metadata 副作用；T-259 以 immutable plan、既有 approval 和单一 transaction/journal Owner 增加 text-only existing-file apply。Command、resource operation、server applyEdit 与 auto-apply 继续拒绝，TS/Vue 因无 external server 保持 INCONCLUSIVE。 |
 | P16 | Ordinary Coding Reliability / Runtime State | 阶段性收口 | T-229/T-230 与 T-231~T-233 已覆盖 clean/dirty coding、stale write、同步中断、子进程回收和 typed non-delivery session continuation。 |
 | P17 | Independent Terminal TUI | 已完成并发布 T-249 stable | T-234~T-249 完成独立 Owner、单 UI 写者、bounded mailbox、同步 Runtime worker、focused interaction、cooperative cancellation、PTY restore、默认 `lca`、normal-screen native scrollback、AssistantMessage correlation、共享 history、bounded Ctrl-R search 与 responsive multiline composer；visual-row navigation、history、wheel/Page 和 overlays 生命周期保持分离。 |
 
@@ -717,7 +719,7 @@ T-213/T-214 已完成 S5-1 的 Codex 直接隔离交付。T-213 在上述 clean 
 
 用户确认本文件后，建议按以下顺序继续：
 
-1. 使用 T-257 stable 的 `lca` 做真实日常 coding；P17 当前阶段不再横向扩功能。P18 的 macOS Seatbelt 已在 applied-truth Phase 0 正式判定长期 unsupported，Linux/Windows 同样 NO-GO；未来只有出现能在目标 exec 前向同一 process Owner 同步返回 apply 失败的受支持公开 API 才重新立项。继续如实把 T-253~T-257 称为 child-env、capture 或协议级 containment，不冒充 sandbox。provider/DNS 恢复前不重复 T-250/T-252 同类 live。
+1. 使用 T-259 stable 的 `lca` 做真实日常 coding；P15/P17 当前阶段不再横向扩功能。P18 的 macOS Seatbelt 已在 applied-truth Phase 0 正式判定长期 unsupported，Linux/Windows 同样 NO-GO；未来只有出现能在目标 exec 前向同一 process Owner 同步返回 apply 失败的受支持公开 API 才重新立项。继续如实把 T-253~T-257 称为 child-env、capture 或协议级 containment，不冒充 sandbox。provider/DNS 恢复前不重复 T-250/T-252 同类 live。
 2. 保留 T-214 隔离 workspace 和完整 diff，是否写回原 finance-base/payment 由用户单独确认；不得把隔离交付描述成生产已上线。
 3. 若进入生产集成，先在 Oracle JDK 8u121 和真实 Oracle/MyBatis 环境验证 DDL、事务、唯一键并发与现有 MQ 回放，再应用到目标分支。
 4. P14 保留 Phase 1 default-off Explore，只有后续多个真实任务出现稳定收益时才重启 reviewer/implement 评估；TUI 已完成但不与 MCP、Browser、多 Agent 或 auto-apply 横向捆绑扩展。
