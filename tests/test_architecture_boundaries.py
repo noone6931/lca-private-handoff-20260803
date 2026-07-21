@@ -74,8 +74,9 @@ OWNER_COMPLEXITY_CEILINGS = {
     "src/local_agent/lsp/workspace_edit.py": 472,
     "src/local_agent/lsp/workspace_edit_store.py": 225,
     "src/local_agent/patch/anchored.py": 322,
+    "src/local_agent/patch/journal.py": 54,
     "src/local_agent/patch/transaction.py": 179,
-    "src/local_agent/tools/files.py": 897,
+    "src/local_agent/tools/files.py": 891,
     "src/local_agent/tools/workspace_edit.py": 230,
     "src/local_agent/tools/lsp_rename.py": 222,
     "src/local_agent/tools/lsp_code_action.py": 430,
@@ -727,6 +728,29 @@ class ArchitectureBoundaryTests(unittest.TestCase):
         self.assertNotIn("ExecutionPolicy", apply_tool)
         self.assertNotIn("get_client", apply_tool)
         self.assertNotIn(".rename(", apply_tool)
+
+    def test_patch_journal_has_one_atomic_persistence_owner(self) -> None:
+        journal = (ROOT / "src/local_agent/patch/journal.py").read_text(encoding="utf-8")
+        files = (ROOT / "src/local_agent/tools/files.py").read_text(encoding="utf-8")
+        transaction = (ROOT / "src/local_agent/patch/transaction.py").read_text(encoding="utf-8")
+        production = "\n".join(
+            path.read_text(encoding="utf-8") for path in (ROOT / "src/local_agent").rglob("*.py")
+        )
+
+        self.assertEqual(production.count("def append_patch_record("), 1)
+        self.assertIn("append_patch_record as _append_patch_record", files)
+        self.assertNotIn('open("a"', files)
+        self.assertIn("os.replace(temporary, path)", journal)
+        append_body = journal.split("def append_patch_record", 1)[1].split("def _write_temporary_file", 1)[0]
+        self.assertLess(
+            append_body.index("_write_temporary_file"),
+            append_body.index("        os.replace(temporary, path)"),
+        )
+        self.assertIn("handle.flush()", journal)
+        self.assertIn("os.fsync(handle.fileno())", journal)
+        self.assertNotIn("local_agent.tools", journal)
+        self.assertNotIn("transaction", journal)
+        self.assertNotIn("os.replace", transaction)
 
     def test_lsp_code_action_preview_has_one_owner_and_cannot_execute_or_write(self) -> None:
         tools = importlib.import_module("local_agent.tools")

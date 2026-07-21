@@ -13,6 +13,7 @@ from local_agent.patch.anchored import hash_text
 from local_agent.patch.anchored import PatchError
 from local_agent.patch.anchored import PatchResult
 from local_agent.patch.anchored import resolve_workspace_path
+from local_agent.patch.journal import append_patch_record as _append_patch_record
 from local_agent.patch.transaction import ExistingTextFileChange
 from local_agent.patch.transaction import TextTransactionResult
 from local_agent.patch.transaction import apply_existing_text_transaction
@@ -712,7 +713,7 @@ def _record_patch(
         "before_exists": before_exists,
         "diff": diff,
     }
-    _append_patch_record(context, record)
+    _append_patch_record(_patch_log_path(context), record)
     return patch_id
 
 
@@ -747,7 +748,7 @@ def record_workspace_edit_patch(
             }
         )
     _append_patch_record(
-        context,
+        _patch_log_path(context),
         {
             "event": "apply",
             "id": transaction_id,
@@ -826,20 +827,13 @@ def _rollback_residual_paths(
 
 def _record_rollback(context: ToolContext, patch_id: str) -> None:
     _append_patch_record(
-        context,
+        _patch_log_path(context),
         {
             "event": "rollback",
             "patch_id": patch_id,
             "time": datetime.now(timezone.utc).isoformat(),
         },
     )
-
-
-def _append_patch_record(context: ToolContext, record: dict[str, Any]) -> None:
-    path = _patch_log_path(context)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
 def _load_patch_records(context: ToolContext) -> list[dict[str, Any]]:

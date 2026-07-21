@@ -297,7 +297,7 @@ class ApplyWorkspaceEditTests(unittest.TestCase):
             store = WorkspaceEditPlanStore()
             stored = self._register(store, context, (first, second))
 
-            with patch("local_agent.tools.workspace_edit.record_workspace_edit_patch", side_effect=OSError("full")):
+            with patch("local_agent.patch.journal.os.replace", side_effect=OSError("replace failed")):
                 result = self._execute(store, context, stored.plan_id)
 
             self.assertTrue(result.is_error)
