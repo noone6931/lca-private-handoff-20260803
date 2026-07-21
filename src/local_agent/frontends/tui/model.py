@@ -72,6 +72,7 @@ class TuiProjector:
         self._state = state or TuiState()
         self._delta_indices: dict[str, int] = {}
         self._active_run_id: str | None = None
+        self._candidate_message_id: str | None = None
         self._last_assistant_content: str | None = None
         self._local_entry_seq = _next_local_entry_seq(self._state.transcript)
 
@@ -112,6 +113,7 @@ class TuiProjector:
         elif event.type == "TurnStarted":
             self._delta_indices.clear()
             self._active_run_id = event.run_id
+            self._candidate_message_id = None
             self._last_assistant_content = None
             state = replace(
                 state,
@@ -136,6 +138,7 @@ class TuiProjector:
             if event.run_id == self._active_run_id:
                 state = self._apply_turn_finished(state, event)
                 self._active_run_id = None
+                self._candidate_message_id = None
         elif event.type == "ToolStarted":
             state = self._append_tool(state, event, "running")
         elif event.type in {"ToolFinished", "ToolFailed"}:
@@ -189,6 +192,36 @@ class TuiProjector:
             return state
         self._last_assistant_content = content
         entries = list(state.transcript)
+        phase = str(event.get("phase", ""))
+        if phase in {"candidate", "tool_call"}:
+            if self._candidate_message_id and self._candidate_message_id != message_id:
+                entries = [
+                    entry
+                    for entry in entries
+                    if not (entry.entry_id == self._candidate_message_id and entry.provisional)
+                ]
+            candidate_index = next(
+                (index for index in range(len(entries) - 1, -1, -1) if entries[index].entry_id == message_id),
+                None,
+            )
+            if candidate_index is not None:
+                entries[candidate_index] = replace(
+                    entries[candidate_index],
+                    text=content,
+                    provisional=True,
+                )
+            elif content:
+                entries.append(
+                    TranscriptEntry(
+                        entry_id=message_id,
+                        role="assistant",
+                        text=content,
+                        provisional=True,
+                    )
+                )
+            self._candidate_message_id = message_id
+            self._delta_indices.pop(message_id, None)
+            return replace(state, transcript=tuple(entries[-_MAX_TRANSCRIPT_ENTRIES:]))
         provisional = (
             entries[-1]
             if entries and entries[-1].entry_id == message_id and entries[-1].provisional
@@ -209,15 +242,32 @@ class TuiProjector:
         final_message_id = event.get("final_message_id")
         origin = str(event.get("origin", ""))
         if isinstance(final_message_id, str) and final_message_id:
+            entries = [
+                entry
+                for entry in entries
+                if not (entry.provisional and entry.entry_id != final_message_id)
+            ]
             final_index = next(
                 (index for index in range(len(entries) - 1, -1, -1) if entries[index].entry_id == final_message_id),
                 None,
             )
             if final_index is not None:
-                if content and entries[final_index].text != content:
-                    entries[final_index] = replace(
-                        entries[final_index], text=content, provisional=False, authoritative=origin == "runtime"
+                entries[final_index] = replace(
+                    entries[final_index],
+                    text=content or entries[final_index].text,
+                    provisional=False,
+                    authoritative=entries[final_index].authoritative or origin == "runtime",
+                )
+                content = ""
+            elif content:
+                entries.append(
+                    TranscriptEntry(
+                        entry_id=final_message_id,
+                        role="assistant",
+                        text=content,
+                        authoritative=origin == "runtime",
                     )
+                )
                 content = ""
         provisional = entries[-1] if entries and entries[-1].provisional else None
         if provisional is not None and provisional.text == content:
@@ -249,6 +299,8 @@ class TuiProjector:
         entries = list(state.transcript)
         if entries and entries[-1].entry_id == message_id and entries[-1].provisional:
             entries.pop()
+        if self._candidate_message_id == message_id:
+            self._candidate_message_id = None
         self._delta_indices.pop(message_id, None)
         return replace(state, transcript=tuple(entries[-_MAX_TRANSCRIPT_ENTRIES:]))
 
@@ -343,7 +395,7 @@ def project_agent_event(event: AgentEvent) -> TuiEvent | None:
         fields.extend(
             (
                 ("name", _string(payload.get("name"), 256)),
-                ("detail", _string(payload.get("content_preview"), 2048)),
+                ("detail", _single_line_text(payload.get("content_preview"), 2048)),
             )
         )
     elif event.type in {"ApprovalRequested", "ApprovalResult"}:
@@ -406,6 +458,10 @@ def _string(value: Any, limit: int) -> str:
     if not isinstance(value, str):
         return ""
     return _bounded_text(value, limit)
+
+
+def _single_line_text(value: Any, limit: int) -> str:
+    return _string(value, limit).replace("\r\n", " ").replace("\r", " ").replace("\n", " ")
 
 
 def _integer(value: Any) -> int | None:

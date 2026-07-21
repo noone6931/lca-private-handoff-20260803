@@ -264,29 +264,33 @@ def _inline_activity_lines(state: TuiState, width: int) -> tuple[str, ...]:
         if part
     )
     if context:
-        lines.append(clip_cells(context, width, marker="..."))
+        lines.append(clip_cells(_activity_text(context), width, marker="..."))
     for tool in state.tools[-4:]:
         summary = f"{tool.status:<9} {tool.name} {tool.detail}".rstrip()
-        lines.append(clip_cells(summary, width, marker="..."))
+        lines.append(clip_cells(_activity_text(summary), width, marker="..."))
     if state.todos:
-        lines.extend(clip_cells(f"todo {todo}", width, marker="...") for todo in state.todos[-2:])
+        lines.extend(clip_cells(_activity_text(f"todo {todo}"), width, marker="...") for todo in state.todos[-2:])
     return tuple(lines)
 
 
 def _side_lines(state: TuiState, width: int, height: int) -> tuple[str, ...]:
     lines = ["CONTEXT"]
     if state.provider:
-        lines.append(clip_cells(f"provider {state.provider}", width, marker="..."))
+        lines.append(clip_cells(_activity_text(f"provider {state.provider}"), width, marker="..."))
     if state.workspace:
-        lines.append(clip_cells(f"workspace {state.workspace}", width, marker="..."))
+        lines.append(clip_cells(_activity_text(f"workspace {state.workspace}"), width, marker="..."))
     lines.append("TOOLS")
     for tool in state.tools[-max((height - len(lines)) // 2, 1):]:
         summary = f"{tool.status:<9} {tool.name} {tool.detail}".rstrip()
-        lines.append(clip_cells(summary, width, marker="..."))
+        lines.append(clip_cells(_activity_text(summary), width, marker="..."))
     if state.todos and len(lines) < height:
         lines.append("TODOS")
-        lines.extend(clip_cells(f"- {todo}", width, marker="...") for todo in state.todos)
+        lines.extend(clip_cells(_activity_text(f"- {todo}"), width, marker="...") for todo in state.todos)
     return tuple((lines + [""] * height)[:height])
+
+
+def _activity_text(value: str) -> str:
+    return value.replace("\r\n", " ").replace("\r", " ").replace("\n", " ")
 
 
 def _palette(view: TuiView, width: int, rows: int) -> tuple[str, ...]:

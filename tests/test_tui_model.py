@@ -115,6 +115,81 @@ class TuiModelTests(unittest.TestCase):
         self.assertEqual([entry.text for entry in state.transcript], ["safe final"])
         self.assertTrue(state.transcript[-1].authoritative)
 
+    def test_candidate_messages_replace_each_other_until_turn_finished(self) -> None:
+        projector = TuiProjector()
+        projector.apply(_tui_event("TurnStarted"))
+        first = projector.apply(
+            _tui_event(
+                "AssistantMessage",
+                seq=2,
+                fields=(("message_id", "m1"), ("content", "yes"), ("phase", "candidate")),
+            )
+        )
+        second = projector.apply(
+            _tui_event(
+                "AssistantMessage",
+                seq=3,
+                fields=(("message_id", "m2"), ("content", "checking"), ("phase", "tool_call")),
+            )
+        )
+        third = projector.apply(
+            _tui_event(
+                "AssistantMessage",
+                seq=4,
+                fields=(("message_id", "m3"), ("content", "no"), ("phase", "candidate")),
+            )
+        )
+
+        self.assertEqual([(entry.entry_id, entry.text) for entry in first.transcript], [("m1", "yes")])
+        self.assertTrue(first.transcript[0].provisional)
+        self.assertEqual([(entry.entry_id, entry.text) for entry in second.transcript], [("m2", "checking")])
+        self.assertTrue(second.transcript[0].provisional)
+        self.assertEqual([(entry.entry_id, entry.text) for entry in third.transcript], [("m3", "no")])
+        self.assertTrue(third.transcript[0].provisional)
+
+        finished = projector.apply(
+            _tui_event(
+                "TurnFinished",
+                seq=5,
+                fields=(
+                    ("content", "no"),
+                    ("reason", "final"),
+                    ("final_message_id", "m3"),
+                    ("origin", "provider"),
+                ),
+            )
+        )
+
+        self.assertEqual([(entry.entry_id, entry.text) for entry in finished.transcript], [("m3", "no")])
+        self.assertFalse(finished.transcript[0].provisional)
+
+    def test_turn_finished_discards_non_final_provisional_candidate(self) -> None:
+        projector = TuiProjector()
+        projector.apply(_tui_event("TurnStarted"))
+        projector.apply(
+            _tui_event(
+                "AssistantMessage",
+                seq=2,
+                fields=(("message_id", "m1"), ("content", "provider draft"), ("phase", "candidate")),
+            )
+        )
+
+        state = projector.apply(
+            _tui_event(
+                "TurnFinished",
+                seq=3,
+                fields=(
+                    ("content", "runtime final"),
+                    ("reason", "final"),
+                    ("final_message_id", "runtime-message"),
+                    ("origin", "runtime"),
+                ),
+            )
+        )
+
+        self.assertEqual([(entry.entry_id, entry.text) for entry in state.transcript], [("runtime-message", "runtime final")])
+        self.assertTrue(state.transcript[0].authoritative)
+
     def test_aborted_message_closes_provisional_before_runtime_delivery(self) -> None:
         projector = TuiProjector()
         projector.apply(_tui_event("TurnStarted"))
@@ -257,6 +332,26 @@ class TuiModelTests(unittest.TestCase):
         self.assertEqual(len(state.tools), 1)
         self.assertEqual(state.tools[0].status, "failed")
         self.assertEqual(state.tools[0].detail, "denied")
+
+    def test_tool_error_preview_is_single_line_at_projection_ingress(self) -> None:
+        mailbox = TuiMailbox(capacity=8)
+        sink = TuiEventSink(mailbox)
+
+        sink.emit(
+            _event(
+                "ToolOutput",
+                {
+                    "name": "run_tests",
+                    "is_error": True,
+                    "content_preview": "\n[stderr]\r\nboom",
+                },
+            )
+        )
+
+        projected = mailbox.get(timeout=0)
+        self.assertIsInstance(projected, TuiEvent)
+        assert isinstance(projected, TuiEvent)
+        self.assertEqual(projected.get("detail"), " [stderr] boom")
 
 
 def _event(event_type: str, payload: dict) -> AgentEvent:

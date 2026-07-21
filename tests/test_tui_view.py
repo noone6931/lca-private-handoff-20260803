@@ -137,6 +137,22 @@ print("中文👩‍💻")
         self.assertIn("provider bailian", rendered)
         self.assertLess(len(frame.lines), 20)
 
+    def test_activity_rows_never_embed_terminal_newlines(self) -> None:
+        state = TuiState(
+            provider="bailian\nshadow",
+            workspace="/tmp/project\rhidden",
+            transcript=(TranscriptEntry("a1", "assistant", "working", provisional=True),),
+            tools=(ToolEntry(1, "run_tests", "failed", "\n[stderr]\r\nboom"),),
+            todos=("inspect\nagain",),
+        )
+
+        inline = render_inline_frame(state, TuiView(input_text="x", cursor=1), 80, 20)
+        overlay = render_frame(state, TuiView(), 80, 12)
+
+        for frame in (inline, overlay):
+            self.assertTrue(all("\n" not in line and "\r" not in line for line in frame.lines))
+        self.assertTrue(any("failed" in line and "[stderr]" in line for line in inline.lines))
+
     def test_home_logo_yields_to_transcript_content(self) -> None:
         state = TuiState(transcript=(TranscriptEntry("a1", "assistant", "ready"),))
         frame = render_frame(state, TuiView(), 80, 14)
