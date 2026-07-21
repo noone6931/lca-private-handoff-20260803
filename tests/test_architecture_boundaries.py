@@ -65,7 +65,7 @@ OWNER_COMPLEXITY_CEILINGS = {
     "src/local_agent/providers/protocol.py": 379,
     "src/local_agent/runtime/prompt.py": 490,
     "src/local_agent/runtime/collector.py": 668,
-    "src/local_agent/runtime/evidence.py": 528,
+    "src/local_agent/runtime/evidence.py": 535,
     "src/local_agent/tools/gateway.py": 409,
     "src/local_agent/platform/terminal.py": 122,
     "src/local_agent/protocol/cancellation.py": 66,
@@ -152,6 +152,32 @@ class ArchitectureBoundaryTests(unittest.TestCase):
         self.assertEqual(runtime.count("if progress == 0:"), 2)
         self.assertNotIn("[:30000]", shell)
         self.assertNotIn("process_output", agent)
+
+    def test_prior_execution_evidence_has_focused_tool_session_and_steering_owners(self) -> None:
+        metadata = (ROOT / "src/local_agent/tools/execution_metadata.py").read_text(encoding="utf-8")
+        session = (ROOT / "src/local_agent/session/execution_evidence.py").read_text(encoding="utf-8")
+        steering = (ROOT / "src/local_agent/steering/evidence.py").read_text(encoding="utf-8")
+        tool_usage = (ROOT / "src/local_agent/steering/tool_usage.py").read_text(encoding="utf-8")
+        lifecycle = (ROOT / "src/local_agent/runtime/evidence.py").read_text(encoding="utf-8")
+        agent = (ROOT / "src/local_agent/agent.py").read_text(encoding="utf-8")
+        self.assertIn('EXECUTION_METADATA_KEY = "execution_v1"', metadata)
+        self.assertIn('EXECUTION_COMPLETED_EVENT = "execution_completed_v1"', session)
+        self.assertIn("class SessionExecutionEvidenceOwner:", session)
+        self.assertNotIn("tool_choice_results", session)
+        self.assertNotIn("verification_plan", session)
+        self.assertNotIn("execution_completed_v1", agent)
+        self.assertNotIn("runtime", metadata)
+        self.assertIn("class ToolUsageEvidenceSteerer", tool_usage)
+        self.assertNotIn("claims_definite_execution_status", steering + tool_usage)
+        self.assertFalse((ROOT / "src/local_agent/steering/prior_execution.py").exists())
+        self.assertNotIn("runtime._messages[-1]", session)
+        self.assertIn("tool_call_id=tool_call_id", lifecycle)
+        self.assertIn('load_event_payloads("event_v1"', session)
+        self.assertIn('event.get("type") == "ContextUpdated"', session)
+        self.assertIn('event.get("type") == "ToolOutput"', session)
+        self.assertIn("self.lines.get(reference) == segment.strip()", session)
+        self.assertNotIn("reference in segment", session)
+        self.assertIn("tool in prior_attributions.references.values()", steering)
 
     def test_session_task_continuity_is_typed_and_owned_outside_runtime(self) -> None:
         owner = (ROOT / "src/local_agent/session/continuity.py").read_text(encoding="utf-8")

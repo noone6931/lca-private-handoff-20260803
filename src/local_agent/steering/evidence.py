@@ -8,6 +8,8 @@ from ..evidence.negative import negative_claim_metrics
 from ..evidence.negative import render_negative_existence_issues
 from ..evidence.negative import unsupported_negative_existence_claims
 from ..evidence.negative import unsupported_unlocated_escalations
+from ..session.execution_evidence import EXECUTION_TOOLS
+from ..session.execution_evidence import PriorExecutionAttributions
 from ..workflows.root_coverage import read_only_root_coverage
 from ..evidence.requirements import requirement_citation_examples
 from ..evidence.requirements import requirement_fact_citation_issues
@@ -219,36 +221,6 @@ class SourceEvidenceFalseNegativeSteerer:
         )
 
 
-class ToolUsageEvidenceSteerer:
-    """Keep final claims about tool evidence aligned with observed tool results."""
-
-    kind = "tool_usage_evidence"
-
-    def __init__(self, *, max_steers: int) -> None:
-        self._max_steers = max_steers
-
-    def decide(self, context: FinalAnswerContext) -> SteeringDecision | None:
-        if context.steer_counts.get(self.kind, 0) >= self._max_steers:
-            return None
-        claimed_missing_tools = phantom_tool_evidence_claims(context.content, context.tool_results)
-        if not claimed_missing_tools:
-            return None
-        tools = ", ".join(claimed_missing_tools)
-        steering = (
-            "Runtime steering: the previous final answer claimed evidence, invocation, or an empty result from tools "
-            "that did not run in this task. Do not call tools. Rewrite the answer using only tool results actually "
-            "observed in this run; say an item is unverified rather than attributing it to an uncalled tool.\n"
-            f"- Unsupported tool-evidence claims: {tools}\n"
-            f"- Tools actually observed: {', '.join(_observed_tool_names(context.tool_results)) or 'none'}"
-            f"{final_answer_request_summary(context.request)}"
-        )
-        return SteeringDecision(
-            kind=self.kind,
-            message=steering,
-            payload={"unobserved_tools": list(claimed_missing_tools)},
-        )
-
-
 class NegativeExistenceSteerer:
     """Reject path/source/Git absence claims that lack matching discovery evidence."""
 
@@ -427,12 +399,13 @@ def tool_names_since(messages: list[dict[str, Any]], start_index: int) -> set[st
 def phantom_tool_evidence_claims(
     content: str,
     tool_results: list[ToolResultSummary],
+    prior_attributions: PriorExecutionAttributions | None = None,
 ) -> tuple[str, ...]:
     """Return unobserved tools that the answer presents as run/result evidence.
 
     Merely recommending a tool is valid. A claim must occur in the same
     sentence-like segment as an execution/result/evidence marker, and explicit
-    statements that the tool was *not called* are deliberately ignored.
+    statements that the tool was *not called* use the existing explicit non-execution branch.
     """
 
     observed = set(_observed_tool_names(tool_results))
@@ -441,13 +414,27 @@ def phantom_tool_evidence_claims(
     claimed: set[str] = set()
     claimed.update(_unsupported_read_file_path_claims(content, tool_results))
     claimed.update(_unsupported_root_coverage_claims(content, tool_results))
-    for segment in re.split(r"[\n。！？!?;]+", content.lower()):
-        if not segment.strip() or not _looks_like_tool_evidence_claim(segment):
+    for raw_segment in re.split(r"[\n。！？!?;]+", content):
+        segment = raw_segment.lower()
+        if not segment.strip():
             continue
         if _EXPLICIT_TOOL_NON_EXECUTION.search(segment):
+            if prior_attributions is not None:
+                for tool in EXECUTION_TOOLS - observed:
+                    if (
+                        (prior_attributions.inconclusive or tool in prior_attributions.references.values())
+                        and not prior_attributions.supports(raw_segment, tool)
+                        and not prior_attributions.supports_inconclusive(raw_segment)
+                        and re.search(rf"(?<![a-z0-9_]){re.escape(tool)}(?![a-z0-9_])", segment)
+                    ):
+                        claimed.add(tool)
+            continue
+        if not _looks_like_tool_evidence_claim(segment):
             continue
         for tool in KNOWN_TOOL_EVIDENCE_NAMES - observed:
             if _tool_reference_is_recommendation(segment, tool):
+                continue
+            if prior_attributions is not None and prior_attributions.supports(raw_segment, tool):
                 continue
             if re.search(rf"(?<![a-z0-9_]){re.escape(tool)}(?![a-z0-9_])", segment):
                 claimed.add(tool)

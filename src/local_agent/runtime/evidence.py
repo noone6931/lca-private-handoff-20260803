@@ -16,6 +16,7 @@ from ..session.evidence import MAX_SESSION_EVIDENCE_JOURNAL_EVENTS
 from ..session.evidence import is_journal_safe_cached_evidence
 from ..session.evidence import query_identity as session_evidence_query_identity
 from ..session.evidence import serialize_cached_evidence_entry
+from ..session.execution_evidence import SessionExecutionEvidenceOwner
 from ..workflows.test_planner import plan_narrow_test
 from ..workflows.tool_choice.queue import session_evidence_reuse_directive
 from ..tools.observation import ToolResultSummary
@@ -49,6 +50,7 @@ class EvidenceVerificationLifecycle:
 
     def __init__(self, runtime: EvidenceRuntimePort) -> None:
         self._runtime = runtime
+        self._execution_evidence = SessionExecutionEvidenceOwner(runtime)
 
     def record_read_file_evidence(self, name: str, arguments: str | dict[str, Any], result: ToolResult) -> None:
         runtime = self._runtime
@@ -62,10 +64,13 @@ class EvidenceVerificationLifecycle:
                 requirement_candidates=requirement.candidate_files if requirement is not None else (),
             )
 
-    def record_tool_choice_result(self, name: str, arguments: str | dict[str, Any], result: ToolResult) -> None:
+    def record_tool_choice_result(
+        self, name: str, arguments: str | dict[str, Any], result: ToolResult, *, tool_call_id: str | None = None
+    ) -> None:
         runtime = self._runtime
         if result.metadata.get("evidence_eligible") is False:
             return
+        self._execution_evidence.capture_at_join(name, result, tool_call_id=tool_call_id)
         metadata = self.tool_choice_result_metadata(name, arguments, result)
         if is_session_evidence_reread(
             name,
@@ -349,6 +354,7 @@ class EvidenceVerificationLifecycle:
 
     def restore_session_evidence_cache(self) -> None:
         runtime = self._runtime
+        self._execution_evidence.restore()
         preapproval = getattr(runtime._registry, "is_preapproved", None)
         if not callable(preapproval):
             self.record_session_evidence_event("restore_skipped", {"reason": "read_policy_unknown"})
@@ -376,6 +382,7 @@ class EvidenceVerificationLifecycle:
 
     def hydrate_session_evidence(self, prompt: str) -> None:
         runtime = self._runtime
+        self._execution_evidence.begin_run()
         reuse = runtime._session_evidence.reuse_for_request(
             prompt=prompt,
             workspace_revision=runtime._workspace_context.revision,

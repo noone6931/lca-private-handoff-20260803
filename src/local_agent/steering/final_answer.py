@@ -17,7 +17,6 @@ from .evidence import ReadOnlyEvidenceSteerer
 from .evidence import RequirementEvidenceSteerer
 from .evidence import SourceEvidenceFalseNegativeSteerer
 from .evidence import SourceGroundedNumericSteerer
-from .evidence import ToolUsageEvidenceSteerer
 from .evidence import phantom_tool_evidence_claims
 from .evidence import request_mentions_todo
 from .evidence import request_needs_read_only_code_evidence
@@ -29,6 +28,7 @@ from .delivery import FinalStructureSteerer
 from .delivery import NoEditFinalHygieneSteerer
 from .delivery import PatchReviewSteerer
 from .delivery import render_unverified_final_answer
+from .tool_usage import ToolUsageEvidenceSteerer
 
 __all__ = [
     "CompletionAuditSteerer",

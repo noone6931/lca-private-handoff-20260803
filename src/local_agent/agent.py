@@ -697,7 +697,7 @@ class AgentRuntime:
                     },
                 )
                 self._run.reset_forced_final_answer_continuations()
-                self._evidence_phase.record_tool_choice_result(name, arguments, result)
+                self._evidence_phase.record_tool_choice_result(name, arguments, result, tool_call_id=str(tool_call.get("id") or ""))
                 self._evidence_phase.record_successful_patch_preview(name, arguments, result)
                 self._evidence_phase.record_read_file_evidence(name, arguments, result)
                 self._evidence_phase.record_tool_evidence(name, arguments, result)

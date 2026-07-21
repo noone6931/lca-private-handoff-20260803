@@ -11,9 +11,13 @@ from typing import Any
 from local_agent.patch.anchored import PatchError, resolve_workspace_path
 
 from .base import Tool, ToolContext, ToolResult
+from .execution_metadata import execution_error_result
+from .execution_metadata import legacy_test_metadata as _test_metadata
+from .execution_metadata import with_execution_metadata
 from .process_environment import build_child_process_environment
 from .process_output import process_tool_result as _process_tool_result
 from .process_runtime import run_process as _run_process
+from .shell_execution import run_shell_process
 from .test_runner_policy import resolve_test_runner, test_environment_denial_reason
 from .test_runner_policy import test_runner_denial_reason as _test_runner_denial_reason
 
@@ -120,7 +124,11 @@ def run_tests(args: dict[str, Any], context: ToolContext) -> ToolResult:
 
 
 def run_shell(args: dict[str, Any], context: ToolContext) -> ToolResult:
-    return _run_command(args["command"], args, context, default_timeout=60)
+    command = args["command"]
+    timeout = _clamp_timeout_to_budget(min(max(int(args.get("timeout") or 60), 1), 600), context)
+    return run_shell_process(
+        command, timeout=timeout, context=context, dangerous_reason=_dangerous_command_reason(command), process_runner=_run_process
+    )
 
 
 def _resolve_test_cwd(raw_cwd: object, context: ToolContext) -> Path:
@@ -207,17 +215,12 @@ def _run_test_process(
 ) -> ToolResult:
     timeout = min(max(int(args.get("timeout") or 120), 1), 600)
     timeout = _clamp_timeout_to_budget(timeout, context)
-    metadata = _test_metadata(
-        command,
-        working_directory,
-        argv,
-        environment,
-        exit_code=None,
-        status="failed",
-        runner_executable=runner_executable,
-    )
     if timeout < 1:
-        return ToolResult("Test command was not run because budget_seconds is exhausted.", is_error=True, metadata=metadata)
+        return execution_error_result(
+            "Test command was not run because budget_seconds is exhausted.",
+            metadata=_test_metadata(command, working_directory, argv, environment, exit_code=None, status="failed", runner_executable=runner_executable),
+            command=command, argv=argv, shell=False, working_directory=working_directory, outcome="not_run",
+        )
     try:
         completed = _run_process(
             list(argv),
@@ -228,17 +231,25 @@ def _run_test_process(
             cancel_event=context.cancel_event,
         )
     except subprocess.TimeoutExpired as exc:
-        return _process_tool_result(
+        projected = _process_tool_result(
             exc,
             terminal_line=f"[timeout] Test command timed out after {timeout} seconds.",
             is_error=True,
-            metadata=metadata,
+            metadata=_test_metadata(command, working_directory, argv, environment, exit_code=None, status="failed", runner_executable=runner_executable),
             label_stdout=True,
         )
+        return with_execution_metadata(
+            projected, command=command, argv=argv, shell=False, working_directory=working_directory,
+            outcome="timed_out", exit_code=None,
+        )
     except OSError as exc:
-        return ToolResult(f"Test runner could not be started: {exc}", is_error=True, metadata=metadata)
+        return execution_error_result(
+            f"Test runner could not be started: {exc}",
+            metadata=_test_metadata(command, working_directory, argv, environment, exit_code=None, status="failed", runner_executable=runner_executable),
+            command=command, argv=argv, shell=False, working_directory=working_directory, outcome="spawn_failed",
+        )
     status = "succeeded" if completed.returncode == 0 else "failed"
-    return _process_tool_result(
+    projected = _process_tool_result(
         completed,
         terminal_line=f"[exit_code] {completed.returncode}",
         is_error=completed.returncode != 0,
@@ -252,6 +263,10 @@ def _run_test_process(
             runner_executable=runner_executable,
         ),
     )
+    return with_execution_metadata(
+        projected, command=command, argv=argv, shell=False, working_directory=working_directory,
+        outcome="exited", exit_code=completed.returncode,
+    )
 
 
 def _test_not_run(
@@ -263,9 +278,8 @@ def _test_not_run(
     environment: dict[str, str] | None = None,
 ) -> ToolResult:
     rendered_command = command if isinstance(command, str) else str(command)
-    return ToolResult(
+    return execution_error_result(
         reason,
-        is_error=True,
         metadata=_test_metadata(
             rendered_command,
             working_directory,
@@ -274,62 +288,11 @@ def _test_not_run(
             exit_code=None,
             status="not_run",
         ),
-    )
-
-
-def _test_metadata(
-    command: str,
-    working_directory: Path,
-    argv: tuple[str, ...],
-    environment: dict[str, str],
-    *,
-    exit_code: int | None,
-    status: str,
-    runner_executable: str | None = None,
-) -> dict[str, Any]:
-    return {
-        "executed_command": command,
-        "display_command": shlex.join(argv) if argv else command,
-        "argv": list(argv),
-        "environment_keys": sorted(environment),
-        "working_directory": str(working_directory.resolve()),
-        "exit_code": exit_code,
-        "execution_status": status,
-        "execution_capability": "exec",
-        "runner_executable": runner_executable,
-        "sandboxed": False,
-        "trust_boundary": "executes repository-controlled test/build code",
-    }
-
-
-def _run_command(command: str, args: dict[str, Any], context: ToolContext, *, default_timeout: int) -> ToolResult:
-    dangerous_reason = _dangerous_command_reason(command)
-    if dangerous_reason:
-        return ToolResult(dangerous_reason, is_error=True)
-    timeout = min(max(int(args.get("timeout") or default_timeout), 1), 600)
-    timeout = _clamp_timeout_to_budget(timeout, context)
-    if timeout < 1:
-        return ToolResult("Command was not run because budget_seconds is exhausted.", is_error=True)
-    try:
-        completed = _run_process(
-            command,
-            cwd=context.workspace,
-            env=build_child_process_environment().values,
-            shell=True,
-            timeout=timeout,
-            cancel_event=context.cancel_event,
-        )
-    except subprocess.TimeoutExpired as exc:
-        return _process_tool_result(
-            exc,
-            terminal_line=f"[timeout] Command timed out after {timeout} seconds.",
-            is_error=True,
-            label_stdout=True,
-        )
-    return _process_tool_result(
-        completed,
-        terminal_line=f"[exit_code] {completed.returncode}",
-        is_error=completed.returncode != 0,
+        command=rendered_command,
+        argv=argv,
+        shell=False,
+        working_directory=working_directory,
+        outcome="not_run",
     )
 
 
