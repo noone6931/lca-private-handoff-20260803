@@ -28,7 +28,6 @@ APPROVAL_MODES = {"always-ask", "write", "yolo"}
 SUMMARY_MODES = {"auto", "local", "llm"}
 MEMORY_CONSOLIDATION_MODES = {"off", "auto", "llm"}
 MEMORY_SCOPES = {"state", "project"}
-SANDBOX_MODES = {"off", "seatbelt"}
 
 
 @dataclass(frozen=True)
@@ -58,7 +57,6 @@ class AgentConfig:
     workflow_profile: str = "auto"
     enable_subagents: bool = False
     subagent_budget_seconds: int = DEFAULT_SUBAGENT_BUDGET_SECONDS
-    sandbox_mode: str = "off"
 
 
 def load_config(
@@ -87,7 +85,6 @@ def load_config(
     workflow_profile: str | None = None,
     enable_subagents: bool | None = None,
     subagent_budget_seconds: int | None = None,
-    sandbox_mode: str | None = None,
 ) -> AgentConfig:
     file_config = _load_json_config(config_path)
     workspace = Path(cwd or file_config.get("workspace") or os.getcwd()).expanduser().resolve()
@@ -256,12 +253,6 @@ def load_config(
         minimum=MIN_SUBAGENT_BUDGET_SECONDS,
         maximum=MAX_SUBAGENT_BUDGET_SECONDS,
     )
-    raw_sandbox_mode = (
-        sandbox_mode
-        if sandbox_mode is not None
-        else file_config.get("sandbox_mode", os.environ.get("AGENT_SANDBOX_MODE", "off"))
-    )
-    resolved_sandbox_mode = _sandbox_mode(raw_sandbox_mode)
     raw_allowed_dirs = (
         allowed_dirs
         if allowed_dirs is not None
@@ -301,7 +292,6 @@ def load_config(
         workflow_profile=resolved_workflow_profile,
         enable_subagents=resolved_enable_subagents,
         subagent_budget_seconds=resolved_subagent_budget,
-        sandbox_mode=resolved_sandbox_mode,
     )
 
 
@@ -394,15 +384,6 @@ def _memory_scope(raw_scope: object) -> str:
     if resolved not in MEMORY_SCOPES:
         raise ConfigError("memory_scope must be one of: state, project.")
     return resolved
-
-
-def _sandbox_mode(raw_mode: object) -> str:
-    if not isinstance(raw_mode, str):
-        raise ConfigError("sandbox_mode must be a string.")
-    mode = raw_mode.strip().lower()
-    if mode not in SANDBOX_MODES:
-        raise ConfigError("sandbox_mode must be one of: off, seatbelt.")
-    return mode
 
 
 def _load_dotenv(path: Path | None, *, required: bool = False) -> None:

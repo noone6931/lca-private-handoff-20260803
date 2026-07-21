@@ -9,10 +9,6 @@ from pathlib import Path
 from typing import Any
 
 from local_agent.patch.anchored import PatchError, resolve_workspace_path
-from local_agent.platform.seatbelt import PreparedSeatbeltCommand
-from local_agent.platform.seatbelt import SeatbeltPreparationError
-from local_agent.platform.seatbelt import prepare_seatbelt_command
-from local_agent.platform.seatbelt import trusted_runtime_temp_root
 
 from .base import Tool, ToolContext, ToolResult
 from .process_environment import build_child_process_environment
@@ -211,43 +207,7 @@ def _run_test_process(
 ) -> ToolResult:
     timeout = min(max(int(args.get("timeout") or 120), 1), 600)
     timeout = _clamp_timeout_to_budget(timeout, context)
-    if timeout < 1:
-        return ToolResult(
-            "Test command was not run because budget_seconds is exhausted.",
-            is_error=True,
-            metadata=_test_metadata(
-                command,
-                working_directory,
-                argv,
-                environment,
-                exit_code=None,
-                status="not_run",
-                runner_executable=runner_executable,
-            ),
-        )
-    try:
-        sandbox = _prepare_sandbox(
-            argv,
-            shell=False,
-            context=context,
-            include_allowed_dirs=True,
-        )
-    except SeatbeltPreparationError as exc:
-        return ToolResult(
-            str(exc),
-            is_error=True,
-            metadata=_test_metadata(
-                command,
-                working_directory,
-                argv,
-                environment,
-                exit_code=None,
-                status="not_run",
-                runner_executable=runner_executable,
-                sandbox_metadata=exc.metadata(),
-            ),
-        )
-    base_metadata = _test_metadata(
+    metadata = _test_metadata(
         command,
         working_directory,
         argv,
@@ -256,9 +216,11 @@ def _run_test_process(
         status="failed",
         runner_executable=runner_executable,
     )
+    if timeout < 1:
+        return ToolResult("Test command was not run because budget_seconds is exhausted.", is_error=True, metadata=metadata)
     try:
         completed = _run_process(
-            list(sandbox.argv) if sandbox is not None else list(argv),
+            list(argv),
             cwd=working_directory,
             env=build_child_process_environment(overrides=environment).values,
             shell=False,
@@ -270,32 +232,11 @@ def _run_test_process(
             exc,
             terminal_line=f"[timeout] Test command timed out after {timeout} seconds.",
             is_error=True,
-            metadata=_test_metadata(
-                command,
-                working_directory,
-                argv,
-                environment,
-                exit_code=None,
-                status="failed",
-                runner_executable=runner_executable,
-                sandbox_metadata=sandbox.applied_metadata() if sandbox is not None else None,
-            ),
+            metadata=metadata,
             label_stdout=True,
         )
     except OSError as exc:
-        if sandbox is None:
-            return ToolResult(f"Test runner could not be started: {exc}", is_error=True, metadata=base_metadata)
-        failed_metadata = _test_metadata(
-            command,
-            working_directory,
-            argv,
-            environment,
-            exit_code=None,
-            status="not_run",
-            runner_executable=runner_executable,
-            sandbox_metadata=sandbox.launch_failed_metadata(),
-        )
-        return ToolResult("Seatbelt sandbox could not start the test command.", is_error=True, metadata=failed_metadata)
+        return ToolResult(f"Test runner could not be started: {exc}", is_error=True, metadata=metadata)
     status = "succeeded" if completed.returncode == 0 else "failed"
     return _process_tool_result(
         completed,
@@ -309,7 +250,6 @@ def _run_test_process(
             exit_code=completed.returncode,
             status=status,
             runner_executable=runner_executable,
-            sandbox_metadata=sandbox.applied_metadata() if sandbox is not None else None,
         ),
     )
 
@@ -346,9 +286,8 @@ def _test_metadata(
     exit_code: int | None,
     status: str,
     runner_executable: str | None = None,
-    sandbox_metadata: dict[str, object] | None = None,
 ) -> dict[str, Any]:
-    metadata: dict[str, Any] = {
+    return {
         "executed_command": command,
         "display_command": shlex.join(argv) if argv else command,
         "argv": list(argv),
@@ -361,9 +300,6 @@ def _test_metadata(
         "sandboxed": False,
         "trust_boundary": "executes repository-controlled test/build code",
     }
-    metadata.update(sandbox_metadata or {})
-    metadata.setdefault("sandboxed", False)
-    return metadata
 
 
 def _run_command(command: str, args: dict[str, Any], context: ToolContext, *, default_timeout: int) -> ToolResult:
@@ -375,24 +311,11 @@ def _run_command(command: str, args: dict[str, Any], context: ToolContext, *, de
     if timeout < 1:
         return ToolResult("Command was not run because budget_seconds is exhausted.", is_error=True)
     try:
-        sandbox = _prepare_sandbox(
-            command,
-            shell=True,
-            context=context,
-            include_allowed_dirs=False,
-        )
-    except SeatbeltPreparationError as exc:
-        return ToolResult(
-            str(exc),
-            is_error=True,
-            metadata={**exc.metadata(), "execution_status": "not_run"},
-        )
-    try:
         completed = _run_process(
-            list(sandbox.argv) if sandbox is not None else command,
+            command,
             cwd=context.workspace,
             env=build_child_process_environment().values,
-            shell=False if sandbox is not None else True,
+            shell=True,
             timeout=timeout,
             cancel_event=context.cancel_event,
         )
@@ -401,41 +324,13 @@ def _run_command(command: str, args: dict[str, Any], context: ToolContext, *, de
             exc,
             terminal_line=f"[timeout] Command timed out after {timeout} seconds.",
             is_error=True,
-            metadata=sandbox.applied_metadata() if sandbox is not None else None,
             label_stdout=True,
-        )
-    except OSError:
-        if sandbox is None:
-            raise
-        return ToolResult(
-            "Seatbelt sandbox could not start the shell command.",
-            is_error=True,
-            metadata={**sandbox.launch_failed_metadata(), "execution_status": "not_run"},
         )
     return _process_tool_result(
         completed,
         terminal_line=f"[exit_code] {completed.returncode}",
         is_error=completed.returncode != 0,
-        metadata=sandbox.applied_metadata() if sandbox is not None else None,
     )
-
-
-def _prepare_sandbox(
-    command: str | tuple[str, ...],
-    *,
-    shell: bool,
-    context: ToolContext,
-    include_allowed_dirs: bool,
-) -> PreparedSeatbeltCommand | None:
-    if context.sandbox_mode == "off":
-        return None
-    if context.sandbox_mode != "seatbelt":
-        raise SeatbeltPreparationError("invalid_root", "Configured sandbox mode is invalid.")
-    roots = [context.workspace]
-    if include_allowed_dirs:
-        roots.extend(context.allowed_dirs)
-    roots.append(trusted_runtime_temp_root())
-    return prepare_seatbelt_command(command, shell=shell, writable_roots=roots)
 
 
 def _dangerous_command_reason(command: str) -> str | None:

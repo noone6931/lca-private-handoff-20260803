@@ -12,10 +12,14 @@ ExecutionPolicySource = Literal[
     "auto_approve",
     "non_interactive",
 ]
+SandboxState = Literal["none", "unsandboxed"]
+
 EXECUTION_POLICY_OUTCOMES = frozenset({"allow", "prompt", "deny"})
 EXECUTION_POLICY_SOURCES = frozenset(
     {"config_per_tool", "session_per_tool", "approval_mode", "auto_approve", "non_interactive"}
 )
+EXECUTION_SANDBOX_STATES = frozenset({"none", "unsandboxed"})
+
 _APPROVAL_MODE_ALLOWED_TIERS = {
     "always-ask": frozenset({"read", "state", "interaction"}),
     "write": frozenset({"read", "state", "interaction", "write"}),
@@ -45,6 +49,7 @@ class ExecutionPolicyDecision:
     source: ExecutionPolicySource
     approval_mode: str
     session_cache_allowed: bool
+    sandbox_state: SandboxState
 
     def event_payload(self) -> dict[str, object]:
         return {
@@ -55,6 +60,7 @@ class ExecutionPolicyDecision:
             "source": self.source,
             "approval_mode": self.approval_mode,
             "session_cache_allowed": self.session_cache_allowed,
+            "sandbox_state": self.sandbox_state,
         }
 
 
@@ -154,4 +160,11 @@ def _decision(
         source=source,
         approval_mode=mode,
         session_cache_allowed=session_cache_allowed,
+        sandbox_state=_sandbox_state(action),
     )
+
+
+def _sandbox_state(action: ExecutionAction) -> SandboxState:
+    if action.tier == "exec":
+        return "unsandboxed"
+    return "none"

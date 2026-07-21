@@ -96,11 +96,6 @@ def main(argv: list[str] | None = None) -> int:
         help="Tool approval policy.",
     )
     parser.add_argument(
-        "--sandbox",
-        choices=["off", "seatbelt"],
-        help="Process sandbox for shell and run_tests (default: off).",
-    )
-    parser.add_argument(
         "--auto-approve-tools",
         help="Comma-separated tool names to allow without prompting in ask mode.",
     )
@@ -184,7 +179,6 @@ def main(argv: list[str] | None = None) -> int:
             workflow_profile=args.workflow_profile,
             enable_subagents=args.enable_subagents,
             subagent_budget_seconds=args.subagent_budget_seconds,
-            sandbox_mode=args.sandbox,
         )
         chat_requested = args.chat or _is_chat_prompt(args.prompt)
         tui_requested = bool(args.tui or (not args.prompt and not chat_requested))

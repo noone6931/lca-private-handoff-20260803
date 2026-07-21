@@ -384,6 +384,8 @@ def _format_last_run_status(summary: dict[str, Any]) -> list[str]:
             f"allow={execution_policy.get('allow', 0)}, "
             f"prompt={execution_policy.get('prompt', 0)}, "
             f"deny={execution_policy.get('deny', 0)}, "
+            "unsandboxed_exec_evaluations="
+            f"{execution_policy.get('unsandboxed_exec_evaluations', 0)}, "
             f"invalid_events={execution_policy.get('invalid_events', 0)}"
         )
     subagents = summary.get("subagents")

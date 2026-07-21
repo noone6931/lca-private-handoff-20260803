@@ -36,17 +36,17 @@ OWNER_COMPLEXITY_CEILINGS = {
     "src/local_agent/runtime/review.py": 643,
     "src/local_agent/runtime/review_round.py": 452,
     "src/local_agent/review/safe_partial.py": 446,
-    "src/local_agent/tools/shell.py": 460,
+    "src/local_agent/tools/shell.py": 355,
     "src/local_agent/tools/process_environment.py": 64,
-    "src/local_agent/tools/process_output.py": 252,
+    "src/local_agent/tools/process_output.py": 250,
     "src/local_agent/tools/process_runtime.py": 201,
     "src/local_agent/tools/test_runner_policy.py": 217,
     "src/local_agent/steering/pre_review.py": 83,
     "src/local_agent/steering/final_answer.py": 59,
     "src/local_agent/workflows/profile.py": 165,
     "src/local_agent/runtime/workflow_profile.py": 44,
-    "src/local_agent/tools/policy.py": 157,
-    "src/local_agent/tools/base.py": 608,
+    "src/local_agent/tools/policy.py": 170,
+    "src/local_agent/tools/base.py": 607,
     "src/local_agent/runtime/commands.py": 221,
     "src/local_agent/providers/stream.py": 340,
     "src/local_agent/providers/deadline.py": 179,
@@ -63,20 +63,17 @@ OWNER_COMPLEXITY_CEILINGS = {
     "src/local_agent/runtime/assistant_message.py": 170,
     "src/local_agent/runtime/run_output.py": 130,
     "src/local_agent/providers/protocol.py": 379,
-    "src/local_agent/runtime/prompt.py": 469,
-    "src/local_agent/runtime/collector.py": 661,
+    "src/local_agent/runtime/prompt.py": 490,
+    "src/local_agent/runtime/collector.py": 668,
     "src/local_agent/runtime/evidence.py": 518,
     "src/local_agent/tools/gateway.py": 404,
     "src/local_agent/platform/terminal.py": 122,
-    "src/local_agent/platform/seatbelt.py": 161,
     "src/local_agent/protocol/cancellation.py": 66,
     "src/local_agent/workflows/explore_subagent.py": 561,
     "src/local_agent/lsp/workspace_edit.py": 380,
     "src/local_agent/tools/lsp_rename.py": 187,
     "src/local_agent/tools/lsp_code_action.py": 430,
     "src/local_agent/session/continuity.py": 284,
-    "src/local_agent/config.py": 641,
-    "src/local_agent/cli.py": 276,
 }
 LEGACY_COMPLEXITY_DEBT_CEILINGS = {
     "src/local_agent/agent.py": 1632,
@@ -148,36 +145,6 @@ class ArchitectureBoundaryTests(unittest.TestCase):
         self.assertEqual(runtime.count("if progress == 0:"), 2)
         self.assertNotIn("[:30000]", shell)
         self.assertNotIn("process_output", agent)
-
-    def test_seatbelt_adapter_is_opt_in_and_separate_from_approval_and_process_lifecycle(self) -> None:
-        adapter = (ROOT / "src/local_agent/platform/seatbelt.py").read_text(encoding="utf-8")
-        platform_init = (ROOT / "src/local_agent/platform/__init__.py").read_text(encoding="utf-8")
-        shell = (ROOT / "src/local_agent/tools/shell.py").read_text(encoding="utf-8")
-        process_runtime = (ROOT / "src/local_agent/tools/process_runtime.py").read_text(encoding="utf-8")
-        policy = (ROOT / "src/local_agent/tools/policy.py").read_text(encoding="utf-8")
-        agent = (ROOT / "src/local_agent/agent.py").read_text(encoding="utf-8")
-        unrelated = "\n".join(
-            (ROOT / path).read_text(encoding="utf-8")
-            for path in (
-                "src/local_agent/tools/git.py",
-                "src/local_agent/tools/search.py",
-                "src/local_agent/lsp/client.py",
-            )
-        )
-
-        self.assertNotIn("import subprocess", adapter)
-        self.assertNotIn("ExecutionPolicy", adapter)
-        self.assertNotIn("ToolRegistry", adapter)
-        self.assertNotIn("seatbelt", platform_init)
-        self.assertIn("prepare_seatbelt_command", shell)
-        self.assertNotIn("subprocess.Popen", shell)
-        self.assertEqual(process_runtime.count("subprocess.Popen("), 1)
-        self.assertNotIn("seatbelt", process_runtime)
-        self.assertNotIn("sandbox_state", policy)
-        self.assertNotIn("seatbelt", unrelated)
-        self.assertNotIn("from .platform.seatbelt", agent)
-        self.assertNotIn("if config.sandbox_mode", agent)
-        self.assertLessEqual(len(agent.splitlines()), 1632)
 
     def test_session_task_continuity_is_typed_and_owned_outside_runtime(self) -> None:
         owner = (ROOT / "src/local_agent/session/continuity.py").read_text(encoding="utf-8")

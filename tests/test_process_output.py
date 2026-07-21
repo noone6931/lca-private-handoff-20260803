@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 import shlex
-import subprocess
 import sys
 import tempfile
 import unittest
@@ -14,7 +13,6 @@ from local_agent.tools.process_output import CapturedText
 from local_agent.tools.process_output import ProcessOutputCapture
 from local_agent.tools.process_output import StreamCaptureSummary
 from local_agent.tools.process_output import project_process_tool_output
-from local_agent.tools.process_output import process_tool_result
 from local_agent.tools.shell import run_shell
 
 
@@ -120,17 +118,6 @@ class ProcessOutputTests(unittest.TestCase):
         self.assertEqual(result.metadata["output_capture"]["stderr"]["observed_bytes"], 40_000)
         self.assertNotIn("A" * 1000, str(result.metadata))
         self.assertFalse(result.metadata["sandboxed"])
-
-    def test_caller_sandbox_truth_is_not_overwritten(self) -> None:
-        result = process_tool_result(
-            subprocess.CompletedProcess(["sandbox-exec"], 0, stdout="ok", stderr=""),
-            terminal_line="[exit_code] 0",
-            is_error=False,
-            metadata={"sandboxed": True, "sandbox_backend": "seatbelt"},
-        )
-
-        self.assertTrue(result.metadata["sandboxed"])
-        self.assertEqual(result.metadata["sandbox_backend"], "seatbelt")
 
     @unittest.skipUnless(os.name == "posix", "timeout shell command uses POSIX quoting")
     def test_shell_timeout_retains_bounded_output_and_terminal_diagnostic(self) -> None:
