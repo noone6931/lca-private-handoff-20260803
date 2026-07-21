@@ -125,6 +125,9 @@ class ArchitectureBoundaryTests(unittest.TestCase):
         agent = (ROOT / "src/local_agent/agent.py").read_text(encoding="utf-8")
         for marker in ("--no-optional-locks", "core.fsmonitor=false", "--no-ext-diff", "--no-textconv"):
             self.assertIn(marker, git_owner)
+        self.assertIn("--get-regexp", git_owner)
+        self.assertIn("filter\\..*\\.(clean|process|smudge)", git_owner)
+        self.assertIn("read_tier_external_filter_unsupported", git_owner)
         self.assertIn("--no-config", search_owner)
         self.assertIn("build_child_process_environment", git_owner)
         self.assertIn("build_child_process_environment", search_owner)

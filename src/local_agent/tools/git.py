@@ -26,6 +26,20 @@ _GIT_HELPER_ENVIRONMENT_KEY_FOLDS = frozenset(
         "GIT_EXTERNAL_DIFF",
     )
 )
+_GIT_FILTER_CONFIG_PATTERN = r"^filter\..*\.(clean|process|smudge)$"
+_GIT_READ_FILTER_DENIAL_KIND = "external_filter_unsupported"
+_GIT_READ_FILTER_DENIAL_REASON = "read_tier_external_filter_unsupported"
+_GIT_READ_FILTER_MESSAGE = (
+    "Git read operation was not run: repository configuration defines an external clean, process, or smudge "
+    "filter. Read-tier external filters are unsupported because they may execute repository-controlled processes."
+)
+
+
+class GitReadSafetyError(RuntimeError):
+    def __init__(self, message: str, *, reason: str, filter_count: int = 0) -> None:
+        super().__init__(message)
+        self.reason = reason
+        self.filter_count = filter_count
 
 
 @dataclass
@@ -114,11 +128,26 @@ def capture_git_baseline(workspace: str | PathLike[str]) -> dict[str, Any]:
             "diff_name_status": "",
             "staged_name_status": "",
         }
+    head_revision: str | None = None
     try:
         head_revision = _git_raw(workspace_path, ["rev-parse", "HEAD"]).stdout.strip() or None
         status_short = _git_raw(workspace_path, ["status", "--short"]).stdout.rstrip()
         diff_name_status = _git_raw(workspace_path, ["diff", "--name-status"]).stdout.rstrip()
         staged_name_status = _git_raw(workspace_path, ["diff", "--staged", "--name-status"]).stdout.rstrip()
+    except GitReadSafetyError as exc:
+        return {
+            "is_git_repo": True,
+            "head_revision": head_revision,
+            "error": str(exc),
+            "denial_kind": _GIT_READ_FILTER_DENIAL_KIND,
+            "reason": exc.reason,
+            "filter_count": exc.filter_count,
+            "external_process": "git",
+            "sandboxed": False,
+            "status_short": "",
+            "diff_name_status": "",
+            "staged_name_status": "",
+        }
     except (OSError, subprocess.SubprocessError) as exc:
         return {
             "is_git_repo": False,
@@ -137,7 +166,23 @@ def capture_git_baseline(workspace: str | PathLike[str]) -> dict[str, Any]:
 
 
 def _git(context: ToolContext, args: list[str]) -> ToolResult:
-    completed = _git_raw(context.workspace, args)
+    try:
+        completed = _git_raw(context.workspace, args)
+    except GitReadSafetyError as exc:
+        return ToolResult(
+            str(exc),
+            is_error=True,
+            metadata={
+                "git_probe_root": str(context.workspace),
+                "git_repository": True,
+                "external_process": "git",
+                "sandboxed": False,
+                "execution_status": "not_run",
+                "denial_kind": _GIT_READ_FILTER_DENIAL_KIND,
+                "reason": exc.reason,
+                "filter_count": exc.filter_count,
+            },
+        )
     output = completed.stdout or completed.stderr or "(empty)"
     is_error = completed.returncode != 0
     is_not_repository = is_error and "not a git repository" in output.lower()
@@ -158,6 +203,12 @@ def _git(context: ToolContext, args: list[str]) -> ToolResult:
 
 
 def _git_raw(workspace: str | PathLike[str], args: list[str]) -> subprocess.CompletedProcess[str]:
+    if args and args[0] in {"diff", "status"}:
+        _assert_git_read_filters_safe(workspace)
+    return _run_git(workspace, args)
+
+
+def _run_git(workspace: str | PathLike[str], args: list[str]) -> subprocess.CompletedProcess[str]:
     environment = {
         key: value
         for key, value in build_child_process_environment().values.items()
@@ -172,6 +223,41 @@ def _git_raw(workspace: str | PathLike[str], args: list[str]) -> subprocess.Comp
         timeout=30,
         check=False,
     )
+
+
+def _assert_git_read_filters_safe(workspace: str | PathLike[str]) -> None:
+    worktree = _run_git(workspace, ["rev-parse", "--is-inside-work-tree"])
+    if worktree.returncode != 0 or worktree.stdout.strip() != "true":
+        return
+    configured = _run_git(
+        workspace,
+        ["config", "--null", "--includes", "--get-regexp", _GIT_FILTER_CONFIG_PATTERN],
+    )
+    if configured.returncode == 1:
+        return
+    if configured.returncode != 0:
+        raise GitReadSafetyError(
+            "Git read operation was not run because external filter configuration could not be verified safely.",
+            reason="read_tier_external_filter_preflight_failed",
+        )
+    filter_count = 0
+    for record in configured.stdout.split("\0"):
+        if not record:
+            continue
+        _key, separator, value = record.partition("\n")
+        if not separator:
+            raise GitReadSafetyError(
+                "Git read operation was not run because external filter configuration could not be verified safely.",
+                reason="read_tier_external_filter_preflight_failed",
+            )
+        if value.strip():
+            filter_count += 1
+    if filter_count:
+        raise GitReadSafetyError(
+            _GIT_READ_FILTER_MESSAGE,
+            reason=_GIT_READ_FILTER_DENIAL_REASON,
+            filter_count=filter_count,
+        )
 
 
 def _git_command(args: list[str]) -> list[str]:

@@ -10,6 +10,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from local_agent.tools.base import ToolContext
+from local_agent.tools.base import ToolResult
 from local_agent.tools.git import _git_raw
 from local_agent.tools.git import capture_git_baseline
 from local_agent.tools.git import git_diff
@@ -123,6 +124,76 @@ class GitReadHelperContainmentTests(unittest.TestCase):
         self.assertFalse(result.is_error, result.content)
         self.assertFalse(marker_exists)
         self.assertIn("sample.txt", result.content)
+
+    def test_conversion_filters_fail_closed_before_status_diff_or_baseline(self) -> None:
+        for filter_kind in ("clean", "process", "smudge"):
+            with self.subTest(filter_kind=filter_kind), tempfile.TemporaryDirectory() as tmp:
+                workspace = Path(tmp)
+                marker = workspace / f"{filter_kind}.marker"
+                helper = workspace / f"{filter_kind}-helper"
+                self._init_repo(
+                    workspace,
+                    {
+                        ".gitattributes": "*.txt filter=lcaevil\n",
+                        "sample.txt": "before\n",
+                    },
+                )
+                self._write_marker_helper(helper, marker)
+                subprocess.run(
+                    ["git", "config", f"filter.lcaevil.{filter_kind}", str(helper)],
+                    cwd=workspace,
+                    check=True,
+                )
+                (workspace / "sample.txt").write_text("after\n", encoding="utf-8")
+                context = ToolContext(workspace=workspace, approval_mode="yolo")
+
+                status = git_status({}, context)
+                self._assert_filter_denial(status)
+                self.assertFalse(marker.exists())
+
+                diff = git_diff({}, context)
+                self._assert_filter_denial(diff)
+                self.assertFalse(marker.exists())
+
+                baseline = capture_git_baseline(workspace)
+                self.assertTrue(baseline["is_git_repo"])
+                self.assertEqual(baseline["denial_kind"], "external_filter_unsupported")
+                self.assertEqual(baseline["reason"], "read_tier_external_filter_unsupported")
+                self.assertEqual(baseline["filter_count"], 1)
+                self.assertEqual(baseline["external_process"], "git")
+                self.assertFalse(baseline["sandboxed"])
+                self.assertEqual(baseline["status_short"], "")
+                self.assertFalse(marker.exists())
+
+    def test_empty_filter_config_is_not_treated_as_an_executable_helper(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            self._init_repo(
+                workspace,
+                {
+                    ".gitattributes": "*.txt filter=empty\n",
+                    "sample.txt": "before\n",
+                },
+            )
+            subprocess.run(["git", "config", "filter.empty.clean", ""], cwd=workspace, check=True)
+            (workspace / "sample.txt").write_text("after\n", encoding="utf-8")
+
+            result = git_status({}, ToolContext(workspace=workspace, approval_mode="yolo"))
+
+        self.assertFalse(result.is_error, result.content)
+        self.assertIn("sample.txt", result.content)
+
+    def _assert_filter_denial(self, result: ToolResult) -> None:
+        self.assertTrue(result.is_error)
+        metadata = result.metadata
+        self.assertEqual(metadata["git_repository"], True)
+        self.assertEqual(metadata["execution_status"], "not_run")
+        self.assertEqual(metadata["denial_kind"], "external_filter_unsupported")
+        self.assertEqual(metadata["reason"], "read_tier_external_filter_unsupported")
+        self.assertEqual(metadata["filter_count"], 1)
+        self.assertEqual(metadata["external_process"], "git")
+        self.assertFalse(metadata["sandboxed"])
+        self.assertIn("Read-tier external filters are unsupported", result.content)
 
     def test_git_config_environment_injection_cannot_start_fsmonitor(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
