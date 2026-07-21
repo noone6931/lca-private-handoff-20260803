@@ -52,6 +52,8 @@ T-256 已完成并发布 P18 Git/Ripgrep Read-tier Helper Containment Phase 1。
 
 T-257 已完成并发布 P18 External LSP Execution Containment Phase 1。默认 server 只从 `PATH` 解析，canonical executable 位于 workspace 内或经 `PATH` symlink 指向 workspace 时 unavailable/fallback；只有 `AGENT_LSP_*_COMMAND` 的 absolute command[0] 可显式授权 workspace executable。LSP child 复用 `build_child_process_environment`，typed append 不能重新注入 provider credential，parent、toolchain、六项 noninteractive defaults 与 JDTLS `JAVA_TOOL_OPTIONS` false-last 保持。POSIX child 独立 process group，initialize/transport timeout/EOF/reader failure 与正常 close 统一走幂等 TERM/wait/KILL/wait，leader 已退出仍收束 descendant；Windows 只承诺 direct child。独立 verifier 在 immutable candidate 上 9/9 PASS、26 个 server PID 最终存活 0，main/stable/candidate 零污染；小牙再次停在 approval，诚实记 verifier-environment INCONCLUSIVE。没有新增 Runtime/policy/lifecycle tree、watcher、cleanup 或 sandbox 声明；下一窄批次才进入 macOS-only opt-in Seatbelt Phase 1，Linux/Windows 保持 unsupported/NO-GO。
 
+T-258 macOS-only Opt-in Seatbelt Sandbox Phase 1 已按 verifier-protocol NO-GO 收口，未发布新 stable。初版 commit `64d64c6` 的静态 profile 在真实 kernel matrix 中能限制 workspace/sibling/network/descendant，但独立 review 证明 `sandbox-exec` wrapper 成功 `Popen` 不能证明 profile 已应用：故意破坏 profile 时真实命令未启动、wrapper 返回 65，metadata 仍误报 `sandboxed=true`；合法 child 同样可返回 65，因此不能用 exit code 或 output 判别。原契约禁止 preflight、握手、结果扫描和第二 lifecycle，在该边界内没有 deterministic applied truth，错误机制已由 `372c068` 完整回退。回退树与 T-257 状态提交 `41d215b` 等同，复验 1352 unittest（1 skip）、62 benchmark、37 architecture、compileall/diff/help/chat 全绿；stable 继续保持 T-257，现有外部进程仍如实 `sandboxed=false`。macOS Seatbelt 后续只有在先定义可审计的 applied-truth 协议并单独评审后才能重启，Linux/Windows 继续 unsupported/NO-GO。
+
 T-219/T-220 已完成并发布。Codex 以 `CodexThread.submit(Op)`、唯一 submission loop、`next_event()` 和 response stream 建立双向 Runtime 边界，OMP 由 agent loop 消费 provider stream 并产出 turn/message/tool 生命周期；LCA 采用 Python 同步渐进路径：CommandDispatcher 统一消费 prompt/status/workspace/approval，Provider Stream Owner 解析同一次 OpenAI-compatible SSE/JSON 响应，text delta 与 tool argument delta 分离，只有完整合法 tool call 才能进入 ToolRegistry。`AssistantDelta` 与最终 `AssistantMessage` 共享 message/command/run identity；百炼 in-band XML 不泄漏、不执行。T-239 已在该协议上增加独立同步 TUI worker 和 cooperative cancellation；完整 async bus 与 OS sandbox 仍未冒充实现。
 
 T-221 已完成 T-220 immutable stable 的 S6-S10 黑盒批次。S6A 在首轮读取后由外部合法修改并提交新 baseline，第二轮会重读当前文件并保留外部改动；S6C 拒绝两次 patch 后零写入、测试仍失败且终态 `delivered=false`；S7 跨进程恢复同一 session/目标/todo 并完成 patch/test/diff；S8 的 always-ask、write、yolo + per-tool deny 均未越权，未验证写入不会被冒充完成；S9 第二轮变更验收条件后实现和测试均以最新条件为准。所有用户 turn 恰好一个 TurnStarted/RunSummary/TurnFinished，无 raw XML。S6B 首次 patch 直接通过测试，因此“测试失败后再修复”子项为 INCONCLUSIVE，不通过重复刷样本或新增 Harness gate 强行关闭。
@@ -678,7 +680,7 @@ T-213/T-214 已完成 S5-1 的 Codex 直接隔离交付。T-213 在上述 clean 
 | 测试 | 分层通过 | P5 收口时 90 个 unittest；当前 T-257 stable 为 1352/62/37，另有 75 focused LSP tests、9-case immutable fake-LSP matrix、Git/rg helper、bounded-output/process、child-env/process-lifecycle、non-delivery continuity、AssistantMessage/CLI smoke 与 history/search/multiline/follow-up queue matrix。T-250/T-252 的唯一百炼样本均因 DNS/provider environment 记为 INCONCLUSIVE，不冒充 live coding/queue 收益通过。 |
 | 日用入口 | 通过 | README 已补只读分析和小改任务命令模板。 |
 | 开放风险 | 可接受 | shell 仍非沙箱、prompt injection 仍需靠审批和封闭 VM；provider/model 专用 tokenizer、输出 reserve、managed skills、完整 reviewer 和完整 OMP ToolChoiceQueue 继续后置评估。 |
-| 下一阶段 | P18 macOS-only opt-in Seatbelt Phase 1 | T-253~T-257 已分批收口 child environment、process lifecycle、bounded capture、Git/rg helper 与 external LSP execution；下一批只实现 macOS Seatbelt adapter/lifecycle，不合并 approval 或新增第二 policy tree。Linux/Windows 保持 unsupported/NO-GO，现有协议级 containment 继续明确为 `sandboxed=false`。 |
+| 下一阶段 | P18 Seatbelt applied-truth protocol research | T-258 已证明静态 `sandbox-exec` wrapper 无法在禁止握手/预检/结果扫描的边界内确定 profile 已应用，因此实现已回退且 stable 保持 T-257。只有先形成独立、可审计的 applied-truth 协议并通过评审后才重启 macOS opt-in；Linux/Windows 保持 unsupported/NO-GO，现有能力继续明确 `sandboxed=false`。 |
 
 ## 推荐工作流
 
@@ -713,7 +715,7 @@ T-213/T-214 已完成 S5-1 的 Codex 直接隔离交付。T-213 在上述 clean 
 
 用户确认本文件后，建议按以下顺序继续：
 
-1. 使用 T-257 stable 的 `lca` 做真实日常 coding；P17 当前阶段不再横向扩功能。P18 下一窄批次仅实现 macOS-only opt-in Seatbelt Phase 1，保持 approval 与 sandbox lifecycle 分离；Linux/Windows unsupported/NO-GO，不把 T-253~T-257 的 child-env、capture 或协议级 containment 冒充 sandbox。provider/DNS 恢复前不重复 T-250/T-252 同类 live。
+1. 使用 T-257 stable 的 `lca` 做真实日常 coding；P17 当前阶段不再横向扩功能。P18 的 macOS Seatbelt 实现因 applied-truth 协议不可判定已回退，只有先形成独立、可审计的应用确认协议后才重启；Linux/Windows unsupported/NO-GO，不把 T-253~T-257 的 child-env、capture 或协议级 containment 冒充 sandbox。provider/DNS 恢复前不重复 T-250/T-252 同类 live。
 2. 保留 T-214 隔离 workspace 和完整 diff，是否写回原 finance-base/payment 由用户单独确认；不得把隔离交付描述成生产已上线。
 3. 若进入生产集成，先在 Oracle JDK 8u121 和真实 Oracle/MyBatis 环境验证 DDL、事务、唯一键并发与现有 MQ 回放，再应用到目标分支。
 4. P14 保留 Phase 1 default-off Explore，只有后续多个真实任务出现稳定收益时才重启 reviewer/implement 评估；TUI 已完成但不与 MCP、Browser、多 Agent 或 auto-apply 横向捆绑扩展。
