@@ -112,8 +112,13 @@ def root_for_path(workspace: Path, path: Path, server: LspServerConfig) -> Path 
 def resolved_server_configs(workspace: Path) -> list[LspServerConfig]:
     configs: list[LspServerConfig] = []
     for server in DEFAULT_SERVER_CONFIGS:
-        command = _command_override(server.name) or server.command
-        resolved = _resolve_command(workspace, command)
+        override = _command_override(server.name)
+        command = override or server.command
+        resolved = _resolve_command(
+            workspace,
+            command,
+            allow_workspace_executable=bool(override and Path(command[0]).is_absolute()),
+        )
         if resolved is None:
             continue
         configs.append(
@@ -144,28 +149,41 @@ def _command_override(server_name: str) -> tuple[str, ...] | None:
     return parts or None
 
 
-def _resolve_command(workspace: Path, command: tuple[str, ...]) -> tuple[str, ...] | None:
+def _resolve_command(
+    workspace: Path,
+    command: tuple[str, ...],
+    *,
+    allow_workspace_executable: bool = False,
+) -> tuple[str, ...] | None:
     if not command:
         return None
     executable = command[0]
     if os.path.isabs(executable):
-        return command if Path(executable).exists() else None
-    for local_bin in _local_bin_dirs(workspace):
-        candidate = local_bin / executable
-        if candidate.exists():
-            return (str(candidate), *command[1:])
-    resolved = shutil.which(executable)
-    if resolved:
-        return (resolved, *command[1:])
-    return None
+        resolved = _canonical_executable(Path(executable))
+    else:
+        found = shutil.which(executable)
+        resolved = _canonical_executable(Path(found)) if found else None
+    if resolved is None:
+        return None
+    if not allow_workspace_executable and _is_within_workspace(resolved, workspace):
+        return None
+    return (str(resolved), *command[1:])
 
 
-def _local_bin_dirs(workspace: Path) -> tuple[Path, ...]:
-    return (
-        workspace / "node_modules" / ".bin",
-        workspace / ".venv" / "bin",
-        workspace / "venv" / "bin",
-    )
+def _canonical_executable(path: Path) -> Path | None:
+    try:
+        resolved = path.resolve(strict=True)
+    except (OSError, RuntimeError):
+        return None
+    return resolved if resolved.is_file() else None
+
+
+def _is_within_workspace(path: Path, workspace: Path) -> bool:
+    try:
+        path.relative_to(workspace.resolve())
+    except (OSError, ValueError):
+        return False
+    return True
 
 
 def _has_root_marker(workspace: Path, markers: tuple[str, ...]) -> bool:

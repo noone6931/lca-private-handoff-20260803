@@ -735,6 +735,25 @@ class ArchitectureBoundaryTests(unittest.TestCase):
         self.assertNotIn("no files were written", code_action)
         self.assertNotIn("LspServerConfig", ROOT.joinpath("src/local_agent/agent.py").read_text(encoding="utf-8"))
 
+    def test_external_lsp_execution_containment_stays_in_config_and_client_owners(self) -> None:
+        config = (ROOT / "src/local_agent/lsp/config.py").read_text(encoding="utf-8")
+        client = (ROOT / "src/local_agent/lsp/client.py").read_text(encoding="utf-8")
+        process_environment = (ROOT / "src/local_agent/tools/process_environment.py").read_text(encoding="utf-8")
+        runtime = (ROOT / "src/local_agent/agent.py").read_text(encoding="utf-8")
+
+        self.assertNotIn("node_modules", config)
+        self.assertNotIn(".venv", config)
+        self.assertNotIn("venv/bin", config)
+        self.assertIn("allow_workspace_executable", config)
+        self.assertIn("build_child_process_environment", client)
+        self.assertIn("is_provider_credential_environment_key", client)
+        self.assertIn("start_new_session=os.name == \"posix\"", client)
+        self.assertIn("os.killpg", client)
+        self.assertIn("_process_group_id", client)
+        self.assertNotIn("LspServerConfig", runtime)
+        self.assertNotIn("StdioLspClient", runtime)
+        self.assertNotIn("local_agent.lsp", process_environment)
+
     def test_runtime_strategy_owners_do_not_reintroduce_business_keyword_guards(self) -> None:
         strategy_files = (
             ROOT / "src/local_agent/workflows/contracts.py",

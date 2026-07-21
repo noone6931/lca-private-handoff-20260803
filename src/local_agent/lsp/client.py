@@ -4,6 +4,7 @@ import atexit
 import json
 import os
 import queue
+import signal
 import subprocess
 import threading
 import time
@@ -20,6 +21,9 @@ DEFAULT_LSP_TIMEOUT_SECONDS = 8.0
 DIAGNOSTICS_SETTLE_SECONDS = 1.5
 PROJECT_LOAD_TIMEOUT_SECONDS = 15.0
 PROJECT_LOAD_NO_PROGRESS_GRACE_SECONDS = 0.25
+LSP_CLOSE_TERM_SECONDS = 0.5
+LSP_CLOSE_KILL_SECONDS = 0.5
+LSP_READER_JOIN_SECONDS = 0.5
 CODE_ACTION_KINDS = (
     "quickfix",
     "refactor",
@@ -62,12 +66,22 @@ class LspClientError(RuntimeError):
     pass
 
 
+_READER_EOF = object()
+
+
 def _child_process_environment(
     server: LspServerConfig,
     parent_environment: Mapping[str, str] | None = None,
 ) -> dict[str, str]:
-    child_environment = dict(os.environ if parent_environment is None else parent_environment)
+    from local_agent.tools.process_environment import build_child_process_environment
+    from local_agent.tools.process_environment import is_provider_credential_environment_key
+
+    child_environment = dict(
+        build_child_process_environment(parent=parent_environment).values
+    )
     for name, value in server.process_environment.append:
+        if is_provider_credential_environment_key(name):
+            continue
         inherited = child_environment.get(name)
         child_environment[name] = f"{inherited} {value}" if inherited else value
     return child_environment
@@ -78,12 +92,16 @@ class StdioLspClient:
         self.server = server
         self.workspace = workspace
         self._next_id = 1
-        self._messages: queue.Queue[dict[str, Any] | BaseException | None] = queue.Queue()
+        self._messages: queue.Queue[dict[str, Any] | BaseException | object] = queue.Queue()
         self._diagnostics: dict[str, list[dict[str, Any]]] = {}
         self._open_uris: set[str] = set()
         self._progress_tokens: set[str] = set()
         self._saw_progress = False
         self._project_loaded = threading.Event()
+        self._close_lock = threading.Lock()
+        self._closed = False
+        self._healthy = False
+        self._reader: threading.Thread | None = None
         self._process = subprocess.Popen(
             list(server.command),
             cwd=workspace,
@@ -92,13 +110,24 @@ class StdioLspClient:
             stderr=subprocess.DEVNULL,
             text=False,
             env=_child_process_environment(server),
+            start_new_session=os.name == "posix",
         )
-        self._reader = threading.Thread(target=self._reader_loop, name=f"lsp-reader-{server.name}", daemon=True)
-        self._reader.start()
-        self._initialize()
+        self._process_group_id = self._process.pid if os.name == "posix" else None
+        self._healthy = True
+        try:
+            self._reader = threading.Thread(
+                target=self._reader_loop,
+                name=f"lsp-reader-{server.name}",
+                daemon=True,
+            )
+            self._reader.start()
+            self._initialize()
+        except BaseException:
+            self.close()
+            raise
 
     def alive(self) -> bool:
-        return self._process.poll() is None
+        return self._healthy and self._process.poll() is None
 
     def document_symbols(self, path: Path, *, timeout: float = DEFAULT_LSP_TIMEOUT_SECONDS) -> list[LspSymbol]:
         self.ensure_open(path)
@@ -241,18 +270,27 @@ class StdioLspClient:
     def request(self, method: str, params: dict[str, Any], *, timeout: float = DEFAULT_LSP_TIMEOUT_SECONDS) -> Any:
         request_id = self._next_id
         self._next_id += 1
-        self._send({"jsonrpc": "2.0", "id": request_id, "method": method, "params": params})
+        try:
+            self._send({"jsonrpc": "2.0", "id": request_id, "method": method, "params": params})
+        except (LspClientError, OSError, ValueError) as exc:
+            self._raise_transport_failure(f"LSP transport write failed: {method}", cause=exc)
         deadline = time.monotonic() + timeout
         while True:
             message = self._read_message(deadline)
             if isinstance(message, BaseException):
-                raise LspClientError(str(message)) from message
+                self._raise_transport_failure(f"LSP transport reader failed: {method}", cause=message)
+            if message is _READER_EOF:
+                self._raise_transport_failure(f"LSP transport closed: {method}")
             if message is None:
-                raise LspClientError(f"LSP request timed out: {method}")
-            if self._handle_notification(message):
-                continue
-            if self._handle_server_request(message):
-                continue
+                self._raise_transport_failure(f"LSP request timed out: {method}")
+            assert isinstance(message, dict)
+            try:
+                if self._handle_notification(message):
+                    continue
+                if self._handle_server_request(message):
+                    continue
+            except (LspClientError, OSError, ValueError) as exc:
+                self._raise_transport_failure(f"LSP transport write failed: {method}", cause=exc)
             if message.get("id") != request_id:
                 continue
             if "error" in message:
@@ -260,25 +298,32 @@ class StdioLspClient:
             return message.get("result")
 
     def notify(self, method: str, params: dict[str, Any]) -> None:
-        self._send({"jsonrpc": "2.0", "method": method, "params": params})
+        try:
+            self._send({"jsonrpc": "2.0", "method": method, "params": params})
+        except (LspClientError, OSError, ValueError) as exc:
+            self._raise_transport_failure(f"LSP transport write failed: {method}", cause=exc)
 
     def close(self) -> None:
-        if self._process.poll() is not None:
-            _close_pipe(self._process.stdin)
-            _close_pipe(self._process.stdout)
-            return
-        try:
-            if self._process.stdin is not None:
-                self._process.stdin.close()
-            if self._process.poll() is None:
-                self._process.terminate()
-                self._process.wait(timeout=1)
-        except Exception:  # noqa: BLE001 - cleanup must be best-effort.
-            if self._process.poll() is None:
-                self._process.kill()
-        finally:
-            _close_pipe(self._process.stdin)
-            _close_pipe(self._process.stdout)
+        with self._close_lock:
+            if self._closed:
+                return
+            self._closed = True
+            self._healthy = False
+        _close_pipe(self._process.stdin)
+        _terminate_lsp_process(self._process, self._process_group_id)
+        reader = self._reader
+        if reader is not None and reader is not threading.current_thread():
+            reader.join(timeout=LSP_READER_JOIN_SECONDS)
+        _close_pipe(self._process.stdout)
+        if reader is not None and reader.is_alive() and reader is not threading.current_thread():
+            reader.join(timeout=LSP_READER_JOIN_SECONDS)
+
+    def _raise_transport_failure(self, message: str, *, cause: BaseException | None = None) -> None:
+        self._healthy = False
+        self.close()
+        if cause is None:
+            raise LspClientError(message)
+        raise LspClientError(message) from cause
 
     def _initialize(self) -> None:
         self.request(
@@ -330,13 +375,13 @@ class StdioLspClient:
             while True:
                 message = _read_framed_message(self._process.stdout)
                 if message is None:
-                    self._messages.put(None)
+                    self._messages.put(_READER_EOF)
                     return
                 self._messages.put(message)
         except BaseException as exc:  # noqa: BLE001 - reader failures become request failures.
             self._messages.put(exc)
 
-    def _read_message(self, deadline: float) -> dict[str, Any] | BaseException | None:
+    def _read_message(self, deadline: float) -> dict[str, Any] | BaseException | object | None:
         timeout = max(0.0, deadline - time.monotonic())
         try:
             return self._messages.get(timeout=timeout)
@@ -345,6 +390,10 @@ class StdioLspClient:
 
     def _drain_one_message(self, deadline: float) -> None:
         message = self._read_message(deadline)
+        if isinstance(message, BaseException):
+            self._raise_transport_failure("LSP transport reader failed", cause=message)
+        if message is _READER_EOF:
+            self._raise_transport_failure("LSP transport closed")
         if isinstance(message, dict):
             self._handle_notification(message) or self._handle_server_request(message)
 
@@ -475,6 +524,74 @@ def _close_pipe(pipe: Any) -> None:
     try:
         pipe.close()
     except Exception:  # noqa: BLE001 - process cleanup is best-effort.
+        return
+
+
+def _terminate_lsp_process(
+    process: subprocess.Popen[bytes],
+    process_group_id: int | None,
+) -> None:
+    if os.name == "posix" and process_group_id is not None:
+        _signal_process_group(process_group_id, signal.SIGTERM)
+        if not _wait_for_process_group_exit(process, process_group_id, LSP_CLOSE_TERM_SECONDS):
+            _signal_process_group(process_group_id, signal.SIGKILL)
+            _wait_for_process_group_exit(process, process_group_id, LSP_CLOSE_KILL_SECONDS)
+        _wait_for_direct_process(process, LSP_CLOSE_KILL_SECONDS)
+        return
+    if process.poll() is not None:
+        return
+    try:
+        process.terminate()
+        process.wait(timeout=LSP_CLOSE_TERM_SECONDS)
+    except (OSError, subprocess.TimeoutExpired):
+        try:
+            process.kill()
+            process.wait(timeout=LSP_CLOSE_KILL_SECONDS)
+        except (OSError, subprocess.TimeoutExpired):
+            return
+
+
+def _signal_process_group(process_group_id: int, sig: signal.Signals) -> None:
+    try:
+        os.killpg(process_group_id, sig)
+    except (OSError, ProcessLookupError):
+        return
+
+
+def _wait_for_process_group_exit(
+    process: subprocess.Popen[bytes],
+    process_group_id: int,
+    timeout: float,
+) -> bool:
+    deadline = time.monotonic() + timeout
+    while True:
+        process.poll()
+        if not _process_group_alive(process_group_id):
+            return True
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+        time.sleep(min(0.02, remaining))
+
+
+def _process_group_alive(process_group_id: int) -> bool:
+    try:
+        os.killpg(process_group_id, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def _wait_for_direct_process(process: subprocess.Popen[bytes], timeout: float) -> None:
+    if process.poll() is not None:
+        return
+    try:
+        process.wait(timeout=timeout)
+    except (OSError, subprocess.TimeoutExpired):
         return
 
 
