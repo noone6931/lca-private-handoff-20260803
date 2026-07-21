@@ -285,7 +285,6 @@ def redact_prior_execution_transcript(
     execution_narrative = False
     for index, message in enumerate(messages):
         if message.get("role") == "user":
-            execution_narrative = False
             continue
         if message.get("role") == "assistant":
             copied, calls, contains_execution = _redacted_assistant_message(message, execution_ids)

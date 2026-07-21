@@ -17,6 +17,7 @@ from local_agent.session.execution_evidence import PRIOR_EXECUTION_MESSAGE_KEY
 from local_agent.session.execution_evidence import PRIOR_EXECUTION_STATE_KEY
 from local_agent.session.execution_evidence import _execution_ref
 from local_agent.session.execution_evidence import _fact_from_payload
+from local_agent.session.execution_evidence import redact_prior_execution_transcript
 from local_agent.session.execution_evidence import trusted_prior_execution_attributions
 from local_agent.session.jsonl_store import JsonlSessionStore
 from local_agent.steering.final_answer import FinalAnswerContext
@@ -162,6 +163,20 @@ class ExecutionMetadataTests(unittest.TestCase):
 
 
 class ProspectiveExecutionEvidenceTests(unittest.TestCase):
+    def test_no_execution_history_redaction_is_byte_equivalent(self) -> None:
+        messages = [
+            {"role": "user", "content": "Keep this user prompt exactly."},
+            {"role": "assistant", "content": "Keep this assistant response exactly."},
+            {"role": "user", "content": "Keep this later prompt too."},
+            {"role": "assistant", "content": "Keep this later response too."},
+        ]
+        before = json.dumps(messages, ensure_ascii=False, separators=(",", ":"))
+
+        redacted = redact_prior_execution_transcript(messages, execution_ids={"unmatched-persisted-call"})
+
+        self.assertEqual(redacted, 0)
+        self.assertEqual(json.dumps(messages, ensure_ascii=False, separators=(",", ":")), before)
+
     def test_no_prior_execution_produces_no_projection_or_steering(self) -> None:
         _NoPriorClient.calls = []
         with tempfile.TemporaryDirectory() as tmp, patch(
@@ -176,6 +191,7 @@ class ProspectiveExecutionEvidenceTests(unittest.TestCase):
         self.assertEqual(len(_NoPriorClient.calls), 2)
         for call in _NoPriorClient.calls:
             self.assertNotIn("<prior_execution_facts_v1>", json.dumps(call["messages"]))
+        self.assertIn("No prospective execution fact is available.", json.dumps(_NoPriorClient.calls[1]["messages"]))
         self.assertEqual(summary["tool_calls"], 0)
         self.assertEqual(summary["tool_counts"], {})
         self.assertEqual(summary["steering_counts"].get("tool_usage_evidence", 0), 0)
@@ -301,6 +317,29 @@ class ProspectiveExecutionEvidenceTests(unittest.TestCase):
                 ),
             )
             store.append("assistant", {"role": "assistant", "content": "Bubble sort verified with typed exit 0."})
+            store.append("user", {"content": "Please confirm whether that historical command really ran."})
+            store.append(
+                "assistant",
+                {
+                    "role": "assistant",
+                    "content": "Later confirmation command: cd /legacy/workspace && python bubble_sort.py",
+                },
+            )
+            store.append("user", {"content": "What output did the confirmation show?"})
+            store.append(
+                "assistant",
+                {
+                    "role": "assistant",
+                    "content": "Later confirmation output: sorted=[11, 12, 22, 25, 34, 64, 90] exit=0",
+                },
+            )
+            store.append(
+                "assistant",
+                {
+                    "role": "assistant",
+                    "content": "Second assistant-only confirmation: the shell output proved success.",
+                },
+            )
             config = _config(workspace, state_dir=state_dir)
             with patch("local_agent.agent.OpenAICompatibleClient", _LegacyReplayClient):
                 runtime = AgentRuntime(config, show_tool_logs=False, session_id=store.session_id)
@@ -315,6 +354,11 @@ class ProspectiveExecutionEvidenceTests(unittest.TestCase):
         self.assertNotIn("legacy-credential", first_context)
         self.assertNotIn("all passed", first_context)
         self.assertNotIn("Bubble sort verified", first_context)
+        self.assertNotIn("Later confirmation command", first_context)
+        self.assertNotIn("Later confirmation output", first_context)
+        self.assertNotIn("Second assistant-only confirmation", first_context)
+        self.assertIn("Please confirm whether that historical command really ran.", first_context)
+        self.assertIn("What output did the confirmation show?", first_context)
         self.assertEqual(runtime._session.load_event_payloads("execution_completed_v1"), [])
         self.assertEqual(runtime._last_run_summary["tool_calls"], 0)
         self.assertEqual(runtime._last_run_summary["tool_counts"], {})

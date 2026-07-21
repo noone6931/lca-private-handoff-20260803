@@ -178,6 +178,10 @@ class ArchitectureBoundaryTests(unittest.TestCase):
         self.assertIn("self.lines.get(reference) == segment.strip()", session)
         self.assertNotIn("reference in segment", session)
         self.assertIn("tool in prior_attributions.references.values()", steering)
+        redaction = session.split("def redact_prior_execution_transcript", 1)[1].split(
+            "def _redacted_assistant_message", 1
+        )[0]
+        self.assertEqual(redaction.count("execution_narrative = False"), 1)
 
     def test_session_task_continuity_is_typed_and_owned_outside_runtime(self) -> None:
         owner = (ROOT / "src/local_agent/session/continuity.py").read_text(encoding="utf-8")
