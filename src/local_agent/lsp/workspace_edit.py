@@ -21,18 +21,15 @@ MAX_WORKSPACE_PREVIEW_BYTES = 96 * 1024
 class WorkspaceEditError(RuntimeError):
     """Raised when an LSP WorkspaceEdit cannot be previewed safely."""
 
-
 @dataclass(frozen=True)
 class LspPosition:
     line: int
     character: int
 
-
 @dataclass(frozen=True)
 class LspRange:
     start: LspPosition
     end: LspPosition
-
 
 @dataclass(frozen=True)
 class WorkspaceEditFilePlan:
@@ -312,7 +309,10 @@ def _parse_text_edits(
             raise WorkspaceEditError("Only plain TextEdit objects are supported.")
         if not isinstance(item["newText"], str):
             raise WorkspaceEditError("TextEdit.newText must be a string.")
-        new_text_bytes = len(item["newText"].encode("utf-8"))
+        try:
+            new_text_bytes = len(item["newText"].encode("utf-8"))
+        except UnicodeEncodeError as exc:
+            raise WorkspaceEditError("TextEdit.newText must be valid UTF-8 encodable text.") from exc
         if new_text_bytes > MAX_WORKSPACE_EDIT_REPLACEMENT_BYTES:
             raise WorkspaceEditError(
                 f"TextEdit.newText exceeds the {MAX_WORKSPACE_EDIT_REPLACEMENT_BYTES}-byte replacement limit."

@@ -142,6 +142,49 @@ class ExistingTextTransactionTests(unittest.TestCase):
             self.assertEqual(first.read_bytes(), b"new-one\n")
             self.assertEqual(second.read_bytes(), b"two\n")
 
+    def test_compensation_exception_after_restore_uses_final_residual_truth(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            target = root / "target.txt"
+            target.write_bytes(b"old\n")
+            change = ExistingTextFileChange.create(target, b"old\n", b"new\n")
+
+            def write_then_raise(path: Path, content: bytes) -> None:
+                path.write_bytes(content)
+                raise OSError("reported after write")
+
+            with patch("local_agent.patch.transaction._write_bytes", side_effect=write_then_raise):
+                result = apply_existing_text_transaction((change,))
+
+            self.assertEqual(result.status, "rolled_back")
+            self.assertFalse(result.workspace_changed)
+            self.assertEqual(result.changed_paths, ())
+            self.assertEqual(result.error_kind, "write_failed")
+            self.assertEqual(target.read_bytes(), b"old\n")
+
+    def test_compensation_exception_with_residual_remains_rollback_failed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            target = root / "target.txt"
+            target.write_bytes(b"old\n")
+            change = ExistingTextFileChange.create(target, b"old\n", b"new\n")
+            calls = 0
+
+            def leave_residual(path: Path, content: bytes) -> None:
+                nonlocal calls
+                calls += 1
+                if calls == 1:
+                    path.write_bytes(content)
+                raise OSError("controlled failure")
+
+            with patch("local_agent.patch.transaction._write_bytes", side_effect=leave_residual):
+                result = apply_existing_text_transaction((change,))
+
+            self.assertEqual(result.status, "rollback_failed")
+            self.assertTrue(result.workspace_changed)
+            self.assertEqual(result.changed_paths, (target,))
+            self.assertEqual(target.read_bytes(), b"new\n")
+
     def test_duplicate_and_noncanonical_targets_fail_closed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp).resolve()

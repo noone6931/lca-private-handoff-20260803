@@ -308,6 +308,47 @@ class ApplyWorkspaceEditTests(unittest.TestCase):
             self.assertEqual((first.read_text(), second.read_text()), ("old\n", "old\n"))
             self.assertEqual(store.get(stored.plan_id, scope=self._scope(context)), stored)
 
+    def test_journal_inverse_exception_after_restore_retains_retriable_plan(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            target = root / "main.py"
+            target.write_text("old\n", encoding="utf-8")
+            context = self._context(root)
+            store = WorkspaceEditPlanStore()
+            stored = self._register(store, context, (target,))
+            calls = 0
+
+            def restored_then_reported_failure(path: Path, content: bytes) -> None:
+                nonlocal calls
+                calls += 1
+                if calls == 1:
+                    path.write_bytes(content)
+                    return
+                if calls == 2:
+                    path.write_bytes(content)
+                raise OSError("controlled compensation report")
+
+            with (
+                patch("local_agent.patch.journal.os.replace", side_effect=OSError("journal unavailable")),
+                patch(
+                    "local_agent.patch.transaction._write_bytes",
+                    side_effect=restored_then_reported_failure,
+                ),
+            ):
+                result = self._execute(store, context, stored.plan_id)
+
+            self.assertTrue(result.is_error)
+            self.assertEqual(result.metadata["workspace_state"], "restored")
+            self.assertEqual(result.metadata["transaction_status"], "rolled_back")
+            self.assertFalse(result.metadata["workspace_changed"])
+            self.assertEqual(result.metadata["changed_paths"], [])
+            self.assertEqual(target.read_text(encoding="utf-8"), "old\n")
+            self.assertEqual(store.get(stored.plan_id, scope=self._scope(context)), stored)
+
+            retried = self._execute(store, context, stored.plan_id)
+            self.assertFalse(retried.is_error, retried.content)
+            self.assertEqual(target.read_text(encoding="utf-8"), "new\n")
+
     def test_workspace_edit_journal_failure_partial_inverse_reports_final_residual(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp).resolve()

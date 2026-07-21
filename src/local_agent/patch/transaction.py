@@ -130,7 +130,6 @@ def _compensate(
     attempted: ExistingTextFileChange | None,
     error_kind: str,
 ) -> TextTransactionResult:
-    compensation_failed = False
     rollback_order = ([attempted] if attempted is not None else []) + list(reversed(committed))
     for change in rollback_order:
         try:
@@ -138,16 +137,14 @@ def _compensate(
             if current == change.before_bytes:
                 continue
             if current != change.after_bytes:
-                compensation_failed = True
                 continue
             _write_bytes(change.path, change.before_bytes)
-            if _read_exact(change.path) != change.before_bytes:
-                compensation_failed = True
+            _read_exact(change.path)
         except (OSError, RuntimeError):
-            compensation_failed = True
+            pass
 
     changed_paths = _changed_paths(all_changes)
-    if compensation_failed or changed_paths:
+    if changed_paths:
         return TextTransactionResult("rollback_failed", True, changed_paths, error_kind)
     return TextTransactionResult("rolled_back", False, (), error_kind)
 

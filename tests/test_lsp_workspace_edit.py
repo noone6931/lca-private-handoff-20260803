@@ -335,6 +335,31 @@ class WorkspaceEditPreviewTests(unittest.TestCase):
             self.assertEqual(target.read_bytes(), original)
             self.assertGreater(MAX_WORKSPACE_REPLACEMENT_BYTES, MAX_WORKSPACE_EDIT_REPLACEMENT_BYTES)
 
+    def test_lone_surrogate_replacement_is_typed_for_both_workspace_edit_shapes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            target = workspace / "main.py"
+            target.write_text("old\n", encoding="utf-8")
+            original = target.read_bytes()
+            edit = _edit(0, 0, 0, 3, "\ud800")
+            payloads = (
+                {"changes": {target.as_uri(): [edit]}},
+                {
+                    "documentChanges": [
+                        {
+                            "textDocument": {"uri": target.as_uri(), "version": 1},
+                            "edits": [edit],
+                        }
+                    ]
+                },
+            )
+
+            for payload in payloads:
+                with self.subTest(shape=next(iter(payload))):
+                    with self.assertRaisesRegex(WorkspaceEditError, "valid UTF-8 encodable text"):
+                        self._preview(workspace, payload)
+                    self.assertEqual(target.read_bytes(), original)
+
 
 if __name__ == "__main__":
     unittest.main()

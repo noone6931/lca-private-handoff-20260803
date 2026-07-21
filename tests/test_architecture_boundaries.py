@@ -75,7 +75,7 @@ OWNER_COMPLEXITY_CEILINGS = {
     "src/local_agent/lsp/workspace_edit_store.py": 225,
     "src/local_agent/patch/anchored.py": 322,
     "src/local_agent/patch/journal.py": 54,
-    "src/local_agent/patch/transaction.py": 179,
+    "src/local_agent/patch/transaction.py": 176,
     "src/local_agent/tools/files.py": 891,
     "src/local_agent/tools/workspace_edit.py": 230,
     "src/local_agent/tools/lsp_rename.py": 222,

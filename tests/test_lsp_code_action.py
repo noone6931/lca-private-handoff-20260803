@@ -389,6 +389,27 @@ class LspCodeActionPreviewTests(unittest.TestCase):
             self.assertEqual(first.read_text(encoding="utf-8"), "a\n")
             self.assertEqual(second.read_text(encoding="utf-8"), "b\n")
 
+    def test_lone_surrogate_workspace_edit_is_typed_through_code_action_preview(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            target = workspace / "main.py"
+            target.write_text("old\n", encoding="utf-8")
+            action = {
+                "title": "Invalid replacement",
+                "edit": {"changes": {target.as_uri(): [_range_edit(0, 0, 0, 3, "\ud800")]}},
+            }
+
+            result = self._execute(
+                workspace,
+                {"path": "main.py", "line": 1, "symbol": "old", "action_index": 0},
+                client=_CodeActionClient([action]),
+            )
+
+            self.assertTrue(result.is_error)
+            self.assertIn("valid UTF-8 encodable text", result.content)
+            self.assertNotIn("Semantic code action preview", result.content)
+            self.assertEqual(target.read_text(encoding="utf-8"), "old\n")
+
     def test_external_server_and_exact_position_are_required(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp).resolve()
