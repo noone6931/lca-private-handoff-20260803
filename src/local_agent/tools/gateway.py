@@ -130,7 +130,12 @@ def _tool_choice_result_path(arguments: str | dict[str, Any], result: ToolResult
     if path is not None:
         return str(path)
     changed_path = result.metadata.get("changed_path") if isinstance(result.metadata, Mapping) else None
-    return str(changed_path) if isinstance(changed_path, str) and changed_path.strip() else None
+    if isinstance(changed_path, str) and changed_path.strip():
+        return str(changed_path)
+    changed_paths = result.metadata.get("changed_paths") if isinstance(result.metadata, Mapping) else None
+    if isinstance(changed_paths, (list, tuple)):
+        return next((value for value in changed_paths if isinstance(value, str) and value.strip()), None)
+    return None
 
 
 def is_session_evidence_reread(

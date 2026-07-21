@@ -5,7 +5,7 @@ import re
 from typing import Any, Mapping, Protocol
 
 
-WRITE_TOOL_NAMES = frozenset({"apply_patch", "rollback_patch", "write_file"})
+WRITE_TOOL_NAMES = frozenset({"apply_patch", "apply_workspace_edit", "rollback_patch", "write_file"})
 NO_WRITE_RESULT_MARKERS = frozenset(
     {
         "dry run",
@@ -31,10 +31,14 @@ class TimelineToolResult(Protocol):
 
 
 def result_changed_workspace(result: TimelineToolResult) -> bool:
+    workspace_changed = result.metadata.get("workspace_changed")
+    if isinstance(workspace_changed, bool):
+        return workspace_changed
     if result.is_error:
         return False
-    if result.changed is not None:
-        return result.changed
+    changed = getattr(result, "changed", None)
+    if changed is not None:
+        return bool(changed)
     content = (result.content or "").lower()
     return not any(marker in content for marker in NO_WRITE_RESULT_MARKERS)
 
@@ -99,14 +103,16 @@ def effective_workspace_write_paths(results: Sequence[TimelineToolResult]) -> tu
     for result in results:
         if result.name not in WRITE_TOOL_NAMES or not result_changed_workspace(result):
             continue
-        path = _write_path(result)
-        if not path:
-            continue
-        key = _normalize_path(path)
         if result.name == "rollback_patch":
-            paths.pop(key, None)
+            transaction_paths = _metadata_paths(result, "transaction_paths") or result_workspace_write_paths(result)
+            for path in transaction_paths:
+                paths.pop(_normalize_path(path), None)
+            for path in _metadata_paths(result, "effective_changed_paths"):
+                paths[_normalize_path(path)] = path
         else:
-            paths[key] = path
+            effective_paths = _metadata_paths(result, "effective_changed_paths") or result_workspace_write_paths(result)
+            for path in effective_paths:
+                paths[_normalize_path(path)] = path
     return tuple(paths.values())
 
 
@@ -163,10 +169,26 @@ def _is_empty_diff(content: str) -> bool:
 
 
 def _write_path(result: TimelineToolResult) -> str | None:
-    if result.path:
-        return result.path
+    path = getattr(result, "path", None)
+    if path:
+        return str(path)
     changed_path = result.metadata.get("changed_path")
     return changed_path if isinstance(changed_path, str) and changed_path.strip() else None
+
+
+def result_workspace_write_paths(result: TimelineToolResult) -> tuple[str, ...]:
+    paths = _metadata_paths(result, "changed_paths")
+    if paths:
+        return paths
+    path = _write_path(result)
+    return (path,) if path else ()
+
+
+def _metadata_paths(result: TimelineToolResult, key: str) -> tuple[str, ...]:
+    values = result.metadata.get(key)
+    if not isinstance(values, (list, tuple)):
+        return ()
+    return tuple(dict.fromkeys(value for value in values if isinstance(value, str) and value.strip()))
 
 
 def _diff_mentions_any_path(result: TimelineToolResult, paths: tuple[str, ...]) -> bool:

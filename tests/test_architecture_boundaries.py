@@ -65,15 +65,18 @@ OWNER_COMPLEXITY_CEILINGS = {
     "src/local_agent/providers/protocol.py": 379,
     "src/local_agent/runtime/prompt.py": 490,
     "src/local_agent/runtime/collector.py": 668,
-    "src/local_agent/runtime/evidence.py": 518,
-    "src/local_agent/tools/gateway.py": 404,
+    "src/local_agent/runtime/evidence.py": 528,
+    "src/local_agent/tools/gateway.py": 409,
     "src/local_agent/platform/terminal.py": 122,
     "src/local_agent/protocol/cancellation.py": 66,
     "src/local_agent/workflows/explore_subagent.py": 561,
-    "src/local_agent/lsp/workspace_edit.py": 380,
-    "src/local_agent/tools/lsp_rename.py": 187,
+    "src/local_agent/lsp/workspace_edit.py": 440,
+    "src/local_agent/lsp/workspace_edit_store.py": 114,
+    "src/local_agent/patch/transaction.py": 160,
+    "src/local_agent/tools/workspace_edit.py": 164,
+    "src/local_agent/tools/lsp_rename.py": 216,
     "src/local_agent/tools/lsp_code_action.py": 430,
-    "src/local_agent/session/continuity.py": 284,
+    "src/local_agent/session/continuity.py": 288,
 }
 LEGACY_COMPLEXITY_DEBT_CEILINGS = {
     "src/local_agent/agent.py": 1632,
@@ -683,6 +686,38 @@ class ArchitectureBoundaryTests(unittest.TestCase):
         self.assertNotIn("write_text", workspace_edit)
         self.assertNotIn("apply_patch", rename_tool.split("description=", 1)[0])
         self.assertNotIn("ToolChoice", rename_tool)
+
+    def test_semantic_workspace_edit_apply_has_one_parser_store_writer_and_approval_boundary(self) -> None:
+        tools = importlib.import_module("local_agent.tools")
+        parser = (ROOT / "src/local_agent/lsp/workspace_edit.py").read_text(encoding="utf-8")
+        store = (ROOT / "src/local_agent/lsp/workspace_edit_store.py").read_text(encoding="utf-8")
+        writer = (ROOT / "src/local_agent/patch/transaction.py").read_text(encoding="utf-8")
+        apply_tool = (ROOT / "src/local_agent/tools/workspace_edit.py").read_text(encoding="utf-8")
+        anchored = (ROOT / "src/local_agent/patch/anchored.py").read_text(encoding="utf-8")
+        code_action = (ROOT / "src/local_agent/tools/lsp_code_action.py").read_text(encoding="utf-8")
+        client = (ROOT / "src/local_agent/lsp/client.py").read_text(encoding="utf-8")
+        runtime = (ROOT / "src/local_agent/agent.py").read_text(encoding="utf-8")
+        production = "\n".join(
+            path.read_text(encoding="utf-8") for path in (ROOT / "src/local_agent").rglob("*.py")
+        )
+
+        registered = tools.create_default_registry()
+        schema = next(item for item in registered.schemas() if item["function"]["name"] == "apply_workspace_edit")
+        self.assertEqual(set(schema["function"]["parameters"]["properties"]), {"plan_id"})
+        self.assertFalse(schema["function"]["parameters"]["additionalProperties"])
+        self.assertEqual(production.count("def _parse_workspace_edit("), 1)
+        self.assertIn("class WorkspaceEditPlanStore:", store)
+        self.assertIn("class ExistingTextFileChange:", writer)
+        self.assertEqual(writer.count("def _write_bytes("), 1)
+        self.assertNotIn("write_bytes", apply_tool)
+        self.assertNotIn("write_text", apply_tool)
+        self.assertNotIn("write_bytes", parser)
+        self.assertNotIn("write_text", parser)
+        self.assertNotIn("write_bytes", anchored)
+        self.assertNotIn("workspace_edit_store", code_action)
+        self.assertIn('"applied": False', client)
+        self.assertNotIn("apply_workspace_edit", runtime)
+        self.assertNotIn("ExecutionPolicy", apply_tool)
 
     def test_lsp_code_action_preview_has_one_owner_and_cannot_execute_or_write(self) -> None:
         tools = importlib.import_module("local_agent.tools")

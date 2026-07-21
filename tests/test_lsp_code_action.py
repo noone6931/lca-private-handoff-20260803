@@ -8,6 +8,7 @@ from unittest.mock import Mock, patch
 
 from local_agent.lsp.client import CODE_ACTION_KINDS, LspClientError, StdioLspClient
 from local_agent.lsp.config import LspServerConfig
+from local_agent.lsp.workspace_edit_store import default_workspace_edit_plan_store
 from local_agent.tools import create_default_registry
 from local_agent.tools.base import ToolContext, ToolRegistry
 from local_agent.tools.lsp_code_action import MAX_CODE_ACTIONS
@@ -170,6 +171,7 @@ class LspCodeActionPreviewTests(unittest.TestCase):
                 "edit": {"changes": {target.as_uri(): [_range_edit(0, 0, 0, 3, "fresh")] }},
             }
             client = _CodeActionClient([action])
+            plan_snapshot = default_workspace_edit_plan_store().snapshot()
             result = self._execute(
                 workspace,
                 {"path": "main.py", "line": 1, "symbol": "old", "action_index": 0},
@@ -186,6 +188,8 @@ class LspCodeActionPreviewTests(unittest.TestCase):
             self.assertEqual(client.resolve_calls, [])
             self.assertEqual(result.metadata["mode"], "preview")
             self.assertEqual(result.metadata["evidence_eligible"], False)
+            self.assertNotIn("plan_id", result.metadata)
+            self.assertEqual(default_workspace_edit_plan_store().snapshot(), plan_snapshot)
 
     def test_resolve_once_requires_same_title_and_text_only_edit(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -13,6 +13,9 @@ from local_agent.patch.anchored import hash_text
 from local_agent.patch.anchored import PatchError
 from local_agent.patch.anchored import PatchResult
 from local_agent.patch.anchored import resolve_workspace_path
+from local_agent.patch.transaction import ExistingTextFileChange
+from local_agent.patch.transaction import TextTransactionResult
+from local_agent.patch.transaction import apply_existing_text_transaction
 
 from .base import Tool, ToolContext, ToolResult, VisionInspectionUnavailableError, tool_state_dir
 
@@ -382,18 +385,29 @@ def patch_file(args: dict[str, Any], context: ToolContext) -> ToolResult:
     before_text = path.read_bytes().decode("utf-8")
     before_tag = hash_text(before_text)
     tag, interpreted_from = _normalize_patch_tag(args["tag"])
-    result = apply_anchored_patch(
-        workspace=context.workspace,
-        path=args["path"],
-        tag=tag,
-        start_line=int(args["start_line"]),
-        end_line=int(args["end_line"]),
-        old_text=args["old_text"],
-        new_text=args["new_text"],
-        mode=args.get("mode") or "replace",
-        dry_run=bool(args.get("dry_run")),
-        allowed_roots=context.allowed_dirs,
-    )
+    try:
+        result = apply_anchored_patch(
+            workspace=context.workspace,
+            path=args["path"],
+            tag=tag,
+            start_line=int(args["start_line"]),
+            end_line=int(args["end_line"]),
+            old_text=args["old_text"],
+            new_text=args["new_text"],
+            mode=args.get("mode") or "replace",
+            dry_run=bool(args.get("dry_run")),
+            allowed_roots=context.allowed_dirs,
+        )
+    except PatchError as exc:
+        transaction = exc.transaction_result
+        if isinstance(transaction, TextTransactionResult):
+            return _transaction_failure_result(
+                transaction,
+                context=context,
+                operation="apply_patch",
+                transaction_paths=(path,),
+            )
+        return ToolResult(str(exc), is_error=True)
     tag_note = _interpreted_tag_note(interpreted_from, tag)
     range_note = _patch_range_note(args, result)
     range_metadata = _patch_range_metadata(args, result)
@@ -450,6 +464,9 @@ def rollback_patch(args: dict[str, Any], context: ToolContext) -> ToolResult:
             return ToolResult(f"Patch record not found or already rolled back: {patch_id}", is_error=True)
         return ToolResult("No unapplied patch record found for this session.", is_error=True)
 
+    if isinstance(record.get("files"), list):
+        return _rollback_text_transaction(record, context)
+
     try:
         path = resolve_workspace_path(context.workspace, str(record["path"]), context.allowed_dirs)
     except PatchError as exc:
@@ -484,7 +501,18 @@ def rollback_patch(args: dict[str, Any], context: ToolContext) -> ToolResult:
         )
 
     before_text = str(record["before_text"])
-    path.write_bytes(before_text.encode("utf-8"))
+    rollback_changes = (
+        ExistingTextFileChange.create(path, current_text.encode("utf-8"), before_text.encode("utf-8")),
+    )
+    transaction = apply_existing_text_transaction(rollback_changes)
+    if transaction.status != "committed":
+        return _transaction_failure_result(
+            transaction,
+            context=context,
+            operation="rollback",
+            transaction_paths=(path,),
+            rollback_changes=rollback_changes,
+        )
     _record_rollback(context, str(record["id"]))
     diff = "".join(
         difflib.unified_diff(
@@ -496,7 +524,71 @@ def rollback_patch(args: dict[str, Any], context: ToolContext) -> ToolResult:
     )
     return ToolResult(
         f"Rolled back patch {record['id']}. Restored tag: {record['before_tag']}\n\n{diff}",
-        metadata={"changed_path": str(record["path"]), "rollback_of": str(record["id"])},
+        metadata={
+            "changed_path": str(record["path"]),
+            "changed_paths": [str(record["path"])],
+            "transaction_paths": [str(record["path"])],
+            "effective_changed_paths": [],
+            "workspace_changed": True,
+            "transaction_status": "committed",
+            "rollback_of": str(record["id"]),
+        },
+    )
+
+
+def _rollback_text_transaction(record: dict[str, Any], context: ToolContext) -> ToolResult:
+    raw_files = record.get("files")
+    assert isinstance(raw_files, list)
+    changes: list[ExistingTextFileChange] = []
+    display_paths: list[str] = []
+    for item in raw_files:
+        if not isinstance(item, dict):
+            return ToolResult("Patch transaction record is malformed.", is_error=True)
+        raw_path = item.get("path")
+        before_text = item.get("before_text")
+        after_text = item.get("after_text")
+        if not all(isinstance(value, str) for value in (raw_path, before_text, after_text)):
+            return ToolResult("Patch transaction record is malformed.", is_error=True)
+        try:
+            path = resolve_workspace_path(context.workspace, raw_path, context.allowed_dirs)
+        except PatchError as exc:
+            return ToolResult(str(exc), is_error=True)
+        changes.append(
+            ExistingTextFileChange.create(path, after_text.encode("utf-8"), before_text.encode("utf-8"))
+        )
+        display_paths.append(raw_path)
+
+    transaction = apply_existing_text_transaction(tuple(changes))
+    if transaction.status != "committed":
+        return _transaction_failure_result(
+            transaction,
+            context=context,
+            operation="rollback",
+            transaction_paths=tuple(change.path for change in changes),
+            rollback_changes=tuple(changes),
+        )
+    _record_rollback(context, str(record["id"]))
+    diff = "".join(
+        "".join(
+            difflib.unified_diff(
+                change.before_bytes.decode("utf-8").splitlines(keepends=True),
+                change.after_bytes.decode("utf-8").splitlines(keepends=True),
+                fromfile=f"a/{display_path}",
+                tofile=f"b/{display_path}",
+            )
+        )
+        for change, display_path in zip(changes, display_paths)
+    )
+    return ToolResult(
+        f"Rolled back transaction {record['id']} across {len(display_paths)} files.\n\n{diff}",
+        metadata={
+            "changed_paths": display_paths,
+            "transaction_paths": display_paths,
+            "effective_changed_paths": [],
+            "workspace_changed": True,
+            "transaction_status": "committed",
+            "rollback_of": str(record["id"]),
+        },
     )
 
 
@@ -591,6 +683,106 @@ def _record_patch(
     return patch_id
 
 
+def record_workspace_edit_patch(
+    *,
+    context: ToolContext,
+    source: str,
+    plan_id: str,
+    plan_digest: str,
+    files: tuple[Any, ...],
+    diff: str,
+) -> str:
+    transaction_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    entries = []
+    for file in files:
+        display_path = display_workspace_path(context.workspace, file.path, context.allowed_dirs)
+        entries.append(
+            {
+                "path": display_path,
+                "before_text": file.before_bytes.decode("utf-8"),
+                "after_text": file.after_bytes.decode("utf-8"),
+                "before_tag": hash_text(file.before_bytes.decode("utf-8")),
+                "after_tag": hash_text(file.after_bytes.decode("utf-8")),
+                "before_sha256": file.before_sha256,
+                "after_sha256": file.after_sha256,
+                "edit_count": file.edit_count,
+                "diff": file.unified_diff,
+            }
+        )
+    _append_patch_record(
+        context,
+        {
+            "event": "apply",
+            "id": transaction_id,
+            "transaction_id": transaction_id,
+            "time": datetime.now(timezone.utc).isoformat(),
+            "source": source,
+            "plan_id": plan_id,
+            "plan_digest": plan_digest,
+            "files": entries,
+            "diff": diff,
+        },
+    )
+    return transaction_id
+
+
+def _transaction_failure_result(
+    transaction: TextTransactionResult,
+    *,
+    context: ToolContext,
+    operation: str,
+    transaction_paths: tuple[Path, ...],
+    rollback_changes: tuple[ExistingTextFileChange, ...] = (),
+) -> ToolResult:
+    changed_paths = [
+        display_workspace_path(context.workspace, path, context.allowed_dirs)
+        for path in transaction.changed_paths
+    ]
+    all_paths = [
+        display_workspace_path(context.workspace, path, context.allowed_dirs)
+        for path in transaction_paths
+    ]
+    if transaction.status == "stale":
+        state = "stale"
+        message = f"{operation} transaction refused before writing because an exact file identity is stale."
+    elif transaction.status == "rolled_back":
+        state = "restored"
+        message = f"{operation} transaction failed, but every attempted write was restored."
+    else:
+        state = "indeterminate"
+        message = f"{operation} transaction failed and compensation did not restore every file."
+    return ToolResult(
+        message,
+        is_error=True,
+        metadata={
+            "workspace_changed": transaction.workspace_changed,
+            "changed_paths": changed_paths,
+            "transaction_paths": all_paths,
+            "effective_changed_paths": changed_paths if operation != "rollback" else _rollback_residual_paths(
+                context, rollback_changes
+            ),
+            "transaction_status": transaction.status,
+            "workspace_state": state,
+            "error_kind": transaction.error_kind,
+        },
+    )
+
+
+def _rollback_residual_paths(
+    context: ToolContext,
+    changes: tuple[ExistingTextFileChange, ...],
+) -> list[str]:
+    residual: list[str] = []
+    for change in changes:
+        try:
+            restored = change.path.read_bytes() == change.after_bytes
+        except OSError:
+            restored = False
+        if not restored:
+            residual.append(display_workspace_path(context.workspace, change.path, context.allowed_dirs))
+    return residual
+
+
 def _record_rollback(context: ToolContext, patch_id: str) -> None:
     _append_patch_record(
         context,
@@ -637,23 +829,26 @@ def _find_rollback_record(records: list[dict[str, Any]], patch_id: str | None) -
         for record in records
         if record.get("event") == "rollback" and record.get("patch_id")
     }
-    applied = [
-        record
-        for record in records
-        if record.get("event") == "apply"
-        and isinstance(record.get("id"), str)
-        and isinstance(record.get("path"), str)
-        and isinstance(record.get("before_text"), str)
-        and isinstance(record.get("before_tag"), str)
-        and isinstance(record.get("after_tag"), str)
-        and record["id"] not in rolled_back
-    ]
+    applied = [record for record in records if _is_rollback_candidate(record, rolled_back)]
     if patch_id:
         for record in reversed(applied):
             if record["id"] == patch_id:
                 return record
         return None
     return applied[-1] if applied else None
+
+
+def _is_rollback_candidate(record: dict[str, Any], rolled_back: set[str]) -> bool:
+    if record.get("event") != "apply" or not isinstance(record.get("id"), str) or record["id"] in rolled_back:
+        return False
+    if isinstance(record.get("files"), list):
+        return bool(record["files"])
+    return (
+        isinstance(record.get("path"), str)
+        and isinstance(record.get("before_text"), str)
+        and isinstance(record.get("before_tag"), str)
+        and isinstance(record.get("after_tag"), str)
+    )
 
 
 def _patch_log_path(context: ToolContext) -> Path:

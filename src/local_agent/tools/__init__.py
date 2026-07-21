@@ -11,6 +11,7 @@ from .memory import memory_tools
 from .search import search_tools
 from .shell import shell_tools
 from .todo import todo_tools
+from .workspace_edit import workspace_edit_tools
 
 
 def create_default_registry(extra_tools: tuple[Tool, ...] = ()) -> ToolRegistry:
@@ -25,6 +26,7 @@ def create_default_registry(extra_tools: tuple[Tool, ...] = ()) -> ToolRegistry:
         *lsp_tools(),
         *lsp_code_action_tools(),
         *lsp_rename_tools(),
+        *workspace_edit_tools(),
         *extra_tools,
     ]
     return ToolRegistry(tools)

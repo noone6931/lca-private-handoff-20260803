@@ -22,6 +22,9 @@ from ..tools.observation import ToolResultSummary
 from ..tools.base import ToolResult
 from ..tools.relevance import is_code_implementation_request, request_mentions_config_or_path
 from ..evidence.verification import VerificationPlan
+from ..evidence.timeline import WRITE_TOOL_NAMES
+from ..evidence.timeline import result_changed_workspace
+from ..evidence.timeline import result_workspace_write_paths
 from ..steering.final_answer import SteeringDecision
 from ..tools.gateway import _display_read_file_range_subject, _request_requires_patch_preview, _source_evidence_matches_path, _tool_call_uses_dry_run, _tool_choice_result_path, is_session_evidence_reread
 
@@ -260,27 +263,34 @@ class EvidenceVerificationLifecycle:
             workspace=runtime._workspace_context.primary,
             allowed_dirs=runtime._workspace_context.additional_roots,
         )
-        if result.is_error or name not in {"apply_patch", "rollback_patch", "write_file"}:
+        if name not in WRITE_TOOL_NAMES or not result_changed_workspace(result):
             return
         if name == "apply_patch" and _tool_call_uses_dry_run(arguments):
             return
-        raw_path = _tool_choice_result_path(arguments, result)
-        if not raw_path:
+        raw_paths = result_workspace_write_paths(result)
+        if not raw_paths:
+            raw_path = _tool_choice_result_path(arguments, result)
+            raw_paths = (raw_path,) if raw_path else ()
+        changed_paths: list[Path] = []
+        for raw_path in raw_paths:
+            try:
+                changed_paths.append(
+                    resolve_workspace_path(
+                        runtime._workspace_context.primary,
+                        raw_path,
+                        runtime._workspace_context.additional_roots,
+                    )
+                )
+            except PatchError:
+                continue
+        if not changed_paths:
             return
-        try:
-            changed_path = resolve_workspace_path(
-                runtime._workspace_context.primary,
-                raw_path,
-                runtime._workspace_context.additional_roots,
-            )
-        except PatchError:
-            return
-        removed = runtime._session_evidence.invalidate_paths((changed_path,))
+        removed = runtime._session_evidence.invalidate_paths(tuple(changed_paths))
         if removed:
             runtime._run.collector.record_session_evidence_invalidation(removed)
             self.record_session_evidence_event(
                 "invalidated",
-                {"reason": "workspace_write", "paths": [str(changed_path)], "count": removed},
+                {"reason": "workspace_write", "paths": [str(path) for path in changed_paths], "count": removed},
             )
 
     def capture_session_evidence(self, record: EvidenceRecord | None) -> None:

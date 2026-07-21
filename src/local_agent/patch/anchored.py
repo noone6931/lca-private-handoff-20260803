@@ -5,11 +5,17 @@ import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 
+from .transaction import ExistingTextFileChange, apply_existing_text_transaction
+
 PATCH_MODES = {"replace", "insert_before", "insert_after"}
 
 
 class PatchError(RuntimeError):
     """Raised when an anchored patch cannot be applied safely."""
+
+    def __init__(self, message: str, *, transaction_result: object | None = None) -> None:
+        super().__init__(message)
+        self.transaction_result = transaction_result
 
 
 @dataclass(frozen=True)
@@ -60,7 +66,8 @@ def apply_anchored_patch(
     target = resolve_workspace_path(workspace, path, allowed_roots)
     if not target.exists():
         raise PatchError(f"Target file does not exist: {path}")
-    raw_original = target.read_bytes().decode("utf-8")
+    raw_original_bytes = target.read_bytes()
+    raw_original = raw_original_bytes.decode("utf-8")
     bom, original = _strip_bom(raw_original)
     line_ending = _detect_line_ending(original)
     normalized_original = _normalize_to_lf(original)
@@ -103,7 +110,15 @@ def apply_anchored_patch(
     )
     persisted = bom + _restore_line_endings(updated, line_ending)
     if not dry_run:
-        target.write_bytes(persisted.encode("utf-8"))
+        transaction = apply_existing_text_transaction(
+            (ExistingTextFileChange.create(target, raw_original_bytes, persisted.encode("utf-8")),)
+        )
+        if transaction.status != "committed":
+            suffix = " Workspace content may have changed." if transaction.workspace_changed else ""
+            raise PatchError(
+                f"Anchored patch transaction failed: {transaction.error_kind or transaction.status}.{suffix}",
+                transaction_result=transaction,
+            )
     return PatchResult(
         diff=diff,
         new_tag=hash_text(persisted),

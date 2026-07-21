@@ -532,8 +532,17 @@ def _baseline_paths(baseline: dict[str, Any], *, staged: bool) -> set[str]:
 def _session_patch_paths(context: ToolContext) -> set[str]:
     paths: set[str] = set()
     for record in session_patch_records(context):
-        if record.get("event") == "apply" and isinstance(record.get("path"), str):
+        if record.get("event") != "apply":
+            continue
+        if isinstance(record.get("path"), str):
             paths.add(record["path"])
+        files = record.get("files")
+        if isinstance(files, list):
+            paths.update(
+                item["path"]
+                for item in files
+                if isinstance(item, dict) and isinstance(item.get("path"), str)
+            )
     return paths
 
 

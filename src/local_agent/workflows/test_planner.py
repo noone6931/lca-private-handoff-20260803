@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Literal
 
 from ..tools.observation import ToolResultSummary
-from ..evidence.timeline import last_workspace_write_index
+from ..evidence.timeline import effective_workspace_write_paths
 
 
 TestBreadth = Literal["module", "project", "blocked"]
@@ -88,19 +88,7 @@ def _project_plan(command: str, reason: str, changed_paths: tuple[str, ...]) -> 
 
 
 def _changed_paths(workspace: Path, results: list[ToolResultSummary]) -> tuple[str, ...]:
-    write_index = last_workspace_write_index(results)
-    if write_index < 0:
-        return ()
-    paths: list[str] = []
-    for result in results[write_index:]:
-        metadata = result.metadata.get("patch_review") if isinstance(result.metadata, dict) else None
-        if isinstance(metadata, dict):
-            values = metadata.get("changed_paths")
-            if isinstance(values, (list, tuple)):
-                paths.extend(_display_path(workspace, str(value)) for value in values if str(value).strip())
-        if result.name in {"apply_patch", "write_file", "rollback_patch"} and result.path:
-            paths.append(_display_path(workspace, result.path))
-    return tuple(dict.fromkeys(paths))
+    return tuple(_display_path(workspace, path) for path in effective_workspace_write_paths(results))
 
 
 def _display_path(workspace: Path, raw_path: str) -> str:

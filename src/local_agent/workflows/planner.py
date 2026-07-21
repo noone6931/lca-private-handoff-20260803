@@ -7,6 +7,7 @@ from .tool_choice.queue import CODE_EVIDENCE_TOOL_NAMES
 from .tool_choice.queue import autonomous_small_change_candidate_paths
 from ..tools.observation import ToolResultSummary
 from .tool_choice.queue import WRITE_TOOL_NAMES
+from ..evidence.timeline import result_changed_workspace
 
 
 PlannerPhase = Literal["not_applicable", "explore", "candidate_committed", "ready_to_implement", "verify"]
@@ -94,24 +95,7 @@ def _workspace_write_happened(tool_results: list[ToolResultSummary]) -> bool:
 
 
 def _changed_workspace(result: ToolResultSummary) -> bool:
-    if result.is_error:
-        return False
-    if result.changed is not None:
-        return result.changed
-    content = (result.content or "").lower()
-    return not any(
-        marker in content
-        for marker in {
-            "dry run",
-            "dry_run",
-            "file not changed",
-            "no file changed",
-            "not changed",
-            "patch preview only",
-            "preview only",
-            "would be",
-        }
-    )
+    return result_changed_workspace(result)
 
 
 __all__ = [

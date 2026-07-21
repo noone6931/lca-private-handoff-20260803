@@ -223,18 +223,22 @@ def _writes_from_patch_records(
     for record in records:
         if record.get("event") != "apply" or record.get("id") in rolled_back:
             continue
-        raw_path = record.get("path")
-        if not isinstance(raw_path, str):
-            continue
-        try:
-            resolved = resolve_workspace_path(
-                runtime._workspace_context.primary,
-                raw_path,
-                runtime._workspace_context.additional_roots,
-            )
-        except PatchError:
-            continue
-        active[resolved] = record
+        entries = record.get("files") if isinstance(record.get("files"), list) else (record,)
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            raw_path = entry.get("path")
+            if not isinstance(raw_path, str):
+                continue
+            try:
+                resolved = resolve_workspace_path(
+                    runtime._workspace_context.primary,
+                    raw_path,
+                    runtime._workspace_context.additional_roots,
+                )
+            except PatchError:
+                continue
+            active[resolved] = entry
     writes: list[PendingWrite] = []
     for raw_path in paths:
         try:

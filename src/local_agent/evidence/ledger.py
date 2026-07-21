@@ -16,6 +16,9 @@ from ..tools.argument_normalization import normalize_compatibility_arguments
 from ..tools.base import ToolResult
 from ..tools.relevance import is_low_relevance_patch_path
 from ..tools.relevance import path_matches_any
+from .timeline import WRITE_TOOL_NAMES
+from .timeline import result_changed_workspace
+from .timeline import result_workspace_write_paths
 
 
 MAX_RECORDS = 30
@@ -150,16 +153,17 @@ class EvidenceLedger:
         workspace: Path,
         allowed_dirs: tuple[Path, ...],
     ) -> None:
-        if result.is_error or name not in {"apply_patch", "rollback_patch", "write_file"}:
+        if name not in WRITE_TOOL_NAMES or not result_changed_workspace(result):
             return
         parsed = parse_tool_arguments(arguments)
         if name == "apply_patch" and parsed.get("dry_run"):
             return
-        raw_path = parsed.get("path")
-        if not isinstance(raw_path, str) or not raw_path.strip():
-            return
-        display_path = display_read_file_path(workspace, raw_path.strip(), allowed_dirs)
-        self.source_evidence = [item for item in self.source_evidence if item.path != display_path]
+        raw_paths = result_workspace_write_paths(result)
+        if not raw_paths:
+            raw_path = parsed.get("path")
+            raw_paths = (raw_path,) if isinstance(raw_path, str) and raw_path.strip() else ()
+        display_paths = {display_read_file_path(workspace, path, allowed_dirs) for path in raw_paths}
+        self.source_evidence = [item for item in self.source_evidence if item.path not in display_paths]
 
     def record_successful_patch_preview(
         self,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import difflib
+import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -32,10 +33,35 @@ class LspRange:
 
 
 @dataclass(frozen=True)
-class WorkspaceEditPreview:
-    paths: tuple[Path, ...]
+class WorkspaceEditFilePlan:
+    path: Path
+    before_bytes: bytes
+    after_bytes: bytes
+    before_sha256: str
+    after_sha256: str
     edit_count: int
     unified_diff: str
+
+
+@dataclass(frozen=True)
+class WorkspaceEditPlan:
+    files: tuple[WorkspaceEditFilePlan, ...]
+    edit_count: int
+    unified_diff: str
+    digest: str
+
+    @property
+    def paths(self) -> tuple[Path, ...]:
+        return tuple(file.path for file in self.files)
+
+    @property
+    def stored_bytes(self) -> int:
+        return sum(len(file.before_bytes) + len(file.after_bytes) for file in self.files) + len(
+            self.unified_diff.encode("utf-8")
+        )
+
+
+WorkspaceEditPreview = WorkspaceEditPlan
 
 
 @dataclass(frozen=True)
@@ -54,6 +80,7 @@ class _OffsetEdit:
 @dataclass(frozen=True)
 class _DecodedFile:
     path: Path
+    raw_bytes: bytes
     text: str
     bom: bool
     line_ending: str
@@ -112,7 +139,7 @@ def build_workspace_edit_preview(
     workspace: Path,
     allowed_roots: tuple[Path, ...],
     project_root: Path,
-) -> WorkspaceEditPreview:
+) -> WorkspaceEditPlan:
     edits_by_path = _parse_workspace_edit(
         value,
         workspace=workspace,
@@ -140,29 +167,45 @@ def build_workspace_edit_preview(
         decoded[path] = file
         offset_edits[path] = _validate_ranges(file, edits)
 
+    file_plans: list[WorkspaceEditFilePlan] = []
     diff_parts: list[str] = []
     diff_bytes = 0
     ordered_paths = tuple(sorted(decoded, key=str))
     for path in ordered_paths:
         file = decoded[path]
         updated = _apply_edits(file.text, offset_edits[path], file.line_ending)
+        after_bytes = (b"\xef\xbb\xbf" if file.bom else b"") + updated.encode("utf-8")
         label = display_workspace_path(workspace, path, allowed_roots)
-        for part in difflib.unified_diff(
-            file.text.splitlines(keepends=True),
-            updated.splitlines(keepends=True),
-            fromfile=f"a/{label}",
-            tofile=f"b/{label}",
-        ):
-            diff_bytes += len(part.encode("utf-8"))
-            if diff_bytes > MAX_WORKSPACE_PREVIEW_BYTES:
-                raise WorkspaceEditError(
-                    f"WorkspaceEdit preview exceeds the {MAX_WORKSPACE_PREVIEW_BYTES}-byte output limit."
-                )
-            diff_parts.append(part)
+        file_diff = "".join(
+            difflib.unified_diff(
+                file.text.splitlines(keepends=True),
+                updated.splitlines(keepends=True),
+                fromfile=f"a/{label}",
+                tofile=f"b/{label}",
+            )
+        )
+        diff_bytes += len(file_diff.encode("utf-8"))
+        if diff_bytes > MAX_WORKSPACE_PREVIEW_BYTES:
+            raise WorkspaceEditError(
+                f"WorkspaceEdit preview exceeds the {MAX_WORKSPACE_PREVIEW_BYTES}-byte output limit."
+            )
+        diff_parts.append(file_diff)
+        file_plans.append(
+            WorkspaceEditFilePlan(
+                path=path,
+                before_bytes=file.raw_bytes,
+                after_bytes=after_bytes,
+                before_sha256=hashlib.sha256(file.raw_bytes).hexdigest(),
+                after_sha256=hashlib.sha256(after_bytes).hexdigest(),
+                edit_count=len(offset_edits[path]),
+                unified_diff=file_diff,
+            )
+        )
     unified_diff = "".join(diff_parts)
     if not unified_diff:
         raise WorkspaceEditError("LSP rename produced no textual change.")
-    return WorkspaceEditPreview(paths=ordered_paths, edit_count=edit_count, unified_diff=unified_diff)
+    digest = _plan_digest(tuple(file_plans), edit_count)
+    return WorkspaceEditPlan(files=tuple(file_plans), edit_count=edit_count, unified_diff=unified_diff, digest=digest)
 
 
 def _parse_workspace_edit(
@@ -197,11 +240,13 @@ def _parse_workspace_edit(
                 allowed_roots=allowed_roots,
                 project_root=project_root,
             )
+            if path in parsed:
+                raise WorkspaceEditError("WorkspaceEdit contains duplicate canonical target files.")
             edits = _parse_text_edits(raw_edits)
             edit_count += len(edits)
             if edit_count > MAX_WORKSPACE_EDITS:
                 raise WorkspaceEditError(f"WorkspaceEdit exceeds the {MAX_WORKSPACE_EDITS}-edit preview limit.")
-            parsed.setdefault(path, []).extend(edits)
+            parsed[path] = edits
         return parsed
 
     document_changes = value["documentChanges"]
@@ -225,11 +270,13 @@ def _parse_workspace_edit(
             allowed_roots=allowed_roots,
             project_root=project_root,
         )
+        if path in parsed:
+            raise WorkspaceEditError("WorkspaceEdit contains duplicate canonical target files.")
         edits = _parse_text_edits(item["edits"])
         edit_count += len(edits)
         if edit_count > MAX_WORKSPACE_EDITS:
             raise WorkspaceEditError(f"WorkspaceEdit exceeds the {MAX_WORKSPACE_EDITS}-edit preview limit.")
-        parsed.setdefault(path, []).extend(edits)
+        parsed[path] = edits
         if len(parsed) > MAX_WORKSPACE_EDIT_FILES:
             raise WorkspaceEditError(f"WorkspaceEdit exceeds the {MAX_WORKSPACE_EDIT_FILES}-file preview limit.")
     return parsed
@@ -314,7 +361,20 @@ def _read_file(path: Path) -> _DecodedFile:
     except UnicodeDecodeError as exc:
         raise WorkspaceEditError("WorkspaceEdit target is not valid UTF-8 text.") from exc
     line_ending = _line_ending(text)
-    return _DecodedFile(path=path, text=text, bom=bom, line_ending=line_ending, byte_count=len(raw))
+    return _DecodedFile(path=path, raw_bytes=raw, text=text, bom=bom, line_ending=line_ending, byte_count=len(raw))
+
+
+def _plan_digest(files: tuple[WorkspaceEditFilePlan, ...], edit_count: int) -> str:
+    digest = hashlib.sha256()
+    digest.update(f"workspace-edit-v1:{edit_count}\n".encode("ascii"))
+    for file in files:
+        digest.update(str(file.path).encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(file.before_sha256.encode("ascii"))
+        digest.update(file.after_sha256.encode("ascii"))
+        digest.update(str(file.edit_count).encode("ascii"))
+        digest.update(b"\n")
+    return digest.hexdigest()
 
 
 def _line_ending(text: str) -> str:

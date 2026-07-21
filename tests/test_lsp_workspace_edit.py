@@ -228,6 +228,25 @@ class WorkspaceEditPreviewTests(unittest.TestCase):
             with self.assertRaisesRegex(WorkspaceEditError, "authorized roots"):
                 self._preview(workspace, {"changes": {link.as_uri(): [_edit(0, 0, 0, 3, "x")]}}, project_root=project)
 
+    def test_uri_aliases_cannot_duplicate_one_canonical_target(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            target = workspace / "main.py"
+            target.write_text("old value\n", encoding="utf-8")
+            local = target.as_uri()
+            localhost = local.replace("file://", "file://localhost", 1)
+            with self.assertRaisesRegex(WorkspaceEditError, "duplicate canonical"):
+                self._preview(
+                    workspace,
+                    {
+                        "changes": {
+                            local: [_edit(0, 0, 0, 3, "new")],
+                            localhost: [_edit(0, 4, 0, 9, "name")],
+                        }
+                    },
+                )
+            self.assertEqual(target.read_text(encoding="utf-8"), "old value\n")
+
     def test_file_edit_byte_and_preview_budgets_fail_closed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp).resolve()
