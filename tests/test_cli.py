@@ -57,6 +57,20 @@ class _FakeAgentRuntime:
 
 
 class CliTests(unittest.TestCase):
+    def test_sandbox_flag_projects_to_typed_config_loader(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = SimpleNamespace(workspace=Path(tmp), state_dir=None)
+            with (
+                patch("local_agent.cli.load_config", return_value=config) as load,
+                patch("local_agent.cli.AgentRuntime", _FakeAgentRuntime),
+                patch("local_agent.cli.silenced_terminal_input"),
+                redirect_stdout(io.StringIO()),
+            ):
+                code = main(["--sandbox", "seatbelt", "inspect"])
+
+        self.assertEqual(code, 0)
+        self.assertEqual(load.call_args.kwargs["sandbox_mode"], "seatbelt")
+
     def test_chat_prompt_alias_is_detected(self) -> None:
         self.assertTrue(_is_chat_prompt(["chat"]))
         self.assertFalse(_is_chat_prompt(["chat", "about", "this", "repo"]))

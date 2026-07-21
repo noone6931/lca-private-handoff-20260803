@@ -210,10 +210,12 @@ def process_tool_result(
         terminal_line=terminal_line,
         label_stdout=label_stdout,
     )
+    result_metadata = {**(metadata or {}), **projection.metadata(capture)}
+    result_metadata.setdefault("sandboxed", False)
     return ToolResult(
         projection.content,
         is_error=is_error,
-        metadata={**(metadata or {}), **projection.metadata(capture), "sandboxed": False},
+        metadata=result_metadata,
     )
 
 

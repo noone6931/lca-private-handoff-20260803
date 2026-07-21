@@ -42,6 +42,73 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.approval_mode, "always-ask")
         self.assertEqual(config.allowed_dirs, ())
         self.assertEqual(config.reviewer_model, "")
+        self.assertEqual(config.sandbox_mode, "off")
+
+    def test_sandbox_mode_precedence_is_cli_then_config_then_env(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "agent.json"
+            config_path.write_text(json.dumps({"sandbox_mode": "seatbelt"}), encoding="utf-8")
+            environment = {"DASHSCOPE_API_KEY": "token", "AGENT_SANDBOX_MODE": "off"}
+            with patch.dict("os.environ", environment, clear=True):
+                from_config = load_config(
+                    config_path=str(config_path),
+                    cwd=tmp,
+                    provider="bailian",
+                    api_base_url=None,
+                    api_key=None,
+                    model=None,
+                    max_steps=None,
+                    budget_seconds=None,
+                    approval_mode=None,
+                )
+                from_cli = load_config(
+                    config_path=str(config_path),
+                    cwd=tmp,
+                    provider="bailian",
+                    api_base_url=None,
+                    api_key=None,
+                    model=None,
+                    max_steps=None,
+                    budget_seconds=None,
+                    approval_mode=None,
+                    sandbox_mode="off",
+                )
+                config_path.write_text("{}", encoding="utf-8")
+                os.environ["AGENT_SANDBOX_MODE"] = "seatbelt"
+                from_env = load_config(
+                    config_path=str(config_path),
+                    cwd=tmp,
+                    provider="bailian",
+                    api_base_url=None,
+                    api_key=None,
+                    model=None,
+                    max_steps=None,
+                    budget_seconds=None,
+                    approval_mode=None,
+                )
+
+        self.assertEqual(from_config.sandbox_mode, "seatbelt")
+        self.assertEqual(from_cli.sandbox_mode, "off")
+        self.assertEqual(from_env.sandbox_mode, "seatbelt")
+
+    def test_sandbox_mode_rejects_aliases_and_non_strings(self) -> None:
+        for raw_mode in (True, "auto", "yes"):
+            with self.subTest(raw_mode=raw_mode), tempfile.TemporaryDirectory() as tmp:
+                config_path = Path(tmp) / "agent.json"
+                config_path.write_text(json.dumps({"sandbox_mode": raw_mode}), encoding="utf-8")
+                with patch.dict("os.environ", {"DASHSCOPE_API_KEY": "token"}, clear=True):
+                    with self.assertRaisesRegex(RuntimeError, "sandbox_mode must"):
+                        load_config(
+                            config_path=str(config_path),
+                            cwd=tmp,
+                            provider="bailian",
+                            api_base_url=None,
+                            api_key=None,
+                            model=None,
+                            max_steps=None,
+                            budget_seconds=None,
+                            approval_mode=None,
+                        )
 
     def test_reviewer_model_role_resolves_from_env(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

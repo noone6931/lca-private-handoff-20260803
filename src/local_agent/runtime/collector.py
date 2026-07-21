@@ -6,7 +6,6 @@ from typing import Any, Mapping
 
 from ..tools.policy import EXECUTION_POLICY_OUTCOMES
 from ..tools.policy import EXECUTION_POLICY_SOURCES
-from ..tools.policy import EXECUTION_SANDBOX_STATES
 
 
 READ_ONLY_REVIEWER_LIFECYCLE_CATEGORIES = frozenset(
@@ -105,7 +104,6 @@ class RunStats:
     execution_policy_allow: int = 0
     execution_policy_prompt: int = 0
     execution_policy_deny: int = 0
-    execution_policy_unsandboxed_exec_evaluations: int = 0
     execution_policy_invalid_events: int = 0
     execution_policy_sources: dict[str, int] = field(default_factory=dict)
     subagent_calls: int = 0
@@ -214,11 +212,9 @@ class RunCollector:
             return
         outcome = payload.get("outcome")
         source = payload.get("source")
-        sandbox_state = payload.get("sandbox_state")
         if (
             outcome not in EXECUTION_POLICY_OUTCOMES
             or source not in EXECUTION_POLICY_SOURCES
-            or sandbox_state not in EXECUTION_SANDBOX_STATES
         ):
             self._stats.execution_policy_invalid_events += 1
             return
@@ -229,8 +225,6 @@ class RunCollector:
             getattr(self._stats, f"execution_policy_{outcome}") + 1,
         )
         self._stats.execution_policy_sources[source] = self._stats.execution_policy_sources.get(source, 0) + 1
-        if sandbox_state == "unsandboxed":
-            self._stats.execution_policy_unsandboxed_exec_evaluations += 1
 
     def record_tool_finished(self, *, is_error: bool) -> None:
         if self._stats is not None and is_error:
@@ -638,7 +632,6 @@ class RunCollector:
                 "allow": stats.execution_policy_allow,
                 "prompt": stats.execution_policy_prompt,
                 "deny": stats.execution_policy_deny,
-                "unsandboxed_exec_evaluations": stats.execution_policy_unsandboxed_exec_evaluations,
                 "invalid_events": stats.execution_policy_invalid_events,
                 "sources": dict(sorted(stats.execution_policy_sources.items())),
             },

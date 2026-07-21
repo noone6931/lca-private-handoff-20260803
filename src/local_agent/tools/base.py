@@ -31,6 +31,7 @@ class ToolResult:
 class ToolContext:
     workspace: Path
     approval_mode: str
+    sandbox_mode: str = "off"
     state_dir: Path | None = None
     allowed_dirs: tuple[Path, ...] = ()
     session_id: str | None = None

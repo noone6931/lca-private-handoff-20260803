@@ -97,17 +97,15 @@ class ExecutionPolicyTests(unittest.TestCase):
                 self.assertEqual(decision.source, source)
                 self.assertEqual(decision.session_cache_allowed, cache)
 
-    def test_action_and_sandbox_taxonomy_is_static_and_truthful(self) -> None:
+    def test_action_taxonomy_is_static_and_has_no_sandbox_projection(self) -> None:
         shell = evaluate_execution_policy(execution_action("shell", "exec"), approval_mode="yolo")
-        tests = evaluate_execution_policy(execution_action("run_tests", "exec"), approval_mode="yolo")
         read = evaluate_execution_policy(execution_action("read_file", "read"), approval_mode="yolo")
         state = evaluate_execution_policy(execution_action("todo_update", "state"), approval_mode="yolo")
 
         self.assertEqual(shell.action.capability_class, "process_exec")
-        self.assertEqual(shell.sandbox_state, "unsandboxed")
-        self.assertEqual(tests.sandbox_state, "unsandboxed")
-        self.assertEqual(read.sandbox_state, "none")
-        self.assertEqual(state.sandbox_state, "none")
+        self.assertEqual(read.action.capability_class, "workspace_read")
+        self.assertEqual(state.action.capability_class, "session_state")
+        self.assertNotIn("sandbox", shell.event_payload())
 
     def test_registry_execute_and_preapproval_use_the_same_evaluator(self) -> None:
         tool = _tool("sample_read", "read")
@@ -142,7 +140,7 @@ class ExecutionPolicyTests(unittest.TestCase):
         self.assertEqual(len(policy_events), 2)
         self.assertEqual({payload["tool"] for payload in policy_events}, {"shell", "run_tests"})
         self.assertTrue(all(payload["outcome"] == "deny" for payload in policy_events))
-        self.assertTrue(all(payload["sandbox_state"] == "unsandboxed" for payload in policy_events))
+        self.assertTrue(all("sandbox_state" not in payload for payload in policy_events))
         self.assertNotIn(secret, json.dumps(policy_events, sort_keys=True))
         self.assertFalse(any(key in payload for payload in policy_events for key in ("arguments", "command", "env")))
 
@@ -189,14 +187,13 @@ class ExecutionPolicyTests(unittest.TestCase):
                 "allow": 1,
                 "prompt": 1,
                 "deny": 1,
-                "unsandboxed_exec_evaluations": 2,
                 "invalid_events": 0,
                 "sources": {"approval_mode": 2, "non_interactive": 1},
             },
         )
         collector.record_event(
             "ExecutionPolicyEvaluated",
-            {"outcome": "allow", "source": "raw-model-text", "sandbox_state": "none"},
+            {"outcome": "allow", "source": "raw-model-text"},
         )
         after_invalid = collector.finish("final", guard_values={}, steering_values={})
         self.assertEqual(after_invalid["execution_policy"]["invalid_events"], 1)
@@ -232,7 +229,7 @@ class ExecutionPolicyTests(unittest.TestCase):
         self.assertEqual(runtime._last_run_summary["execution_policy"]["evaluated"], 1)
         self.assertEqual(runtime._last_run_summary["execution_policy"]["allow"], 1)
         self.assertIn("execution_policy: evaluated=1, allow=1, prompt=0, deny=0", runtime.status_summary())
-        self.assertIn("unsandboxed_exec_evaluations=0, invalid_events=0", runtime.status_summary())
+        self.assertIn("invalid_events=0", runtime.status_summary())
         self.assertTrue(
             any(
                 record.get("event") == "event_v1"

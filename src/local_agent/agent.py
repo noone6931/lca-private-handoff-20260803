@@ -279,7 +279,7 @@ class AgentRuntime:
         ]
         self._tool_context = ToolContext(
             workspace=config.workspace,
-            approval_mode=config.approval_mode,
+            approval_mode=config.approval_mode, sandbox_mode=config.sandbox_mode,
             state_dir=self._state_dir,
             allowed_dirs=self._workspace_context.additional_roots,
             session_id=self._session.session_id,
