@@ -383,7 +383,7 @@ AGENT_LSP_TYPESCRIPT_COMMAND="/path/to/typescript-language-server --stdio"
 AGENT_LSP_VUE_COMMAND="/path/to/vue-language-server --stdio"
 ```
 
-也可以把 npm 依赖预装到目标项目的 `node_modules/.bin`，或把 jdtls 离线包放到 VM 并通过环境变量指定。诊断当前状态：
+默认外部 server 只从 `PATH` 解析，并拒绝 canonical executable 位于 workspace 内（包括指向 workspace 的 `PATH` symlink）。封闭 VM 可把 server 预装到 workspace 外的全局 `PATH`；若确需使用 workspace 内受控 executable，必须通过 `AGENT_LSP_*_COMMAND` 指定绝对路径。诊断当前状态：
 
 ```bash
 ./agent --cwd /path/to/project "请调用 lsp_status 看一下语言服务器是否可用"
