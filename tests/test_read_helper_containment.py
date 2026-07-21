@@ -183,6 +183,59 @@ class GitReadHelperContainmentTests(unittest.TestCase):
         self.assertFalse(result.is_error, result.content)
         self.assertIn("sample.txt", result.content)
 
+    def test_filter_config_timeout_preserves_confirmed_repository_identity(self) -> None:
+        def timeout_config(
+            workspace: str | os.PathLike[str],
+            args: list[str],
+        ) -> subprocess.CompletedProcess[str]:
+            if args and args[0] == "config":
+                raise subprocess.TimeoutExpired(
+                    ["git", "config"],
+                    timeout=30,
+                    output="secret config output",
+                    stderr="secret config error",
+                )
+            if args == ["rev-parse", "--is-inside-work-tree"]:
+                return subprocess.CompletedProcess(args, 0, "true\n", "")
+            if args == ["rev-parse", "HEAD"]:
+                return subprocess.CompletedProcess(args, 0, "confirmed-head\n", "")
+            self.fail(f"unexpected git invocation: {args!r}")
+
+        context = ToolContext(workspace=Path("/tmp/confirmed-repository"), approval_mode="yolo")
+        with patch("local_agent.tools.git._run_git", side_effect=timeout_config):
+            status = git_status({}, context)
+        with patch("local_agent.tools.git._run_git", side_effect=timeout_config):
+            baseline = capture_git_baseline(context.workspace)
+
+        self.assertTrue(status.is_error)
+        self.assertEqual(status.metadata["git_repository"], True)
+        self.assertEqual(status.metadata["execution_status"], "not_run")
+        self.assertEqual(status.metadata["denial_kind"], "external_filter_unsupported")
+        self.assertEqual(status.metadata["reason"], "read_tier_external_filter_preflight_failed")
+        self.assertEqual(status.metadata["external_process"], "git")
+        self.assertFalse(status.metadata["sandboxed"])
+        self.assertNotIn("secret config", status.content)
+
+        self.assertTrue(baseline["is_git_repo"])
+        self.assertEqual(baseline["head_revision"], "confirmed-head")
+        self.assertEqual(baseline["denial_kind"], "external_filter_unsupported")
+        self.assertEqual(baseline["reason"], "read_tier_external_filter_preflight_failed")
+        self.assertEqual(baseline["external_process"], "git")
+        self.assertFalse(baseline["sandboxed"])
+        self.assertEqual(baseline["status_short"], "")
+        self.assertNotIn("secret config", baseline["error"])
+
+    def test_worktree_probe_start_failure_remains_unconfirmed(self) -> None:
+        with patch(
+            "local_agent.tools.git._run_git",
+            side_effect=FileNotFoundError("git executable unavailable"),
+        ):
+            baseline = capture_git_baseline(Path("/tmp/unconfirmed-repository"))
+
+        self.assertFalse(baseline["is_git_repo"])
+        self.assertNotIn("denial_kind", baseline)
+        self.assertNotIn("external_process", baseline)
+
     def _assert_filter_denial(self, result: ToolResult) -> None:
         self.assertTrue(result.is_error)
         metadata = result.metadata

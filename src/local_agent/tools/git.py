@@ -229,10 +229,16 @@ def _assert_git_read_filters_safe(workspace: str | PathLike[str]) -> None:
     worktree = _run_git(workspace, ["rev-parse", "--is-inside-work-tree"])
     if worktree.returncode != 0 or worktree.stdout.strip() != "true":
         return
-    configured = _run_git(
-        workspace,
-        ["config", "--null", "--includes", "--get-regexp", _GIT_FILTER_CONFIG_PATTERN],
-    )
+    try:
+        configured = _run_git(
+            workspace,
+            ["config", "--null", "--includes", "--get-regexp", _GIT_FILTER_CONFIG_PATTERN],
+        )
+    except (OSError, subprocess.SubprocessError):
+        raise GitReadSafetyError(
+            "Git read operation was not run because external filter configuration could not be verified safely.",
+            reason="read_tier_external_filter_preflight_failed",
+        ) from None
     if configured.returncode == 1:
         return
     if configured.returncode != 0:
