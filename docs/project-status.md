@@ -685,10 +685,10 @@ T-213/T-214 已完成 S5-1 的 Codex 直接隔离交付。T-213 在上述 clean 
 | 项目 | 结论 | 依据 |
 |---|---|---|
 | 主链路 | 通过 | 百炼真实小改复测已跑通 todo、dry_run、apply_patch、session allow、rollback、run_tests、git_diff。 |
-| 测试 | 分层通过 | P5 收口时 90 个 unittest；当前 T-257 stable 为 1352/62/37，另有 75 focused LSP tests、9-case immutable fake-LSP matrix、Git/rg helper、bounded-output/process、child-env/process-lifecycle、non-delivery continuity、AssistantMessage/CLI smoke 与 history/search/multiline/follow-up queue matrix。T-250/T-252 的唯一百炼样本均因 DNS/provider environment 记为 INCONCLUSIVE，不冒充 live coding/queue 收益通过。 |
+| 测试 | 分层通过 | P5 收口时 90 个 unittest；当前 T-261 stable 为 1422/62/40，另有 17 项 prior-run focused、43 项 runtime matrix、fresh two-run/reopen、原始 bubble-sort session replay、真实 JDTLS multi-file matrix、Git/rg helper、bounded-output/process、child-env/process-lifecycle、non-delivery continuity、AssistantMessage/CLI smoke 与 history/search/multiline/follow-up queue matrix。T-250/T-252 的唯一百炼样本均因 DNS/provider environment 记为 INCONCLUSIVE，不冒充 live coding/queue 收益通过。 |
 | 日用入口 | 通过 | README 已补只读分析和小改任务命令模板。 |
 | 开放风险 | 可接受 | shell 仍非沙箱、prompt injection 仍需靠审批和封闭 VM；provider/model 专用 tokenizer、输出 reserve、managed skills、完整 reviewer 和完整 OMP ToolChoiceQueue 继续后置评估。 |
-| 下一阶段 | P18 stable hold / platform sandbox long-term unsupported | T-258 与后续 applied-truth Phase 0 已共同证明：公开受支持的 macOS API、Codex wrapper 语义和当前单一 `Popen` Owner 之间不存在目标 exec 前的 deterministic applied boundary。stable 保持 T-257；macOS/Linux/Windows 均不发布 OS sandbox，现有能力继续明确 `sandboxed=false`。只有未来出现可支持的公开 applied API 才重新立项，不以私有 symbol、child result 或静态 profile 替代。 |
+| 下一阶段 | T-261 stable hold / 等待下一项真实任务 | T-261 已关闭 prospective prior-run execution attribution；legacy incomplete record 继续 INCONCLUSIVE。P18 platform sandbox 保持长期 unsupported/NO-GO，现有能力继续明确 `sandboxed=false`；只有未来出现受支持的公开 applied API 才重新立项。 |
 
 ## 推荐工作流
 
