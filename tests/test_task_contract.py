@@ -106,6 +106,9 @@ class RequirementContractTests(unittest.TestCase):
             "不要修改任何文件？实现 parser 功能。",
             "不要修改任何文件：实现 parser 功能。",
             "不要修改任何文件但实现 parser 功能。",
+            "不要修改任何文件但要实现 parser 功能。",
+            "不要修改所有文件并需要修改 parser 功能。",
+            "不要修改代码然后继续支持 parser 功能。",
         )
 
         for prompt in prompts:
@@ -124,6 +127,9 @@ class RequirementContractTests(unittest.TestCase):
             "实现 parser 功能；不要修改文件并发测试/。",
             "实现 parser 功能；不要修改代码并行生成/。",
             "实现 parser 功能；不要修改所有并发样例/。",
+            "实现 parser 功能；不要修改文件并修改记录/。",
+            "实现 parser 功能；不要修改代码以及实现方案/。",
+            "实现 parser 功能；不要修改所有但支持样例/。",
         )
 
         for prompt in prompts:

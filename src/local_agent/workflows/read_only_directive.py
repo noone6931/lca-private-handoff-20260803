@@ -59,6 +59,8 @@ _GLOBAL_TARGETS = frozenset({
     "工作区",
 })
 
+_CONCRETE_TARGET_MARKERS = ("/", "\\", " directory", " folder", " path", "目录", "文件夹", "路径")
+
 
 def has_global_read_only_directive(prompt: str) -> bool:
     for directive in _DIRECTIVES:
@@ -75,26 +77,31 @@ def has_global_read_only_directive(prompt: str) -> bool:
 
 
 def _directive_target(prompt: str, start: int) -> str:
-    clause = re.split(
-        r"[，。；：！？,.;:!?\n]|\b(?:and|but|then)\b|"
-        r"(?:并且|然后|但是|以及|并|但)(?=\s*(?:实现|修复|修改|新增|增加|添加|接入|支持|调整|"
-        r"重构|删除|补充|编写|创建|更新|优化|迁移|运行|执行))",
-        prompt[start : start + 96],
-        maxsplit=1,
-    )[0]
+    clause = re.split(r"[，。、；：！？,.;:!?\n]", prompt[start : start + 96], maxsplit=1)[0]
     return clause.strip(" \t:：,.")
 
 
 def _is_global_target(target: str) -> bool:
     target = re.sub(r"^(?:to\s+)?(?:the\s+)?", "", target, count=1)
-    if target in _GLOBAL_TARGETS or target.split("、", 1)[0] in _GLOBAL_TARGETS:
+    if target in _GLOBAL_TARGETS:
         return True
+    if any(marker in target for marker in _CONCRETE_TARGET_MARKERS):
+        return False
     match = re.fullmatch(
         r"(?:any files?|all files|existing files|files|code|source code)\s+"
         r"(?:in|under|within)\s+(?:the\s+)?(?:workspace|repository|repo)",
         target,
     )
-    return match is not None
+    if match is not None:
+        return True
+    subjects = "|".join(re.escape(value) for value in sorted(_GLOBAL_TARGETS, key=len, reverse=True))
+    return bool(
+        re.match(
+            rf"(?:{subjects})\s*(?:and|but|then|并且|然后|但是|以及|并|但)"
+            r"\s*(?:(?:要|需要|继续|仍需)\s*)?",
+            target,
+        )
+    )
 
 
 __all__ = ["has_global_read_only_directive"]
