@@ -102,6 +102,10 @@ class RequirementContractTests(unittest.TestCase):
             "Do not edit any files and implement parser.",
             "No changes to all files, implement parser.",
             "No changes to all files. Implement parser.",
+            "不要修改任何文件！实现 parser 功能。",
+            "不要修改任何文件？实现 parser 功能。",
+            "不要修改任何文件：实现 parser 功能。",
+            "不要修改任何文件但实现 parser 功能。",
         )
 
         for prompt in prompts:
@@ -115,6 +119,8 @@ class RequirementContractTests(unittest.TestCase):
             "Implement the parser; do not edit existing files in protected-zone/.",
             "Implement the parser; do not edit code under generated/.",
             "实现 parser 功能；不要修改文件 protected-zone/。",
+            "实现 parser 功能！不要修改文件 protected-zone/。",
+            "实现 parser 功能但不要修改 docs 目录。",
         )
 
         for prompt in prompts:
