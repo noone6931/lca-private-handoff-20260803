@@ -23,6 +23,7 @@ DEFAULT_CONTEXT_RECENT_MESSAGES = 40
 DEFAULT_SUBAGENT_BUDGET_SECONDS = 60
 MIN_SUBAGENT_BUDGET_SECONDS = 5
 MAX_SUBAGENT_BUDGET_SECONDS = 300
+DEFAULT_WEB_SEARCH_MODEL = "qwen-plus"
 TOOL_APPROVAL_POLICIES = {"allow", "prompt", "deny"}
 APPROVAL_MODES = {"always-ask", "write", "yolo"}
 SUMMARY_MODES = {"auto", "local", "llm"}
@@ -57,6 +58,8 @@ class AgentConfig:
     workflow_profile: str = "auto"
     enable_subagents: bool = False
     subagent_budget_seconds: int = DEFAULT_SUBAGENT_BUDGET_SECONDS
+    enable_web_search: bool = False
+    web_search_model: str = DEFAULT_WEB_SEARCH_MODEL
 
 
 def load_config(
@@ -85,6 +88,8 @@ def load_config(
     workflow_profile: str | None = None,
     enable_subagents: bool | None = None,
     subagent_budget_seconds: int | None = None,
+    enable_web_search: bool | None = None,
+    web_search_model: str | None = None,
 ) -> AgentConfig:
     file_config = _load_json_config(config_path)
     workspace = Path(cwd or file_config.get("workspace") or os.getcwd()).expanduser().resolve()
@@ -132,6 +137,7 @@ def load_config(
         or ""
     ).strip()
     tools_config = _tools_config(file_config)
+    web_search_config = _web_search_config(tools_config)
     raw_approval_mode = (
         approval_mode
         or tools_config.get("approvalMode")
@@ -253,6 +259,26 @@ def load_config(
         minimum=MIN_SUBAGENT_BUDGET_SECONDS,
         maximum=MAX_SUBAGENT_BUDGET_SECONDS,
     )
+    raw_enable_web_search = (
+        enable_web_search
+        if enable_web_search is not None
+        else web_search_config.get(
+            "enabled",
+            file_config.get("enable_web_search", os.environ.get("LCA_ENABLE_WEB_SEARCH", False)),
+        )
+    )
+    resolved_enable_web_search = _boolean("enable_web_search", raw_enable_web_search)
+    resolved_web_search_model = str(
+        web_search_model
+        or web_search_config.get("model")
+        or file_config.get("web_search_model")
+        or os.environ.get("LCA_WEB_SEARCH_MODEL")
+        or DEFAULT_WEB_SEARCH_MODEL
+    ).strip()
+    if resolved_enable_web_search and resolved_provider not in {"bailian", "bailian-intl"}:
+        raise ConfigError("web_search is currently supported only for bailian and bailian-intl providers.")
+    if resolved_enable_web_search and not resolved_web_search_model:
+        raise ConfigError("web_search_model must not be empty when web_search is enabled.")
     raw_allowed_dirs = (
         allowed_dirs
         if allowed_dirs is not None
@@ -292,6 +318,8 @@ def load_config(
         workflow_profile=resolved_workflow_profile,
         enable_subagents=resolved_enable_subagents,
         subagent_budget_seconds=resolved_subagent_budget,
+        enable_web_search=resolved_enable_web_search,
+        web_search_model=resolved_web_search_model,
     )
 
 
@@ -322,6 +350,13 @@ def _tools_config(file_config: dict) -> dict:
     if not isinstance(tools, dict):
         raise ConfigError("tools must be an object.")
     return tools
+
+
+def _web_search_config(tools_config: dict) -> dict:
+    web_search = tools_config.get("webSearch") or {}
+    if not isinstance(web_search, dict):
+        raise ConfigError("tools.webSearch must be an object.")
+    return web_search
 
 
 def normalize_approval_mode(raw_mode: object) -> str:

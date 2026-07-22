@@ -701,6 +701,28 @@ class ArchitectureBoundaryTests(unittest.TestCase):
         enabled = tools.create_runtime_registry(object(), True, 60)
         self.assertEqual(enabled.tool_names().count("delegate_explore"), 1)
 
+    def test_web_search_has_one_opt_in_network_owner_and_no_browser_or_workspace_mutation(self) -> None:
+        tools = importlib.import_module("local_agent.tools")
+        provider = (ROOT / "src/local_agent/providers/web_search.py").read_text(encoding="utf-8")
+        adapter = (ROOT / "src/local_agent/tools/web_search.py").read_text(encoding="utf-8")
+        runtime = (ROOT / "src/local_agent/agent.py").read_text(encoding="utf-8")
+        production = "\n".join(
+            path.read_text(encoding="utf-8") for path in (ROOT / "src/local_agent").rglob("*.py")
+        )
+
+        self.assertEqual(production.count('name="web_search"'), 1)
+        self.assertNotIn("web_search", tools.create_default_registry().tool_names())
+        self.assertIn('tier="network"', adapter)
+        self.assertIn("redact_arguments=True", adapter)
+        self.assertIn('"enable_source": True', provider)
+        self.assertIn('"X-DashScope-SSE": "enable"', provider)
+        self.assertNotIn("web_search", runtime)
+        self.assertNotIn("subprocess", provider)
+        self.assertNotIn("playwright", provider.casefold())
+        self.assertNotIn("browser", provider.casefold())
+        self.assertNotIn("write_text", adapter)
+        self.assertNotIn("write_bytes", adapter)
+
     def test_lsp_rename_preview_has_one_readonly_owner_and_no_evidence_or_write_bypass(self) -> None:
         tools = importlib.import_module("local_agent.tools")
         workspace_edit = (ROOT / "src/local_agent/lsp/workspace_edit.py").read_text(encoding="utf-8")

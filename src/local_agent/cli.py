@@ -18,6 +18,7 @@ from .frontends.tui import prepend_initial_prompt
 from .frontends.tui import run_tui
 from .frontends.tui import tui_is_supported
 from .providers.llm import LlmError
+from .providers.web_search import WebSearchError
 from .protocol.commands import CommandResult
 from .protocol.commands import new_command
 from .session.jsonl_store import SessionError
@@ -83,6 +84,16 @@ def main(argv: list[str] | None = None) -> int:
         "--subagent-budget-seconds",
         type=int,
         help="Deadline cap for an enabled read-only explore subtask (5-300 seconds; default: 60).",
+    )
+    parser.add_argument(
+        "--web-search",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Expose sourced Bailian web_search as an opt-in network-read tool (default: disabled).",
+    )
+    parser.add_argument(
+        "--web-search-model",
+        help="Bailian model used only by enabled web_search (default: qwen-plus).",
     )
     parser.add_argument(
         "--max-steps",
@@ -179,6 +190,8 @@ def main(argv: list[str] | None = None) -> int:
             workflow_profile=args.workflow_profile,
             enable_subagents=args.enable_subagents,
             subagent_budget_seconds=args.subagent_budget_seconds,
+            enable_web_search=args.web_search,
+            web_search_model=args.web_search_model,
         )
         chat_requested = args.chat or _is_chat_prompt(args.prompt)
         tui_requested = bool(args.tui or (not args.prompt and not chat_requested))
@@ -231,7 +244,7 @@ def main(argv: list[str] | None = None) -> int:
             print(str(result.payload.get("content", "")))
             return 0
         return 0
-    except (ConfigError, LlmError, SessionError) as exc:
+    except (ConfigError, LlmError, WebSearchError, SessionError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
     except KeyboardInterrupt:

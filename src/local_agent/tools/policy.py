@@ -21,13 +21,13 @@ EXECUTION_POLICY_SOURCES = frozenset(
 EXECUTION_SANDBOX_STATES = frozenset({"none", "unsandboxed"})
 
 _APPROVAL_MODE_ALLOWED_TIERS = {
-    "always-ask": frozenset({"read", "state", "interaction"}),
-    "write": frozenset({"read", "state", "interaction", "write"}),
-    "yolo": frozenset({"read", "state", "interaction", "write", "exec"}),
+    "always-ask": frozenset({"read", "network", "state", "interaction"}),
+    "write": frozenset({"read", "network", "state", "interaction", "write"}),
+    "yolo": frozenset({"read", "network", "state", "interaction", "write", "exec"}),
 }
 _APPROVAL_MODE_ALIASES = {"ask": "always-ask", "auto-read": "always-ask", "always_ask": "always-ask"}
 _CAPABILITY_CLASS_BY_TIER = {
-    "read": "workspace_read",
+    "read": "workspace_read", "network": "network_read",
     "write": "workspace_write",
     "exec": "process_exec",
     "state": "session_state",

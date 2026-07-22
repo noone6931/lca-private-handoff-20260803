@@ -40,6 +40,11 @@ def create_runtime_registry(
     base_registry: ToolRegistry | None = None,
 ) -> ToolRegistry:
     registry = base_registry or create_default_registry()
+    web_search_backend = getattr(client, "web_search_backend", None)
+    if web_search_backend is not None:
+        from .web_search import web_search_tools
+
+        registry = registry.extended(web_search_tools(web_search_backend))
     if not enable_subagents:
         return registry
     from ..workflows.explore_subagent import delegate_explore_tool

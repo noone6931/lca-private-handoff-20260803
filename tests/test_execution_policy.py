@@ -60,6 +60,7 @@ class ExecutionPolicyTests(unittest.TestCase):
             ("always-ask", "read", None, None, False, True, "allow", "approval_mode", False),
             ("always-ask", "state", None, None, False, True, "allow", "approval_mode", False),
             ("always-ask", "interaction", None, None, False, True, "allow", "approval_mode", False),
+            ("always-ask", "network", None, None, False, True, "allow", "approval_mode", False),
             ("always-ask", "write", None, None, False, True, "prompt", "approval_mode", True),
             ("always-ask", "exec", None, None, False, True, "prompt", "approval_mode", True),
             ("write", "write", None, None, False, True, "allow", "approval_mode", False),
@@ -102,12 +103,15 @@ class ExecutionPolicyTests(unittest.TestCase):
         tests = evaluate_execution_policy(execution_action("run_tests", "exec"), approval_mode="yolo")
         read = evaluate_execution_policy(execution_action("read_file", "read"), approval_mode="yolo")
         state = evaluate_execution_policy(execution_action("todo_update", "state"), approval_mode="yolo")
+        network = evaluate_execution_policy(execution_action("web_search", "network"), approval_mode="yolo")
 
         self.assertEqual(shell.action.capability_class, "process_exec")
         self.assertEqual(shell.sandbox_state, "unsandboxed")
         self.assertEqual(tests.sandbox_state, "unsandboxed")
         self.assertEqual(read.sandbox_state, "none")
         self.assertEqual(state.sandbox_state, "none")
+        self.assertEqual(network.action.capability_class, "network_read")
+        self.assertEqual(network.sandbox_state, "none")
 
     def test_registry_execute_and_preapproval_use_the_same_evaluator(self) -> None:
         tool = _tool("sample_read", "read")

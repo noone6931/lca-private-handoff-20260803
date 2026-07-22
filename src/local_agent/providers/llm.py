@@ -11,10 +11,9 @@ from ..config import AgentConfig
 from .protocol import ProviderProtocolArtifact
 from .protocol import classify_provider_content_artifact
 from .protocol import normalize_provider_dialect_message
-from .stream import ProviderStreamError
-from .stream import ProviderTextDelta
-from .stream import RawChatCompletion
+from .stream import ProviderStreamError, ProviderTextDelta, RawChatCompletion
 from .stream import iter_chat_completion_response
+from .web_search import BailianWebSearchBackend
 
 
 VISION_OBSERVATION_SYSTEM_PROMPT = """You are an evidence-first visual observation assistant.
@@ -45,6 +44,7 @@ class ChatResponse:
 class OpenAICompatibleClient:
     def __init__(self, config: AgentConfig):
         self._config = config
+        self.web_search_backend = BailianWebSearchBackend(config) if config.enable_web_search else None
 
     def chat(
         self,
