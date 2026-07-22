@@ -76,7 +76,9 @@ def has_global_read_only_directive(prompt: str) -> bool:
 
 def _directive_target(prompt: str, start: int) -> str:
     clause = re.split(
-        r"[，。；：！？,.;:!?\n]|\b(?:and|but|then)\b|(?:并且|然后|但是|以及|并|但)",
+        r"[，。；：！？,.;:!?\n]|\b(?:and|but|then)\b|"
+        r"(?:并且|然后|但是|以及|并|但)(?=\s*(?:实现|修复|修改|新增|增加|添加|接入|支持|调整|"
+        r"重构|删除|补充|编写|创建|更新|优化|迁移|运行|执行))",
         prompt[start : start + 96],
         maxsplit=1,
     )[0]

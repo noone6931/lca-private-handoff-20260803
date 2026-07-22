@@ -121,6 +121,9 @@ class RequirementContractTests(unittest.TestCase):
             "实现 parser 功能；不要修改文件 protected-zone/。",
             "实现 parser 功能！不要修改文件 protected-zone/。",
             "实现 parser 功能但不要修改 docs 目录。",
+            "实现 parser 功能；不要修改文件并发测试/。",
+            "实现 parser 功能；不要修改代码并行生成/。",
+            "实现 parser 功能；不要修改所有并发样例/。",
         )
 
         for prompt in prompts:
