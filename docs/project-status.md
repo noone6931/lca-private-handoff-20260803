@@ -21,20 +21,20 @@ LCA、OMP 与 Codex 的当前源码级对照和路线校正见 `docs/lca-omp-cod
 - 生成并展示 git diff。
 - 沉淀项目级记忆。
 - 只访问指定的 OpenAI-compatible AI API，例如阿里云百炼。
-- 不依赖公网搜索，不自动下载依赖，不做远程控制。
+- 默认不依赖公网搜索；仅显式 opt-in 时使用百炼 sourced search，不自动下载依赖，不做远程控制。
 
 第一阶段仍暂不做：
 
 - 多 Agent 并行。
 - DAP，以及任意 LSP command、server-side apply 或自动应用类重构能力。
-- Browser 工具。
-- 自动联网搜索。
+- Browser 与任意 URL 抓取工具。
+- 自动联网搜索；现有 sourced search 必须显式开启。
 - 远程仓库控制。
 - AST 级复杂编辑。
 
 ## 当前进度
 
-当前 stable 为 T-262：release `20260722T025834Z-af39a53f2dd7-881b0b217bda`，revision `af39a53f2dd70ab36305d61c31a1445901a2235f`，digest `881b0b217bda59908f95e414268f92b0b86b1758a68e97ac0ebfe8c2586aff84`；clean detached Python 3.14 publish gate 通过 1430 unittest（1 skip）、compileall 和 diff-check，独立 deterministic verifier 另通过 62/62 benchmark、40/40 architecture checks、77/77 focused、CLI help/chat、execution metadata negative matrix、read-only clause matrix 与 TUI approval scrollback replay。T-262 关闭用户真实目录任务暴露的 operation provenance、task contract scope 和 approval live-region 真值问题；30 个工具 schema 不变，未新增 writer、evidence tree、finalization gate 或循环依赖。
+当前 stable 为 T-263：release `20260722T085314Z-841fc3a1ed45-396e7898efa0`，revision `841fc3a1ed4527b2a4a781e3024cf1f87e50bed2`，digest `396e7898efa0d881cd895eba8e36347f18abb2bd28f5e8152ad7f4c68d54998b`；clean detached Python 3.14 publish gate 通过 1441 unittest（1 skip）、compileall 和 diff-check，独立 deterministic verifier 另通过 62/62 benchmark、41/41 architecture checks、10/10 web-search focused 与 CLI help/chat。真实百炼 E2E 只调用一次 `web_search`，0 tool error、0 schema/protocol violation，并将 provider 的 9/9 sources 完整投影。T-263 默认不增加网络能力；只有显式 opt-in 才注册 network-read 工具，未新增 Browser、任意 URL fetch、writer、evidence tree、finalization gate 或循环依赖。
 
 T-250 已完成 T-249 stable 的 multiline TUI 日用收益门槛。fresh Python fixture 的三行 Alt-Enter prompt 在 composer、session user event 和 `0600` history 中精确保留，只有一个 SubmitPrompt/TurnStarted/RunSummary/TurnFinished；唯一百炼请求因 DNS/provider environment 在首个 LLM request 失败，tool calls 为 0，终态诚实为 `provider_error` / `delivered=false`，fixture 没有源码 diff，stable/main 身份不变。真实 read/patch/test/diff 收益因此为 INCONCLUSIVE；未发现自动提交、输入改写、重复 settled output、权限越权、假交付或 identity 污染，不重跑 provider、不修改 Harness，也不给大猛发开发任务。P17 当前阶段据此收口，后续回到普通 coding 的真实收益与可靠性观察。
 
@@ -61,6 +61,8 @@ T-260 已完成并发布 P17 TUI Activity / Candidate Settlement Truth Closure�
 T-261 已完成并发布 Prior-run Execution Evidence Truth。`shell` / `run_tests` 生成统一 typed execution metadata，既有 SessionEvidence post-tool join 产出单条 `execution_completed_v1`，绑定 origin session/run/command、tool call、event seq/time、canonical cwd、structured command、typed outcome/exit 和 bounded output provenance；恢复时严格校验 session/workspace/revision 与 `ToolOutput`、`ContextUpdated` correlation。模型只收到 runtime 生成的 bounded/redacted attribution，且明确“本轮未重跑、不证明当前文件状态”；prior fact 不进入 current-run `tool_choice_results`、observed tool names、verification plan 或 tool counts。原始 bubble-sort JSONL 缺 call/run/typed exit correlation，不能从 assistant 文本或 legacy output 反推，因此保持 legacy INCONCLUSIVE，而不是伪造 typed PASS。首个 candidate 因新 user turn 后旧 assistant command/output narrative 仍可泄漏被独立 verifier 拒绝；修正为 trusted historical execution 后 assistant narrative taint 跨后续 user turn 保持，用户消息和无执行历史不受影响。最终独立 empty-env verifier 通过 17/17 focused、40/40 architecture、62/62 benchmark、1422 unittest（1 skip）和 43/43 runtime matrix；fresh 两轮引用不污染本轮计数，原始 session 重放无 typed exit 0、无错误“未运行”、无 command/output narrative 泄漏，`residual_subagents=0`。该协议只保证 exact typed attribution 与 false-denial closure，不宣称能完全约束任意自由文本时间语义。
 
 T-262 已完成并发布 Runtime Operation Provenance / Approval Scrollback Truth Closure。`delivery.py` 只消费 typed execution metadata：`shell` 即使可能产生副作用，也不会被计作 patch transaction 或 `run_tests` gate；patch 后执行的 shell 另列为 post-write execution，并仅投影 command digest、canonical cwd、typed status/exit，不泄漏 raw command。`execution_metadata.py` 成为 `execution_v1` 唯一 schema parser，SessionEvidence 与 delivery report 复用同一 fail-closed 解析。任务契约的 read-only 判断改为有界 clause/target grammar：具体目录保护保持局部，真正全局的只读目标仍阻止实现，不依赖关键词/output 扫描或新增自然语言 final gate。TUI 继续由唯一 native renderer 写终端，并在首帧前预留 mutable live region；独立 replay 证明 approval/header 在物理 scrollback 为 0、当前可见区为 1。七轮 rejected candidate 均未发布，最终 immutable candidate 通过 1430 unittest（1 skip）、62 benchmark、40 architecture、77 focused、18 malformed metadata、clause overlap/path/modal matrix、30 schema identity 和 owner/cycle 检查；stable/main/candidate 身份与用户 dirty 边界均保持，`residual_subagents=0`。
+
+T-263 已完成并发布 Opt-in Sourced Web Search Tool Phase 1，并承接用户提出的普通 Coding 端到端收益门禁。既有 T-262 编号已用于 provenance/scrollback stable，因此没有重写历史编号。deterministic 普通 Coding 任务 1/1 PASS；真实百炼任务正确交付 patch、测试与 diff，核心收益 PASS，严格工具协议因 provider 多发一次 malformed `todo_add` 记 9/10，未据此修改 Harness。工具补全只为 `bailian` / `bailian-intl` 注册默认关闭的 `web_search`：查询参数不进入 session/telemetry，百炼原生 SSE 必须给出 request identity 和至少一个结构化 source，最多 20 条且必须完整投影；缺 source、超界、无完成事件、错误 endpoint 或非百炼 provider 全部 fail closed。网络 tier 复用既有 ExecutionPolicy，未新增 approval tree；Browser、任意 URL fetch、自动下载仍不提供。clean detached candidate 与独立 empty-env verifier 均为 1441/62/41/10 全绿，真实 E2E 为 1 次搜索、0 错误、9/9 sources，`residual_subagents=0`。
 
 后续只读 Seatbelt Applied-Truth Protocol Feasibility Phase 0 已独立复核并正式判定长期 NO-GO/unsupported，不分配新 T 编号。Codex 的 macOS adapter 只把 argv 改写为 `/usr/bin/sandbox-exec` 并按所选 `SandboxType` 投影产品状态；真实 wrapper 在自身进程中 `sandbox_compile_*`、`sandbox_apply` 成功后才 `execvp`，父进程没有 kernel applied acknowledgement。公开 `sandbox_init` 已 deprecated、只作用于当前进程且公开 flag 只支持 named profile；公开 `spawn.h`、Python `Popen` / `os.posix_spawn` 均没有 Seatbelt profile attribute，`sandbox_check` 也不能在目标 exec 前证明完整 profile。即使使用本机导出的私有 `posix_spawnattr_setmacpolicyinfo_np`，受控 probe 中有效 `no-write` 与无效 profile 都返回 `spawn_rc=0` 和 PID；前者由 kernel 拒绝写入，后者在 command 未执行前终止，因此 spawn 成功仍不等于 applied，child signal/exit/output 也不能消除歧义。独立 verifier 确认 Codex/OMP/LCA Owner 分账、`src/tests` 相对 `41d215b` 零 diff、用户 dirty 不变并以 `residual_subagents=0` 闭合。除非未来出现受支持的公开 API，能在目标 exec 前向同一个 `Popen` Owner 同步返回 profile apply 失败，否则不重启 macOS Seatbelt；封闭 VM/容器继续是需要真实 OS 隔离时的外部边界。
 
@@ -648,7 +650,7 @@ T-213/T-214 已完成 S5-1 的 Codex 直接隔离交付。T-213 在上述 clean 
 | ADR-004 | 第一阶段 memory 使用 Markdown。 | Markdown 简单、可审计、封闭 VM 友好；暂不引入 SQLite 或向量库。 |
 | ADR-005 | 第一阶段使用 anchored patch，不做 AST edit。 | hash + old_text + line 校验已经足够支撑 MVP 的可控修改。 |
 | ADR-006 | 长需求应写入文件，让 Agent 读取。 | 直接把大段需求塞进 prompt 会挤占上下文，不利于长任务。 |
-| ADR-007 | 封闭 VM 目标优先于联网能力。 | 第一阶段只允许访问指定 AI API，不引入公网搜索和自动下载依赖。 |
+| ADR-007 | 封闭 VM 目标优先于联网能力。 | 默认只访问指定 AI API；T-263 增补显式 opt-in、带完整来源的百炼搜索，但仍不引入 Browser、任意 URL 抓取或自动下载。 |
 
 | ADR-039 | Stable 与 Dev 使用显式发布通道 | 对齐 OMP 已安装 CLI 与开发 checkout 分离；LCA 以 source snapshot、source digest、全量本地 gate 和原子 current 指针实现，不下载依赖、不要求双 venv。provider secret 只来自环境、显式 env-file、用户级 config 或 workspace env，snapshot 不携带密钥。 |
 | ADR-040 | Path-scoped rules 采用 metadata 常驻、正文按命中路径加载 | 对齐 OMP project context/discovery，同时控制多 root prompt 体积；规则根隔离且 advisory，工具 policy 仍是唯一安全边界。 |
@@ -687,10 +689,10 @@ T-213/T-214 已完成 S5-1 的 Codex 直接隔离交付。T-213 在上述 clean 
 | 项目 | 结论 | 依据 |
 |---|---|---|
 | 主链路 | 通过 | 百炼真实小改复测已跑通 todo、dry_run、apply_patch、session allow、rollback、run_tests、git_diff。 |
-| 测试 | 分层通过 | P5 收口时 90 个 unittest；当前 T-262 stable 为 1430/62/40，另有 77 项 focused、typed execution metadata negative matrix、read-only clause matrix、approval live-region replay、prior-run/runtime matrix、真实 JDTLS multi-file matrix、Git/rg helper、bounded-output/process、child-env/process-lifecycle、non-delivery continuity、AssistantMessage/CLI smoke 与 history/search/multiline/follow-up queue matrix。T-250/T-252 的唯一百炼样本均因 DNS/provider environment 记为 INCONCLUSIVE，不冒充 live coding/queue 收益通过。 |
+| 测试 | 分层通过 | P5 收口时 90 个 unittest；当前 T-263 stable 为 1441/62/41，另有 10 项 web-search focused、真实百炼 1-call/0-error/9-of-9-source E2E，以及既有 typed execution、read-only clause、approval live-region、prior-run/runtime、真实 JDTLS、Git/rg helper、bounded-output/process、child-env/process-lifecycle、non-delivery continuity、AssistantMessage/CLI 与 history/search/multiline/follow-up queue matrix。 |
 | 日用入口 | 通过 | README 已补只读分析和小改任务命令模板。 |
 | 开放风险 | 可接受 | shell 仍非沙箱、prompt injection 仍需靠审批和封闭 VM；provider/model 专用 tokenizer、输出 reserve、managed skills、完整 reviewer 和完整 OMP ToolChoiceQueue 继续后置评估。 |
-| 下一阶段 | T-262 stable hold / 等待下一项真实任务 | T-262 已关闭 operation provenance、read-only clause scope 与 approval live-region 真值问题。自动联网搜索和 Browser 仍是明确后置的独立产品能力，不与本批可靠性修复混合；P18 platform sandbox 保持长期 unsupported/NO-GO，现有能力继续明确 `sandboxed=false`。 |
+| 下一阶段 | T-263 stable hold / 等待下一项真实任务 | T-263 已完成普通 Coding 收益门禁和显式 sourced search。Browser、任意 URL 抓取与自动下载仍是独立后置能力；P18 platform sandbox 保持长期 unsupported/NO-GO，现有外部进程能力继续明确 `sandboxed=false`。 |
 
 ## 推荐工作流
 

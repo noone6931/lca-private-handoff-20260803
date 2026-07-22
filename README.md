@@ -10,7 +10,7 @@
 - 运行本地命令和测试；
 - 生成 diff；
 - 用 Markdown 沉淀项目级记忆；
-- 不依赖公网搜索，不自动下载依赖，不做远程控制，不做多 Agent。
+- 默认离线；仅在显式启用时通过百炼执行带来源的公网搜索，不自动下载依赖，不做远程控制。
 
 ## 运行前需要
 
@@ -71,6 +71,8 @@ export AGENT_TOOL_APPROVAL="shell=deny,run_tests=allow"  # optional per-tool all
 export AGENT_CONTEXT_CHAR_BUDGET="60000"  # optional approximate compaction window
 export AGENT_SUMMARY_MODE="auto"  # auto | local | llm
 export AGENT_ALLOWED_DIRS="/path/to/requirements:/path/to/other-read-write-root"  # optional extra roots
+export LCA_ENABLE_WEB_SEARCH="true"  # optional Bailian sourced web search; default off
+export LCA_WEB_SEARCH_MODEL="qwen-plus"  # optional search-only model
 ```
 
 ## 本地运行
@@ -334,6 +336,7 @@ python3 scripts/sync_project_excel.py
 - `read_file`: 读取文件，输出 `[path#hash]`、纯 `tag: hash` 和行号；`apply_patch.tag` 应传纯 hash。
 - `list_files`: 列出项目文件，默认跳过 `.git`、`.local-agent` 和缓存目录。
 - `search_code`: 使用 `rg` 搜索代码。
+- `web_search`: 显式 opt-in 的百炼公网搜索，返回有界答案和完整 typed source URL；不打开或抓取任意 URL。用 `--web-search` 启用，默认关闭。
 - `shell`: 运行本地命令，带超时和确认。
 - `run_tests`: exec-tier 的受约束测试/构建入口，默认执行 `PYTHONPATH=src python3 -m unittest discover -s tests`。它使用结构化 argv、固定可信 PATH 解析出的 runner、真实退出码和显式 `cwd`，不解释 shell 管道或重定向。
 - `git_status`: 查看本地 git 状态。
@@ -396,6 +399,7 @@ AGENT_LSP_VUE_COMMAND="/path/to/vue-language-server --stdio"
 - 单 Agent；
 - 小工具集；
 - 本地优先；
+- 公网搜索默认关闭；显式启用后只暴露带来源的 `web_search`，Browser、任意 URL 抓取和自动下载仍不提供；
 - 默认谨慎权限；
 - `always-ask` 模式可通过 `--auto-approve-tools` 对明确工具做免确认白名单，也可用 `--tool-approval tool=allow|prompt|deny` 做更细策略；
 - 工具参数会在执行前做运行时校验；

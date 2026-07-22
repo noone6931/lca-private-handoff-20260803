@@ -17,10 +17,10 @@ python3 scripts/sync_project_excel.py
 | 字段 | 当前值 | 说明 |
 |---|---|---|
 | 最终目标 | 个人本地编程助手 Agent | 本地优先、封闭 VM 可用、只访问指定 AI API，能读代码、搜代码、改代码、跑测试、生成 diff、沉淀项目记忆。 |
-| 当前阶段 | T-262 Runtime Operation Provenance / Approval Scrollback Truth Closure 已完成；P18 platform sandbox 长期 unsupported | 当前 stable 为 T-262 `20260722T025834Z-af39a53f2dd7-881b0b217bda`。shell、patch transaction 与 run_tests provenance 分账；read-only clause scope 和 TUI approval live region 均由原有 Owner 收口。 |
+| 当前阶段 | T-263 Opt-in Sourced Web Search Tool Phase 1 已完成；P18 platform sandbox 长期 unsupported | 当前 stable 为 T-263 `20260722T085314Z-841fc3a1ed45-396e7898efa0`。普通 Coding 收益门禁通过；百炼 sourced search 默认关闭，显式启用后复用既有 network-read policy。 |
 | 推荐入口 | `lca` 或 `./agent` | 连接 POSIX TTY 时进入 normal-screen TUI，wheel/trackpad 使用终端原生历史；`lca --chat` / `lca chat` 使用轻量 terminal-native chat，非 TTY 自动回退。 |
 | Token 配置 | 环境变量 / `--env-file` / `.env` | 优先级为真实环境变量、显式 env-file、用户级 `${AGENT_CONFIG_DIR:-~/.config/local-coding-agent}/.env`、workspace `.env`；stable snapshot 不携带密钥。 |
-| 测试数 | T-262 stable 1430/62/40 | clean detached Python 3.14 release gate 通过 1430 unittest（1 skip）、compileall、diff-check；独立 deterministic verifier 另通过 62 benchmark、40 architecture、77 focused、metadata/clause/scrollback matrix 与 CLI help/chat。Excel 按用户要求不生成。 |
+| 测试数 | T-263 stable 1441/62/41 | clean detached Python 3.14 release gate 通过 1441 unittest（1 skip）、compileall、diff-check；独立 deterministic verifier 另通过 62 benchmark、41 architecture、10 web-search focused 与 CLI help/chat；真实百炼 E2E 为 1-call/0-error/9-of-9-source。Excel 按用户要求不生成。 |
 | 三方架构对照 | 已完成 2026-07-16 基线 | 见 `docs/lca-omp-codex-architecture-comparison-2026-07-16.md`；目标修正为 OMP/Codex 级通用底座 + LCA 企业工作流，不以完整复制 OMP platform 为 KPI。 |
 | 默认 budget_seconds | 600 | 单次任务默认 10 分钟墙钟预算；`--budget-seconds 0` 可关闭。 |
 | 默认 max_steps | 0 | 表示不限步；仅在用户显式设置时作为防失控保险丝。 |
@@ -35,7 +35,7 @@ python3 scripts/sync_project_excel.py
 | 默认工作流落地 | 已完成 MVP 版 | system prompt + tool descriptions + runtime workflow reminder 已落地，用户不需要每次手写工具顺序。 |
 | LSP / Light fallback | 已完成 MVP 版 | `lsp_symbols` / `lsp_workspace_symbols` / `lsp_document_symbols` / `lsp_definition` / `lsp_references` / `lsp_diagnostics` / `lsp_status`，覆盖 Python、Java、JavaScript、TypeScript、Vue；默认可用则外部 LSP，不可用则 light fallback。 |
 | Multi-root workspace | 已完成 MVP 版 | `--allow-dir` / `AGENT_ALLOWED_DIRS` 支持显式授权额外目录给文件、搜索、LSP、patch 工具；system prompt 和 `list_files`/path-not-found 等工具观察会列出 primary workspace 和 allowed dirs；需求/文档类任务会先用 soft tool requirement 要求读取 allowed-dir 文档；shell/git/显式项目 memory/skills 仍锚定 `--cwd`，session/todo/patch logs 和默认 consolidation memory 走 state dir。 |
-| Stable / Dev release channels | 已完成 MVP 版 | `lca` 指向已验证的不可变 source snapshot，`lca-dev` 指向当前源码；当前 stable 为 T-262 `20260722T025834Z-af39a53f2dd7-881b0b217bda`，revision `af39a53f2dd70ab36305d61c31a1445901a2235f`，digest `881b0b217bda59908f95e414268f92b0b86b1758a68e97ac0ebfe8c2586aff84`。`lca-release publish` 先跑离线 gate 再原子 promote，失败保留旧 stable。 |
+| Stable / Dev release channels | 已完成 MVP 版 | `lca` 指向已验证的不可变 source snapshot，`lca-dev` 指向当前源码；当前 stable 为 T-263 `20260722T085314Z-841fc3a1ed45-396e7898efa0`，revision `841fc3a1ed4527b2a4a781e3024cf1f87e50bed2`，digest `396e7898efa0d881cd895eba8e36347f18abb2bd28f5e8152ad7f4c68d54998b`。`lca-release publish` 先跑离线 gate 再原子 promote，失败保留旧 stable。 |
 | Workflow Profiles | 已完成 Phase 1 | `auto` 依据 typed `RequirementContract` 解析 `coding`、`enterprise-evidence`、`readiness-audit`；缺 contract 时 optional heavy hooks 全关闭。 | profile 不改变 task kind、tool schema、approval 或 workspace；不强制 `apply_patch`，通过 Session、`ContextUpdated`、RunSummary 和 `/status` 审计。 |
 | Path-scoped rules | 已完成 MVP 版 | 每个 canonical workspace root 可定义 `.local-agent/rules/*.md`；每轮只注入轻量 metadata，用户或工具路径命中时才注入对应规则正文，规则不改变工具权限。 |
 | Offline benchmark / eval | 已完成 MVP 版 | `benchmarks/tasks` 的隔离 fixture 默认使用 deterministic fake provider 跑真实 Runtime，并输出 JSON/Markdown 结果；`--live` 才显式使用外部 provider。 |
@@ -381,6 +381,7 @@ python3 scripts/sync_project_excel.py
 | T-260 | P0 | P17 | TUI Activity / Candidate Settlement Truth Closure | 已完成并发布 stable | 用户真实 bubble-sort session、TUI projector/native scrollback Owner、原始 JSONL deterministic replay | Tool error preview 在 projection/view 两层保持 display-only 单物理行；provider `candidate`/`tool_call` 只留在 mutable tail，新候选替换旧候选，只有 `TurnFinished.final_message_id` 结算。未改 Runtime、session evidence、renderer writer 或 approval tree。 | commit `2df07c5`；1404/62/39、146 TUI focused、compileall/diff/help/chat 全绿；empty-env verifier 44/44、原始三候选 replay 1/1、frame 2/2，stable `20260721T092421Z-2df07c5c25c3-7e0b62645bca`。prior-run typed execution evidence 单独后置。 |
 | T-261 | P0 | Core Runtime | Prior-run Execution Evidence Truth | 已完成并发布 stable | 用户真实 bubble-sort session、Codex/OMP provenance 对照、单一 SessionEvidence post-tool join、独立 empty-env verifier | `shell` / `run_tests` 形成严格关联的 `execution_completed_v1`；prior fact 只以 bounded/redacted exact attribution 投影，不进入 current-run tools/counts，也不证明当前文件状态。legacy 缺 correlation/typed exit 时保持 INCONCLUSIVE；assistant/tool narrative 不可充当证据。 | commits `901a96b`、`06eb8e9`；首个 candidate 因跨 user turn narrative 泄漏被拒后修正。1422/62/40、17 focused、43 runtime matrix、fresh two-run/reopen 与原始 session replay 全绿，`residual_subagents=0`；stable `20260721T113922Z-06eb8e9391b9-83e0ed1c6609`，digest `83e0ed1c66096739740e46bd4b79706b6dd70e692abb9f67bf6f7cc710ac7b15`。 |
 | T-262 | P0 | Core Runtime / P17 | Runtime Operation Provenance / Approval Scrollback Truth Closure | 已完成并发布 stable | 用户真实目录任务、typed execution metadata、task contract clause scope、native renderer live region、独立 deterministic verifier | shell、patch transaction 与 run_tests 分账；SessionEvidence/delivery 共用唯一 `execution_v1` parser；具体目录只读约束保持局部，全局只读仍 fail closed；approval/header 只在 mutable live region 显示，不进入物理 scrollback。没有新增 writer、evidence tree、finalization gate、schema 或循环依赖。 | commits `d5baa55`..`af39a53`；1430/62/40、77 focused、18 malformed metadata、clause overlap/path/modal、approval scrollback 与 30 schema identity 全绿。stable `20260722T025834Z-af39a53f2dd7-881b0b217bda`，digest `881b0b217bda59908f95e414268f92b0b86b1758a68e97ac0ebfe8c2586aff84`，`residual_subagents=0`。 |
+| T-263 | P0 | Core Tools | Opt-in Sourced Web Search Tool Phase 1 / Ordinary Coding Benefit Gate | 已完成并发布 stable | Codex/OMP web-tool 对照、百炼原生 sourced-search 协议、deterministic coding gate、独立 empty-env verifier | 只为 `bailian` / `bailian-intl` 显式注册 `web_search`；默认 off，单查询、完整 source provenance、bounded/redacted 输出，复用既有 network-read policy。Browser、任意 URL fetch、自动下载、第二 approval/evidence tree 均未引入。既有 T-262 编号不重写。 | commit `841fc3a`；1441/62/41、10 focused、普通 Coding deterministic 1/1，真实百炼 search E2E 1-call/0-error/9-of-9-source。stable `20260722T085314Z-841fc3a1ed45-396e7898efa0`，digest `396e7898efa0d881cd895eba8e36347f18abb2bd28f5e8152ad7f4c68d54998b`，`residual_subagents=0`。 |
 
 ## 风险与决策
 
@@ -472,7 +473,7 @@ python3 scripts/sync_project_excel.py
 | ADR | ADR-004 | 2026-07-07 | 第一阶段 memory 用 Markdown | 已接受 | 后续看需求升级 | OMP 有本地 memory 后台抽取，并在启动时注入 Memory Guidance；我们先用项目 Markdown，后续再做自动整理。 |
 | ADR | ADR-005 | 2026-07-07 | Patch 先用 anchored patch，不上 AST edit | 已接受 | P5 再评估 preview/rollback | OMP 的 edit/apply_patch 结合审批、渲染和更丰富编辑链路；我们先做 anchored patch 与 dry_run，AST edit 后置。 |
 | ADR | ADR-006 | 2026-07-07 | 长需求建议放文件让 Agent read_file | 已接受 | README 已写推荐工作流 | OMP 会自动发现 context files，也支持按需读取 Markdown；我们让复杂需求落 md，再用 `read_file` 分段注入。 |
-| ADR | ADR-007 | 2026-07-07 | 封闭 VM 下不做公网搜索/自动下载 | 已接受 | 依赖提前准备 | OMP 可接 web、MCP、插件等外部能力，并由配置和 approval 管控；我们封闭 VM 默认离线，依赖提前准备。 |
+| ADR | ADR-007 | 2026-07-07/2026-07-22 | 封闭 VM 默认离线；公网搜索仅显式 opt-in | 已接受并由 T-263 增强 | 依赖仍提前准备；Browser/任意 URL fetch/自动下载不引入 | OMP 可接 web、MCP、插件等外部能力并由配置和 approval 管控；LCA 只增加百炼 sourced search，默认关闭，要求完整来源并复用既有 network-read policy。 |
 | ADR | ADR-008 | 2026-07-07 | Excel 给人看，Markdown 给开发协作 Agent 读 | 已接受 | 持续同步本文件和 `project-status.md` | 这套项目管理文档服务于开发 LCA 的过程，不是 LCA 运行时 memory。我们以 Markdown 作为开发项目事实源，Excel 只生成展示视图。 |
 | ADR | ADR-009 | 2026-07-07 | OMP 核心架构笔记单独固化 | 已接受 | 见 `docs/omp-core-architecture-notes.md` | OMP 的关键判断来自源码和 docs，需要沉淀成项目 context；我们单独维护笔记，避免每次重复扫源码。 |
 | ADR | ADR-010 | 2026-07-07 | P6 优先实现 OMP 默认工作流的本地 MVP 版 | 已接受并落地 | 已做 system prompt、tool descriptions、轻量 runtime nudge | OMP 的体验来自系统上下文、工具规范和 runtime 纠偏共同作用；我们直接采纳分层设计，但暂不搬入完整 ToolChoiceQueue、subagents 等复杂能力。 |
@@ -576,10 +577,10 @@ python3 scripts/sync_project_excel.py
 | 项目 | 结论 | 依据 |
 |---|---|---|
 | 主链路 | 通过 | 百炼真实小改复测已跑通 todo、dry_run、apply_patch、session allow、rollback、run_tests、git_diff。 |
-| 测试 | 分层通过 | P5 收口时 90 个 unittest；当前 T-262 stable 为 1430/62/40，另有 77 项 focused、typed metadata/clause/approval scrollback matrix、prior-run/runtime matrix、真实 JDTLS multi-file apply/javac/rollback/stale、Git/rg helper marker、bounded-output/process matrix、child-env/process-lifecycle、non-delivery continuity、AssistantMessage/CLI smoke 与 history/search/multiline/follow-up queue matrix；T-250/T-252 真实百炼收益因 DNS 记 INCONCLUSIVE；T-214 业务 compile 983/667、focused JUnit 4/17。 |
+| 测试 | 分层通过 | P5 收口时 90 个 unittest；当前 T-263 stable 为 1441/62/41，另有 10 项 web-search focused、真实百炼 1-call/0-error/9-of-9-source E2E，以及既有 typed metadata/clause/approval scrollback、prior-run/runtime、真实 JDTLS、Git/rg helper、bounded-output/process、child-env/process-lifecycle、non-delivery continuity、AssistantMessage/CLI 与 history/search/multiline/follow-up queue matrix；T-214 业务 compile 983/667、focused JUnit 4/17。 |
 | 日用入口 | 通过 | README 已补只读分析和小改任务命令模板。 |
 | 开放风险 | 可接受 | shell 仍非沙箱、prompt injection 仍需靠审批和封闭 VM；provider/model 专用 tokenizer、输出 reserve、managed skills、完整 reviewer 和完整 OMP ToolChoiceQueue 继续后置评估。 |
-| 下一阶段 | T-262 stable hold / 等待下一项真实任务 | T-262 已关闭 operation provenance、read-only clause scope 与 approval live-region 真值问题。自动联网搜索和 Browser 仍是后置的独立产品能力；P18 platform sandbox 保持长期 unsupported/NO-GO，只有未来出现受支持的公开 applied API 才重新立项。 |
+| 下一阶段 | T-263 stable hold / 等待下一项真实任务 | 普通 Coding 收益门禁和显式 sourced search 已完成。Browser、任意 URL 抓取与自动下载仍后置；P18 platform sandbox 保持长期 unsupported/NO-GO，只有未来出现受支持的公开 applied API 才重新立项。 |
 
 ## 推荐工作流
 

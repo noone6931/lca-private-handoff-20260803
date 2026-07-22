@@ -111,7 +111,7 @@ T-218 是这一规则的反例与纠偏记录：`requested_test_missing` 曾从 
 | 用户入口层 | `[CORE-已落地]` | CLI、REPL、一次性 prompt、继续会话。 | `./agent`、`src/local_agent/cli.py`。 |
 | 配置层 | `[CORE-已落地]` | 合并 CLI、环境变量、JSON config、provider preset、approval、summary、memory consolidation、预算、allowed dirs。 | `src/local_agent/config.py`。 |
 | Agent Runtime | `[CORE-已落地]` | 模型循环、工具分发、deadline、synthetic tool result 与阶段编排；不再持有 prompt 投影、workspace roots、memory 归档、tool metadata、证据/verification/session-cache 或 session guard 窗口的具体实现。 | `src/local_agent/agent.py` 当前为 1,792 行、71 个方法的 orchestration facade；`workflow_profile.py` / `runtime_workflow_profile.py` 拥有 typed profile 解析与生命周期，其他 phase 通过显式 Protocol ports 协作，禁止 `__getattr__` service-locator 转发。 |
-| Provider 层 | `[CORE-已落地]` | OpenAI-compatible chat completions 与 tool-call-safe streaming，对接百炼和通用 endpoint。 | `src/local_agent/llm.py` 负责请求适配，`src/local_agent/provider_stream.py` 单独拥有 SSE/JSON 解析、text/tool delta 分离和完整 tool-call 聚合。 |
+| Provider 层 | `[CORE-已落地]` | OpenAI-compatible chat completions 与 tool-call-safe streaming，对接百炼和通用 endpoint；百炼可显式启用独立的 sourced web-search adapter。 | `src/local_agent/providers/llm.py` 负责请求适配，`src/local_agent/provider_stream.py` 单独拥有 SSE/JSON 解析；`src/local_agent/providers/web_search.py` 独占百炼原生搜索协议和 source provenance 校验。 |
 | 工具系统 | `[CORE-已落地]` | 工具注册、schema、tier、approval policy、参数校验、错误包装。 | `src/local_agent/tools/base.py`。 |
 | 本地工具层 | `[CORE-已落地]` | 文件、搜索、shell/test、git、patch、rollback、memory、learn、todo、ask_user。 | `src/local_agent/tools/`。 |
 | 上下文治理 | `[MVP-已落地]` | OMP 风格 reserve、auto/local/llm summary、recent 保留、tool 输出截断、单 system message。 | `AgentRuntime._messages_for_model()` 编排，`src/local_agent/compaction.py` 承载纯函数。 |
@@ -158,10 +158,11 @@ flowchart TD
 | 能力域 | 标签 | 当前能力 | 架构说明 |
 |---|---|---|---|
 | CLI / REPL | `[CORE-已落地]` | 一次性 prompt、REPL、`--continue`、指定 session、隐藏工具日志。 | CLI 只负责输入和配置组装，业务逻辑留在 Runtime。 |
-| Provider | `[CORE-已落地]` | `bailian`、`bailian-intl`、通用 OpenAI-compatible。 | 第一阶段只访问配置的 AI API，不加入公网搜索。 |
+| Provider | `[CORE-已落地]` | `bailian`、`bailian-intl`、通用 OpenAI-compatible；前两者可显式启用独立搜索模型。 | 默认仍只访问配置的 AI API；`--web-search` 才启用百炼原生 sourced search，通用 OpenAI-compatible 配置 fail closed。 |
 | Agent loop | `[CORE-已落地]` | 模型请求、工具调用循环、`finish_reason=length` 处理、deadline 停止、重复工具后强制最终回答。 | `max_steps=0` 默认不限步，靠时间预算和模型自然结束控制；重复同参工具命中阈值后，下一轮可发送 `tools=[]` 促使模型从已有证据回答。 |
 | 默认工作流 | `[MVP-已落地]` | system prompt 和 runtime workflow nudge 会引导探索、todo、patch preview、验证、diff。 | 借鉴 OMP 分层设计，先用轻量 steering 替代完整 ToolChoiceQueue。 |
 | 工具注册 | `[CORE-已落地]` | OpenAI function schema、运行时参数校验、tier 分类。 | tier 是 approval 的基础：read/state/interaction/write/exec。 |
+| Sourced web search | `[MVP-已落地]` | 单查询、最多 20 条完整来源、bounded/redacted answer 与 request provenance。 | `providers/web_search.py` 是协议 Owner，`tools/web_search.py` 是工具 Owner；tier 为 `network`，默认关闭，不提供 Browser 或任意 URL fetch。 |
 | Approval | `[CORE-已落地]` | `always-ask`、`write`、`yolo`；每工具 `allow/prompt/deny`；session allow/reject；REPL `/approval`。 | 配置级 `prompt/deny` 是硬护栏，不被 session allow 绕过。 |
 | 文件读取 | `[CORE-已落地]` | workspace 或显式 allowed dir 内读文件，返回 hash tag 和行号，限制大文件和二进制；展示单行最多 768 列并返回截断 metadata，完整文件 hash 不变。 | 写入前必须先读，给 anchored patch 提供校验锚点；超长/minified 单行不会吞掉上下文预算。 |
 | Multi-root | `[MVP-已落地]` | `--allow-dir` / `AGENT_ALLOWED_DIRS` 显式授权额外目录，并把 workspace roots 注入模型上下文。 | 文件、搜索、LSP、patch 工具可访问额外目录；shell、git、project memory/skills 仍锚定 `--cwd`，session/todo/patch logs 和默认 consolidation memory 走 state dir。 |
@@ -271,7 +272,7 @@ T-196 明确三类 root：
 | Reviewer / planner 角色 | `[MVP-已落地]` | `planner.py`、`tool_choice_queue.py`、`completion_audit.py`、`patch_reviewer.py` 和 final steerers。 | 单 Agent 内部阶段化：先 explore，再写入；自主极小改动在读到源码+测试候选后进入 `candidate_committed`，收束为 preview/write/test/diff；写后以实际 diff/工具证据独立审查测试、调用方与实现质量，最后 CompletionAudit 收口；不引入多 Agent 并发。 | 高风险写入前后都有可审计的证据约束，真实小改持续复测。 |
 | Remote/Web frontend | `[LATER-后续候选]` | `src/local_agent/frontends/remote/`。 | 等 Event/Command 协议稳定后再通过 JSONL replay 或 WebSocket 暴露；不进入第一版。 | CLI/Terminal Frontend 已证明协议可复用后，再接 remote/web。 |
 | DAP | `[DEFER-暂缓]` | 调试工具层。 | 依赖语言生态和进程管理，当前收益低于 LSP / memory。 | 有真实调试场景后再设计。 |
-| Browser / Web search | `[OUT-阶段外]` | 不加入第一阶段。 | 与封闭 VM、本地优先和无公网搜索目标冲突。 | 项目目标改变前不做。 |
+| Browser / arbitrary URL fetch | `[OUT-阶段外]` | 不加入当前阶段。 | 会扩大远程内容执行、下载和权限面；不同于已落地的有界 sourced search。 | 有明确浏览/抓取需求后单独设计。 |
 | MCP / 插件市场 | `[OUT-阶段外]` | 不加入第一阶段。 | 会扩大外部依赖和权限面。 | 等本地核心稳定后重新评估。 |
 | 自动下载依赖 | `[OUT-阶段外]` | 不加入第一阶段。 | 封闭 VM 场景下不可假设公网可用，也有供应链风险。 | 只允许用户显式安装或预置依赖。 |
 | 远程仓库控制 | `[OUT-阶段外]` | 不加入第一阶段。 | 当前只做本地 git status/diff，不自动推送或开 PR。 | 需要单独权限模型后再议。 |
@@ -514,7 +515,7 @@ rollback 只回滚当前 session 的 patch record，并要求当前文件仍匹�
 第一阶段不做：
 
 - Browser。
-- Web search。
+- 任意 URL 抓取、自动联网浏览；有来源的百炼 `web_search` 仅显式 opt-in。
 - 外部 LSP server 作为默认强依赖。
 - DAP。
 - MCP。
