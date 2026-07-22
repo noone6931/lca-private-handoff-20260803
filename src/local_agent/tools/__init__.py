@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from .base import Tool, ToolRegistry
+from .current_time import current_time_tools
 from .files import file_tools
 from .git import git_tools
 from .interaction import interaction_tools
@@ -16,6 +17,7 @@ from .workspace_edit import workspace_edit_tools
 
 def create_default_registry(extra_tools: tuple[Tool, ...] = ()) -> ToolRegistry:
     tools = [
+        *current_time_tools(),
         *file_tools(),
         *search_tools(),
         *shell_tools(),

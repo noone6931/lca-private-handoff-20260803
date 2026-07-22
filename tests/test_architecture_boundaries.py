@@ -723,6 +723,29 @@ class ArchitectureBoundaryTests(unittest.TestCase):
         self.assertNotIn("write_text", adapter)
         self.assertNotIn("write_bytes", adapter)
 
+    def test_current_time_has_one_clock_owner_and_provider_only_context_projection(self) -> None:
+        tools = importlib.import_module("local_agent.tools")
+        owner = (ROOT / "src/local_agent/platform/current_time.py").read_text(encoding="utf-8")
+        adapter = (ROOT / "src/local_agent/tools/current_time.py").read_text(encoding="utf-8")
+        provider_context = (ROOT / "src/local_agent/runtime/provider_context.py").read_text(encoding="utf-8")
+        runtime = (ROOT / "src/local_agent/agent.py").read_text(encoding="utf-8")
+        production = "\n".join(
+            path.read_text(encoding="utf-8") for path in (ROOT / "src/local_agent").rglob("*.py")
+        )
+
+        registered = tools.create_default_registry()
+        schema = next(item for item in registered.schemas() if item["function"]["name"] == "current_time")
+        self.assertEqual(production.count('name="current_time"'), 1)
+        self.assertEqual(registered.tool_names().count("current_time"), 1)
+        self.assertFalse(schema["function"]["parameters"]["additionalProperties"])
+        self.assertIn('tier="read"', adapter)
+        self.assertEqual(owner.count("datetime.now(timezone.utc)"), 1)
+        self.assertIn("messages_with_current_time_context(runtime_messages", provider_context)
+        self.assertNotIn("current_time", runtime)
+        self.assertNotIn("write_text", owner)
+        self.assertNotIn("subprocess", owner)
+        self.assertNotIn("urlopen", owner)
+
     def test_lsp_rename_preview_has_one_readonly_owner_and_no_evidence_or_write_bypass(self) -> None:
         tools = importlib.import_module("local_agent.tools")
         workspace_edit = (ROOT / "src/local_agent/lsp/workspace_edit.py").read_text(encoding="utf-8")

@@ -32,6 +32,7 @@ from ..memory.consolidation import _messages_to_memory_transcript
 from ..workspace.path_rules import candidate_paths_for_path_rules, matching_path_rule_context, render_path_rule_metadata
 from ..workflows.planner import render_planner_explore_context
 from ..evidence.requirements import render_pinned_requirement_evidence
+from ..platform.current_time import current_time_snapshot, messages_with_current_time_context
 from .prompt import _latest_user_content, _messages_with_runtime_context
 from ..tools.base import VisionInspectionUnavailableError, tool_state_dir
 
@@ -249,25 +250,26 @@ class ProviderContextPhase:
             runtime._run.current_user_request or "",
             retained_user_contents=retained_user_contents,
         )
+        runtime_messages = _messages_with_runtime_context(
+            messages,
+            todo_summary,
+            evidence_ledger,
+            planner_explore_context,
+            runtime._workspace_context.primary,
+            runtime._user_config_dir,
+            runtime._workspace_context.additional_roots,
+            runtime._run.current_user_request,
+            runtime._run.requirement_contract,
+            runtime._run.requirement_contract_context,
+            render_pinned_requirement_evidence(runtime._run.evidence.pinned_requirement_evidence),
+            runtime._run.user_facts_context,
+            prior_user_context,
+            path_rule_metadata,
+            matched_path_rules,
+            verification_plan_context,
+        )
         return _provider_safe_messages(
-            _messages_with_runtime_context(
-                messages,
-                todo_summary,
-                evidence_ledger,
-                planner_explore_context,
-                runtime._workspace_context.primary,
-                runtime._user_config_dir,
-                runtime._workspace_context.additional_roots,
-                runtime._run.current_user_request,
-                runtime._run.requirement_contract,
-                runtime._run.requirement_contract_context,
-                render_pinned_requirement_evidence(runtime._run.evidence.pinned_requirement_evidence),
-                runtime._run.user_facts_context,
-                prior_user_context,
-                path_rule_metadata,
-                matched_path_rules,
-                verification_plan_context,
-            )
+            messages_with_current_time_context(runtime_messages, current_time_snapshot())
         )
 
     def build_compaction_summary(
