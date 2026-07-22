@@ -197,6 +197,8 @@ local-agent "帮我找一下测试失败原因"
 
 长会话默认启用 OMP 风格上下文压缩策略：`--context-char-budget` 近似表示上下文窗口，runtime 会至少预留 15% 给下一轮 prompt/输出；超过阈值后压缩早期历史，保留最近消息和未完成 todo，并截断发送给模型的超大 tool 输出。发送给模型的上下文还会折叠空搜索/LSP 这类 useless 结果，以及被新等价读取/搜索 supersede 的旧工具结果；session 日志仍保留原文。默认 `--summary-mode auto`：小历史不摘要，触发 compaction 时自动调用当前配置的 AI API 生成语义摘要，失败回退本地确定性摘要。可用 `--summary-mode local` 强制只用本地摘要，`--summary-mode llm` 强制在 compaction 时尝试 LLM 摘要，`--context-char-budget 0` 关闭压缩。
 
+每次 provider 请求都会附带由单一系统时钟 Owner 生成的 UTC/本地时间快照；该快照只存在于 provider-bound context，不写入对话历史或 checkpoint。无参数 read-tier `current_time` 工具可返回同一 typed `current_time_v1` 结构；需要实时外部事实时仍由显式启用的 `web_search` 单独取证，时间上下文本身不触发联网。
+
 自动记忆整理默认关闭，避免只读分析时隐式写入长期 memory。需要时可用 `--memory-consolidation auto` 或 `AGENT_MEMORY_CONSOLIDATION=auto` 开启；每轮结束后会让当前 provider 从本轮 session 中抽取长期可复用的 project/decisions/conventions/learned。默认 `--memory-scope state` 会追加到 runtime state 目录的 `memory/*.md`，对齐 OMP 的用户 agent dir 思路；只有显式 `--memory-scope project` 或 `AGENT_MEMORY_SCOPE=project` 才写入项目 `.local-agent/memory/*.md`。坏 JSON、空结果、预算耗尽、本轮已经显式调用 `learn` / `memory_write` 时不会写入。`--memory-consolidation llm` 会跳过 auto 的小会话启发式，直接尝试抽取。
 
 项目内可放可复用工作流 skill：

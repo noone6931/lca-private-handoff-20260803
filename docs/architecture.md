@@ -163,6 +163,7 @@ flowchart TD
 | 默认工作流 | `[MVP-已落地]` | system prompt 和 runtime workflow nudge 会引导探索、todo、patch preview、验证、diff。 | 借鉴 OMP 分层设计，先用轻量 steering 替代完整 ToolChoiceQueue。 |
 | 工具注册 | `[CORE-已落地]` | OpenAI function schema、运行时参数校验、tier 分类。 | tier 是 approval 的基础：read/state/interaction/write/exec。 |
 | Sourced web search | `[MVP-已落地]` | 单查询、最多 20 条完整来源、bounded/redacted answer 与 request provenance。 | `providers/web_search.py` 是协议 Owner，`tools/web_search.py` 是工具 Owner；tier 为 `network`，默认关闭，不提供 Browser 或任意 URL fetch。 |
+| Current time truth | `[CORE-已落地]` | 同一系统时钟 instant 的 UTC/local/date/timezone typed snapshot，以及无参数 read-tier `current_time`。 | `platform/current_time.py` 是唯一 clock Owner；tool 与 `runtime/provider_context.py` 只向下依赖它。fresh 时间只注入当前 provider request，不持久化到消息、session 或 checkpoint，也不触发联网。 |
 | Approval | `[CORE-已落地]` | `always-ask`、`write`、`yolo`；每工具 `allow/prompt/deny`；session allow/reject；REPL `/approval`。 | 配置级 `prompt/deny` 是硬护栏，不被 session allow 绕过。 |
 | 文件读取 | `[CORE-已落地]` | workspace 或显式 allowed dir 内读文件，返回 hash tag 和行号，限制大文件和二进制；展示单行最多 768 列并返回截断 metadata，完整文件 hash 不变。 | 写入前必须先读，给 anchored patch 提供校验锚点；超长/minified 单行不会吞掉上下文预算。 |
 | Multi-root | `[MVP-已落地]` | `--allow-dir` / `AGENT_ALLOWED_DIRS` 显式授权额外目录，并把 workspace roots 注入模型上下文。 | 文件、搜索、LSP、patch 工具可访问额外目录；shell、git、project memory/skills 仍锚定 `--cwd`，session/todo/patch logs 和默认 consolidation memory 走 state dir。 |
