@@ -97,6 +97,11 @@ class RequirementContractTests(unittest.TestCase):
             "Review the implementation; do not edit the workspace.",
             "Do not edit any files; implement parser.",
             "No changes to all files; implement parser.",
+            "Do not edit any files, implement parser.",
+            "Do not edit any files. Implement parser.",
+            "Do not edit any files and implement parser.",
+            "No changes to all files, implement parser.",
+            "No changes to all files. Implement parser.",
         )
 
         for prompt in prompts:

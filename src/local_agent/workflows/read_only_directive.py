@@ -75,7 +75,7 @@ def has_global_read_only_directive(prompt: str) -> bool:
 
 
 def _directive_target(prompt: str, start: int) -> str:
-    clause = re.split(r"[，。；;\n]", prompt[start : start + 96], maxsplit=1)[0]
+    clause = re.split(r"[，。；;,.!?\n]|\band\b", prompt[start : start + 96], maxsplit=1)[0]
     return clause.strip(" \t:：,.")
 
 
