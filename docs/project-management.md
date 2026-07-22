@@ -1,6 +1,6 @@
 # Local Coding Agent 开发项目管理数据源
 
-更新时间：2026-07-20
+更新时间：2026-07-22
 
 本文件是开发 `local-coding-agent` 过程中的项目管理数据源，给参与开发本项目的人和协作 Agent 读取。它不是 LCA 运行时自己的 memory 或用户项目记忆。
 
@@ -17,10 +17,10 @@ python3 scripts/sync_project_excel.py
 | 字段 | 当前值 | 说明 |
 |---|---|---|
 | 最终目标 | 个人本地编程助手 Agent | 本地优先、封闭 VM 可用、只访问指定 AI API，能读代码、搜代码、改代码、跑测试、生成 diff、沉淀项目记忆。 |
-| 当前阶段 | T-261 Prior-run Execution Evidence Truth 已完成；P18 platform sandbox 长期 unsupported | 当前 stable 为 T-261 `20260721T113922Z-06eb8e9391b9-83e0ed1c6609`。prospective `shell` / `run_tests` 可形成严格关联的 typed prior-run fact；legacy incomplete record 保持 INCONCLUSIVE，旧事实不冒充本轮重跑或当前 filesystem truth。 |
+| 当前阶段 | T-262 Runtime Operation Provenance / Approval Scrollback Truth Closure 已完成；P18 platform sandbox 长期 unsupported | 当前 stable 为 T-262 `20260722T025834Z-af39a53f2dd7-881b0b217bda`。shell、patch transaction 与 run_tests provenance 分账；read-only clause scope 和 TUI approval live region 均由原有 Owner 收口。 |
 | 推荐入口 | `lca` 或 `./agent` | 连接 POSIX TTY 时进入 normal-screen TUI，wheel/trackpad 使用终端原生历史；`lca --chat` / `lca chat` 使用轻量 terminal-native chat，非 TTY 自动回退。 |
 | Token 配置 | 环境变量 / `--env-file` / `.env` | 优先级为真实环境变量、显式 env-file、用户级 `${AGENT_CONFIG_DIR:-~/.config/local-coding-agent}/.env`、workspace `.env`；stable snapshot 不携带密钥。 |
-| 测试数 | T-261 stable 1422/62/40 | clean detached Python 3.14 release gate 通过 1422 unittest（1 skip）、compileall、diff-check；独立 empty-env verifier 另通过 62 benchmark、40 architecture、17 T-261 focused、43 runtime matrix、fresh two-run/reopen、原始 session replay 与 CLI help/chat。Excel 按用户要求不生成。 |
+| 测试数 | T-262 stable 1430/62/40 | clean detached Python 3.14 release gate 通过 1430 unittest（1 skip）、compileall、diff-check；独立 deterministic verifier 另通过 62 benchmark、40 architecture、77 focused、metadata/clause/scrollback matrix 与 CLI help/chat。Excel 按用户要求不生成。 |
 | 三方架构对照 | 已完成 2026-07-16 基线 | 见 `docs/lca-omp-codex-architecture-comparison-2026-07-16.md`；目标修正为 OMP/Codex 级通用底座 + LCA 企业工作流，不以完整复制 OMP platform 为 KPI。 |
 | 默认 budget_seconds | 600 | 单次任务默认 10 分钟墙钟预算；`--budget-seconds 0` 可关闭。 |
 | 默认 max_steps | 0 | 表示不限步；仅在用户显式设置时作为防失控保险丝。 |
@@ -35,7 +35,7 @@ python3 scripts/sync_project_excel.py
 | 默认工作流落地 | 已完成 MVP 版 | system prompt + tool descriptions + runtime workflow reminder 已落地，用户不需要每次手写工具顺序。 |
 | LSP / Light fallback | 已完成 MVP 版 | `lsp_symbols` / `lsp_workspace_symbols` / `lsp_document_symbols` / `lsp_definition` / `lsp_references` / `lsp_diagnostics` / `lsp_status`，覆盖 Python、Java、JavaScript、TypeScript、Vue；默认可用则外部 LSP，不可用则 light fallback。 |
 | Multi-root workspace | 已完成 MVP 版 | `--allow-dir` / `AGENT_ALLOWED_DIRS` 支持显式授权额外目录给文件、搜索、LSP、patch 工具；system prompt 和 `list_files`/path-not-found 等工具观察会列出 primary workspace 和 allowed dirs；需求/文档类任务会先用 soft tool requirement 要求读取 allowed-dir 文档；shell/git/显式项目 memory/skills 仍锚定 `--cwd`，session/todo/patch logs 和默认 consolidation memory 走 state dir。 |
-| Stable / Dev release channels | 已完成 MVP 版 | `lca` 指向已验证的不可变 source snapshot，`lca-dev` 指向当前源码；当前 stable 为 T-261 `20260721T113922Z-06eb8e9391b9-83e0ed1c6609`，revision `06eb8e9391b9e12bc4c1c4ca2973c511cfad42c5`，digest `83e0ed1c66096739740e46bd4b79706b6dd70e692abb9f67bf6f7cc710ac7b15`。`lca-release publish` 先跑离线 gate 再原子 promote，失败保留旧 stable。 |
+| Stable / Dev release channels | 已完成 MVP 版 | `lca` 指向已验证的不可变 source snapshot，`lca-dev` 指向当前源码；当前 stable 为 T-262 `20260722T025834Z-af39a53f2dd7-881b0b217bda`，revision `af39a53f2dd70ab36305d61c31a1445901a2235f`，digest `881b0b217bda59908f95e414268f92b0b86b1758a68e97ac0ebfe8c2586aff84`。`lca-release publish` 先跑离线 gate 再原子 promote，失败保留旧 stable。 |
 | Workflow Profiles | 已完成 Phase 1 | `auto` 依据 typed `RequirementContract` 解析 `coding`、`enterprise-evidence`、`readiness-audit`；缺 contract 时 optional heavy hooks 全关闭。 | profile 不改变 task kind、tool schema、approval 或 workspace；不强制 `apply_patch`，通过 Session、`ContextUpdated`、RunSummary 和 `/status` 审计。 |
 | Path-scoped rules | 已完成 MVP 版 | 每个 canonical workspace root 可定义 `.local-agent/rules/*.md`；每轮只注入轻量 metadata，用户或工具路径命中时才注入对应规则正文，规则不改变工具权限。 |
 | Offline benchmark / eval | 已完成 MVP 版 | `benchmarks/tasks` 的隔离 fixture 默认使用 deterministic fake provider 跑真实 Runtime，并输出 JSON/Markdown 结果；`--live` 才显式使用外部 provider。 |
@@ -380,6 +380,7 @@ python3 scripts/sync_project_excel.py
 | T-259 | P0 | P15 | Explicit Text-only WorkspaceEdit Apply Phase 2 | 已完成并发布 stable | 单一 WorkspaceEdit parser/store、统一 existing-file transaction、既有 approval 与 patch journal/rollback | Rename preview 生成 session-scoped immutable plan；apply 仅收 `plan_id`，重新验证 workspace/project/server identity 与每个 before hash。仅 existing regular UTF-8 TextEdit；command、resource ops、annotations、server applyEdit、自动调用全部拒绝。多文件先完整 preflight，同步失败补偿，不宣称 crash-atomic；journal 以原子 replace 提供确定 commit truth。 | commits `7c39ad8`、`bac9c91`、`a6650d6`、`73b169c`；1400/62/39、真实 JDTLS apply/javac/rollback/stale、独立 candidate 121 focused matrix 全绿。TypeScript/Vue 与小牙 approval 环境记 INCONCLUSIVE；stable `20260721T074504Z-73b169c5f690-63428407dec3`。 |
 | T-260 | P0 | P17 | TUI Activity / Candidate Settlement Truth Closure | 已完成并发布 stable | 用户真实 bubble-sort session、TUI projector/native scrollback Owner、原始 JSONL deterministic replay | Tool error preview 在 projection/view 两层保持 display-only 单物理行；provider `candidate`/`tool_call` 只留在 mutable tail，新候选替换旧候选，只有 `TurnFinished.final_message_id` 结算。未改 Runtime、session evidence、renderer writer 或 approval tree。 | commit `2df07c5`；1404/62/39、146 TUI focused、compileall/diff/help/chat 全绿；empty-env verifier 44/44、原始三候选 replay 1/1、frame 2/2，stable `20260721T092421Z-2df07c5c25c3-7e0b62645bca`。prior-run typed execution evidence 单独后置。 |
 | T-261 | P0 | Core Runtime | Prior-run Execution Evidence Truth | 已完成并发布 stable | 用户真实 bubble-sort session、Codex/OMP provenance 对照、单一 SessionEvidence post-tool join、独立 empty-env verifier | `shell` / `run_tests` 形成严格关联的 `execution_completed_v1`；prior fact 只以 bounded/redacted exact attribution 投影，不进入 current-run tools/counts，也不证明当前文件状态。legacy 缺 correlation/typed exit 时保持 INCONCLUSIVE；assistant/tool narrative 不可充当证据。 | commits `901a96b`、`06eb8e9`；首个 candidate 因跨 user turn narrative 泄漏被拒后修正。1422/62/40、17 focused、43 runtime matrix、fresh two-run/reopen 与原始 session replay 全绿，`residual_subagents=0`；stable `20260721T113922Z-06eb8e9391b9-83e0ed1c6609`，digest `83e0ed1c66096739740e46bd4b79706b6dd70e692abb9f67bf6f7cc710ac7b15`。 |
+| T-262 | P0 | Core Runtime / P17 | Runtime Operation Provenance / Approval Scrollback Truth Closure | 已完成并发布 stable | 用户真实目录任务、typed execution metadata、task contract clause scope、native renderer live region、独立 deterministic verifier | shell、patch transaction 与 run_tests 分账；SessionEvidence/delivery 共用唯一 `execution_v1` parser；具体目录只读约束保持局部，全局只读仍 fail closed；approval/header 只在 mutable live region 显示，不进入物理 scrollback。没有新增 writer、evidence tree、finalization gate、schema 或循环依赖。 | commits `d5baa55`..`af39a53`；1430/62/40、77 focused、18 malformed metadata、clause overlap/path/modal、approval scrollback 与 30 schema identity 全绿。stable `20260722T025834Z-af39a53f2dd7-881b0b217bda`，digest `881b0b217bda59908f95e414268f92b0b86b1758a68e97ac0ebfe8c2586aff84`，`residual_subagents=0`。 |
 
 ## 风险与决策
 
@@ -575,10 +576,10 @@ python3 scripts/sync_project_excel.py
 | 项目 | 结论 | 依据 |
 |---|---|---|
 | 主链路 | 通过 | 百炼真实小改复测已跑通 todo、dry_run、apply_patch、session allow、rollback、run_tests、git_diff。 |
-| 测试 | 分层通过 | P5 收口时 90 个 unittest；当前 T-261 stable 为 1422/62/40，另有 17 项 prior-run focused、43 项 runtime matrix、fresh two-run/reopen、原始 bubble-sort session replay、真实 JDTLS multi-file apply/javac/rollback/stale、Git/rg helper marker、bounded-output/process matrix、child-env/process-lifecycle、non-delivery continuity、AssistantMessage/CLI smoke 与 history/search/multiline/follow-up queue matrix；T-250/T-252 真实百炼收益因 DNS 记 INCONCLUSIVE；T-214 业务 compile 983/667、focused JUnit 4/17。 |
+| 测试 | 分层通过 | P5 收口时 90 个 unittest；当前 T-262 stable 为 1430/62/40，另有 77 项 focused、typed metadata/clause/approval scrollback matrix、prior-run/runtime matrix、真实 JDTLS multi-file apply/javac/rollback/stale、Git/rg helper marker、bounded-output/process matrix、child-env/process-lifecycle、non-delivery continuity、AssistantMessage/CLI smoke 与 history/search/multiline/follow-up queue matrix；T-250/T-252 真实百炼收益因 DNS 记 INCONCLUSIVE；T-214 业务 compile 983/667、focused JUnit 4/17。 |
 | 日用入口 | 通过 | README 已补只读分析和小改任务命令模板。 |
 | 开放风险 | 可接受 | shell 仍非沙箱、prompt injection 仍需靠审批和封闭 VM；provider/model 专用 tokenizer、输出 reserve、managed skills、完整 reviewer 和完整 OMP ToolChoiceQueue 继续后置评估。 |
-| 下一阶段 | T-261 stable hold / 等待下一项真实任务 | T-261 已关闭 prospective prior-run execution attribution；legacy incomplete record 继续 INCONCLUSIVE。P18 platform sandbox 保持长期 unsupported/NO-GO，只有未来出现受支持的公开 applied API 才重新立项。 |
+| 下一阶段 | T-262 stable hold / 等待下一项真实任务 | T-262 已关闭 operation provenance、read-only clause scope 与 approval live-region 真值问题。自动联网搜索和 Browser 仍是后置的独立产品能力；P18 platform sandbox 保持长期 unsupported/NO-GO，只有未来出现受支持的公开 applied API 才重新立项。 |
 
 ## 推荐工作流
 
