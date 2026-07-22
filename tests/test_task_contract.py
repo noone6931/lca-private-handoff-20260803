@@ -104,11 +104,17 @@ class RequirementContractTests(unittest.TestCase):
                 self.assertEqual(generate_requirement_contract(prompt).task_kind, "read-only")
 
     def test_concrete_directory_with_global_prefix_text_remains_scoped(self) -> None:
-        contract = generate_requirement_contract(
-            "实现 parser 并补测试，不要修改 codegen/ 或 repository-fixtures/。"
+        prompts = (
+            "实现 parser 并补测试，不要修改 codegen/ 或 repository-fixtures/。",
+            "Implement the parser; do not edit files in protected-zone/.",
+            "Implement the parser; do not edit existing files in protected-zone/.",
+            "Implement the parser; do not edit code under generated/.",
+            "实现 parser 功能；不要修改文件 protected-zone/。",
         )
 
-        self.assertEqual(contract.task_kind, "code-implementation")
+        for prompt in prompts:
+            with self.subTest(prompt=prompt):
+                self.assertEqual(generate_requirement_contract(prompt).task_kind, "code-implementation")
 
     def test_t208_write_shape_keeps_implementation_contract_and_no_material_gate(self) -> None:
         contract = generate_requirement_contract(

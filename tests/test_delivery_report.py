@@ -89,7 +89,7 @@ class DeliveryReportTests(unittest.TestCase):
                         "command": {"text": "python3 bubble_sort.py", "argv": None, "shell": True},
                         "cwd": "/workspace",
                         "outcome": {"kind": "exited", "exit_code": 0},
-                        "output": {"provenance": "bounded_process_capture_v1", "bounded": True},
+                        "output": {"provenance": "bounded_process_capture_v1", "bounded": True, "capture": {}},
                     }
                 },
             ),
@@ -118,7 +118,7 @@ class DeliveryReportTests(unittest.TestCase):
                     "command": {"text": "rm bubble_sort.py", "argv": None, "shell": True},
                     "cwd": "/workspace",
                     "outcome": {"kind": "exited", "exit_code": 0},
-                    "output": {"provenance": "bounded_process_capture_v1", "bounded": True},
+                    "output": {"provenance": "bounded_process_capture_v1", "bounded": True, "capture": {}},
                 }
             },
         )
@@ -130,6 +130,29 @@ class DeliveryReportTests(unittest.TestCase):
         self.assertIn("not patch-journal mutation evidence", report)
         self.assertIn("passed shell exit=0", report)
         self.assertNotIn("rm bubble_sort.py", report)
+
+    def test_shell_report_rejects_malformed_or_unbounded_execution_metadata(self) -> None:
+        plan = VerificationPlan.from_contract(generate_requirement_contract("运行脚本。"))
+        valid = {
+            "version": 1,
+            "command": {"text": "python3 script.py", "argv": None, "shell": True},
+            "cwd": "/workspace",
+            "outcome": {"kind": "exited", "exit_code": 0},
+            "output": {"provenance": "bounded_process_capture_v1", "bounded": True, "capture": {}},
+        }
+        malformed = (
+            {key: value for key, value in valid.items() if key != "version"},
+            {**valid, "version": 2},
+            {**valid, "command": {**valid["command"], "shell": False}},
+            {**valid, "command": {**valid["command"], "argv": ["python3", "script.py"]}},
+            {**valid, "output": {"provenance": "raw", "bounded": False}},
+            {**valid, "output": {"provenance": "bounded_process_capture_v1", "bounded": True}},
+        )
+
+        for execution in malformed:
+            with self.subTest(execution=execution):
+                result = ToolResultSummary("shell", "[exit_code] 0", metadata={"execution_v1": execution})
+                self.assertEqual(render_delivery_report(plan, [result]), "")
 
 
 def _successful_delivery() -> tuple[VerificationPlan, list[ToolResultSummary]]:

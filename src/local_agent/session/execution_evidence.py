@@ -12,6 +12,7 @@ from typing import Any
 from urllib.parse import quote
 
 from ..tools.execution_metadata import EXECUTION_METADATA_KEY
+from ..tools.execution_metadata import parse_execution_metadata
 
 
 EXECUTION_COMPLETED_EVENT = "execution_completed_v1"
@@ -21,7 +22,6 @@ MAX_EXECUTION_EVENTS = 128
 MAX_EXECUTION_RUNTIME_EVENTS = MAX_EXECUTION_EVENTS * 16
 MAX_PROJECTED_EXECUTIONS = 6
 EXECUTION_TOOLS = frozenset({"shell", "run_tests"})
-EXECUTION_OUTCOMES = frozenset({"exited", "timed_out", "cancelled", "not_run", "spawn_failed"})
 INCONCLUSIVE_REFERENCE = "[prior-execution:INCONCLUSIVE]"
 INCONCLUSIVE_ATTRIBUTION_LINE = f"attribution={INCONCLUSIVE_REFERENCE}"
 _OMITTED_TOOL_CONTENT = "[prior execution output omitted; use the runtime attribution block]"
@@ -148,10 +148,11 @@ class SessionExecutionEvidenceOwner:
         roots = tuple(str(path.resolve()) for path in runtime._workspace_context.all_roots)
         primary = str(runtime._workspace_context.primary.resolve())
         revision = runtime._workspace_context.revision
-        parsed = _execution_metadata(metadata, name=name, authorized_roots=roots)
+        parsed = parse_execution_metadata(metadata, tool_name=name, authorized_roots=roots)
         if parsed is None:
             return
-        command, argv, shell, cwd, status, exit_code, output = parsed
+        command, argv, shell, cwd = parsed.command, parsed.argv, parsed.shell, parsed.cwd
+        status, exit_code, output = parsed.outcome, parsed.exit_code, parsed.output
         execution_ref = _execution_ref(*origin, name, cwd, command)
         if any(fact.execution_ref == execution_ref for fact in self._facts):
             return
@@ -424,41 +425,6 @@ def _tool_output_payload_matches(payload: Any, fact: ExecutionFact) -> bool:
     )
 
 
-def _execution_metadata(
-    metadata: Mapping[str, Any], *, name: str, authorized_roots: Sequence[str]
-) -> tuple[str, tuple[str, ...] | None, bool, str, str, int | None, Mapping[str, Any]] | None:
-    if metadata.get("version") != 1:
-        return None
-    command = metadata.get("command")
-    outcome = metadata.get("outcome")
-    output = metadata.get("output")
-    if not isinstance(command, Mapping) or not isinstance(outcome, Mapping) or not isinstance(output, Mapping):
-        return None
-    text, raw_argv, shell = command.get("text"), command.get("argv"), command.get("shell")
-    cwd, status, exit_code = metadata.get("cwd"), outcome.get("kind"), outcome.get("exit_code")
-    if not _identity(text, max_chars=65_536) or not isinstance(shell, bool) or status not in EXECUTION_OUTCOMES:
-        return None
-    if not _canonical_cwd(cwd, authorized_roots) or (name == "shell") != shell:
-        return None
-    if raw_argv is None:
-        argv = None
-    elif isinstance(raw_argv, list) and all(_identity(item, max_chars=16_384) for item in raw_argv):
-        argv = tuple(str(item) for item in raw_argv)
-    else:
-        return None
-    if name == "run_tests" and argv is None:
-        return None
-    if status == "exited":
-        if isinstance(exit_code, bool) or not isinstance(exit_code, int):
-            return None
-    elif exit_code is not None:
-        return None
-    bounded_output = _bounded_output(output)
-    if bounded_output is None:
-        return None
-    return str(text), argv, shell, str(Path(str(cwd)).resolve()), str(status), exit_code, bounded_output
-
-
 def _fact_from_payload(payload: Mapping[str, Any]) -> ExecutionFact | None:
     try:
         command, outcome = payload["command"], payload["outcome"]
@@ -470,10 +436,11 @@ def _fact_from_payload(payload: Mapping[str, Any]) -> ExecutionFact | None:
             "outcome": {"kind": outcome["status"], "exit_code": outcome.get("exit_code")},
             "output": payload["output"],
         }
-        parsed = _execution_metadata(metadata, name=str(payload["tool"]), authorized_roots=roots)
+        parsed = parse_execution_metadata(metadata, tool_name=str(payload["tool"]), authorized_roots=roots)
         if parsed is None:
             return None
-        text, argv, shell, cwd, status, exit_code, output = parsed
+        text, argv, shell, cwd = parsed.command, parsed.argv, parsed.shell, parsed.cwd
+        status, exit_code, output = parsed.outcome, parsed.exit_code, parsed.output
         primary = str(Path(payload["workspace_primary"]).resolve())
         revision = payload["workspace_revision"]
         expected_workspace = _workspace_identity(primary, roots, revision)
@@ -505,44 +472,6 @@ def _fact_from_payload(payload: Mapping[str, Any]) -> ExecutionFact | None:
         )
     except (KeyError, OSError, TypeError, ValueError):
         return None
-
-
-def _bounded_output(output: Mapping[str, Any]) -> Mapping[str, Any] | None:
-    provenance = output.get("provenance")
-    if output.get("bounded") is not True or provenance not in {"none", "bounded_process_capture_v1"}:
-        return None
-    if provenance == "none":
-        return {"provenance": "none", "bounded": True}
-    capture = output.get("capture")
-    if not isinstance(capture, Mapping):
-        return None
-    safe_capture: dict[str, Any] = {}
-    for stream in ("stdout", "stderr", "total", "display"):
-        values = capture.get(stream)
-        if not isinstance(values, Mapping):
-            continue
-        safe_values = {
-            str(key): value
-            for key, value in values.items()
-            if key.endswith(("_bytes", "_chars")) or key == "truncated"
-            if isinstance(value, (int, bool)) and not isinstance(value, float)
-        }
-        if any(isinstance(value, int) and not isinstance(value, bool) and value < 0 for value in safe_values.values()):
-            return None
-        safe_capture[stream] = safe_values
-    return {"provenance": provenance, "bounded": True, "capture": safe_capture}
-
-
-def _canonical_cwd(value: Any, roots: Sequence[str]) -> bool:
-    if not _identity(value, max_chars=4096):
-        return False
-    try:
-        cwd = Path(str(value))
-        if not cwd.is_absolute() or cwd.resolve() != cwd:
-            return False
-        return any(cwd == Path(root) or cwd.is_relative_to(Path(root)) for root in roots)
-    except (OSError, ValueError):
-        return False
 
 
 def _workspace_identity(primary: str, roots: Sequence[str], revision: int) -> str:

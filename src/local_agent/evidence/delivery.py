@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Sequence
-from typing import Mapping
+from collections.abc import Mapping, Sequence
 
+from ..tools.execution_metadata import ParsedExecutionMetadata
+from ..tools.execution_metadata import parse_execution_metadata
 from ..tools.observation import ToolResultSummary
 from .verification import VerificationPlan
 
@@ -12,7 +13,7 @@ def render_delivery_report(plan: VerificationPlan, results: Sequence[ToolResultS
     """Render a terminal delivery record from Runtime facts, never model prose."""
 
     all_shell_executions = [
-        result for result in results if result.name == "shell" and _execution_outcome(result) is not None
+        result for result in results if result.name == "shell" and _execution(result) is not None
     ]
     changed_paths = plan.effective_write_paths(list(results))
     if not changed_paths:
@@ -39,7 +40,7 @@ def render_delivery_report(plan: VerificationPlan, results: Sequence[ToolResultS
     shell_executions = [
         result
         for result in plan.results_after_effective_write(list(results))
-        if result.name == "shell" and _execution_outcome(result) is not None
+        if result.name == "shell" and _execution(result) is not None
     ]
     if shell_executions:
         lines.append("- other_post_write_executions (not counted as the run_tests gate):")
@@ -93,37 +94,20 @@ def _test_status(result: ToolResultSummary) -> str:
     return "failed"
 
 
-def _execution_outcome(result: ToolResultSummary) -> tuple[str, int | None] | None:
+def _execution(result: ToolResultSummary) -> ParsedExecutionMetadata | None:
     execution = result.metadata.get("execution_v1")
     if not isinstance(execution, Mapping):
         return None
-    outcome = execution.get("outcome")
-    if not isinstance(outcome, Mapping):
-        return None
-    kind = outcome.get("kind")
-    exit_code = outcome.get("exit_code")
-    if kind not in {"exited", "timed_out", "cancelled", "not_run", "spawn_failed"}:
-        return None
-    if kind == "exited" and (isinstance(exit_code, bool) or not isinstance(exit_code, int)):
-        return None
-    if kind != "exited" and exit_code is not None:
-        return None
-    return str(kind), exit_code
+    return parse_execution_metadata(execution, tool_name=result.name)
 
 
 def _render_execution(result: ToolResultSummary) -> str:
-    outcome = _execution_outcome(result)
-    assert outcome is not None
-    kind, exit_code = outcome
-    execution = result.metadata["execution_v1"]
-    command = execution.get("command") if isinstance(execution, Mapping) else None
-    text = command.get("text") if isinstance(command, Mapping) else None
-    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()[:12] if isinstance(text, str) else "unavailable"
-    cwd = execution.get("cwd") if isinstance(execution, Mapping) else None
-    rendered_cwd = str(cwd) if isinstance(cwd, str) and cwd else "(cwd unavailable)"
-    status = "passed" if kind == "exited" and exit_code == 0 else kind
-    exit_text = f" exit={exit_code}" if exit_code is not None else ""
-    return f"{status} shell{exit_text}; cwd={rendered_cwd}; command_sha256={digest}"
+    execution = _execution(result)
+    assert execution is not None
+    digest = hashlib.sha256(execution.command.encode("utf-8")).hexdigest()[:12]
+    status = "passed" if execution.outcome == "exited" and execution.exit_code == 0 else execution.outcome
+    exit_text = f" exit={execution.exit_code}" if execution.exit_code is not None else ""
+    return f"{status} shell{exit_text}; cwd={execution.cwd}; command_sha256={digest}"
 
 
 __all__ = ["render_delivery_report"]

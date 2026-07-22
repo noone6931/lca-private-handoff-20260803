@@ -21,27 +21,43 @@ _DIRECTIVES = (
     "no changes",
 )
 
-_GLOBAL_TARGET_PREFIXES = (
+_GLOBAL_TARGETS = frozenset({
     "anything",
     "any file",
     "any files",
+    "any code",
+    "all code",
     "all files",
+    "codebase",
     "code",
+    "entire codebase",
+    "entire repository",
+    "entire workspace",
     "existing files",
     "files",
     "repository",
     "repo",
+    "source code",
     "workspace",
     "任何",
+    "任何代码",
+    "任何内容",
+    "任何文件",
     "全部",
+    "全部代码",
+    "全部内容",
+    "全部文件",
     "所有",
+    "所有代码",
+    "所有内容",
+    "所有文件",
     "代码",
     "源码",
     "现有文件",
     "文件",
     "仓库",
     "工作区",
-)
+})
 
 
 def has_global_read_only_directive(prompt: str) -> bool:
@@ -65,13 +81,14 @@ def _directive_target(prompt: str, start: int) -> str:
 
 def _is_global_target(target: str) -> bool:
     target = re.sub(r"^(?:to\s+)?(?:the\s+)?", "", target, count=1)
-    for prefix in _GLOBAL_TARGET_PREFIXES:
-        if prefix.isascii():
-            if re.match(rf"{re.escape(prefix)}(?:\s|$)", target):
-                return True
-        elif target.startswith(prefix):
-            return True
-    return False
+    if target in _GLOBAL_TARGETS or target.split("、", 1)[0] in _GLOBAL_TARGETS:
+        return True
+    match = re.fullmatch(
+        r"(?:any files?|all files|existing files|files|code|source code)\s+"
+        r"(?:in|under|within)\s+(?:the\s+)?(?:workspace|repository|repo)",
+        target,
+    )
+    return match is not None
 
 
 __all__ = ["has_global_read_only_directive"]

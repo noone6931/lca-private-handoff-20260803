@@ -6,6 +6,7 @@ is added later, after the tool result has joined the originating call.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
@@ -14,6 +15,18 @@ from .base import ToolResult
 
 EXECUTION_METADATA_KEY = "execution_v1"
 ExecutionOutcome = Literal["exited", "timed_out", "cancelled", "not_run", "spawn_failed"]
+EXECUTION_OUTCOMES = frozenset({"exited", "timed_out", "cancelled", "not_run", "spawn_failed"})
+
+
+@dataclass(frozen=True)
+class ParsedExecutionMetadata:
+    command: str
+    argv: tuple[str, ...] | None
+    shell: bool
+    cwd: str
+    outcome: str
+    exit_code: int | None
+    output: Mapping[str, Any]
 
 
 def legacy_test_metadata(
@@ -125,6 +138,57 @@ def execution_error_result(
     )
 
 
+def parse_execution_metadata(
+    metadata: Mapping[str, Any],
+    *,
+    tool_name: str,
+    authorized_roots: Sequence[str] | None = None,
+) -> ParsedExecutionMetadata | None:
+    """Validate the single execution metadata schema used by tools and evidence."""
+
+    if metadata.get("version") != 1 or tool_name not in {"shell", "run_tests"}:
+        return None
+    command = metadata.get("command")
+    outcome = metadata.get("outcome")
+    output = metadata.get("output")
+    if not isinstance(command, Mapping) or not isinstance(outcome, Mapping) or not isinstance(output, Mapping):
+        return None
+    text, raw_argv, shell = command.get("text"), command.get("argv"), command.get("shell")
+    cwd, status, exit_code = metadata.get("cwd"), outcome.get("kind"), outcome.get("exit_code")
+    if not _metadata_identity(text, max_chars=65_536) or not isinstance(shell, bool):
+        return None
+    if status not in EXECUTION_OUTCOMES or (tool_name == "shell") != shell:
+        return None
+    canonical_cwd = _canonical_cwd(cwd, authorized_roots)
+    if canonical_cwd is None:
+        return None
+    if raw_argv is None:
+        argv = None
+    elif isinstance(raw_argv, list) and all(_metadata_identity(item, max_chars=16_384) for item in raw_argv):
+        argv = tuple(str(item) for item in raw_argv)
+    else:
+        return None
+    if (tool_name == "shell" and argv is not None) or (tool_name == "run_tests" and argv is None):
+        return None
+    if status == "exited":
+        if isinstance(exit_code, bool) or not isinstance(exit_code, int):
+            return None
+    elif exit_code is not None:
+        return None
+    bounded_output = _bounded_output(output)
+    if bounded_output is None:
+        return None
+    return ParsedExecutionMetadata(
+        command=str(text),
+        argv=argv,
+        shell=shell,
+        cwd=canonical_cwd,
+        outcome=str(status),
+        exit_code=exit_code,
+        output=bounded_output,
+    )
+
+
 def _output_provenance(metadata: Mapping[str, Any]) -> dict[str, Any]:
     capture = metadata.get("output_capture")
     if not isinstance(capture, Mapping):
@@ -160,10 +224,58 @@ def _capture_summary(capture: Mapping[str, Any]) -> dict[str, Any]:
     return summary
 
 
+def _bounded_output(output: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    provenance = output.get("provenance")
+    if output.get("bounded") is not True or provenance not in {"none", "bounded_process_capture_v1"}:
+        return None
+    if provenance == "none":
+        return {"provenance": "none", "bounded": True}
+    capture = output.get("capture")
+    if not isinstance(capture, Mapping):
+        return None
+    safe_capture: dict[str, Any] = {}
+    for stream in ("stdout", "stderr", "total", "display"):
+        values = capture.get(stream)
+        if not isinstance(values, Mapping):
+            continue
+        safe_values = {
+            str(key): value
+            for key, value in values.items()
+            if key.endswith(("_bytes", "_chars")) or key == "truncated"
+            if isinstance(value, (int, bool)) and not isinstance(value, float)
+        }
+        if any(isinstance(value, int) and not isinstance(value, bool) and value < 0 for value in safe_values.values()):
+            return None
+        safe_capture[stream] = safe_values
+    return {"provenance": provenance, "bounded": True, "capture": safe_capture}
+
+
+def _canonical_cwd(value: Any, authorized_roots: Sequence[str] | None) -> str | None:
+    if not _metadata_identity(value, max_chars=4096):
+        return None
+    try:
+        cwd = Path(str(value))
+        if not cwd.is_absolute() or cwd.resolve() != cwd:
+            return None
+        if authorized_roots is not None and not any(
+            cwd == Path(root) or cwd.is_relative_to(Path(root)) for root in authorized_roots
+        ):
+            return None
+        return str(cwd)
+    except (OSError, ValueError):
+        return None
+
+
+def _metadata_identity(value: Any, *, max_chars: int) -> bool:
+    return isinstance(value, str) and bool(value.strip()) and len(value) <= max_chars and "\x00" not in value
+
+
 __all__ = [
     "EXECUTION_METADATA_KEY",
+    "ParsedExecutionMetadata",
     "execution_error_result",
     "legacy_shell_metadata",
     "legacy_test_metadata",
+    "parse_execution_metadata",
     "with_execution_metadata",
 ]
