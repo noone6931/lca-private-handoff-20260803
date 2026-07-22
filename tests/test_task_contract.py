@@ -109,6 +109,15 @@ class RequirementContractTests(unittest.TestCase):
             "不要修改任何文件但要实现 parser 功能。",
             "不要修改所有文件并需要修改 parser 功能。",
             "不要修改代码然后继续支持 parser 功能。",
+            "Do not edit all files in the workspace directory; implement parser.",
+            "Do not edit files under the repository path; implement parser.",
+            "不要修改工作区目录；实现 parser 功能。",
+            "不要修改仓库路径；实现 parser 功能。",
+            "Do not edit all files and paths; implement parser.",
+            "不要修改所有文件以及路径；实现 parser 功能。",
+            "Do not edit workspace path and implement parser.",
+            "Do not edit all files and paths and implement parser.",
+            "不要修改工作区路径但要实现 parser 功能。",
         )
 
         for prompt in prompts:
