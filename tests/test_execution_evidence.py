@@ -219,7 +219,9 @@ class ProspectiveExecutionEvidenceTests(unittest.TestCase):
             reopened_names = list(reopened._run.tool_choice_tool_names)
             reopened_verification = reopened._run.verification_plan.snapshot()
 
-        self.assertEqual(first, "first run complete")
+        self.assertTrue(first.startswith("first run complete\n\n[Runtime operation provenance]"))
+        self.assertIn("patch_transaction_writes: none recorded", first)
+        self.assertIn("passed shell exit=0", first)
         self.assertEqual(len(payloads), 1)
         fact = payloads[0]
         self.assertEqual(fact["tool"], "shell")

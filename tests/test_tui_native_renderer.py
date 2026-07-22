@@ -16,6 +16,65 @@ class _Output:
         return 9
 
 
+class _ScrollbackTerminal:
+    """Minimal ANSI model for the cursor/erase sequences emitted by this renderer."""
+
+    def __init__(self, width: int, height: int) -> None:
+        self.width = width
+        self.height = height
+        self.screen = [[" "] * width for _ in range(height)]
+        self.scrollback: list[str] = []
+        self.row = height - 1
+        self.col = 0
+
+    def write(self, _fd, payload: bytes) -> int:
+        text = payload.decode("utf-8")
+        index = 0
+        while index < len(text):
+            if text.startswith("\x1b[", index):
+                end = index + 2
+                while end < len(text) and not text[end].isalpha():
+                    end += 1
+                if end < len(text):
+                    self._csi(text[index + 2 : end], text[end])
+                    index = end + 1
+                    continue
+            char = text[index]
+            if char == "\r":
+                self.col = 0
+            elif char == "\n":
+                self._linefeed()
+            elif ord(char) >= 32:
+                if self.col < self.width:
+                    self.screen[self.row][self.col] = char
+                    self.col += 1
+            index += 1
+        return len(payload)
+
+    def _csi(self, raw_params: str, command: str) -> None:
+        params = raw_params.lstrip("?")
+        first = int(params.split(";", 1)[0] or "1") if params.lstrip(";").replace(";", "").isdigit() else 1
+        if command == "A":
+            self.row = max(self.row - first, 0)
+        elif command == "B":
+            self.row = min(self.row + first, self.height - 1)
+        elif command == "C":
+            self.col = min(self.col + first, self.width - 1)
+        elif command == "J":
+            self.screen[self.row][self.col :] = [" "] * (self.width - self.col)
+            for row in range(self.row + 1, self.height):
+                self.screen[row] = [" "] * self.width
+        elif command == "K" and params in {"2", ""}:
+            self.screen[self.row] = [" "] * self.width
+
+    def _linefeed(self) -> None:
+        if self.row < self.height - 1:
+            self.row += 1
+            return
+        self.scrollback.append("".join(self.screen[0]).rstrip())
+        self.screen = [*self.screen[1:], [" "] * self.width]
+
+
 class TuiNativeRendererTests(unittest.TestCase):
     def test_settled_rows_commit_once_without_alt_screen_or_scrollback_clear(self) -> None:
         chunks = []
@@ -165,6 +224,49 @@ class TuiNativeRendererTests(unittest.TestCase):
         self.assertNotIn(b"\x1b[?1049h", rendered)
         self.assertNotIn(b"\x1b[?1007h", rendered)
         self.assertNotIn(b"\x1b[3J", rendered)
+
+    def test_mutable_tail_is_reserved_before_header_and_reused_for_approval_updates(self) -> None:
+        chunks = []
+
+        def write(_fd, payload):
+            chunks.append(payload)
+            return len(payload)
+
+        renderer = NativeScrollbackRenderer(_Output())
+        requested = TuiState(session_id="20260722", busy=True, status="approval: run_tests")
+        decided = TuiState(session_id="20260722", busy=True, status="approval allow_once")
+        with patch("local_agent.frontends.tui.native_renderer.os.write", side_effect=write):
+            renderer.render(requested, TuiView(interaction_prompt="Allow run_tests?"), 80, 12)
+            first = b"".join(chunks)
+            chunks.clear()
+            renderer.render(decided, TuiView(), 80, 12)
+            second = b"".join(chunks)
+
+        header = b" LCA  RUNNING  session 20260722"
+        self.assertIn(header, first)
+        self.assertLess(first.find(b"\r\n"), first.find(header))
+        self.assertIn(b"\x1b[", first[: first.find(header)])
+        self.assertIn(b"\x1b[J", second)
+        self.assertNotIn(b"\r\n\r\n\r\n\r\n", second[: second.find(header)])
+
+    def test_approval_repaints_never_commit_header_to_physical_scrollback(self) -> None:
+        terminal = _ScrollbackTerminal(80, 12)
+        renderer = NativeScrollbackRenderer(_Output())
+        states = (
+            TuiState(session_id="20260722", busy=True, status="approval: run_tests"),
+            TuiState(session_id="20260722", busy=True, status="approval allow_once"),
+            TuiState(session_id="20260722", busy=True, status="running"),
+        )
+        views = (TuiView(interaction_prompt="Allow run_tests?"), TuiView(), TuiView())
+
+        with patch("local_agent.frontends.tui.native_renderer.os.write", side_effect=terminal.write):
+            for state, view in zip(states, views, strict=True):
+                renderer.render(state, view, 80, 12)
+
+        self.assertFalse(any("LCA" in line for line in terminal.scrollback))
+        visible_headers = [line for row in terminal.screen if "LCA" in (line := "".join(row).rstrip())]
+        self.assertEqual(len(visible_headers), 1)
+        self.assertIn("running", visible_headers[0])
 
 
 if __name__ == "__main__":

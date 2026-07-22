@@ -82,6 +82,34 @@ class RequirementContractTests(unittest.TestCase):
         self.assertEqual(contract.task_kind, "code-implementation")
         self.assertEqual(contract.document_artifacts, ())
 
+    def test_arbitrary_named_directory_exclusion_does_not_become_global_read_only(self) -> None:
+        contract = generate_requirement_contract(
+            "实现一个原子批量 inventory 更新并补测试。"
+            "不要修改 notes 目录中的现有用户工作内容，也不要提交 git commit。"
+        )
+
+        self.assertEqual(contract.task_kind, "code-implementation")
+
+    def test_generic_or_empty_edit_prohibition_remains_global_read_only(self) -> None:
+        prompts = (
+            "检查实现，不要修改。",
+            "只分析，不要修改任何文件。",
+            "Review the implementation; do not edit the workspace.",
+            "Do not edit any files; implement parser.",
+            "No changes to all files; implement parser.",
+        )
+
+        for prompt in prompts:
+            with self.subTest(prompt=prompt):
+                self.assertEqual(generate_requirement_contract(prompt).task_kind, "read-only")
+
+    def test_concrete_directory_with_global_prefix_text_remains_scoped(self) -> None:
+        contract = generate_requirement_contract(
+            "实现 parser 并补测试，不要修改 codegen/ 或 repository-fixtures/。"
+        )
+
+        self.assertEqual(contract.task_kind, "code-implementation")
+
     def test_t208_write_shape_keeps_implementation_contract_and_no_material_gate(self) -> None:
         contract = generate_requirement_contract(
             "在 synthetic Git workspace 完整交付实现；必须完成 Patch、run_tests 和 git_diff。"

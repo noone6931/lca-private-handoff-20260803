@@ -34,6 +34,7 @@ class NativeScrollbackRenderer:
     def __init__(self, output=None) -> None:
         self._output = output or sys.stdout
         self._live_rows = 0
+        self._reserved_rows = 0
         self._cursor_y = 0
         self._last_frame: TuiFrame | None = None
         self._paint_width = 80
@@ -68,6 +69,7 @@ class NativeScrollbackRenderer:
         self._suspended = False
         self._last_frame = None
         self._live_rows = 0
+        self._reserved_rows = 0
         self._cursor_y = 0
 
     def close(self) -> None:
@@ -109,6 +111,7 @@ class NativeScrollbackRenderer:
         self._overlay_active = False
         self._last_frame = None
         self._live_rows = 0
+        self._reserved_rows = 0
         self._cursor_y = 0
 
     def _commit_entries(self, entries: tuple[TranscriptEntry, ...], width: int) -> None:
@@ -122,14 +125,33 @@ class NativeScrollbackRenderer:
             payload.extend(b"\r\n")
         payload.extend(b"\x1b[?25h")
         self._write(bytes(payload))
+        self._reserved_rows = 0
 
     def _paint_live_frame(self, frame: TuiFrame, width: int) -> None:
+        self._reserve_live_region(len(frame.lines))
         self._write(b"\x1b[?25l" + _frame_bytes(frame, width))
         self._live_rows = len(frame.lines)
         self._cursor_y = frame.cursor_y
         self._paint_width = width
         self._position_cursor(frame)
         self._last_frame = frame
+
+    def _reserve_live_region(self, rows: int) -> None:
+        """Reserve mutable rows before painting so they cannot enter scrollback."""
+
+        if rows <= self._reserved_rows:
+            return
+        existing = self._reserved_rows
+        payload = bytearray(b"\r")
+        if existing > 1:
+            payload.extend(f"{_CSI}{existing - 1}B".encode("ascii"))
+        growth = rows - max(existing, 1)
+        if growth:
+            payload.extend(b"\r\n" * growth)
+        if rows > 1:
+            payload.extend(f"{_CSI}{rows - 1}A".encode("ascii"))
+        self._write(bytes(payload))
+        self._reserved_rows = rows
 
     def _position_cursor(self, frame: TuiFrame) -> None:
         rows_up = max(len(frame.lines) - 1 - frame.cursor_y, 0)
@@ -148,6 +170,7 @@ class NativeScrollbackRenderer:
         rows_up = self._cursor_y
         if self._last_frame is not None:
             rows_up = _cursor_row_after_reflow(self._last_frame, self._paint_width, erase_width + 1)
+        resized = width is not None and width != self._paint_width
         payload = "\r"
         if rows_up:
             payload += f"{_CSI}{rows_up}A"
@@ -156,6 +179,8 @@ class NativeScrollbackRenderer:
         self._live_rows = 0
         self._cursor_y = 0
         self._last_frame = None
+        if resized:
+            self._reserved_rows = 0
 
     def _terminal_width(self) -> int:
         try:
