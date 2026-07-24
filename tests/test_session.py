@@ -4,6 +4,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from local_agent.session.assistant_history import AssistantSettlement
+from local_agent.session.assistant_history import MESSAGE_ID_KEY, PHASE_KEY, RUN_ID_KEY
+from local_agent.session.assistant_history import UNSETTLED_CANDIDATE_PHASE
 from local_agent.session.jsonl_store import JsonlSessionStore, SessionError
 
 
@@ -84,7 +87,7 @@ class SessionStoreTests(unittest.TestCase):
 
         self.assertEqual([payload["entry"]["index"] for payload in payloads], [3, 4])
 
-    def test_load_messages_adds_missing_assistant_role(self) -> None:
+    def test_load_messages_drops_untyped_candidate_without_settlement(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp).resolve()
             store = JsonlSessionStore(workspace)
@@ -97,7 +100,6 @@ class SessionStoreTests(unittest.TestCase):
             messages,
             [
                 {"role": "user", "content": "hello"},
-                {"role": "assistant", "content": "hi"},
             ],
         )
 
@@ -109,7 +111,7 @@ class SessionStoreTests(unittest.TestCase):
 
             messages = store.load_messages()
 
-        self.assertEqual(messages, [{"role": "assistant", "content": "hi"}])
+        self.assertEqual(messages, [])
 
     def test_continue_recent_opens_latest_session(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -142,7 +144,26 @@ class SessionStoreTests(unittest.TestCase):
             store.append("assistant", {"role": "assistant", "content": None, "tool_calls": []})
             store.append("tool_result", {"tool_call_id": "call_1", "content": "orphaned by trim"})
             store.append("user", {"content": "recent"})
-            store.append("assistant", {"role": "assistant", "content": "answer"})
+            store.append(
+                "assistant",
+                {
+                    "role": "assistant",
+                    "content": "answer",
+                    MESSAGE_ID_KEY: "m-answer",
+                    RUN_ID_KEY: "run-answer",
+                    PHASE_KEY: UNSETTLED_CANDIDATE_PHASE,
+                },
+            )
+            store.append(
+                "assistant_settlement_v1",
+                AssistantSettlement.create(
+                    run_id="run-answer",
+                    final_message_id="m-answer",
+                    origin="provider",
+                    output_kind="provider_message",
+                    content="answer",
+                ).to_payload(),
+            )
 
             messages = store.load_messages(max_messages=3)
 

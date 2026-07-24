@@ -8,6 +8,7 @@ from typing import Any, Callable, Mapping, Protocol
 import uuid
 
 from ..protocol.events import EventEmitter
+from ..session.assistant_history import annotate_provider_message
 
 
 MessageIdFactory = Callable[[], str]
@@ -105,7 +106,11 @@ class AssistantMessageLifecycle:
     ) -> AssistantMessage:
         if self._closed:
             raise RuntimeError("Assistant message lifecycle was already closed.")
-        normalized = deepcopy(dict(message))
+        normalized = annotate_provider_message(
+            deepcopy(dict(message)),
+            message_id=self.message_id,
+            run_id=self._events.run_id,
+        )
         normalized["role"] = "assistant"
         content_value = normalized.get("content")
         if content_value is None:

@@ -33,6 +33,9 @@ from ..workspace.path_rules import candidate_paths_for_path_rules, matching_path
 from ..workflows.planner import render_planner_explore_context
 from ..evidence.requirements import render_pinned_requirement_evidence
 from ..platform.current_time import current_time_snapshot, messages_with_current_time_context
+from ..session.assistant_history import checkpoint_messages as _checkpoint_messages
+from ..session.assistant_history import has_unsettled_candidate as _has_unsettled_candidate
+from ..session.assistant_history import messages_for_active_run as _messages_for_active_run
 from .prompt import _latest_user_content, _messages_with_runtime_context
 from ..tools.base import VisionInspectionUnavailableError, tool_state_dir
 
@@ -92,7 +95,9 @@ class ProviderContextPhase:
             runtime._run.collector.record_context_checkpoint_reused()
             self._checkpoint_reuse_reported = True
         todo_summary = self.open_todo_summary()
-        provider_context = _prune_context_tool_outputs(runtime._messages)
+        provider_context = _prune_context_tool_outputs(
+            _messages_for_active_run(runtime._messages, active_run_id=runtime._run.run_id)
+        )
         if not self.context_budget_enabled():
             return self.provider_safe_runtime_messages(provider_context, todo_summary)
         thresholds = self.context_budget_thresholds()
@@ -148,22 +153,36 @@ class ProviderContextPhase:
                     payload["budget_exceeded_after_required_retention"] = True
                 payload["estimated_tokens"] = payload["estimated_tokens_after"]
                 payload.update(thresholds)
+                unsettled = _has_unsettled_candidate(runtime._messages, run_id=runtime._run.run_id)
+                durable_checkpoint = None if unsettled else _checkpoint_messages(compacted)
+                if durable_checkpoint is None:
+                    payload["checkpoint_deferred"] = (
+                        "unsettled_candidate" if unsettled else "untyped_assistant_history"
+                    )
                 runtime._session.append("context_compaction", payload)
                 runtime._record_context_compaction(
                     estimated_tokens_before=estimated_tokens_before,
                     estimated_tokens_after=int(payload["estimated_tokens_after"]),
                 )
-                self._install_compaction_checkpoint(compacted, payload)
-                self._unchanged_overbudget_checkpoint_signature = (
-                    _context_signature(_prune_context_tool_outputs(runtime._messages))
-                    if still_exceeds_budget
-                    else None
-                )
+                if durable_checkpoint is not None:
+                    self._install_compaction_checkpoint(compacted, durable_checkpoint, payload)
+                    self._unchanged_overbudget_checkpoint_signature = (
+                        _context_signature(_prune_context_tool_outputs(runtime._messages))
+                        if still_exceeds_budget
+                        else None
+                    )
+                else:
+                    self._unchanged_overbudget_checkpoint_signature = None
                 return self.provider_safe_runtime_messages(compacted, todo_summary)
             recent_count = max(6, recent_count // 2)
-        return self.provider_safe_runtime_messages(runtime._messages, todo_summary)
+        return self.provider_safe_runtime_messages(provider_context, todo_summary)
 
-    def _install_compaction_checkpoint(self, compacted: list[dict[str, Any]], payload: dict[str, Any]) -> None:
+    def _install_compaction_checkpoint(
+        self,
+        compacted: list[dict[str, Any]],
+        checkpoint: list[dict[str, Any]],
+        payload: dict[str, Any],
+    ) -> None:
         """Replace active provider history after a successful bounded compaction.
 
         The JSONL transcript remains append-only.  The checkpoint stores only
@@ -174,16 +193,11 @@ class ProviderContextPhase:
         runtime = self._runtime
         runtime._run.checkpoint_active_messages(runtime._messages, len(compacted))
         runtime._messages = [dict(message) for message in compacted]
-        checkpoint_messages = [
-            dict(message)
-            for message in compacted
-            if message.get("role") != "system"
-        ]
         runtime._session.append(
             "context_checkpoint",
             {
-                "version": 1,
-                "messages": checkpoint_messages,
+                "version": 2,
+                "messages": checkpoint,
                 "estimated_tokens": payload["estimated_tokens_after"],
                 "compaction_event": "context_compaction",
             },

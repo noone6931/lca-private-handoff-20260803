@@ -5,6 +5,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .assistant_history import ASSISTANT_SETTLEMENT_EVENT
+from .assistant_history import AssistantHistoryError
+from .assistant_history import AssistantHistoryReplay
+from .assistant_history import AssistantSettlement
+from .assistant_history import project_live_settlement
+
 DEFAULT_RESUME_MESSAGE_LIMIT = 80
 
 
@@ -48,7 +54,7 @@ class JsonlSessionStore:
     def load_messages(self, max_messages: int = DEFAULT_RESUME_MESSAGE_LIMIT) -> list[dict[str, Any]]:
         if not self.path.exists():
             return []
-        messages: list[dict[str, Any]] = []
+        history = AssistantHistoryReplay()
         self.last_load_used_context_checkpoint = False
         with self.path.open("r", encoding="utf-8") as handle:
             for line_number, line in enumerate(handle, start=1):
@@ -63,24 +69,31 @@ class JsonlSessionStore:
                 if not isinstance(payload, dict):
                     continue
                 if event == "context_checkpoint":
-                    checkpoint = _checkpoint_messages(payload)
-                    if checkpoint is not None:
-                        messages = checkpoint
+                    if history.install_checkpoint(payload):
                         self.last_load_used_context_checkpoint = True
                 elif event == "user":
-                    messages.append({"role": "user", "content": payload.get("content", "")})
+                    history.append_user(payload)
                 elif event == "assistant":
                     if payload.get("role") in {None, "assistant"}:
-                        messages.append({**payload, "role": "assistant"})
+                        history.append_assistant(payload)
                 elif event == "tool_result":
-                    messages.append(
-                        {
-                            "role": "tool",
-                            "tool_call_id": payload.get("tool_call_id"),
-                            "content": payload.get("content", ""),
-                        }
-                    )
-        return _trim_recent_messages(messages, max_messages)
+                    history.append_tool_result(payload)
+                elif event == ASSISTANT_SETTLEMENT_EVENT:
+                    history.append_settlement(payload)
+        return _trim_recent_messages(history.messages(), max_messages)
+
+    def record_assistant_settlement(
+        self,
+        messages: list[dict[str, Any]],
+        settlement: AssistantSettlement,
+    ) -> bool:
+        try:
+            projected = project_live_settlement(messages, settlement)
+        except AssistantHistoryError:
+            return False
+        self.append(ASSISTANT_SETTLEMENT_EVENT, settlement.to_payload())
+        messages[:] = projected
+        return True
 
     def load_latest_workspace_roots(self) -> dict[str, Any] | None:
         """Return the latest T-128 root state without replaying model messages."""
@@ -154,22 +167,6 @@ def _trim_recent_messages(messages: list[dict[str, Any]], max_messages: int) -> 
     while recent and recent[0].get("role") == "tool":
         recent = recent[1:]
     return _drop_trailing_unpaired_tool_calls(recent)
-
-
-def _checkpoint_messages(payload: dict[str, Any]) -> list[dict[str, Any]] | None:
-    """Accept only Runtime-shaped non-system messages from a checkpoint."""
-
-    if payload.get("version") != 1 or not isinstance(payload.get("messages"), list):
-        return None
-    restored: list[dict[str, Any]] = []
-    for message in payload["messages"]:
-        if not isinstance(message, dict):
-            return None
-        role = message.get("role")
-        if role not in {"user", "assistant", "tool"}:
-            return None
-        restored.append(dict(message))
-    return _drop_trailing_unpaired_tool_calls(restored)
 
 
 def _drop_trailing_unpaired_tool_calls(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:

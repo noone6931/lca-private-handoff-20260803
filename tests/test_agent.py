@@ -24,6 +24,8 @@ from local_agent.protocol.interactions import InteractionResult
 from local_agent.protocol.events import ListEventSink
 from local_agent.requirement_evidence import RequirementEvidence
 from local_agent.run_context import MAX_FORCED_FINAL_ANSWER_CONTINUATIONS
+from local_agent.session.assistant_history import ASSISTANT_SETTLEMENT_EVENT
+from local_agent.session.assistant_history import PHASE_KEY, SETTLED_DELIVERY_PHASE
 from local_agent.steering.final_answer import SourceEvidence
 from local_agent.steering.final_answer import DesignEvidenceSteerer
 from local_agent.steering.final_answer import FinalAnswerContext
@@ -5147,6 +5149,7 @@ class AgentRuntimeTests(unittest.TestCase):
                 ):
                     result = runtime.run("请给出最终答案。")
             records = [json.loads(line) for line in runtime._session.path.read_text(encoding="utf-8").splitlines()]
+            resumed_messages = runtime._session.load_messages()
 
         self.assertEqual(result, "Corrected final answer from existing observations.")
         self.assertNotIn("should-not-run.py", result)
@@ -5160,10 +5163,93 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertEqual(runtime._last_run_summary["forced_final_protocol_recovery_exhausted"], 0)
         self.assertEqual(runtime._last_run_summary["forced_final_structured_tool_calls"], 1)
         self.assertEqual(runtime._last_run_summary["suppressed_tool_executions"], 1)
+        runtime_assistant = [message for message in runtime._messages if message.get("role") == "assistant"]
+        resumed_assistant = [message for message in resumed_messages if message.get("role") == "assistant"]
+        self.assertEqual([message.get("content") for message in runtime_assistant], [result])
+        self.assertEqual([message.get("content") for message in resumed_assistant], [result])
+        self.assertEqual(runtime_assistant[0][PHASE_KEY], SETTLED_DELIVERY_PHASE)
+        self.assertEqual(sum(record.get("event") == ASSISTANT_SETTLEMENT_EVENT for record in records), 1)
         violation = next(record for record in records if record.get("event") == "provider_protocol_violation")
         self.assertEqual(violation["payload"]["kind"], "structured_tool_calls")
         self.assertEqual(violation["payload"]["recovery_action"], "retry")
         self.assertNotIn("should-not-run.py", json.dumps(violation, ensure_ascii=False))
+
+    def test_compaction_during_rewrite_is_transient_until_delivery_settles(self) -> None:
+        marker = "REJECTED_CANDIDATE_MUST_NOT_RESUME"
+        _ForcedFinalProtocolClient.calls = []
+        _ForcedFinalProtocolClient.mode = "accepted settled delivery"
+        _ForcedFinalProtocolClient.first_content = marker + (" draft" * 1200)
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=workspace,
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+                context_char_budget=2400,
+                context_recent_messages=1,
+                summary_mode="local",
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _ForcedFinalProtocolClient):
+                runtime = AgentRuntime(config, show_tool_logs=False)
+                with patch.object(
+                    runtime,
+                    "_decide_final_answer_steering",
+                    side_effect=(SteeringDecision(kind="completion_audit", message="rewrite", payload={}), None),
+                ):
+                    result = runtime.run("produce one final answer")
+
+            rewrite_records = [
+                json.loads(line) for line in runtime._session.path.read_text(encoding="utf-8").splitlines()
+            ]
+            self.assertTrue(
+                any(
+                    record.get("event") == "context_compaction"
+                    and record.get("payload", {}).get("checkpoint_deferred") == "unsettled_candidate"
+                    for record in rewrite_records
+                )
+            )
+            candidate_index = next(
+                index
+                for index, record in enumerate(rewrite_records)
+                if record.get("event") == "assistant"
+                and marker in str(record.get("payload", {}).get("content"))
+            )
+            settlement_index = next(
+                index
+                for index, record in enumerate(rewrite_records)
+                if record.get("event") == ASSISTANT_SETTLEMENT_EVENT
+            )
+            self.assertFalse(
+                any(
+                    record.get("event") == "context_checkpoint"
+                    for record in rewrite_records[candidate_index + 1 : settlement_index]
+                )
+            )
+            rewrite_messages = _ForcedFinalProtocolClient.calls[1]["messages"]
+            self.assertIn(marker, json.dumps(rewrite_messages, ensure_ascii=False))
+            self.assertFalse(
+                any(key.startswith("_lca_") for message in rewrite_messages for key in message)
+            )
+            self.assertNotIn(marker, json.dumps(runtime._messages, ensure_ascii=False))
+
+            runtime._messages.append({"role": "user", "content": "settled growth " + ("x" * 12000)})
+            runtime._provider_context_phase.messages_for_model()
+            settled_records = [
+                json.loads(line) for line in runtime._session.path.read_text(encoding="utf-8").splitlines()
+            ]
+            resumed = AgentRuntime(config, show_tool_logs=False, session_id=runtime._session.session_id)
+
+        checkpoint = next(record for record in settled_records if record.get("event") == "context_checkpoint")
+        self.assertEqual(result, "accepted settled delivery")
+        self.assertEqual(checkpoint["payload"]["version"], 2)
+        self.assertNotIn(marker, json.dumps(checkpoint, ensure_ascii=False))
+        self.assertNotIn(marker, json.dumps(resumed._messages, ensure_ascii=False))
+        self.assertIn(result, json.dumps(resumed._messages, ensure_ascii=False))
 
     def test_forced_final_bailian_markup_artifact_recovers_without_leaking_values(self) -> None:
         _ForcedFinalProtocolClient.calls = []

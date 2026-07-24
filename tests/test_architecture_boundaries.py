@@ -60,8 +60,9 @@ OWNER_COMPLEXITY_CEILINGS = {
     "src/local_agent/frontends/tui/history_search.py": 130,
     "src/local_agent/frontends/tui/composer_layout.py": 183,
     "src/local_agent/frontends/tui/pending_prompt.py": 58,
-    "src/local_agent/runtime/assistant_message.py": 170,
-    "src/local_agent/runtime/run_output.py": 130,
+    "src/local_agent/runtime/assistant_message.py": 163,
+    "src/local_agent/runtime/provider_context.py": 445,
+    "src/local_agent/runtime/run_output.py": 138,
     "src/local_agent/providers/protocol.py": 379,
     "src/local_agent/runtime/prompt.py": 490,
     "src/local_agent/runtime/collector.py": 668,
@@ -81,9 +82,11 @@ OWNER_COMPLEXITY_CEILINGS = {
     "src/local_agent/tools/lsp_rename.py": 222,
     "src/local_agent/tools/lsp_code_action.py": 430,
     "src/local_agent/session/continuity.py": 288,
+    "src/local_agent/session/assistant_history.py": 379,
+    "src/local_agent/session/jsonl_store.py": 206,
 }
 LEGACY_COMPLEXITY_DEBT_CEILINGS = {
-    "src/local_agent/agent.py": 1632,
+    "src/local_agent/agent.py": 1613,
     "src/local_agent/tools/lsp.py": 1166,
     "src/local_agent/evidence/completion.py": 1093,
     "src/local_agent/review/handoff.py": 991,
@@ -679,6 +682,30 @@ class ArchitectureBoundaryTests(unittest.TestCase):
         )
         delta_source = ast.get_source_segment(renderer, delta_renderer) or ""
         self.assertNotIn("arguments", delta_source)
+
+    def test_assistant_history_settlement_has_one_output_and_session_owner(self) -> None:
+        runtime = (ROOT / "src/local_agent/agent.py").read_text(encoding="utf-8")
+        commands = (ROOT / "src/local_agent/runtime/commands.py").read_text(encoding="utf-8")
+        run_output = (ROOT / "src/local_agent/runtime/run_output.py").read_text(encoding="utf-8")
+        provider_context = (ROOT / "src/local_agent/runtime/provider_context.py").read_text(encoding="utf-8")
+        history = (ROOT / "src/local_agent/session/assistant_history.py").read_text(encoding="utf-8")
+        session = (ROOT / "src/local_agent/session/jsonl_store.py").read_text(encoding="utf-8")
+
+        self.assertIn("class RunOutputLifecycle:", run_output)
+        self.assertIn("AssistantSettlement.create(", run_output)
+        self.assertIn("record_assistant_settlement", session)
+        self.assertIn("ASSISTANT_SETTLEMENT_EVENT", session)
+        self.assertIn("class AssistantHistoryReplay:", history)
+        self.assertNotIn("from ..runtime", history)
+        self.assertNotIn("from ..agent", history)
+        self.assertIn("messages_for_active_run", provider_context)
+        self.assertIn("checkpoint_messages", provider_context)
+        self.assertNotIn("AssistantSettlement", runtime)
+        self.assertNotIn("AssistantSettlement", commands)
+        self.assertNotIn(".output.emit(", runtime)
+        self.assertNotIn(".output.emit(", commands)
+        for output_kind in ("provider_message", "runtime_augmented", "runtime_replaced", "runtime_only"):
+            self.assertNotIn(output_kind, runtime)
 
     def test_explore_subagent_is_opt_in_readonly_nonrecursive_and_runtime_thin(self) -> None:
         owner = (ROOT / "src/local_agent/workflows/explore_subagent.py").read_text(encoding="utf-8")

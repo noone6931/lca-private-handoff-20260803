@@ -6,6 +6,8 @@ from local_agent.protocol.events import EventEmitter
 from local_agent.protocol.events import ListEventSink
 from local_agent.runtime.assistant_message import AssistantMessageLifecycle
 from local_agent.runtime.run_output import RunOutputLifecycle
+from local_agent.session.assistant_history import MESSAGE_ID_KEY, PHASE_KEY, RUN_ID_KEY
+from local_agent.session.assistant_history import TOOL_CALL_PHASE
 
 
 class AssistantMessageLifecycleTests(unittest.TestCase):
@@ -41,6 +43,9 @@ class AssistantMessageLifecycleTests(unittest.TestCase):
 
         self.assertEqual(finalized.message_id, "m1")
         self.assertEqual(finalized.content, "hello")
+        self.assertEqual(finalized.model_message()[MESSAGE_ID_KEY], "m1")
+        self.assertEqual(finalized.model_message()[RUN_ID_KEY], events.run_id)
+        self.assertEqual(finalized.model_message()[PHASE_KEY], TOOL_CALL_PHASE)
         self.assertEqual([event.type for event in sink.events], ["AssistantDelta", "AssistantMessage"])
         self.assertEqual({event.payload["message_id"] for event in sink.events}, {"m1"})
         self.assertNotIn("arguments", repr(sink.events[-1].payload))
@@ -97,6 +102,8 @@ class AssistantMessageLifecycleTests(unittest.TestCase):
     def test_run_output_correlates_provider_and_runtime_delivery(self) -> None:
         sink = ListEventSink()
         events = EventEmitter(session_id="s1", sink=sink)
+        events.begin_command("c1")
+        events.start_run()
         output = RunOutputLifecycle()
         lifecycle = AssistantMessageLifecycle(
             events,
@@ -107,11 +114,13 @@ class AssistantMessageLifecycleTests(unittest.TestCase):
         )
         lifecycle.finalize({"content": "answer"}, finish_reason="stop")
 
+        settlements = []
         output.emit(
             events,
             content="answer\n\nVerification: tests passed.",
             reason="final",
             run_summary={"termination_reason": "final"},
+            settlement_recorder=settlements.append,
         )
 
         finished = sink.events[-1]
@@ -119,6 +128,9 @@ class AssistantMessageLifecycleTests(unittest.TestCase):
         self.assertEqual(finished.payload["final_message_id"], "m4")
         self.assertEqual(finished.payload["origin"], "runtime")
         self.assertEqual(finished.payload["output_kind"], "runtime_augmented")
+        self.assertEqual(settlements[0].run_id, events.run_id)
+        self.assertEqual(settlements[0].final_message_id, "m4")
+        self.assertEqual(settlements[0].content, "answer\n\nVerification: tests passed.")
         with self.assertRaisesRegex(RuntimeError, "already finished"):
             output.finish("duplicate")
 
@@ -145,6 +157,46 @@ class AssistantMessageLifecycleTests(unittest.TestCase):
             [event.type for event in sink.events],
             ["AssistantDelta", "AssistantMessageAborted", "TurnFinished"],
         )
+        self.assertEqual(sink.events[-1].payload["output_kind"], "runtime_only")
+
+    def test_tool_call_message_is_protocol_history_not_a_delivery_candidate(self) -> None:
+        sink = ListEventSink()
+        events = EventEmitter(session_id="s1", sink=sink)
+        events.begin_command("c1")
+        events.start_run()
+        output = RunOutputLifecycle()
+        lifecycle = AssistantMessageLifecycle(
+            events,
+            provider="openai-compatible",
+            stream_enabled=False,
+            message_id_factory=lambda: "m-tool",
+            observer=output,
+        )
+        lifecycle.finalize(
+            {
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "call-1",
+                        "type": "function",
+                        "function": {"name": "read_file", "arguments": "{}"},
+                    }
+                ],
+            },
+            finish_reason="tool_calls",
+        )
+        settlements = []
+
+        output.emit(
+            events,
+            content="Stopped after reaching the turn budget.",
+            reason="budget",
+            run_summary={},
+            settlement_recorder=settlements.append,
+        )
+
+        self.assertIsNone(settlements[0].final_message_id)
+        self.assertEqual(settlements[0].output_kind, "runtime_only")
         self.assertEqual(sink.events[-1].payload["output_kind"], "runtime_only")
 
 

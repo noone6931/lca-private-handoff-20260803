@@ -7,26 +7,6 @@ from pathlib import Path
 import time
 from typing import Any, Mapping
 
-from .runtime.compaction import SUMMARY_INPUT_CHAR_LIMIT
-from .runtime.compaction import SUMMARY_OUTPUT_CHAR_LIMIT
-from .runtime.compaction import SUMMARY_REQUEST_TIMEOUT
-from .runtime.compaction import assistant_snippets as _assistant_snippets
-from .runtime.compaction import compaction_recent_messages as _compaction_recent_messages
-from .runtime.compaction import estimate_message_chars as _estimate_message_chars
-from .runtime.compaction import estimate_message_tokens as _estimate_message_tokens
-from .runtime.compaction import format_llm_compaction_summary as _format_llm_compaction_summary
-from .runtime.compaction import last_user_message_index as _last_user_message_index
-from .runtime.compaction import messages_with_compaction_context as _messages_with_compaction_context
-from .runtime.compaction import messages_to_summary_transcript as _messages_to_summary_transcript
-from .runtime.compaction import provider_safe_messages as _provider_safe_messages
-from .runtime.compaction import prune_context_tool_outputs as _prune_context_tool_outputs
-from .runtime.compaction import resolve_compaction_threshold_chars as _resolve_compaction_threshold_chars
-from .runtime.compaction import resolve_compaction_threshold_tokens as _resolve_compaction_threshold_tokens
-from .runtime.compaction import snippets_for_role as _snippets_for_role
-from .runtime.compaction import summary_cache_key as _summary_cache_key
-from .runtime.compaction import summary_request_content as _summary_request_content
-from .runtime.compaction import tool_snippets as _tool_snippets
-from .runtime.compaction import truncate_recent_tool_outputs as _truncate_recent_tool_outputs
 from .providers.deadline import call_chat_with_timeout
 from .runtime.commands import CommandDispatcher
 from .config import AgentConfig
@@ -51,6 +31,7 @@ from .workspace.path_rules import matching_path_rule_context
 from .workspace.path_rules import render_path_rule_metadata
 from .evidence.requirements import render_pinned_requirement_evidence
 from .runtime.assistant_message import AssistantMessageLifecycle
+from .runtime.run_output import emit_runtime_delivery
 from .runtime.system_prompt import SYSTEM_PROMPT
 from .runtime.system_prompt import WORKFLOW_NUDGE
 from .runtime.context import RunContext
@@ -1498,7 +1479,7 @@ class AgentRuntime:
         else:
             self._memory_phase.consolidate_session_memory(run_messages, content, deadline)
         run_summary = self._finish_run_summary(reason)
-        self._run.output.emit(self._events, content=content, reason=reason, run_summary=run_summary)
+        emit_runtime_delivery(self, self._events, content=content, reason=reason, run_summary=run_summary)
         return content
 
     def _stop_for_budget(self, deadline: float | None, run_start_index: int) -> str:
@@ -1511,7 +1492,7 @@ class AgentRuntime:
         self._session.append("final", {"content": content})
         self._events.emit("ErrorEvent", {"kind": "interrupt", "message": content})
         run_summary = self._finish_run_summary("interrupt")
-        self._run.output.emit(self._events, content=content, reason="interrupt", run_summary=run_summary)
+        emit_runtime_delivery(self, self._events, content=content, reason="interrupt", run_summary=run_summary)
         return content
 
     def _length_stop_tool_message(self) -> str:
