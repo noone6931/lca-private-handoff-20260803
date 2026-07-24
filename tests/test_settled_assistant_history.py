@@ -186,6 +186,56 @@ class SettledAssistantHistoryTests(unittest.TestCase):
         self.assertTrue(replay.install_checkpoint({"version": 2, "messages": settled}))
         self.assertEqual(replay.messages(), settled)
 
+    def test_checkpoint_rejects_malformed_settlement_semantics(self) -> None:
+        provider = project_live_settlement(
+            [_candidate("provider-run", "m1", "provider final")],
+            AssistantSettlement.create(
+                run_id="provider-run",
+                final_message_id="m1",
+                origin="provider",
+                output_kind="provider_message",
+                content="provider final",
+            ),
+        )[0]
+        runtime_augmented = project_live_settlement(
+            [_candidate("augmented-run", "m2", "draft")],
+            AssistantSettlement.create(
+                run_id="augmented-run",
+                final_message_id="m2",
+                origin="runtime",
+                output_kind="runtime_augmented",
+                content="draft\n\nruntime report",
+            ),
+        )[0]
+        runtime_only = project_live_settlement(
+            [],
+            AssistantSettlement.create(
+                run_id="runtime-run",
+                final_message_id=None,
+                origin="runtime",
+                output_kind="runtime_only",
+                content="runtime final",
+            ),
+        )[0]
+        malformed = (
+            {**provider, ORIGIN_KEY: "runtime"},
+            {**runtime_augmented, ORIGIN_KEY: "provider"},
+            {**runtime_only, MESSAGE_ID_KEY: "provider-message-id"},
+            {**provider, MESSAGE_ID_KEY: "runtime:provider-run"},
+            {key: value for key, value in provider.items() if key != MESSAGE_ID_KEY},
+            {key: value for key, value in provider.items() if key != RUN_ID_KEY},
+        )
+        for message in malformed:
+            with self.subTest(message=message):
+                replay = AssistantHistoryReplay()
+
+                self.assertIsNone(checkpoint_messages([message]))
+                self.assertFalse(replay.install_checkpoint({"version": 2, "messages": [message]}))
+                self.assertEqual(replay.messages(), [])
+
+        replay = AssistantHistoryReplay()
+        self.assertFalse(replay.install_checkpoint({"version": 2, "messages": [provider, provider]}))
+
     def test_checkpoint_settlement_identity_rejects_later_duplicates(self) -> None:
         settlements = (
             AssistantSettlement.create(

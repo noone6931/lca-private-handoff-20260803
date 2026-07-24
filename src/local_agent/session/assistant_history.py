@@ -68,10 +68,8 @@ class AssistantSettlement:
             raise AssistantHistoryError("Assistant settlement origin or output kind is invalid.")
         if not isinstance(content, str):
             raise AssistantHistoryError("Assistant settlement content must be text.")
-        if output_kind == "provider_message" and origin != "provider":
-            raise AssistantHistoryError("Provider message settlement must retain provider origin.")
-        if output_kind != "provider_message" and origin != "runtime":
-            raise AssistantHistoryError("Runtime settlement must retain runtime origin.")
+        if not _origin_matches_output_kind(origin, output_kind):
+            raise AssistantHistoryError("Assistant settlement origin does not match its output kind.")
         if output_kind == "runtime_only" and final_message_id is not None:
             raise AssistantHistoryError("Runtime-only settlement cannot reference a provider message.")
         if output_kind != "runtime_only" and final_message_id is None:
@@ -359,14 +357,34 @@ def _delivery_message(
 
 
 def _valid_settled_message(message: Mapping[str, Any]) -> bool:
+    message_id = message.get(MESSAGE_ID_KEY)
+    run_id = message.get(RUN_ID_KEY)
+    origin = message.get(ORIGIN_KEY)
+    output_kind = message.get(OUTPUT_KIND_KEY)
+    if (
+        not isinstance(message_id, str)
+        or not message_id
+        or not isinstance(run_id, str)
+        or not run_id
+        or origin not in _ORIGINS
+        or output_kind not in _OUTPUT_KINDS
+        or not isinstance(message.get("content"), str)
+        or not _origin_matches_output_kind(origin, output_kind)
+    ):
+        return False
+    runtime_message_id = f"runtime:{run_id}"
     return (
-        isinstance(message.get(MESSAGE_ID_KEY), str)
-        and bool(message.get(MESSAGE_ID_KEY))
-        and isinstance(message.get(RUN_ID_KEY), str)
-        and bool(message.get(RUN_ID_KEY))
-        and message.get(ORIGIN_KEY) in _ORIGINS
-        and message.get(OUTPUT_KIND_KEY) in _OUTPUT_KINDS
-        and isinstance(message.get("content"), str)
+        message_id == runtime_message_id
+        if output_kind == "runtime_only"
+        else message_id != runtime_message_id
+    )
+
+
+def _origin_matches_output_kind(origin: object, output_kind: object) -> bool:
+    return (
+        origin == "provider" and output_kind == "provider_message"
+    ) or (
+        origin == "runtime" and output_kind in {"runtime_augmented", "runtime_replaced", "runtime_only"}
     )
 
 
