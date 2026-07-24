@@ -22,6 +22,7 @@ ASSISTANT_SETTLEMENT_VERSION = 1
 AssistantPhase = Literal["tool_call", "unsettled_candidate", "settled_delivery"]
 OutputOrigin = Literal["provider", "runtime"]
 OutputKind = Literal["provider_message", "runtime_augmented", "runtime_replaced", "runtime_only"]
+SettledDeliveryIdentity = tuple[str, str, str, str, str]
 
 _OUTPUT_KINDS = {"provider_message", "runtime_augmented", "runtime_replaced", "runtime_only"}
 _ORIGINS = {"provider", "runtime"}
@@ -210,6 +211,7 @@ class AssistantHistoryReplay:
         self._candidates: dict[tuple[str, str], list[dict[str, Any]]] = {}
         self._settlement_counts: dict[str, int] = {}
         self._invalid_settlement_runs: set[str] = set()
+        self._settled_authorities: dict[str, SettledDeliveryIdentity] = {}
 
     def install_checkpoint(self, payload: Mapping[str, Any]) -> bool:
         if payload.get("version") != 2 or not isinstance(payload.get("messages"), list):
@@ -218,20 +220,26 @@ class AssistantHistoryReplay:
         if projected is None:
             return False
         checkpoint_messages_with_identity: list[dict[str, Any]] = []
-        settlement_counts: dict[str, int] = {}
+        checkpoint_runs: set[str] = set()
         for message in projected:
             checkpoint_message = dict(message)
             if checkpoint_message.get(PHASE_KEY) == SETTLED_DELIVERY_PHASE:
-                run_id = checkpoint_message[RUN_ID_KEY]
-                if run_id in settlement_counts:
+                identity = _settled_delivery_identity(checkpoint_message)
+                if identity is None:
                     return False
-                settlement_counts[run_id] = 1
+                run_id = identity[0]
+                if (
+                    run_id in checkpoint_runs
+                    or self._settlement_counts.get(run_id) != 1
+                    or run_id in self._invalid_settlement_runs
+                    or self._settled_authorities.get(run_id) != identity
+                ):
+                    return False
+                checkpoint_runs.add(run_id)
                 checkpoint_message[_REPLAY_SETTLEMENT_KEY] = run_id
             checkpoint_messages_with_identity.append(checkpoint_message)
         self._messages = checkpoint_messages_with_identity
         self._candidates.clear()
-        self._settlement_counts = settlement_counts
-        self._invalid_settlement_runs.clear()
         return True
 
     def append_user(self, payload: Mapping[str, Any]) -> None:
@@ -272,6 +280,11 @@ class AssistantHistoryReplay:
             if isinstance(run_hint, str) and run_hint:
                 self._invalid_settlement_runs.add(run_hint)
             return
+        identity = _settled_delivery_identity(delivery)
+        if identity is None:
+            self._invalid_settlement_runs.add(settlement.run_id)
+            return
+        self._settled_authorities.setdefault(settlement.run_id, identity)
         delivery[_REPLAY_SETTLEMENT_KEY] = settlement.run_id
         self._messages.append(delivery)
 
@@ -385,6 +398,18 @@ def _origin_matches_output_kind(origin: object, output_kind: object) -> bool:
         origin == "provider" and output_kind == "provider_message"
     ) or (
         origin == "runtime" and output_kind in {"runtime_augmented", "runtime_replaced", "runtime_only"}
+    )
+
+
+def _settled_delivery_identity(message: Mapping[str, Any]) -> SettledDeliveryIdentity | None:
+    if not _valid_settled_message(message):
+        return None
+    return (
+        message[RUN_ID_KEY],
+        message[MESSAGE_ID_KEY],
+        message[ORIGIN_KEY],
+        message[OUTPUT_KIND_KEY],
+        message["content"],
     )
 
 

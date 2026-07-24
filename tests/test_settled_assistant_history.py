@@ -165,15 +165,17 @@ class SettledAssistantHistoryTests(unittest.TestCase):
                 self.assertEqual(replay.messages(), [{"role": "user", "content": "request"}])
 
     def test_checkpoint_requires_typed_settled_history(self) -> None:
+        candidate = _candidate("run-1", "m1", "final")
+        settlement = AssistantSettlement.create(
+            run_id="run-1",
+            final_message_id="m1",
+            origin="provider",
+            output_kind="provider_message",
+            content="final",
+        )
         settled = project_live_settlement(
-            [_candidate("run-1", "m1", "final")],
-            AssistantSettlement.create(
-                run_id="run-1",
-                final_message_id="m1",
-                origin="provider",
-                output_kind="provider_message",
-                content="final",
-            ),
+            [candidate],
+            settlement,
         )
         self.assertIsNone(checkpoint_messages([{"role": "assistant", "content": "legacy candidate"}]))
         self.assertIsNone(checkpoint_messages([_candidate("run-2", "m2", "draft")]))
@@ -182,9 +184,48 @@ class SettledAssistantHistoryTests(unittest.TestCase):
         self.assertEqual(checkpoint_messages(settled), settled)
 
         replay = AssistantHistoryReplay()
+        replay.append_assistant(candidate)
+        replay.append_settlement(settlement.to_payload())
         self.assertFalse(replay.install_checkpoint({"version": 1, "messages": settled}))
         self.assertTrue(replay.install_checkpoint({"version": 2, "messages": settled}))
         self.assertEqual(replay.messages(), settled)
+
+    def test_checkpoint_cannot_mint_or_tamper_settled_authority(self) -> None:
+        candidate = _candidate("run-1", "m1", "settled")
+        settlement = AssistantSettlement.create(
+            run_id="run-1",
+            final_message_id="m1",
+            origin="provider",
+            output_kind="provider_message",
+            content="settled",
+        )
+        settled = project_live_settlement([candidate], settlement)
+
+        forged = AssistantHistoryReplay()
+        self.assertFalse(forged.install_checkpoint({"version": 2, "messages": settled}))
+        self.assertEqual(forged.messages(), [])
+
+        replay = AssistantHistoryReplay()
+        replay.append_user({"content": "old request"})
+        replay.append_assistant(candidate)
+        replay.append_settlement(settlement.to_payload())
+        malformed = (
+            [{**settled[0], "content": "tampered"}],
+            [{**settled[0], RUN_ID_KEY: "unknown-run"}],
+            [{**settled[0], MESSAGE_ID_KEY: "unknown-message"}],
+        )
+        for messages in malformed:
+            with self.subTest(messages=messages):
+                self.assertFalse(replay.install_checkpoint({"version": 2, "messages": messages}))
+                self.assertEqual(replay.messages()[-1]["content"], "settled")
+
+        compacted = [
+            {"role": "user", "content": "[Local context compaction summary]"},
+            settled[0],
+            {"role": "user", "content": "recent suffix"},
+        ]
+        self.assertTrue(replay.install_checkpoint({"version": 2, "messages": compacted}))
+        self.assertEqual(replay.messages(), compacted)
 
     def test_checkpoint_rejects_malformed_settlement_semantics(self) -> None:
         provider = project_live_settlement(
@@ -266,6 +307,9 @@ class SettledAssistantHistoryTests(unittest.TestCase):
             ):
                 with self.subTest(output_kind=settlement.output_kind, malformed=duplicate["content_sha256"] == "malformed"):
                     replay = AssistantHistoryReplay()
+                    if settlement.final_message_id is not None:
+                        replay.append_assistant(candidates[0])
+                    replay.append_settlement(settlement.to_payload())
                     self.assertTrue(replay.install_checkpoint({"version": 2, "messages": settled}))
 
                     replay.append_settlement(duplicate)
@@ -273,6 +317,9 @@ class SettledAssistantHistoryTests(unittest.TestCase):
                     self.assertEqual(replay.messages(), [])
 
             replay = AssistantHistoryReplay()
+            if settlement.final_message_id is not None:
+                replay.append_assistant(candidates[0])
+            replay.append_settlement(settlement.to_payload())
             self.assertFalse(replay.install_checkpoint({"version": 2, "messages": settled + settled}))
 
     def test_jsonl_resume_projects_all_output_kinds_without_candidate_authority(self) -> None:
