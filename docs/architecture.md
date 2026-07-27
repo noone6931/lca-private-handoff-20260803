@@ -115,7 +115,7 @@ T-218 是这一规则的反例与纠偏记录：`requested_test_missing` 曾从 
 | 工具系统 | `[CORE-已落地]` | 工具注册、schema、tier、approval policy、参数校验、错误包装。 | `src/local_agent/tools/base.py`。 |
 | 本地工具层 | `[CORE-已落地]` | 文件、搜索、shell/test、git、patch、rollback、memory、learn、todo、ask_user。 | `src/local_agent/tools/`。 |
 | 上下文治理 | `[MVP-已落地]` | OMP 风格 reserve、auto/local/llm summary、recent 保留、tool 输出截断、单 system message。 | `runtime/provider_context.py` 编排，`runtime/compaction.py` 承载纯函数；durable checkpoint 只消费 settled assistant history。 |
-| Context / Rules | `[MVP-已落地]` | Workspace roots、用户级/项目级 `AGENTS.md` 启动注入，`RULES.md` 每轮 sticky 注入；multi-root roots 也会进入关键工具观察。 | `src/local_agent/startup_context.py`、`--cwd`、`--allow-dir`、`~/.config/local-coding-agent/`、`.local-agent/`。 |
+| Context / Rules | `[MVP-已落地]` | Workspace roots、用户级/项目级 `AGENTS.md` 启动注入，`RULES.md` 每轮 sticky 注入；multi-root roots 也会进入关键工具观察。项目级 `AGENTS/RULES` 的 canonical target 必须留在 primary workspace，内部 leaf/parent symlink 保留，外部及特殊文件 fail closed；用户级语义不变。 | `src/local_agent/workspace/startup.py` 是 Markdown source/reader Owner；`--cwd`、`--allow-dir`、`~/.config/local-coding-agent/`、`.local-agent/`。这是 prompt-source path containment，不是 OS sandbox。 |
 | 代码导航 / LSP | `[MVP-已落地]` | Python、Java、JS、TS、Vue 的 symbols/definition/references/diagnostics；可选外部 LSP server，缺失时回退 lightweight fallback。 | `src/local_agent/tools/lsp.py`、`src/local_agent/lsp/`。 |
 | 本地持久化 | `[CORE-已落地]` | JSONL session、patch log、todo、Markdown memory。 | runtime state 默认在用户级 state dir；显式项目 memory/skills 在 `.local-agent/`，自动 consolidation 默认写 state memory。 |
 | Memory / Skills | `[MVP-已落地]` | Markdown memory 启动注入、learn、可选 session memory consolidation 和 authored skills discovery 已落地；managed skills 待评估。 | `docs/memory-skills-implementation-plan.md`。 |
