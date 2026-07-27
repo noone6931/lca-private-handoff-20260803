@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import os
+import stat
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -29,6 +31,11 @@ APPROVAL_MODES = {"always-ask", "write", "yolo"}
 SUMMARY_MODES = {"auto", "local", "llm"}
 MEMORY_CONSOLIDATION_MODES = {"off", "auto", "llm"}
 MEMORY_SCOPES = {"state", "project"}
+WORKSPACE_DOTENV_CREDENTIAL_KEYS = frozenset({
+    "AI_API_KEY",
+    "BAILIAN_API_KEY",
+    "DASHSCOPE_API_KEY",
+})
 
 
 @dataclass(frozen=True)
@@ -100,13 +107,31 @@ def load_config(
     if resolved_state_root.exists() and not resolved_state_root.is_dir():
         raise ConfigError(f"state_dir exists but is not a directory: {resolved_state_root}")
     resolved_state_dir = workspace_state_dir(resolved_state_root, workspace)
-    # Keep provider credentials outside both a project checkout and a stable
-    # release snapshot. setdefault preserves explicit process/CLI values.
-    _load_dotenv(_resolve_env_file(env_file, workspace), required=env_file is not None)
-    _load_dotenv(_implicit_user_env_file())
-    _load_dotenv(workspace / ".env")
+    process_credentials = _credential_values(os.environ)
+    explicit_env = _load_dotenv(
+        _resolve_env_file(env_file, workspace),
+        required=env_file is not None,
+    )
+    user_env = _load_dotenv(_implicit_user_env_file())
+    workspace_env = _load_dotenv(
+        workspace / ".env",
+        allowed_keys=WORKSPACE_DOTENV_CREDENTIAL_KEYS,
+        apply_to_process=False,
+        require_regular_nonsymlink=True,
+    )
+    dotenv_credentials = _first_credential_source(
+        process_credentials,
+        _credential_values(explicit_env),
+        _credential_values(user_env),
+        _credential_values(workspace_env),
+    )
 
-    resolved_provider = _resolve_provider(provider or file_config.get("provider"))
+    configured_api_key = api_key or file_config.get("api_key")
+    provider_credentials = {} if configured_api_key else dotenv_credentials
+    resolved_provider = _resolve_provider(
+        provider or file_config.get("provider"),
+        provider_credentials,
+    )
     provider_defaults = _provider_defaults(resolved_provider)
     resolved_api_base_url = (
         api_base_url
@@ -115,7 +140,12 @@ def load_config(
         or provider_defaults.get("api_base_url")
         or ""
     ).rstrip("/")
-    resolved_api_key = _resolve_api_key(api_key, file_config, resolved_provider)
+    resolved_api_key = _resolve_api_key(
+        api_key,
+        file_config,
+        resolved_provider,
+        dotenv_credentials,
+    )
     resolved_model = (
         model
         or file_config.get("model")
@@ -421,31 +451,96 @@ def _memory_scope(raw_scope: object) -> str:
     return resolved
 
 
-def _load_dotenv(path: Path | None, *, required: bool = False) -> None:
+def _load_dotenv(
+    path: Path | None,
+    *,
+    required: bool = False,
+    allowed_keys: frozenset[str] | None = None,
+    apply_to_process: bool = True,
+    require_regular_nonsymlink: bool = False,
+) -> dict[str, str]:
     if path is None:
-        return
-    if not path.exists():
-        if required:
-            raise ConfigError(f"Env file not found: {path}")
-        return
-    if not path.is_file():
-        if required:
-            raise ConfigError(f"Env file is not a file: {path}")
-        return
-    with path.open("r", encoding="utf-8") as handle:
-        for line in handle:
-            stripped = line.strip()
-            if not stripped or stripped.startswith("#"):
-                continue
-            if stripped.startswith("export "):
-                stripped = stripped[len("export ") :].strip()
-            if "=" not in stripped:
-                continue
-            key, value = stripped.split("=", 1)
-            key = key.strip()
-            if not key or not all(char.isalnum() or char == "_" for char in key):
-                continue
-            os.environ.setdefault(key, _strip_env_quotes(value.strip()))
+        return {}
+    lines: list[str]
+    if require_regular_nonsymlink:
+        try:
+            inspected = path.lstat()
+        except FileNotFoundError:
+            return {}
+        except OSError as exc:
+            raise ConfigError(f"Unable to inspect workspace env file: {path}") from exc
+        if stat.S_ISLNK(inspected.st_mode) or not stat.S_ISREG(inspected.st_mode):
+            raise ConfigError(f"Workspace env file must be a regular non-symlink file: {path}")
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        try:
+            descriptor = os.open(path, flags)
+        except OSError as exc:
+            raise ConfigError(f"Unable to open workspace env file safely: {path}") from exc
+        try:
+            opened = os.fstat(descriptor)
+            if (
+                not stat.S_ISREG(opened.st_mode)
+                or (inspected.st_dev, inspected.st_ino) != (opened.st_dev, opened.st_ino)
+            ):
+                raise ConfigError(f"Workspace env file changed during safe open: {path}")
+            with os.fdopen(descriptor, "r", encoding="utf-8") as handle:
+                descriptor = -1
+                lines = list(handle)
+        except (OSError, UnicodeError) as exc:
+            raise ConfigError(f"Unable to read workspace env file: {path}") from exc
+        finally:
+            if descriptor >= 0:
+                os.close(descriptor)
+    else:
+        if not path.exists():
+            if required:
+                raise ConfigError(f"Env file not found: {path}")
+            return {}
+        if not path.is_file():
+            if required:
+                raise ConfigError(f"Env file is not a file: {path}")
+            return {}
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except (OSError, UnicodeError) as exc:
+            raise ConfigError(f"Unable to read env file: {path}") from exc
+
+    values: dict[str, str] = {}
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if stripped.startswith("export "):
+            stripped = stripped[len("export ") :].strip()
+        if "=" not in stripped:
+            continue
+        key, value = stripped.split("=", 1)
+        key = key.strip()
+        if not key or not all(char.isalnum() or char == "_" for char in key):
+            continue
+        if allowed_keys is not None and key not in allowed_keys:
+            continue
+        values.setdefault(key, _strip_env_quotes(value.strip()))
+    if apply_to_process:
+        for key, value in values.items():
+            os.environ.setdefault(key, value)
+    return values
+
+
+def _credential_values(values: Mapping[str, str]) -> dict[str, str]:
+    return {
+        key: value
+        for key in WORKSPACE_DOTENV_CREDENTIAL_KEYS
+        if (value := values.get(key))
+    }
+
+
+def _first_credential_source(*sources: Mapping[str, str]) -> dict[str, str]:
+    for source in sources:
+        credentials = _credential_values(source)
+        if credentials:
+            return credentials
+    return {}
 
 
 def _implicit_user_env_file() -> Path | None:
@@ -473,10 +568,13 @@ def _strip_env_quotes(value: str) -> str:
     return value
 
 
-def _resolve_provider(raw_provider: str | None) -> str:
+def _resolve_provider(
+    raw_provider: str | None,
+    credential_source: Mapping[str, str],
+) -> str:
     if raw_provider:
         provider = raw_provider.strip().lower()
-    elif os.environ.get("DASHSCOPE_API_KEY") or os.environ.get("BAILIAN_API_KEY"):
+    elif credential_source.get("DASHSCOPE_API_KEY") or credential_source.get("BAILIAN_API_KEY"):
         provider = "bailian"
     else:
         provider = "openai-compatible"
@@ -509,19 +607,24 @@ def _provider_defaults(provider: str) -> dict[str, str]:
     return {}
 
 
-def _resolve_api_key(api_key: str | None, file_config: dict, provider: str) -> str:
+def _resolve_api_key(
+    api_key: str | None,
+    file_config: dict,
+    provider: str,
+    credential_source: Mapping[str, str],
+) -> str:
     if api_key:
         return api_key
     if file_config.get("api_key"):
         return file_config["api_key"]
     if provider.startswith("bailian"):
         return (
-            os.environ.get("DASHSCOPE_API_KEY")
-            or os.environ.get("BAILIAN_API_KEY")
-            or os.environ.get("AI_API_KEY")
+            credential_source.get("DASHSCOPE_API_KEY")
+            or credential_source.get("BAILIAN_API_KEY")
+            or credential_source.get("AI_API_KEY")
             or ""
         )
-    return os.environ.get("AI_API_KEY") or ""
+    return credential_source.get("AI_API_KEY") or ""
 
 
 def _positive_int(name: str, value: object) -> int:

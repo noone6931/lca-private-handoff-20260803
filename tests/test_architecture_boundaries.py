@@ -84,6 +84,7 @@ OWNER_COMPLEXITY_CEILINGS = {
     "src/local_agent/session/continuity.py": 288,
     "src/local_agent/session/assistant_history.py": 551,
     "src/local_agent/session/jsonl_store.py": 206,
+    "src/local_agent/config.py": 760,
 }
 LEGACY_COMPLEXITY_DEBT_CEILINGS = {
     "src/local_agent/agent.py": 1613,
@@ -129,6 +130,25 @@ def _resolved_import_targets(path: Path) -> list[tuple[int, str]]:
 
 
 class ArchitectureBoundaryTests(unittest.TestCase):
+    def test_workspace_dotenv_authority_stays_scoped_to_the_config_owner(self) -> None:
+        config_path = ROOT / "src/local_agent/config.py"
+        config = config_path.read_text(encoding="utf-8")
+        production = list((ROOT / "src/local_agent").rglob("*.py"))
+        dotenv_owners = [
+            path.relative_to(ROOT).as_posix()
+            for path in production
+            if "def _load_dotenv(" in path.read_text(encoding="utf-8")
+        ]
+        self.assertEqual(dotenv_owners, ["src/local_agent/config.py"])
+        self.assertIn("WORKSPACE_DOTENV_CREDENTIAL_KEYS = frozenset({", config)
+        self.assertIn("allowed_keys=WORKSPACE_DOTENV_CREDENTIAL_KEYS", config)
+        self.assertIn("apply_to_process=False", config)
+        self.assertIn("require_regular_nonsymlink=True", config)
+        self.assertIn('getattr(os, "O_NOFOLLOW", 0)', config)
+        self.assertIn("os.fstat(descriptor)", config)
+        self.assertNotIn("startswith(\"AGENT_\")", config)
+        self.assertNotIn("startswith(\"LCA_\")", config)
+
     def test_read_helper_containment_stays_with_git_search_process_owners(self) -> None:
         git_owner = (ROOT / "src/local_agent/tools/git.py").read_text(encoding="utf-8")
         search_owner = (ROOT / "src/local_agent/tools/search.py").read_text(encoding="utf-8")

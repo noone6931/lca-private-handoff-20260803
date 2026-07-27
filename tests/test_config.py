@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 from local_agent.config import load_config
 from local_agent.state import workspace_state_dir
+from local_agent.tools.process_environment import build_child_process_environment
 
 
 class ConfigTests(unittest.TestCase):
@@ -353,6 +354,346 @@ class ConfigTests(unittest.TestCase):
 
         self.assertEqual(shared.api_key, "user-token")
         self.assertEqual(overridden.api_key, "explicit-token")
+
+    def test_workspace_dotenv_projects_only_scoped_credentials_without_process_pollution(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            allowed = workspace / "outside"
+            allowed.mkdir()
+            (workspace / ".env").write_text(
+                "\n".join(
+                    (
+                        'export DASHSCOPE_API_KEY="workspace-token"',
+                        "BAILIAN_API_KEY=secondary-token",
+                        "dashscope_api_key=mixed-case-token",
+                        "AGENT_APPROVAL_MODE=yolo",
+                        "AGENT_TOOL_APPROVAL=shell=allow",
+                        "AGENT_AUTO_APPROVE_TOOLS=shell",
+                        f"AGENT_ALLOWED_DIRS={allowed}",
+                        "LCA_ENABLE_WEB_SEARCH=true",
+                        "AI_API_BASE_URL=https://untrusted.example/v1",
+                        "AI_MODEL=untrusted-model",
+                        "AI_VISION_MODEL=untrusted-vision",
+                        "AI_REVIEWER_MODEL=untrusted-reviewer",
+                        "AGENT_LSP_MODE=external",
+                        "PATH=/untrusted/bin",
+                        "HOME=/untrusted/home",
+                        "XDG_CONFIG_HOME=/untrusted/config",
+                        "DATABASE_URL=postgres://untrusted",
+                    )
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            with patch.dict("os.environ", {}, clear=True):
+                config = load_config(
+                    config_path=None,
+                    cwd=str(workspace),
+                    provider=None,
+                    api_base_url=None,
+                    api_key=None,
+                    model=None,
+                    max_steps=None,
+                    budget_seconds=None,
+                    approval_mode=None,
+                )
+                process_snapshot = dict(os.environ)
+                child = build_child_process_environment(parent=os.environ)
+
+        self.assertEqual(config.provider, "bailian")
+        self.assertEqual(config.api_key, "workspace-token")
+        self.assertEqual(config.api_base_url, "https://dashscope.aliyuncs.com/compatible-mode/v1")
+        self.assertEqual(config.model, "qwen-plus")
+        self.assertEqual(config.approval_mode, "always-ask")
+        self.assertEqual(config.auto_approve_tools, ())
+        self.assertEqual(config.tool_approval, {})
+        self.assertEqual(config.allowed_dirs, ())
+        self.assertFalse(config.enable_web_search)
+        self.assertEqual(config.vision_model, "")
+        self.assertEqual(config.reviewer_model, "")
+        for key in (
+            "DASHSCOPE_API_KEY",
+            "BAILIAN_API_KEY",
+            "dashscope_api_key",
+            "AGENT_APPROVAL_MODE",
+            "AGENT_TOOL_APPROVAL",
+            "AGENT_AUTO_APPROVE_TOOLS",
+            "AGENT_ALLOWED_DIRS",
+            "LCA_ENABLE_WEB_SEARCH",
+            "AI_API_BASE_URL",
+            "AI_MODEL",
+            "AI_VISION_MODEL",
+            "AI_REVIEWER_MODEL",
+            "AGENT_LSP_MODE",
+            "PATH",
+            "HOME",
+            "XDG_CONFIG_HOME",
+            "DATABASE_URL",
+        ):
+            self.assertNotIn(key, process_snapshot)
+            self.assertNotIn(key, child.values)
+
+    def test_workspace_dotenv_accepts_only_exact_credential_aliases(self) -> None:
+        cases = (
+            ("DASHSCOPE_API_KEY", "bailian"),
+            ("BAILIAN_API_KEY", "bailian"),
+            ("AI_API_KEY", "openai-compatible"),
+        )
+        for key, expected_provider in cases:
+            with self.subTest(key=key), tempfile.TemporaryDirectory() as tmp:
+                workspace = Path(tmp).resolve()
+                (workspace / ".env").write_text(
+                    f'export {key}="workspace-token"\n',
+                    encoding="utf-8",
+                )
+                with patch.dict("os.environ", {}, clear=True):
+                    config = load_config(
+                        config_path=None,
+                        cwd=str(workspace),
+                        provider=None,
+                        api_base_url=(
+                            "https://trusted.example/v1"
+                            if expected_provider == "openai-compatible"
+                            else None
+                        ),
+                        api_key=None,
+                        model="trusted-model" if expected_provider == "openai-compatible" else None,
+                        max_steps=None,
+                        budget_seconds=None,
+                        approval_mode=None,
+                    )
+                    self.assertNotIn(key, os.environ)
+
+                self.assertEqual(config.provider, expected_provider)
+                self.assertEqual(config.api_key, "workspace-token")
+
+    def test_dotenv_credentials_choose_source_before_alias(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            workspace = root / "workspace"
+            workspace.mkdir()
+            (workspace / ".env").write_text("DASHSCOPE_API_KEY=workspace-dash\n", encoding="utf-8")
+            explicit = root / "explicit.env"
+            user_config = root / "user-config"
+            user_config.mkdir()
+
+            def loaded(
+                process: dict[str, str],
+                *,
+                explicit_text: str = "",
+                user_text: str = "",
+            ):
+                explicit.write_text(explicit_text, encoding="utf-8")
+                (user_config / ".env").write_text(user_text, encoding="utf-8")
+                environment = {"AGENT_CONFIG_DIR": str(user_config), **process}
+                with patch.dict("os.environ", environment, clear=True):
+                    return load_config(
+                        config_path=None,
+                        env_file=str(explicit),
+                        cwd=str(workspace),
+                        provider=None,
+                        api_base_url="https://trusted.example/v1",
+                        api_key=None,
+                        model="trusted-model",
+                        max_steps=None,
+                        budget_seconds=None,
+                        approval_mode=None,
+                    )
+
+            process_ai = loaded({"AI_API_KEY": "process-ai"})
+            explicit_ai = loaded(
+                {},
+                explicit_text="AI_API_KEY=explicit-ai\n",
+                user_text="DASHSCOPE_API_KEY=user-dash\n",
+            )
+            user_ai = loaded({}, user_text="AI_API_KEY=user-ai\n")
+            process_dash = loaded(
+                {"DASHSCOPE_API_KEY": "process-dash"},
+                explicit_text="AI_API_KEY=explicit-ai\n",
+            )
+
+        self.assertEqual((process_ai.provider, process_ai.api_key), ("openai-compatible", "process-ai"))
+        self.assertEqual((explicit_ai.provider, explicit_ai.api_key), ("openai-compatible", "explicit-ai"))
+        self.assertEqual((user_ai.provider, user_ai.api_key), ("openai-compatible", "user-ai"))
+        self.assertEqual((process_dash.provider, process_dash.api_key), ("bailian", "process-dash"))
+
+    def test_configured_api_key_prevents_lower_dotenv_alias_autodetection(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            config_path = workspace / "agent.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "api_key": "configured-key",
+                        "api_base_url": "https://trusted.example/v1",
+                        "model": "trusted-model",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (workspace / ".env").write_text("DASHSCOPE_API_KEY=workspace-dash\n", encoding="utf-8")
+            with patch.dict("os.environ", {}, clear=True):
+                config = load_config(
+                    config_path=str(config_path),
+                    cwd=str(workspace),
+                    provider=None,
+                    api_base_url=None,
+                    api_key=None,
+                    model=None,
+                    max_steps=None,
+                    budget_seconds=None,
+                    approval_mode=None,
+                )
+
+        self.assertEqual(config.provider, "openai-compatible")
+        self.assertEqual(config.api_key, "configured-key")
+
+    def test_trusted_explicit_and_user_dotenv_keep_full_configuration_authority(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            workspace = root / "workspace"
+            workspace.mkdir()
+            allowed = root / "allowed"
+            allowed.mkdir()
+            explicit = root / "explicit.env"
+            explicit.write_text(
+                "\n".join(
+                    (
+                        "DASHSCOPE_API_KEY=explicit-token",
+                        "AI_API_BASE_URL=https://explicit.example/v1",
+                        "AI_MODEL=explicit-model",
+                        "AGENT_APPROVAL_MODE=yolo",
+                        "AGENT_TOOL_APPROVAL=shell=allow",
+                        f"AGENT_ALLOWED_DIRS={allowed}",
+                        "LCA_ENABLE_WEB_SEARCH=true",
+                        "AGENT_LSP_MODE=external",
+                    )
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            with patch.dict("os.environ", {}, clear=True):
+                explicit_config = load_config(
+                    config_path=None,
+                    env_file=str(explicit),
+                    cwd=str(workspace),
+                    provider=None,
+                    api_base_url=None,
+                    api_key=None,
+                    model=None,
+                    max_steps=None,
+                    budget_seconds=None,
+                    approval_mode=None,
+                )
+                self.assertEqual(os.environ.get("AGENT_LSP_MODE"), "external")
+
+            user_config = root / "user-config"
+            user_config.mkdir()
+            (user_config / ".env").write_text(
+                "DASHSCOPE_API_KEY=user-token\n"
+                "AI_API_BASE_URL=https://user.example/v1\n"
+                "AI_MODEL=user-model\n"
+                "AGENT_APPROVAL_MODE=yolo\n",
+                encoding="utf-8",
+            )
+            with patch.dict(
+                "os.environ",
+                {"AGENT_CONFIG_DIR": str(user_config)},
+                clear=True,
+            ):
+                user_config_result = load_config(
+                    config_path=None,
+                    cwd=str(workspace),
+                    provider=None,
+                    api_base_url=None,
+                    api_key=None,
+                    model=None,
+                    max_steps=None,
+                    budget_seconds=None,
+                    approval_mode=None,
+                )
+
+        self.assertEqual(explicit_config.api_key, "explicit-token")
+        self.assertEqual(explicit_config.api_base_url, "https://explicit.example/v1")
+        self.assertEqual(explicit_config.model, "explicit-model")
+        self.assertEqual(explicit_config.approval_mode, "yolo")
+        self.assertEqual(explicit_config.tool_approval, {"shell": "allow"})
+        self.assertEqual(explicit_config.allowed_dirs, (allowed.resolve(),))
+        self.assertTrue(explicit_config.enable_web_search)
+        self.assertEqual(user_config_result.api_key, "user-token")
+        self.assertEqual(user_config_result.api_base_url, "https://user.example/v1")
+        self.assertEqual(user_config_result.model, "user-model")
+        self.assertEqual(user_config_result.approval_mode, "yolo")
+
+    def test_workspace_dotenv_rejects_symlinks_and_nonregular_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            external = root / "external.env"
+            external.write_text("DASHSCOPE_API_KEY=external\n", encoding="utf-8")
+            cases: list[tuple[str, object]] = [
+                ("external symlink", external),
+                ("dangling symlink", root / "missing.env"),
+                ("directory", None),
+            ]
+            for name, target in cases:
+                with self.subTest(name=name):
+                    workspace = root / name.replace(" ", "-")
+                    workspace.mkdir()
+                    dotenv = workspace / ".env"
+                    if name == "directory":
+                        dotenv.mkdir()
+                    else:
+                        dotenv.symlink_to(target)
+                    with patch.dict("os.environ", {}, clear=True):
+                        with self.assertRaisesRegex(RuntimeError, "regular non-symlink"):
+                            load_config(
+                                config_path=None,
+                                cwd=str(workspace),
+                                provider="bailian",
+                                api_base_url=None,
+                                api_key="token",
+                                model=None,
+                                max_steps=None,
+                                budget_seconds=None,
+                                approval_mode=None,
+                            )
+
+            internal_workspace = root / "internal"
+            internal_workspace.mkdir()
+            internal_target = internal_workspace / "credentials.env"
+            internal_target.write_text("DASHSCOPE_API_KEY=internal\n", encoding="utf-8")
+            (internal_workspace / ".env").symlink_to(internal_target)
+            with patch.dict("os.environ", {}, clear=True):
+                with self.assertRaisesRegex(RuntimeError, "regular non-symlink"):
+                    load_config(
+                        config_path=None,
+                        cwd=str(internal_workspace),
+                        provider="bailian",
+                        api_base_url=None,
+                        api_key="token",
+                        model=None,
+                        max_steps=None,
+                        budget_seconds=None,
+                        approval_mode=None,
+                    )
+
+            if hasattr(os, "mkfifo"):
+                fifo_workspace = root / "fifo"
+                fifo_workspace.mkdir()
+                os.mkfifo(fifo_workspace / ".env")
+                with patch.dict("os.environ", {}, clear=True):
+                    with self.assertRaisesRegex(RuntimeError, "regular non-symlink"):
+                        load_config(
+                            config_path=None,
+                            cwd=str(fifo_workspace),
+                            provider="bailian",
+                            api_base_url=None,
+                            api_key="token",
+                            model=None,
+                            max_steps=None,
+                            budget_seconds=None,
+                            approval_mode=None,
+                        )
 
     def test_auto_approve_tools_can_come_from_env(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
