@@ -34,7 +34,6 @@ _CAPABILITY_CLASS_BY_TIER = {
     "interaction": "user_interaction",
 }
 
-
 @dataclass(frozen=True)
 class ExecutionAction:
     tool_name: str
@@ -135,6 +134,7 @@ def _prompt_decision(
     session_cache_allowed: bool,
     interactive_available: bool,
 ) -> ExecutionPolicyDecision:
+    session_cache_allowed = session_cache_allowed and action.tier != "exec"
     if not interactive_available:
         return _decision(
             action,

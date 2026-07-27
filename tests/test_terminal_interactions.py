@@ -68,29 +68,46 @@ class TerminalInteractionTests(unittest.TestCase):
         self.assertEqual(output.getvalue().count("This input is answering an Agent question"), 2)
         self.assertNotIn("Unknown command: /help", output.getvalue())
 
-    def test_approval_uses_focused_controller_and_preserves_session_decision(self) -> None:
+    def test_exec_approval_uses_once_only_choices_and_never_caches_session_answer(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             decisions: dict[str, str] = {}
             events: list[tuple[str, dict]] = []
             output = io.StringIO()
             controller = TerminalInteractionController(
-                input_stream=io.StringIO("/workspace list\ns\n"),
+                input_stream=io.StringIO("s\ny\n"),
                 output_stream=output,
             )
+            calls: list[str] = []
             registry = ToolRegistry(
                 [
                     Tool(
                         name="sample_exec",
                         description="sample execution",
                         tier="exec",
-                        input_schema={"type": "object", "properties": {}, "additionalProperties": False},
-                        handler=lambda _args, _context: ToolResult("ok"),
+                        input_schema={
+                            "type": "object",
+                            "properties": {"command": {"type": "string"}},
+                            "required": ["command"],
+                            "additionalProperties": False,
+                        },
+                        handler=lambda args, _context: calls.append(args["command"]) or ToolResult("ok"),
                     )
                 ]
             )
-            result = registry.execute(
+            first = registry.execute(
                 "sample_exec",
-                {},
+                {"command": "first"},
+                ToolContext(
+                    workspace=Path(tmp),
+                    approval_mode="always-ask",
+                    session_tool_approval=decisions,
+                    interaction_handler=controller,
+                    event_callback=lambda event_type, payload: events.append((event_type, payload)),
+                ),
+            )
+            second = registry.execute(
+                "sample_exec",
+                {"command": "second"},
                 ToolContext(
                     workspace=Path(tmp),
                     approval_mode="always-ask",
@@ -100,12 +117,18 @@ class TerminalInteractionTests(unittest.TestCase):
                 ),
             )
 
-        self.assertFalse(result.is_error)
-        self.assertEqual(decisions, {"sample_exec": "allow_always"})
+        self.assertTrue(first.is_error)
+        self.assertFalse(second.is_error)
+        self.assertEqual(calls, ["second"])
+        self.assertEqual(decisions, {})
         self.assertEqual(controller.state, InputState.CHAT)
-        self.assertIn("This input is answering an Agent question", output.getvalue())
-        self.assertIn("InteractionRequested", [event_type for event_type, _payload in events])
-        self.assertIn("InteractionResolved", [event_type for event_type, _payload in events])
+        self.assertNotIn("always this session", output.getvalue())
+        self.assertNotIn("reject this session", output.getvalue())
+        self.assertNotIn("y/s/n/d", output.getvalue())
+        event_types = [event_type for event_type, _payload in events]
+        self.assertEqual(event_types.count("ApprovalRequested"), 2)
+        self.assertEqual(event_types.count("InteractionRequested"), 2)
+        self.assertEqual(event_types.count("InteractionResolved"), 2)
 
     def test_cancelled_approval_returns_a_cancelled_tool_result(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

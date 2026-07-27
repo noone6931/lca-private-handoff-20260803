@@ -2624,7 +2624,7 @@ class ToolTests(unittest.TestCase):
         self.assertTrue(exec_result.is_error)
         self.assertIn("requires approval", exec_result.content)
 
-    def test_session_allow_answer_allows_same_tool_without_reprompt(self) -> None:
+    def test_exec_session_answer_is_rejected_once_and_next_call_reprompts(self) -> None:
         registry = ToolRegistry(
             [
                 Tool(
@@ -2643,15 +2643,17 @@ class ToolTests(unittest.TestCase):
                 approval_mode="always-ask",
                 session_tool_approval=session_policy,
             )
-            with patch("sys.stdin.isatty", return_value=True), patch("builtins.input", return_value="s") as ask:
+            with patch("sys.stdin.isatty", return_value=True), patch(
+                "builtins.input",
+                side_effect=("s", "y"),
+            ) as ask:
                 first = registry.execute("sample_exec", "{}", context)
-            with patch("sys.stdin.isatty", return_value=False):
                 second = registry.execute("sample_exec", "{}", context)
 
-        self.assertFalse(first.is_error)
+        self.assertTrue(first.is_error)
         self.assertFalse(second.is_error)
-        self.assertEqual(session_policy, {"sample_exec": "allow_always"})
-        self.assertEqual(ask.call_count, 1)
+        self.assertEqual(session_policy, {})
+        self.assertEqual(ask.call_count, 2)
 
     def test_config_prompt_is_not_overridden_by_session_allow(self) -> None:
         registry = ToolRegistry(
@@ -2677,6 +2679,46 @@ class ToolTests(unittest.TestCase):
 
         self.assertTrue(result.is_error)
         self.assertIn("requires approval", result.content)
+
+    def test_explicit_exec_allow_controls_still_bypass_interactive_prompt(self) -> None:
+        registry = ToolRegistry(
+            [
+                Tool(
+                    name="sample_exec",
+                    description="sample exec",
+                    tier="exec",
+                    input_schema={"type": "object", "properties": {}, "additionalProperties": False},
+                    handler=lambda args, context: type("Result", (), {"content": "ok", "is_error": False})(),
+                )
+            ]
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            contexts = (
+                ToolContext(
+                    workspace=workspace,
+                    approval_mode="always-ask",
+                    tool_approval={"sample_exec": "allow"},
+                ),
+                ToolContext(
+                    workspace=workspace,
+                    approval_mode="always-ask",
+                    session_tool_approval={"sample_exec": "allow_always"},
+                ),
+                ToolContext(
+                    workspace=workspace,
+                    approval_mode="always-ask",
+                    auto_approve_tools=frozenset({"sample_exec"}),
+                ),
+                ToolContext(workspace=workspace, approval_mode="yolo"),
+            )
+            with patch("sys.stdin.isatty", return_value=True), patch(
+                "builtins.input",
+                side_effect=AssertionError("explicit controls must not prompt"),
+            ):
+                results = [registry.execute("sample_exec", "{}", context) for context in contexts]
+
+        self.assertTrue(all(not result.is_error for result in results))
 
     def test_approval_deadline_already_exhausted_cancels_without_input(self) -> None:
         registry = ToolRegistry(
@@ -2769,13 +2811,13 @@ class ToolTests(unittest.TestCase):
         self.assertFalse(result.is_error)
         self.assertEqual(result.content, "ok")
 
-    def test_approval_timed_input_session_allow_and_deny_are_preserved(self) -> None:
+    def test_write_approval_timed_input_session_allow_and_deny_are_preserved(self) -> None:
         registry = ToolRegistry(
             [
                 Tool(
-                    name="sample_exec",
-                    description="sample exec",
-                    tier="exec",
+                    name="sample_write",
+                    description="sample write",
+                    tier="write",
                     input_schema={"type": "object", "properties": {}, "additionalProperties": False},
                     handler=lambda args, context: type("Result", (), {"content": "ok", "is_error": False})(),
                 )
@@ -2796,7 +2838,7 @@ class ToolTests(unittest.TestCase):
                 patch("builtins.print"),
                 patch("local_agent.tools.base.select.select", return_value=([allow_stdin], [], [])),
             ):
-                allow_result = registry.execute("sample_exec", "{}", allow_context)
+                allow_result = registry.execute("sample_write", "{}", allow_context)
 
             deny_policy: dict[str, str] = {}
             deny_context = ToolContext(
@@ -2812,13 +2854,13 @@ class ToolTests(unittest.TestCase):
                 patch("builtins.print"),
                 patch("local_agent.tools.base.select.select", return_value=([deny_stdin], [], [])),
             ):
-                deny_result = registry.execute("sample_exec", "{}", deny_context)
+                deny_result = registry.execute("sample_write", "{}", deny_context)
 
         self.assertFalse(allow_result.is_error)
-        self.assertEqual(allow_policy, {"sample_exec": "allow_always"})
+        self.assertEqual(allow_policy, {"sample_write": "allow_always"})
         self.assertTrue(deny_result.is_error)
         self.assertIn("denied tool execution for this session", deny_result.content)
-        self.assertEqual(deny_policy, {"sample_exec": "reject_always"})
+        self.assertEqual(deny_policy, {"sample_write": "reject_always"})
 
     def test_write_mode_still_auto_allows_write_and_times_exec_approval(self) -> None:
         registry = ToolRegistry(
@@ -2861,13 +2903,13 @@ class ToolTests(unittest.TestCase):
         self.assertIn("approval cancelled because budget_seconds is exhausted", exec_result.content)
         wait.assert_called_once_with([fake_stdin], [], [], 10.0)
 
-    def test_session_deny_answer_blocks_same_tool_without_reprompt(self) -> None:
+    def test_write_session_deny_answer_blocks_same_tool_without_reprompt(self) -> None:
         registry = ToolRegistry(
             [
                 Tool(
-                    name="sample_exec",
-                    description="sample exec",
-                    tier="exec",
+                    name="sample_write",
+                    description="sample write",
+                    tier="write",
                     input_schema={"type": "object", "properties": {}, "additionalProperties": False},
                     handler=lambda args, context: type("Result", (), {"content": "ok", "is_error": False})(),
                 )
@@ -2881,14 +2923,14 @@ class ToolTests(unittest.TestCase):
                 session_tool_approval=session_policy,
             )
             with patch("sys.stdin.isatty", return_value=True), patch("builtins.input", return_value="d") as ask:
-                first = registry.execute("sample_exec", "{}", context)
+                first = registry.execute("sample_write", "{}", context)
             with patch("sys.stdin.isatty", return_value=True), patch("builtins.input", return_value="y") as second_ask:
-                second = registry.execute("sample_exec", "{}", context)
+                second = registry.execute("sample_write", "{}", context)
 
         self.assertTrue(first.is_error)
         self.assertTrue(second.is_error)
         self.assertIn("denied by session approval", second.content)
-        self.assertEqual(session_policy, {"sample_exec": "reject_always"})
+        self.assertEqual(session_policy, {"sample_write": "reject_always"})
         self.assertEqual(ask.call_count, 1)
         self.assertEqual(second_ask.call_count, 0)
 

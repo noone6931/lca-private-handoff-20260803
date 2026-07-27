@@ -589,9 +589,11 @@ class ArchitectureBoundaryTests(unittest.TestCase):
         self.assertNotIn("from .agent", owner)
         self.assertNotIn("input(", owner)
         self.assertNotIn("event_callback", owner)
+        self.assertIn('action.tier != "exec"', owner)
         self.assertIn("return evaluate_execution_policy(", registry)
         self.assertNotIn("def _approval_denial_reason", registry)
         self.assertNotIn("config_policy in", registry)
+        self.assertNotIn('tool.tier == "exec"', registry)
 
     def test_frontends_submit_typed_commands_through_one_runtime_boundary(self) -> None:
         cli = (ROOT / "src/local_agent/cli.py").read_text(encoding="utf-8")

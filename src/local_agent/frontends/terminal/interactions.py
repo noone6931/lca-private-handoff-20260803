@@ -39,7 +39,7 @@ class TerminalInteractionController:
 
     def request_interaction(self, request: InteractionRequest) -> InteractionResult:
         state = InputState.ASK if request.kind == "ask" else InputState.APPROVAL
-        prompt = "[agent question] answer> " if state is InputState.ASK else "[approval] y/s/n/d> "
+        prompt = "[agent question] answer> " if state is InputState.ASK else "[approval] response> "
         original_state = self._state
         self._state = state
         try:
