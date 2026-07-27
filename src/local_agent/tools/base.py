@@ -16,6 +16,7 @@ from .policy import execution_action
 from ..protocol.interactions import InteractionHandler
 from ..protocol.interactions import InteractionRequest
 from ..platform.terminal import terminal_input_prompt
+from ..workspace.context import WorkspaceRootIdentity
 from .argument_normalization import normalize_compatibility_arguments
 
 
@@ -37,6 +38,7 @@ class ToolContext:
     run_id: str | None = None
     tool_call_id: str | None = None
     workspace_revision: int = 0
+    workspace_identity: WorkspaceRootIdentity | None = None
     auto_approve_tools: tuple[str, ...] = ()
     tool_approval: dict[str, str] | None = None
     session_tool_approval: dict[str, str] | None = None

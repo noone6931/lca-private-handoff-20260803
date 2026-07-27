@@ -73,7 +73,10 @@ def memory_tools() -> list[Tool]:
 
 def memory_read(args: dict[str, Any], context: ToolContext) -> ToolResult:
     try:
-        document = ProjectMemoryStore(context.workspace).read(args["name"])
+        document = ProjectMemoryStore(
+            context.workspace,
+            expected_workspace_identity=context.workspace_identity,
+        ).read(args["name"])
     except ProjectMemoryStoreError as exc:
         if exc.kind == "invalid_memory_name":
             return ToolResult(
@@ -94,7 +97,10 @@ def memory_write(args: dict[str, Any], context: ToolContext) -> ToolResult:
         return ToolResult("Memory note is empty after cleanup.", is_error=True)
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     try:
-        result = ProjectMemoryStore(context.workspace).append(
+        result = ProjectMemoryStore(
+            context.workspace,
+            expected_workspace_identity=context.workspace_identity,
+        ).append(
             args["name"],
             f"\n## {stamp}\n\n{note}\n",
         )
@@ -110,7 +116,10 @@ def learn(args: dict[str, Any], context: ToolContext) -> ToolResult:
     topic = _clean_note(args.get("topic") or "general", max_chars=80).replace("\n", " ")
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     try:
-        result = ProjectMemoryStore(context.workspace).append(
+        result = ProjectMemoryStore(
+            context.workspace,
+            expected_workspace_identity=context.workspace_identity,
+        ).append(
             "learned",
             f"\n## {stamp} - {topic}\n\n{lesson}\n",
         )

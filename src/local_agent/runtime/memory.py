@@ -71,6 +71,7 @@ class MemoryConsolidationLifecycle:
                 runtime._workspace_context.primary,
                 runtime._session.session_id,
                 extracted,
+                expected_workspace_identity=runtime._workspace_context.primary_identity,
             )
             written = project_result.written
             failed = project_result.failed

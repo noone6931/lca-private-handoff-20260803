@@ -47,13 +47,19 @@ class ProjectMemoryAppend:
 class ProjectMemoryStore:
     """The only owner of project-memory names, ordering, and mutation."""
 
-    def __init__(self, workspace: Path) -> None:
+    def __init__(
+        self,
+        workspace: Path,
+        *,
+        expected_workspace_identity: tuple[int, int] | None = None,
+    ) -> None:
         try:
             self.workspace = workspace.expanduser().resolve(strict=True)
         except (OSError, RuntimeError, ValueError) as exc:
             raise ProjectMemoryStoreError("invalid_workspace") from exc
         if self.workspace != workspace or not self.workspace.is_dir():
             raise ProjectMemoryStoreError("invalid_workspace")
+        self.expected_workspace_identity = expected_workspace_identity
         self.memory_dir = self.workspace / ".local-agent" / "memory"
 
     def read(self, name: str, *, allow_custom: bool = True) -> ProjectMemoryDocument | None:
@@ -64,7 +70,11 @@ class ProjectMemoryStore:
 
     def _read_file(self, name: str, file_name: str) -> ProjectMemoryDocument | None:
         try:
-            snapshot = read_rooted_utf8(self.workspace, self.memory_dir / file_name)
+            snapshot = read_rooted_utf8(
+                self.workspace,
+                self.memory_dir / file_name,
+                expected_root_identity=self.expected_workspace_identity,
+            )
         except RootedFileError as exc:
             if exc.kind == "not_found":
                 return None
@@ -103,14 +113,23 @@ class ProjectMemoryStore:
         if cleaned is None:
             raise ProjectMemoryStoreError("invalid_memory_name")
         try:
-            result = append_rooted_utf8(self.workspace, self._path(cleaned), text)
+            result = append_rooted_utf8(
+                self.workspace,
+                self._path(cleaned),
+                text,
+                expected_root_identity=self.expected_workspace_identity,
+            )
         except RootedFileError as exc:
             raise _store_error(exc) from exc
         return _append_result(cleaned, result)
 
     def _extra_file_names(self) -> tuple[str, ...]:
         try:
-            listing = list_rooted_directory(self.workspace, self.memory_dir)
+            listing = list_rooted_directory(
+                self.workspace,
+                self.memory_dir,
+                expected_root_identity=self.expected_workspace_identity,
+            )
         except RootedFileError as exc:
             if exc.kind == "not_found":
                 return ()

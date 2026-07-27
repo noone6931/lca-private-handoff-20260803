@@ -62,19 +62,24 @@ class _RootedDirectoryHandle:
     identities: tuple[tuple[int, int], ...]
 
 
-def read_rooted_utf8(root: Path, lexical_path: Path) -> RootedTextSnapshot:
+def read_rooted_utf8(
+    root: Path,
+    lexical_path: Path,
+    *,
+    expected_root_identity: tuple[int, int] | None = None,
+) -> RootedTextSnapshot:
     """Read one existing regular UTF-8 file through a verified rooted fd chain."""
 
     _require_rooted_fd_support()
-    canonical_root = _canonical_root(root)
+    canonical_root = _canonical_root(root, expected_root_identity)
     lexical = _lexical_under_root(canonical_root, lexical_path)
     canonical = _resolve_existing(canonical_root, lexical)
-    root_fd = _open_root(canonical_root)
+    root_fd = _open_root(canonical_root, expected_root_identity)
     parent: _RootedDirectoryHandle | None = None
     file_fd = -1
     try:
         parent, name = _open_canonical_parent(root_fd, canonical_root, canonical)
-        _validate_directory_authority(canonical_root, root_fd, parent)
+        _validate_directory_authority(canonical_root, root_fd, parent, expected_root_identity)
         inspected = _stat_regular(parent.descriptor, name)
         file_fd = os.open(
             name,
@@ -83,7 +88,7 @@ def read_rooted_utf8(root: Path, lexical_path: Path) -> RootedTextSnapshot:
         )
         opened = os.fstat(file_fd)
         _assert_same_regular(inspected, opened)
-        _validate_directory_authority(canonical_root, root_fd, parent)
+        _validate_directory_authority(canonical_root, root_fd, parent, expected_root_identity)
         initial = _snapshot(opened)
         decoder = codecs.getincrementaldecoder("utf-8")(errors="strict")
         remaining = opened.st_size
@@ -101,7 +106,7 @@ def read_rooted_utf8(root: Path, lexical_path: Path) -> RootedTextSnapshot:
         entry = os.stat(name, dir_fd=parent.descriptor, follow_symlinks=False)
         if _identity(entry) != _identity(opened):
             raise RootedFileError("path_identity_changed")
-        _validate_directory_authority(canonical_root, root_fd, parent)
+        _validate_directory_authority(canonical_root, root_fd, parent, expected_root_identity)
         text = "".join(parts).replace("\r\n", "\n").replace("\r", "\n")
         return RootedTextSnapshot(
             lexical_path=lexical,
@@ -119,19 +124,24 @@ def read_rooted_utf8(root: Path, lexical_path: Path) -> RootedTextSnapshot:
         _close_fds(file_fd, _handle_fd(parent), root_fd)
 
 
-def list_rooted_directory(root: Path, lexical_path: Path) -> RootedDirectoryListing:
+def list_rooted_directory(
+    root: Path,
+    lexical_path: Path,
+    *,
+    expected_root_identity: tuple[int, int] | None = None,
+) -> RootedDirectoryListing:
     """List one existing directory after canonical authorization and fd traversal."""
 
     _require_rooted_fd_support()
-    canonical_root = _canonical_root(root)
+    canonical_root = _canonical_root(root, expected_root_identity)
     lexical = _lexical_under_root(canonical_root, lexical_path)
     canonical = _resolve_existing(canonical_root, lexical)
     root_fd = -1
     directory: _RootedDirectoryHandle | None = None
     try:
-        root_fd = _open_root(canonical_root)
+        root_fd = _open_root(canonical_root, expected_root_identity)
         directory = _open_canonical_directory(root_fd, canonical_root, canonical)
-        _validate_directory_authority(canonical_root, root_fd, directory)
+        _validate_directory_authority(canonical_root, root_fd, directory, expected_root_identity)
         before = os.fstat(directory.descriptor)
         if not stat.S_ISDIR(before.st_mode):
             raise RootedFileError("not_directory")
@@ -139,7 +149,7 @@ def list_rooted_directory(root: Path, lexical_path: Path) -> RootedDirectoryList
         after = os.fstat(directory.descriptor)
         if _directory_snapshot(after) != _directory_snapshot(before):
             raise RootedFileError("directory_changed")
-        _validate_directory_authority(canonical_root, root_fd, directory)
+        _validate_directory_authority(canonical_root, root_fd, directory, expected_root_identity)
         return RootedDirectoryListing(
             lexical_path=lexical,
             canonical_path=canonical,
@@ -154,7 +164,13 @@ def list_rooted_directory(root: Path, lexical_path: Path) -> RootedDirectoryList
         _close_fds(_handle_fd(directory), root_fd)
 
 
-def append_rooted_utf8(root: Path, lexical_path: Path, text: str) -> RootedAppendResult:
+def append_rooted_utf8(
+    root: Path,
+    lexical_path: Path,
+    text: str,
+    *,
+    expected_root_identity: tuple[int, int] | None = None,
+) -> RootedAppendResult:
     """Append UTF-8 through a verified O_APPEND fd, creating missing parents safely."""
 
     _require_rooted_fd_support()
@@ -162,16 +178,16 @@ def append_rooted_utf8(root: Path, lexical_path: Path, text: str) -> RootedAppen
         payload = text.encode("utf-8", errors="strict")
     except UnicodeEncodeError as exc:
         raise RootedFileError("invalid_utf8") from exc
-    canonical_root = _canonical_root(root)
+    canonical_root = _canonical_root(root, expected_root_identity)
     lexical = _lexical_under_root(canonical_root, lexical_path)
     try:
         lexical.lstat()
     except FileNotFoundError:
-        return _append_missing(canonical_root, lexical, payload)
+        return _append_missing(canonical_root, lexical, payload, expected_root_identity)
     except OSError as exc:
         raise RootedFileError("path_inspection_failed") from exc
     canonical = _resolve_existing(canonical_root, lexical)
-    return _append_existing(canonical_root, lexical, canonical, payload)
+    return _append_existing(canonical_root, lexical, canonical, payload, expected_root_identity)
 
 
 def _append_existing(
@@ -179,14 +195,15 @@ def _append_existing(
     lexical: Path,
     canonical: Path,
     payload: bytes,
+    expected_root_identity: tuple[int, int] | None,
 ) -> RootedAppendResult:
     root_fd = file_fd = -1
     parent: _RootedDirectoryHandle | None = None
     written = 0
     try:
-        root_fd = _open_root(canonical_root)
+        root_fd = _open_root(canonical_root, expected_root_identity)
         parent, name = _open_canonical_parent(root_fd, canonical_root, canonical)
-        _validate_directory_authority(canonical_root, root_fd, parent)
+        _validate_directory_authority(canonical_root, root_fd, parent, expected_root_identity)
         inspected = _stat_regular(parent.descriptor, name)
         file_fd = os.open(
             name,
@@ -195,12 +212,12 @@ def _append_existing(
         )
         opened = os.fstat(file_fd)
         _assert_same_regular(inspected, opened)
-        _validate_directory_authority(canonical_root, root_fd, parent)
+        _validate_directory_authority(canonical_root, root_fd, parent, expected_root_identity)
         written = _write_all(file_fd, payload)
         entry = os.stat(name, dir_fd=parent.descriptor, follow_symlinks=False)
         if _identity(entry) != _identity(opened):
             raise RootedFileError("path_identity_changed", workspace_changed=written > 0)
-        _validate_directory_authority(canonical_root, root_fd, parent)
+        _validate_directory_authority(canonical_root, root_fd, parent, expected_root_identity)
         return RootedAppendResult(
             lexical_path=lexical,
             canonical_path=canonical,
@@ -217,17 +234,22 @@ def _append_existing(
         _close_fds(file_fd, _handle_fd(parent), root_fd)
 
 
-def _append_missing(canonical_root: Path, lexical: Path, payload: bytes) -> RootedAppendResult:
+def _append_missing(
+    canonical_root: Path,
+    lexical: Path,
+    payload: bytes,
+    expected_root_identity: tuple[int, int] | None,
+) -> RootedAppendResult:
     root_fd = file_fd = -1
     current: _RootedDirectoryHandle | None = None
     written = 0
     workspace_changed = False
     try:
         ancestor, missing_parents = _creation_parent(canonical_root, lexical.parent)
-        root_fd = _open_root(canonical_root)
+        root_fd = _open_root(canonical_root, expected_root_identity)
         current = _open_canonical_directory(root_fd, canonical_root, ancestor)
         for component in missing_parents:
-            _validate_directory_authority(canonical_root, root_fd, current)
+            _validate_directory_authority(canonical_root, root_fd, current, expected_root_identity)
             try:
                 os.mkdir(component, mode=0o700, dir_fd=current.descriptor)
                 workspace_changed = True
@@ -236,9 +258,9 @@ def _append_missing(canonical_root: Path, lexical: Path, payload: bytes) -> Root
             next_handle = _descend_directory(current, component)
             os.close(current.descriptor)
             current = next_handle
-            _validate_directory_authority(canonical_root, root_fd, current)
+            _validate_directory_authority(canonical_root, root_fd, current, expected_root_identity)
         name = lexical.name
-        _validate_directory_authority(canonical_root, root_fd, current)
+        _validate_directory_authority(canonical_root, root_fd, current, expected_root_identity)
         try:
             file_fd = os.open(
                 name,
@@ -257,16 +279,16 @@ def _append_missing(canonical_root: Path, lexical: Path, payload: bytes) -> Root
             current = None
             root_fd = -1
             canonical = _resolve_existing(canonical_root, lexical)
-            return _append_existing(canonical_root, lexical, canonical, payload)
+            return _append_existing(canonical_root, lexical, canonical, payload, expected_root_identity)
         opened = os.fstat(file_fd)
         if not stat.S_ISREG(opened.st_mode):
             raise RootedFileError("not_regular")
-        _validate_directory_authority(canonical_root, root_fd, current)
+        _validate_directory_authority(canonical_root, root_fd, current, expected_root_identity)
         written = _write_all(file_fd, payload)
         entry = os.stat(name, dir_fd=current.descriptor, follow_symlinks=False)
         if _identity(entry) != _identity(opened):
             raise RootedFileError("path_identity_changed", workspace_changed=written > 0)
-        _validate_directory_authority(canonical_root, root_fd, current)
+        _validate_directory_authority(canonical_root, root_fd, current, expected_root_identity)
         canonical = ancestor.joinpath(*missing_parents, name)
         return RootedAppendResult(
             lexical_path=lexical,
@@ -315,13 +337,17 @@ def _creation_parent(canonical_root: Path, lexical_parent: Path) -> tuple[Path, 
         return ancestor, tuple(missing)
 
 
-def _canonical_root(root: Path) -> Path:
+def _canonical_root(root: Path, expected_identity: tuple[int, int] | None) -> Path:
     try:
+        inspected = root.expanduser().lstat()
+        _assert_expected_root_identity(inspected, expected_identity)
         canonical = root.expanduser().resolve(strict=True)
         if canonical != root:
             raise RootedFileError("root_not_canonical")
-        if not canonical.is_dir():
+        resolved = canonical.lstat()
+        if not stat.S_ISDIR(resolved.st_mode):
             raise RootedFileError("root_not_directory")
+        _assert_expected_root_identity(resolved, expected_identity)
         return canonical
     except RootedFileError:
         raise
@@ -360,10 +386,11 @@ def _resolve_existing(canonical_root: Path, lexical: Path) -> Path:
         raise RootedFileError("outside_root") from exc
 
 
-def _open_root(canonical_root: Path) -> int:
+def _open_root(canonical_root: Path, expected_identity: tuple[int, int] | None) -> int:
     inspected = canonical_root.lstat()
     if not stat.S_ISDIR(inspected.st_mode):
         raise RootedFileError("root_not_directory")
+    _assert_expected_root_identity(inspected, expected_identity)
     descriptor = os.open(
         canonical_root,
         os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
@@ -372,6 +399,7 @@ def _open_root(canonical_root: Path) -> int:
     if not stat.S_ISDIR(opened.st_mode) or _identity(opened) != _identity(inspected):
         os.close(descriptor)
         raise RootedFileError("root_identity_changed")
+    _assert_expected_root_identity(opened, expected_identity)
     return descriptor
 
 
@@ -452,14 +480,16 @@ def _validate_directory_authority(
     canonical_root: Path,
     root_fd: int,
     directory: _RootedDirectoryHandle,
+    expected_root_identity: tuple[int, int] | None,
 ) -> None:
     if _identity(os.fstat(root_fd)) != directory.identities[0]:
         raise RootedFileError("root_identity_changed")
+    _assert_expected_root_identity(os.fstat(root_fd), expected_root_identity)
     reopened_root = -1
     downward: _RootedDirectoryHandle | None = None
     upward = -1
     try:
-        reopened_root = _open_root(canonical_root)
+        reopened_root = _open_root(canonical_root, expected_root_identity)
         if _identity(os.fstat(reopened_root)) != directory.identities[0]:
             raise RootedFileError("root_identity_changed")
         downward = _open_directory_parts(root_fd, directory.relative_parts)
@@ -542,6 +572,14 @@ def _directory_snapshot(file_stat: os.stat_result) -> tuple[int, int, int, int]:
 
 def _identity(file_stat: os.stat_result) -> tuple[int, int]:
     return (file_stat.st_dev, file_stat.st_ino)
+
+
+def _assert_expected_root_identity(
+    file_stat: os.stat_result,
+    expected_identity: tuple[int, int] | None,
+) -> None:
+    if expected_identity is not None and _identity(file_stat) != tuple(expected_identity):
+        raise RootedFileError("root_identity_changed")
 
 
 def _require_rooted_fd_support() -> None:

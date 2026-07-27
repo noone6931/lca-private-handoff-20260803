@@ -115,6 +115,7 @@ class WorkspaceLifecycle:
             workspace=next_context.primary,
             state_dir=next_state_dir,
             allowed_dirs=next_context.additional_roots,
+            workspace_identity=next_context.primary_identity,
         )
         next_messages = [
             {"role": "system", "content": next_system_prompt},
@@ -278,6 +279,7 @@ class WorkspaceLifecycle:
             runtime._base_system_prompt,
             workspace_context.primary,
             runtime._user_config_dir,
+            workspace_identity=workspace_context.primary_identity,
             state_dir=state_dir,
             allowed_dirs=workspace_context.additional_roots,
             startup_context_char_limit=STARTUP_CONTEXT_CHAR_LIMIT,

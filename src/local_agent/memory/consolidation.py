@@ -264,12 +264,17 @@ def _append_project_consolidated_memory(
     workspace: Path,
     session_id: str,
     items_by_bucket: dict[str, list[str]],
+    *,
+    expected_workspace_identity: tuple[int, int] | None = None,
 ) -> ProjectMemoryConsolidationResult:
     written: dict[str, int] = {}
     failed: dict[str, dict[str, object]] = {}
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     try:
-        store = ProjectMemoryStore(workspace)
+        store = ProjectMemoryStore(
+            workspace,
+            expected_workspace_identity=expected_workspace_identity,
+        )
     except ProjectMemoryStoreError as exc:
         return ProjectMemoryConsolidationResult(
             written={},

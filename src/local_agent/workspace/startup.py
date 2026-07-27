@@ -10,6 +10,7 @@ from ..memory.storage import ProjectMemoryStore
 from ..memory.storage import ProjectMemoryStoreError
 from ..platform.rooted_files import RootedFileError
 from ..platform.rooted_files import read_rooted_utf8
+from .context import WorkspaceRootIdentity
 
 
 @dataclass(frozen=True)
@@ -31,6 +32,7 @@ def build_system_prompt(
     workspace: Path,
     user_config_dir: Path,
     *,
+    workspace_identity: WorkspaceRootIdentity,
     state_dir: Path | None,
     allowed_dirs: tuple[Path, ...],
     startup_context_char_limit: int,
@@ -59,6 +61,7 @@ def build_system_prompt(
         )
     memory = load_startup_memory(
         workspace,
+        workspace_identity=workspace_identity,
         state_dir=state_dir,
         max_chars=startup_memory_char_limit,
     )
@@ -136,12 +139,18 @@ def load_startup_context_files(workspace: Path, user_config_dir: Path, *, max_ch
     )
 
 
-def load_startup_memory(workspace: Path, *, state_dir: Path | None, max_chars: int) -> str:
+def load_startup_memory(
+    workspace: Path,
+    *,
+    workspace_identity: WorkspaceRootIdentity | None = None,
+    state_dir: Path | None,
+    max_chars: int,
+) -> str:
     if max_chars <= 0:
         return ""
     return load_markdown_blocks(
         workspace,
-        _startup_memory_sources(workspace, state_dir),
+        _startup_memory_sources(workspace, workspace_identity, state_dir),
         max_chars=max_chars,
         truncation_marker="...<earlier memory truncated>\n",
         dedupe_by_identity=True,
@@ -150,10 +159,14 @@ def load_startup_memory(workspace: Path, *, state_dir: Path | None, max_chars: i
 
 def _startup_memory_sources(
     workspace: Path,
+    workspace_identity: WorkspaceRootIdentity | None,
     state_dir: Path | None,
 ) -> Iterator[_MarkdownSource]:
     try:
-        documents = ProjectMemoryStore(workspace).iter_startup_documents()
+        documents = ProjectMemoryStore(
+            workspace,
+            expected_workspace_identity=workspace_identity,
+        ).iter_startup_documents()
         for document in documents:
             yield _MarkdownSource(
                 document.lexical_path,

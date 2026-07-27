@@ -46,7 +46,7 @@ OWNER_COMPLEXITY_CEILINGS = {
     "src/local_agent/workflows/profile.py": 165,
     "src/local_agent/runtime/workflow_profile.py": 44,
     "src/local_agent/tools/policy.py": 170,
-    "src/local_agent/tools/base.py": 607,
+    "src/local_agent/tools/base.py": 609,
     "src/local_agent/runtime/commands.py": 221,
     "src/local_agent/providers/stream.py": 340,
     "src/local_agent/providers/deadline.py": 179,
@@ -85,12 +85,12 @@ OWNER_COMPLEXITY_CEILINGS = {
     "src/local_agent/session/assistant_history.py": 551,
     "src/local_agent/session/jsonl_store.py": 206,
     "src/local_agent/config.py": 760,
-    "src/local_agent/platform/rooted_files.py": 563,
-    "src/local_agent/memory/storage.py": 168,
-    "src/local_agent/workspace/startup.py": 428,
-    "src/local_agent/tools/memory.py": 139,
-    "src/local_agent/memory/consolidation.py": 329,
-    "src/local_agent/runtime/memory.py": 151,
+    "src/local_agent/platform/rooted_files.py": 601,
+    "src/local_agent/memory/storage.py": 187,
+    "src/local_agent/workspace/startup.py": 441,
+    "src/local_agent/tools/memory.py": 148,
+    "src/local_agent/memory/consolidation.py": 334,
+    "src/local_agent/runtime/memory.py": 152,
 }
 LEGACY_COMPLEXITY_DEBT_CEILINGS = {
     "src/local_agent/agent.py": 1613,
@@ -225,6 +225,51 @@ class ArchitectureBoundaryTests(unittest.TestCase):
         agent = agent_path.read_text(encoding="utf-8")
         self.assertNotIn("ProjectMemoryStore", agent)
         self.assertNotIn("rooted_files", agent)
+
+    def test_project_memory_production_paths_require_workspace_identity_snapshot(self) -> None:
+        paths = (
+            ROOT / "src/local_agent/workspace/startup.py",
+            ROOT / "src/local_agent/tools/memory.py",
+            ROOT / "src/local_agent/memory/consolidation.py",
+        )
+        store_calls = []
+        for path in paths:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            store_calls.extend(
+                node
+                for node in ast.walk(tree)
+                if isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "ProjectMemoryStore"
+            )
+        self.assertEqual(len(store_calls), 5)
+        self.assertTrue(
+            all(
+                "expected_workspace_identity"
+                in {keyword.arg for keyword in call.keywords}
+                for call in store_calls
+            )
+        )
+
+        runtime_memory = ast.parse(
+            (ROOT / "src/local_agent/runtime/memory.py").read_text(encoding="utf-8")
+        )
+        consolidation_calls = [
+            node
+            for node in ast.walk(runtime_memory)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "_append_project_consolidated_memory"
+        ]
+        self.assertEqual(len(consolidation_calls), 1)
+        self.assertIn(
+            "expected_workspace_identity",
+            {keyword.arg for keyword in consolidation_calls[0].keywords},
+        )
+
+        agent = (ROOT / "src/local_agent/agent.py").read_text(encoding="utf-8")
+        self.assertIn("workspace_identity=self._workspace_context.primary_identity", agent)
+        self.assertNotIn("STARTUP_MEMORY_CHAR_LIMIT =", agent)
 
     def test_workspace_dotenv_authority_stays_scoped_to_the_config_owner(self) -> None:
         config_path = ROOT / "src/local_agent/config.py"

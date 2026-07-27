@@ -16,6 +16,7 @@ from local_agent.tools.base import ToolContext
 from local_agent.tools.memory import learn
 from local_agent.tools.memory import memory_read
 from local_agent.tools.memory import memory_write
+from local_agent.workspace.context import WorkspaceContext
 from local_agent.workspace.startup import load_startup_memory
 
 
@@ -519,9 +520,9 @@ class ProjectMemoryStoreTests(unittest.TestCase):
             real_read = rooted_files.read_rooted_utf8
             read_names: list[str] = []
 
-            def observe_read(root: Path, path: Path):
+            def observe_read(root: Path, path: Path, **kwargs):
                 read_names.append(path.name)
-                return real_read(root, path)
+                return real_read(root, path, **kwargs)
 
             limit = len("### .local-agent/memory/project.md\n") + 1
             with (
@@ -541,6 +542,70 @@ class ProjectMemoryStoreTests(unittest.TestCase):
         self.assertEqual(read_names, ["project.md"])
         self.assertNotIn("MUST NOT READ", rendered)
         listing.assert_not_called()
+
+    def test_session_workspace_identity_rejects_root_and_ancestor_replacements(self) -> None:
+        for moved_scope in ("workspace", "ancestor"):
+            with self.subTest(scope=moved_scope), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp).resolve()
+                ancestor = root / "authority"
+                workspace = ancestor / "workspace"
+                memory = workspace / ".local-agent/memory"
+                memory.mkdir(parents=True)
+                (memory / "project.md").write_text("ORIGINAL\n", encoding="utf-8")
+                context = WorkspaceContext(workspace)
+                tool_context = ToolContext(
+                    context.primary,
+                    "yolo",
+                    workspace_identity=context.primary_identity,
+                )
+                moved = root / f"moved-{moved_scope}"
+                target = workspace if moved_scope == "workspace" else ancestor
+                target.rename(moved)
+                replacement_workspace = (
+                    workspace
+                    if moved_scope == "workspace"
+                    else ancestor / "workspace"
+                )
+                replacement_memory = replacement_workspace / ".local-agent/memory"
+                replacement_memory.mkdir(parents=True)
+                replacement_file = replacement_memory / "project.md"
+                replacement_file.write_text("REPLACEMENT\n", encoding="utf-8")
+                original_file = (
+                    moved / ".local-agent/memory/project.md"
+                    if moved_scope == "workspace"
+                    else moved / "workspace/.local-agent/memory/project.md"
+                )
+
+                read_result = memory_read({"name": "project"}, tool_context)
+                write_result = memory_write(
+                    {"name": "project", "note": "MUST NOT WRITE"},
+                    tool_context,
+                )
+                learn_result = learn({"lesson": "MUST NOT LEARN"}, tool_context)
+                startup = load_startup_memory(
+                    context.primary,
+                    workspace_identity=context.primary_identity,
+                    state_dir=None,
+                    max_chars=8000,
+                )
+                consolidated = _append_project_consolidated_memory(
+                    context.primary,
+                    "session",
+                    {"project": ["MUST NOT CONSOLIDATE"]},
+                    expected_workspace_identity=context.primary_identity,
+                )
+
+                self.assertTrue(read_result.is_error)
+                self.assertTrue(write_result.is_error)
+                self.assertTrue(learn_result.is_error)
+                self.assertEqual(read_result.metadata.get("reason"), "root_identity_changed")
+                self.assertEqual(write_result.metadata.get("workspace_changed"), False)
+                self.assertEqual(learn_result.metadata.get("workspace_changed"), False)
+                self.assertEqual(startup, "")
+                self.assertEqual(consolidated.written, {})
+                self.assertTrue(consolidated.failed)
+                self.assertEqual(replacement_file.read_text(encoding="utf-8"), "REPLACEMENT\n")
+                self.assertEqual(original_file.read_text(encoding="utf-8"), "ORIGINAL\n")
 
     def test_startup_priority_extra_order_and_identity_dedupe_are_stable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

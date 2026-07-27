@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from copy import copy as shallow_copy
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import NamedTuple
 
 
 MAX_SESSION_ROOTS = 16
@@ -9,6 +11,11 @@ MAX_SESSION_ROOTS = 16
 
 class WorkspaceContextError(ValueError):
     """Raised when a session workspace-root change would broaden access unsafely."""
+
+
+class WorkspaceRootIdentity(NamedTuple):
+    device: int
+    inode: int
 
 
 @dataclass
@@ -19,11 +26,17 @@ class WorkspaceContext:
     configured_roots: tuple[Path, ...] = ()
     session_roots: tuple[Path, ...] = ()
     revision: int = 0
+    primary_identity: WorkspaceRootIdentity = field(init=False)
     _configured: tuple[Path, ...] = field(init=False, repr=False)
     _session: list[Path] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         self.primary = _canonical_directory(self.primary, label="primary workspace")
+        try:
+            inspected = self.primary.lstat()
+        except OSError as exc:
+            raise WorkspaceContextError("Primary workspace identity could not be captured.") from exc
+        self.primary_identity = WorkspaceRootIdentity(inspected.st_dev, inspected.st_ino)
         self._configured = _normalize_configured_roots(self.primary, self.configured_roots)
         self._session = []
         initial_roots = tuple(self.session_roots)
@@ -170,10 +183,9 @@ class WorkspaceContext:
     def copy(self) -> "WorkspaceContext":
         """Return an equivalent context that can be changed before Runtime commits it."""
 
-        copied = WorkspaceContext(self.primary, self._configured)
+        copied = shallow_copy(self)
         copied._session = list(self._session)
         copied.session_roots = tuple(copied._session)
-        copied.revision = self.revision
         return copied
 
     def _resolve_root(self, raw_path: str, *, require_exists: bool) -> Path:
@@ -221,4 +233,4 @@ def _is_within(path: Path, root: Path) -> bool:
         return False
 
 
-__all__ = ["MAX_SESSION_ROOTS", "WorkspaceContext", "WorkspaceContextError"]
+__all__ = ["MAX_SESSION_ROOTS", "WorkspaceContext", "WorkspaceContextError", "WorkspaceRootIdentity"]

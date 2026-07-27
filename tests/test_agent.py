@@ -2032,6 +2032,52 @@ class _MemoryConsolidationClient:
         )()
 
 
+class _MemoryToolsAfterWorkspaceSwapClient:
+    hook = None
+    calls = 0
+
+    def __init__(self, config: AgentConfig):
+        self.config = config
+
+    def chat(self, messages, tools, *, timeout=None):
+        type(self).calls += 1
+        if type(self).calls == 1:
+            assert type(self).hook is not None
+            type(self).hook()
+            return ChatResponse(
+                {
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "memory-read",
+                            "type": "function",
+                            "function": {
+                                "name": "memory_read",
+                                "arguments": '{"name":"project"}',
+                            },
+                        },
+                        {
+                            "id": "memory-write",
+                            "type": "function",
+                            "function": {
+                                "name": "memory_write",
+                                "arguments": '{"name":"project","note":"MUST NOT WRITE"}',
+                            },
+                        },
+                        {
+                            "id": "memory-learn",
+                            "type": "function",
+                            "function": {
+                                "name": "learn",
+                                "arguments": '{"lesson":"MUST NOT LEARN"}',
+                            },
+                        },
+                    ],
+                }
+            )
+        return ChatResponse({"content": "Project memory operations were rejected safely."})
+
+
 class _InvalidMemoryConsolidationClient:
     calls: list[dict] = []
 
@@ -7827,6 +7873,73 @@ class AgentRuntimeTests(unittest.TestCase):
                 for record in records
             )
         )
+
+    def test_provider_tool_calls_keep_runtime_workspace_identity_after_replacement(self) -> None:
+        for moved_scope in ("workspace", "ancestor"):
+            with self.subTest(scope=moved_scope), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp).resolve()
+                ancestor = root / "authority"
+                workspace = ancestor / "workspace"
+                memory = workspace / ".local-agent/memory"
+                memory.mkdir(parents=True)
+                (memory / "project.md").write_text("ORIGINAL\n", encoding="utf-8")
+                moved = root / f"moved-{moved_scope}"
+
+                def replace_workspace() -> None:
+                    (workspace if moved_scope == "workspace" else ancestor).rename(moved)
+                    replacement_workspace = (
+                        workspace
+                        if moved_scope == "workspace"
+                        else ancestor / "workspace"
+                    )
+                    replacement_memory = replacement_workspace / ".local-agent/memory"
+                    replacement_memory.mkdir(parents=True)
+                    (replacement_memory / "project.md").write_text(
+                        "REPLACEMENT\n",
+                        encoding="utf-8",
+                    )
+
+                _MemoryToolsAfterWorkspaceSwapClient.calls = 0
+                _MemoryToolsAfterWorkspaceSwapClient.hook = replace_workspace
+                config = AgentConfig(
+                    provider="openai-compatible",
+                    api_base_url="https://example.invalid/v1",
+                    api_key="token",
+                    model="model",
+                    workspace=workspace,
+                    state_dir=root / "state",
+                    max_steps=3,
+                    budget_seconds=None,
+                    approval_mode="yolo",
+                )
+                with patch(
+                    "local_agent.agent.OpenAICompatibleClient",
+                    _MemoryToolsAfterWorkspaceSwapClient,
+                ):
+                    runtime = AgentRuntime(config, show_tool_logs=False)
+                    result = runtime.run("Use project memory tools for this request.")
+
+                replacement_file = workspace / ".local-agent/memory/project.md"
+                original_file = (
+                    moved / ".local-agent/memory/project.md"
+                    if moved_scope == "workspace"
+                    else moved / "workspace/.local-agent/memory/project.md"
+                )
+                tool_results = [
+                    message
+                    for message in runtime._messages
+                    if message.get("role") == "tool"
+                    and message.get("_lca_tool_name")
+                    in {"memory_read", "memory_write", "learn"}
+                ]
+
+                self.assertEqual(result, "Project memory operations were rejected safely.")
+                self.assertEqual(len(tool_results), 3)
+                self.assertTrue(
+                    all("root_identity_changed" in str(message["content"]) for message in tool_results)
+                )
+                self.assertEqual(replacement_file.read_text(encoding="utf-8"), "REPLACEMENT\n")
+                self.assertEqual(original_file.read_text(encoding="utf-8"), "ORIGINAL\n")
 
     def test_memory_consolidation_project_scope_writes_project_memory(self) -> None:
         _MemoryConsolidationClient.calls = []

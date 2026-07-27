@@ -83,6 +83,7 @@ class WorkspaceContextTests(unittest.TestCase):
             frontend.mkdir()
             docs.mkdir()
             context = WorkspaceContext(backend, (docs,))
+            original_identity = context.primary_identity
             context.add_session_root(str(frontend))
 
             moved, changed = context.moved_primary(str(frontend))
@@ -93,6 +94,32 @@ class WorkspaceContextTests(unittest.TestCase):
         self.assertEqual(moved.session, (backend,))
         self.assertEqual(moved.additional_roots, (docs, backend))
         self.assertEqual(moved.revision, 2)
+        self.assertNotEqual(moved.primary_identity, original_identity)
+
+    def test_copy_and_root_changes_preserve_identity_until_explicit_move(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            primary = root / "primary"
+            extra = root / "extra"
+            target = root / "target"
+            primary.mkdir()
+            extra.mkdir()
+            target.mkdir()
+            context = WorkspaceContext(primary)
+            identity = context.primary_identity
+            moved_primary = root / "moved-primary"
+            primary.rename(moved_primary)
+            primary.mkdir()
+
+            copied = context.copy()
+            copied.add_session_root(str(extra))
+            copied.remove_session_root(str(extra))
+            copied.reset_session_roots()
+            moved, changed = copied.moved_primary(str(target))
+
+        self.assertEqual(copied.primary_identity, identity)
+        self.assertTrue(changed)
+        self.assertNotEqual(moved.primary_identity, identity)
 
     def test_move_to_configured_root_keeps_configured_authorization_for_later_moves(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

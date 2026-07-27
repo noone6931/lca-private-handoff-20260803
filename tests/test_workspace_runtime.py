@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -17,6 +18,88 @@ from local_agent.workspace_migration import WorkspaceMigrationError
 
 
 class WorkspaceRuntimeTests(unittest.TestCase):
+    def test_runtime_memory_identity_rejects_root_and_ancestor_replacements(self) -> None:
+        for moved_scope in ("workspace", "ancestor"):
+            with self.subTest(scope=moved_scope), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp).resolve()
+                ancestor = root / "authority"
+                workspace = ancestor / "workspace"
+                memory = workspace / ".local-agent/memory"
+                memory.mkdir(parents=True)
+                (memory / "project.md").write_text("ORIGINAL\n", encoding="utf-8")
+                config = replace(
+                    _config(workspace, state_dir=root / "state"),
+                    memory_consolidation="llm",
+                    memory_scope="project",
+                )
+                runtime = AgentRuntime(config, show_tool_logs=False)
+                moved = root / f"moved-{moved_scope}"
+                (workspace if moved_scope == "workspace" else ancestor).rename(moved)
+                replacement_workspace = (
+                    workspace
+                    if moved_scope == "workspace"
+                    else ancestor / "workspace"
+                )
+                replacement_memory = replacement_workspace / ".local-agent/memory"
+                replacement_memory.mkdir(parents=True)
+                replacement_file = replacement_memory / "project.md"
+                replacement_file.write_text("REPLACEMENT\n", encoding="utf-8")
+                original_file = (
+                    moved / ".local-agent/memory/project.md"
+                    if moved_scope == "workspace"
+                    else moved / "workspace/.local-agent/memory/project.md"
+                )
+
+                results = [
+                    runtime._registry.execute(
+                        "memory_read",
+                        {"name": "project"},
+                        runtime._tool_context,
+                    ),
+                    runtime._registry.execute(
+                        "memory_write",
+                        {"name": "project", "note": "MUST NOT WRITE"},
+                        runtime._tool_context,
+                    ),
+                    runtime._registry.execute(
+                        "learn",
+                        {"lesson": "MUST NOT LEARN"},
+                        runtime._tool_context,
+                    ),
+                ]
+                prompt = runtime._workspace_phase.build_system_prompt()
+                with patch.object(
+                    runtime._memory_phase,
+                    "llm_memory_consolidation",
+                    return_value={"project": ["MUST NOT CONSOLIDATE"]},
+                ):
+                    runtime._memory_phase.consolidate_session_memory(
+                        [{"role": "user", "content": "durable project fact"}],
+                        "done",
+                        None,
+                    )
+
+                self.assertTrue(all(result.is_error for result in results))
+                self.assertTrue(
+                    all(
+                        result.metadata.get("reason") == "root_identity_changed"
+                        for result in results
+                    )
+                )
+                self.assertNotIn("REPLACEMENT", prompt)
+                self.assertEqual(replacement_file.read_text(encoding="utf-8"), "REPLACEMENT\n")
+                self.assertEqual(original_file.read_text(encoding="utf-8"), "ORIGINAL\n")
+                event = next(
+                    json.loads(line)["payload"]
+                    for line in runtime._session.path.read_text(encoding="utf-8").splitlines()
+                    if json.loads(line).get("event") == "memory_consolidation"
+                )
+                self.assertEqual(event["status"], "failed")
+                self.assertEqual(
+                    event["failed"]["project"]["reason"],
+                    "root_identity_changed",
+                )
+
     def test_add_remove_updates_file_tool_context_and_provider_roots(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp).resolve()
@@ -230,6 +313,7 @@ class WorkspaceRuntimeTests(unittest.TestCase):
                 show_tool_logs=False,
                 event_sink=sink,
             )
+            previous_identity = runtime._workspace_context.primary_identity
             session_id = runtime._session.session_id
             todo_path = backend_state / "todos" / f"{session_id}.json"
             patch_path = backend_state / "patches" / f"{session_id}.jsonl"
@@ -251,6 +335,21 @@ class WorkspaceRuntimeTests(unittest.TestCase):
             self.assertEqual(moved, frontend)
             self.assertEqual(runtime._workspace_context.primary, frontend)
             self.assertEqual(runtime._tool_context.workspace, frontend)
+            self.assertEqual(
+                runtime._tool_context.workspace_identity,
+                runtime._workspace_context.primary_identity,
+            )
+            self.assertNotEqual(runtime._workspace_context.primary_identity, previous_identity)
+            memory_result = runtime._registry.execute(
+                "memory_write",
+                {"name": "project", "note": "FRONTEND MEMORY"},
+                runtime._tool_context,
+            )
+            self.assertFalse(memory_result.is_error)
+            self.assertIn(
+                "FRONTEND MEMORY",
+                (frontend / ".local-agent/memory/project.md").read_text(encoding="utf-8"),
+            )
             self.assertEqual(runtime._state_dir, frontend_state)
             self.assertIn(backend, runtime._workspace_context.session)
             self.assertFalse((backend_state / "sessions" / f"{session_id}.jsonl").exists())

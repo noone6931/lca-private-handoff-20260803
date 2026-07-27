@@ -164,7 +164,6 @@ MEMORY_CONSOLIDATION_MAX_ITEMS_PER_BUCKET = 5
 MEMORY_CONSOLIDATION_MAX_ITEM_CHARS = 700
 MEMORY_CONSOLIDATION_BUCKETS = ("project", "decisions", "conventions", "learned")
 MEMORY_CONSOLIDATION_WRITE_TOOLS = {"memory_write", "learn"}
-STARTUP_MEMORY_CHAR_LIMIT = 8000
 STARTUP_CONTEXT_CHAR_LIMIT = 8000
 STICKY_RULES_CHAR_LIMIT = 4000
 CURRENT_TASK_CONTRACT_CHAR_LIMIT = 2000
@@ -264,6 +263,7 @@ class AgentRuntime:
             state_dir=self._state_dir,
             allowed_dirs=self._workspace_context.additional_roots,
             session_id=self._session.session_id,
+            workspace_identity=self._workspace_context.primary_identity,
             auto_approve_tools=config.auto_approve_tools,
             tool_approval=config.tool_approval,
             session_tool_approval=self._session_tool_approval,
