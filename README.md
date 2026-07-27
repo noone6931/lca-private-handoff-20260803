@@ -32,7 +32,7 @@ export DASHSCOPE_API_KEY="your-token"
 DASHSCOPE_API_KEY=your-token
 ```
 
-`.env` 已被 `.gitignore` 忽略，不会进入提交。
+`.env` 已被 `.gitignore` 忽略，不会进入提交。目标 workspace 的隐式 `.env` 只接受 `AI_API_KEY`、`BAILIAN_API_KEY`、`DASHSCOPE_API_KEY` 三个精确 credential key；它不能改变 approval、工具权限、workspace roots、provider endpoint/model、Web/LSP 或进程环境。需要完整配置时使用显式 `--env-file` 或用户级 `.env`。
 
 跨项目使用时，推荐把 token 放在用户级 `~/.config/local-coding-agent/.env` 中（可用 `AGENT_CONFIG_DIR` 改目录），然后从任意目标项目启动。显式 `--env-file` 适合一次性覆盖；`./agent` 仍会把 LCA checkout 的 `.env` 作为显式 env-file 加载，方便开发期使用。优先级是：真实环境变量 > 显式 `--env-file` > 用户级 `.env` > 目标 `--cwd/.env`。
 

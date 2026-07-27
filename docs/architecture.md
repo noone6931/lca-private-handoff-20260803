@@ -109,7 +109,7 @@ T-218 是这一规则的反例与纠偏记录：`requested_test_missing` 曾从 
 | 层 | 状态 | 职责 | 当前实现 |
 |---|---|---|---|
 | 用户入口层 | `[CORE-已落地]` | CLI、REPL、一次性 prompt、继续会话。 | `./agent`、`src/local_agent/cli.py`。 |
-| 配置层 | `[CORE-已落地]` | 合并 CLI、环境变量、JSON config、provider preset、approval、summary、memory consolidation、预算、allowed dirs。 | `src/local_agent/config.py`。 |
+| 配置层 | `[CORE-已落地]` | 合并 CLI、环境变量、JSON config、provider preset、approval、summary、memory consolidation、预算、allowed dirs。隐式 workspace `.env` 仅提供三个精确 provider credential key，不写 parent env；显式 env-file 和用户级 env 保留完整可信配置权限。credential 按 process、explicit、user、workspace 的 source-first 顺序解析。 | `src/local_agent/config.py` 是单一 dotenv/credential Owner；workspace 文件以 no-follow regular-file 边界读取，symlink 与非普通文件 fail closed。 |
 | Agent Runtime | `[CORE-已落地]` | 模型循环、工具分发、deadline、synthetic tool result 与阶段编排；不再持有 prompt 投影、workspace roots、memory 归档、tool metadata、证据/verification/session-cache 或 session guard 窗口的具体实现。 | `src/local_agent/agent.py` 当前为 1,792 行、71 个方法的 orchestration facade；`workflow_profile.py` / `runtime_workflow_profile.py` 拥有 typed profile 解析与生命周期，其他 phase 通过显式 Protocol ports 协作，禁止 `__getattr__` service-locator 转发。 |
 | Provider 层 | `[CORE-已落地]` | OpenAI-compatible chat completions 与 tool-call-safe streaming，对接百炼和通用 endpoint；百炼可显式启用独立的 sourced web-search adapter。 | `src/local_agent/providers/llm.py` 负责请求适配，`src/local_agent/provider_stream.py` 单独拥有 SSE/JSON 解析；`src/local_agent/providers/web_search.py` 独占百炼原生搜索协议和 source provenance 校验。 |
 | 工具系统 | `[CORE-已落地]` | 工具注册、schema、tier、approval policy、参数校验、错误包装。 | `src/local_agent/tools/base.py`。 |
