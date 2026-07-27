@@ -55,6 +55,13 @@ class RootedAppendResult:
     bytes_written: int
 
 
+@dataclass(frozen=True)
+class _RootedDirectoryHandle:
+    descriptor: int
+    relative_parts: tuple[str, ...]
+    identities: tuple[tuple[int, int], ...]
+
+
 def read_rooted_utf8(root: Path, lexical_path: Path) -> RootedTextSnapshot:
     """Read one existing regular UTF-8 file through a verified rooted fd chain."""
 
@@ -63,17 +70,20 @@ def read_rooted_utf8(root: Path, lexical_path: Path) -> RootedTextSnapshot:
     lexical = _lexical_under_root(canonical_root, lexical_path)
     canonical = _resolve_existing(canonical_root, lexical)
     root_fd = _open_root(canonical_root)
-    parent_fd = file_fd = -1
+    parent: _RootedDirectoryHandle | None = None
+    file_fd = -1
     try:
-        parent_fd, name = _open_canonical_parent(root_fd, canonical_root, canonical)
-        inspected = _stat_regular(parent_fd, name)
+        parent, name = _open_canonical_parent(root_fd, canonical_root, canonical)
+        _validate_directory_authority(canonical_root, root_fd, parent)
+        inspected = _stat_regular(parent.descriptor, name)
         file_fd = os.open(
             name,
             os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
-            dir_fd=parent_fd,
+            dir_fd=parent.descriptor,
         )
         opened = os.fstat(file_fd)
         _assert_same_regular(inspected, opened)
+        _validate_directory_authority(canonical_root, root_fd, parent)
         initial = _snapshot(opened)
         decoder = codecs.getincrementaldecoder("utf-8")(errors="strict")
         remaining = opened.st_size
@@ -88,9 +98,10 @@ def read_rooted_utf8(root: Path, lexical_path: Path) -> RootedTextSnapshot:
         completed = os.fstat(file_fd)
         if not stat.S_ISREG(completed.st_mode) or _snapshot(completed) != initial:
             raise RootedFileError("snapshot_changed")
-        entry = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+        entry = os.stat(name, dir_fd=parent.descriptor, follow_symlinks=False)
         if _identity(entry) != _identity(opened):
             raise RootedFileError("path_identity_changed")
+        _validate_directory_authority(canonical_root, root_fd, parent)
         text = "".join(parts).replace("\r\n", "\n").replace("\r", "\n")
         return RootedTextSnapshot(
             lexical_path=lexical,
@@ -105,7 +116,7 @@ def read_rooted_utf8(root: Path, lexical_path: Path) -> RootedTextSnapshot:
     except (OSError, RuntimeError, ValueError) as exc:
         raise RootedFileError("read_failed") from exc
     finally:
-        _close_fds(file_fd, parent_fd, root_fd)
+        _close_fds(file_fd, _handle_fd(parent), root_fd)
 
 
 def list_rooted_directory(root: Path, lexical_path: Path) -> RootedDirectoryListing:
@@ -115,17 +126,20 @@ def list_rooted_directory(root: Path, lexical_path: Path) -> RootedDirectoryList
     canonical_root = _canonical_root(root)
     lexical = _lexical_under_root(canonical_root, lexical_path)
     canonical = _resolve_existing(canonical_root, lexical)
-    root_fd = directory_fd = -1
+    root_fd = -1
+    directory: _RootedDirectoryHandle | None = None
     try:
         root_fd = _open_root(canonical_root)
-        directory_fd = _open_canonical_directory(root_fd, canonical_root, canonical)
-        before = os.fstat(directory_fd)
+        directory = _open_canonical_directory(root_fd, canonical_root, canonical)
+        _validate_directory_authority(canonical_root, root_fd, directory)
+        before = os.fstat(directory.descriptor)
         if not stat.S_ISDIR(before.st_mode):
             raise RootedFileError("not_directory")
-        names = tuple(os.listdir(directory_fd))
-        after = os.fstat(directory_fd)
+        names = tuple(os.listdir(directory.descriptor))
+        after = os.fstat(directory.descriptor)
         if _directory_snapshot(after) != _directory_snapshot(before):
             raise RootedFileError("directory_changed")
+        _validate_directory_authority(canonical_root, root_fd, directory)
         return RootedDirectoryListing(
             lexical_path=lexical,
             canonical_path=canonical,
@@ -137,7 +151,7 @@ def list_rooted_directory(root: Path, lexical_path: Path) -> RootedDirectoryList
     except (OSError, RuntimeError, ValueError) as exc:
         raise RootedFileError("list_failed") from exc
     finally:
-        _close_fds(directory_fd, root_fd)
+        _close_fds(_handle_fd(directory), root_fd)
 
 
 def append_rooted_utf8(root: Path, lexical_path: Path, text: str) -> RootedAppendResult:
@@ -166,55 +180,65 @@ def _append_existing(
     canonical: Path,
     payload: bytes,
 ) -> RootedAppendResult:
-    root_fd = parent_fd = file_fd = -1
+    root_fd = file_fd = -1
+    parent: _RootedDirectoryHandle | None = None
     written = 0
     try:
         root_fd = _open_root(canonical_root)
-        parent_fd, name = _open_canonical_parent(root_fd, canonical_root, canonical)
-        inspected = _stat_regular(parent_fd, name)
+        parent, name = _open_canonical_parent(root_fd, canonical_root, canonical)
+        _validate_directory_authority(canonical_root, root_fd, parent)
+        inspected = _stat_regular(parent.descriptor, name)
         file_fd = os.open(
             name,
             os.O_WRONLY | os.O_APPEND | os.O_NOFOLLOW | os.O_NONBLOCK,
-            dir_fd=parent_fd,
+            dir_fd=parent.descriptor,
         )
         opened = os.fstat(file_fd)
         _assert_same_regular(inspected, opened)
+        _validate_directory_authority(canonical_root, root_fd, parent)
         written = _write_all(file_fd, payload)
-        entry = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+        entry = os.stat(name, dir_fd=parent.descriptor, follow_symlinks=False)
         if _identity(entry) != _identity(opened):
             raise RootedFileError("path_identity_changed", workspace_changed=written > 0)
+        _validate_directory_authority(canonical_root, root_fd, parent)
         return RootedAppendResult(
             lexical_path=lexical,
             canonical_path=canonical,
             identity=_identity(opened),
             bytes_written=written,
         )
-    except RootedFileError:
+    except RootedFileError as exc:
+        if written and not exc.workspace_changed:
+            raise RootedFileError(exc.kind, workspace_changed=True) from exc
         raise
     except (OSError, RuntimeError, ValueError) as exc:
         raise RootedFileError("append_failed", workspace_changed=written > 0) from exc
     finally:
-        _close_fds(file_fd, parent_fd, root_fd)
+        _close_fds(file_fd, _handle_fd(parent), root_fd)
 
 
 def _append_missing(canonical_root: Path, lexical: Path, payload: bytes) -> RootedAppendResult:
-    root_fd = current_fd = file_fd = -1
+    root_fd = file_fd = -1
+    current: _RootedDirectoryHandle | None = None
     written = 0
     workspace_changed = False
     try:
         ancestor, missing_parents = _creation_parent(canonical_root, lexical.parent)
         root_fd = _open_root(canonical_root)
-        current_fd = _open_canonical_directory(root_fd, canonical_root, ancestor)
+        current = _open_canonical_directory(root_fd, canonical_root, ancestor)
         for component in missing_parents:
+            _validate_directory_authority(canonical_root, root_fd, current)
             try:
-                os.mkdir(component, mode=0o700, dir_fd=current_fd)
+                os.mkdir(component, mode=0o700, dir_fd=current.descriptor)
                 workspace_changed = True
             except FileExistsError:
                 pass
-            next_fd = _open_child_directory(current_fd, component)
-            os.close(current_fd)
-            current_fd = next_fd
+            next_handle = _descend_directory(current, component)
+            os.close(current.descriptor)
+            current = next_handle
+            _validate_directory_authority(canonical_root, root_fd, current)
         name = lexical.name
+        _validate_directory_authority(canonical_root, root_fd, current)
         try:
             file_fd = os.open(
                 name,
@@ -225,21 +249,24 @@ def _append_missing(canonical_root: Path, lexical: Path, payload: bytes) -> Root
                 | os.O_NOFOLLOW
                 | os.O_NONBLOCK,
                 0o600,
-                dir_fd=current_fd,
+                dir_fd=current.descriptor,
             )
             workspace_changed = True
         except FileExistsError:
-            _close_fds(current_fd, root_fd)
-            current_fd = root_fd = -1
+            _close_fds(current.descriptor, root_fd)
+            current = None
+            root_fd = -1
             canonical = _resolve_existing(canonical_root, lexical)
             return _append_existing(canonical_root, lexical, canonical, payload)
         opened = os.fstat(file_fd)
         if not stat.S_ISREG(opened.st_mode):
             raise RootedFileError("not_regular")
+        _validate_directory_authority(canonical_root, root_fd, current)
         written = _write_all(file_fd, payload)
-        entry = os.stat(name, dir_fd=current_fd, follow_symlinks=False)
+        entry = os.stat(name, dir_fd=current.descriptor, follow_symlinks=False)
         if _identity(entry) != _identity(opened):
             raise RootedFileError("path_identity_changed", workspace_changed=written > 0)
+        _validate_directory_authority(canonical_root, root_fd, current)
         canonical = ancestor.joinpath(*missing_parents, name)
         return RootedAppendResult(
             lexical_path=lexical,
@@ -257,7 +284,7 @@ def _append_missing(canonical_root: Path, lexical: Path, payload: bytes) -> Root
             workspace_changed=workspace_changed or written > 0,
         ) from exc
     finally:
-        _close_fds(file_fd, current_fd, root_fd)
+        _close_fds(file_fd, _handle_fd(current), root_fd)
 
 
 def _creation_parent(canonical_root: Path, lexical_parent: Path) -> tuple[Path, tuple[str, ...]]:
@@ -352,7 +379,7 @@ def _open_canonical_parent(
     root_fd: int,
     canonical_root: Path,
     canonical_path: Path,
-) -> tuple[int, str]:
+) -> tuple[_RootedDirectoryHandle, str]:
     try:
         relative = canonical_path.relative_to(canonical_root)
     except ValueError as exc:
@@ -363,7 +390,11 @@ def _open_canonical_parent(
     return parent_fd, relative.parts[-1]
 
 
-def _open_canonical_directory(root_fd: int, canonical_root: Path, canonical_path: Path) -> int:
+def _open_canonical_directory(
+    root_fd: int,
+    canonical_root: Path,
+    canonical_path: Path,
+) -> _RootedDirectoryHandle:
     try:
         relative = canonical_path.relative_to(canonical_root)
     except ValueError as exc:
@@ -371,20 +402,25 @@ def _open_canonical_directory(root_fd: int, canonical_root: Path, canonical_path
     return _open_directory_parts(root_fd, relative.parts)
 
 
-def _open_directory_parts(root_fd: int, parts: tuple[str, ...]) -> int:
+def _open_directory_parts(
+    root_fd: int,
+    parts: tuple[str, ...],
+) -> _RootedDirectoryHandle:
     current = os.dup(root_fd)
+    identities = [_identity(os.fstat(root_fd))]
     try:
         for component in parts:
-            next_fd = _open_child_directory(current, component)
+            next_fd, next_identity = _open_child_directory(current, component)
             os.close(current)
             current = next_fd
-        return current
+            identities.append(next_identity)
+        return _RootedDirectoryHandle(current, parts, tuple(identities))
     except Exception:
         os.close(current)
         raise
 
 
-def _open_child_directory(parent_fd: int, name: str) -> int:
+def _open_child_directory(parent_fd: int, name: str) -> tuple[int, tuple[int, int]]:
     inspected = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
     if not stat.S_ISDIR(inspected.st_mode):
         raise RootedFileError("not_directory")
@@ -397,7 +433,59 @@ def _open_child_directory(parent_fd: int, name: str) -> int:
     if not stat.S_ISDIR(opened.st_mode) or _identity(opened) != _identity(inspected):
         os.close(descriptor)
         raise RootedFileError("directory_identity_changed")
-    return descriptor
+    return descriptor, _identity(opened)
+
+
+def _descend_directory(
+    parent: _RootedDirectoryHandle,
+    name: str,
+) -> _RootedDirectoryHandle:
+    descriptor, identity = _open_child_directory(parent.descriptor, name)
+    return _RootedDirectoryHandle(
+        descriptor,
+        (*parent.relative_parts, name),
+        (*parent.identities, identity),
+    )
+
+
+def _validate_directory_authority(
+    canonical_root: Path,
+    root_fd: int,
+    directory: _RootedDirectoryHandle,
+) -> None:
+    if _identity(os.fstat(root_fd)) != directory.identities[0]:
+        raise RootedFileError("root_identity_changed")
+    reopened_root = -1
+    downward: _RootedDirectoryHandle | None = None
+    upward = -1
+    try:
+        reopened_root = _open_root(canonical_root)
+        if _identity(os.fstat(reopened_root)) != directory.identities[0]:
+            raise RootedFileError("root_identity_changed")
+        downward = _open_directory_parts(root_fd, directory.relative_parts)
+        if downward.identities != directory.identities:
+            raise RootedFileError("directory_identity_changed")
+        upward = os.dup(directory.descriptor)
+        for index in range(len(directory.identities) - 1, -1, -1):
+            current = os.fstat(upward)
+            if not stat.S_ISDIR(current.st_mode):
+                raise RootedFileError("not_directory")
+            if _identity(current) != directory.identities[index]:
+                raise RootedFileError("directory_ancestry_changed")
+            if index:
+                parent = os.open(
+                    "..",
+                    os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                    dir_fd=upward,
+                )
+                os.close(upward)
+                upward = parent
+    except RootedFileError:
+        raise
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise RootedFileError("directory_authority_failed") from exc
+    finally:
+        _close_fds(upward, _handle_fd(downward), reopened_root)
 
 
 def _stat_regular(parent_fd: int, name: str) -> os.stat_result:
@@ -459,6 +547,10 @@ def _identity(file_stat: os.stat_result) -> tuple[int, int]:
 def _require_rooted_fd_support() -> None:
     if not _HAS_ROOTED_FD_SUPPORT:
         raise RootedFileError("unsupported_platform")
+
+
+def _handle_fd(handle: _RootedDirectoryHandle | None) -> int:
+    return handle.descriptor if handle is not None else -1
 
 
 def _close_fds(*descriptors: int) -> None:

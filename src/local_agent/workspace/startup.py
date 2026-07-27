@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Iterable
+from typing import Iterator
 
 from ..memory.storage import PROJECT_MEMORY_NAMES
 from ..memory.storage import ProjectMemoryStore
@@ -135,32 +137,33 @@ def load_startup_context_files(workspace: Path, user_config_dir: Path, *, max_ch
 
 
 def load_startup_memory(workspace: Path, *, state_dir: Path | None, max_chars: int) -> str:
-    project_sources: list[_MarkdownSource] = []
-    try:
-        documents = ProjectMemoryStore(workspace).startup_documents()
-    except ProjectMemoryStoreError:
-        documents = ()
-    for document in documents:
-        project_sources.append(
-            _MarkdownSource(
-                document.lexical_path,
-                preloaded_text=document.text,
-                identity=document.identity,
-            )
-        )
+    if max_chars <= 0:
+        return ""
     return load_markdown_blocks(
         workspace,
-        [
-            *project_sources,
-            *[
-                _MarkdownSource(path)
-                for path in startup_memory_paths(startup_memory_dirs(state_dir))
-            ],
-        ],
+        _startup_memory_sources(workspace, state_dir),
         max_chars=max_chars,
         truncation_marker="...<earlier memory truncated>\n",
         dedupe_by_identity=True,
     )
+
+
+def _startup_memory_sources(
+    workspace: Path,
+    state_dir: Path | None,
+) -> Iterator[_MarkdownSource]:
+    try:
+        documents = ProjectMemoryStore(workspace).iter_startup_documents()
+        for document in documents:
+            yield _MarkdownSource(
+                document.lexical_path,
+                preloaded_text=document.text,
+                identity=document.identity,
+            )
+    except ProjectMemoryStoreError:
+        pass
+    for path in startup_memory_paths(startup_memory_dirs(state_dir)):
+        yield _MarkdownSource(path)
 
 
 def load_sticky_rules(workspace: Path, user_config_dir: Path, *, max_chars: int) -> str:
@@ -206,7 +209,7 @@ def startup_memory_dirs(state_dir: Path | None) -> list[Path]:
 
 def load_markdown_blocks(
     workspace: Path,
-    sources: list[_MarkdownSource],
+    sources: Iterable[_MarkdownSource],
     *,
     max_chars: int,
     truncation_marker: str,
@@ -217,8 +220,11 @@ def load_markdown_blocks(
     blocks: list[str] = []
     remaining = max_chars
     seen_identities: set[tuple[int, int]] = set()
-    for source in sources:
-        if remaining <= 0:
+    source_iterator = iter(sources)
+    while remaining > 0:
+        try:
+            source = next(source_iterator)
+        except StopIteration:
             break
         loaded = _read_markdown_source(workspace, source)
         if loaded is None:

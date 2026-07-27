@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -70,24 +71,26 @@ class ProjectMemoryStore:
             raise _store_error(exc) from exc
         return _document(name, snapshot)
 
-    def startup_documents(self) -> tuple[ProjectMemoryDocument, ...]:
-        sources = [(name, f"{name}.md") for name in PROJECT_MEMORY_NAMES]
-        sources.extend(
-            (file_name[:-3], file_name)
-            for file_name in self._extra_file_names()
-        )
-        documents: list[ProjectMemoryDocument] = []
+    def iter_startup_documents(self) -> Iterator[ProjectMemoryDocument]:
         seen: set[tuple[int, int]] = set()
-        for name, file_name in sources:
+        for name in PROJECT_MEMORY_NAMES:
             try:
-                document = self._read_file(name, file_name)
+                document = self._read_file(name, f"{name}.md")
             except ProjectMemoryStoreError:
                 continue
             if document is None or document.identity in seen:
                 continue
             seen.add(document.identity)
-            documents.append(document)
-        return tuple(documents)
+            yield document
+        for file_name in self._extra_file_names():
+            try:
+                document = self._read_file(file_name[:-3], file_name)
+            except ProjectMemoryStoreError:
+                continue
+            if document is None or document.identity in seen:
+                continue
+            seen.add(document.identity)
+            yield document
 
     def append(
         self,

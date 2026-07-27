@@ -343,6 +343,205 @@ class ProjectMemoryStoreTests(unittest.TestCase):
         self.assertTrue(raised.exception.workspace_changed)
         self.assertEqual(persisted, b"AB")
 
+    def test_ancestor_move_before_leaf_open_blocks_read_and_append(self) -> None:
+        for operation in ("read", "append"):
+            with self.subTest(operation=operation), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp).resolve()
+                workspace = root / "workspace"
+                memory = workspace / ".local-agent/memory"
+                memory.mkdir(parents=True)
+                source = memory / "project.md"
+                source.write_text("ORIGINAL\n", encoding="utf-8")
+                moved_memory = root / f"moved-memory-{operation}"
+                real_open = os.open
+                real_io = os.read if operation == "read" else os.write
+                io_calls = 0
+                moved = False
+
+                def move_before_leaf(path: object, flags: int, *args, **kwargs) -> int:
+                    nonlocal moved
+                    if (
+                        not moved
+                        and path == "project.md"
+                        and kwargs.get("dir_fd") is not None
+                    ):
+                        moved = True
+                        memory.rename(moved_memory)
+                    return real_open(path, flags, *args, **kwargs)
+
+                def observe_io(*args, **kwargs):
+                    nonlocal io_calls
+                    io_calls += 1
+                    return real_io(*args, **kwargs)
+
+                io_name = "os.read" if operation == "read" else "os.write"
+                with (
+                    patch(
+                        "local_agent.platform.rooted_files.os.open",
+                        side_effect=move_before_leaf,
+                    ),
+                    patch(
+                        f"local_agent.platform.rooted_files.{io_name}",
+                        side_effect=observe_io,
+                    ),
+                ):
+                    with self.assertRaises(ProjectMemoryStoreError) as raised:
+                        store = ProjectMemoryStore(workspace)
+                        if operation == "read":
+                            store.read("project")
+                        else:
+                            store.append("project", "MUST NOT WRITE\n")
+
+                self.assertTrue(moved)
+                self.assertEqual(io_calls, 0)
+                self.assertFalse(raised.exception.workspace_changed)
+                self.assertEqual(
+                    (moved_memory / "project.md").read_text(encoding="utf-8"),
+                    "ORIGINAL\n",
+                )
+
+    def test_ancestor_and_workspace_root_moves_invalidate_read_and_list(self) -> None:
+        for moved_scope in ("ancestor", "workspace"):
+            for operation in ("read", "list"):
+                with (
+                    self.subTest(scope=moved_scope, operation=operation),
+                    tempfile.TemporaryDirectory() as tmp,
+                ):
+                    root = Path(tmp).resolve()
+                    workspace = root / "workspace"
+                    memory = workspace / ".local-agent/memory"
+                    memory.mkdir(parents=True)
+                    (memory / "project.md").write_text("SECRET\n", encoding="utf-8")
+                    moved = root / f"moved-{moved_scope}-{operation}"
+                    target = memory if moved_scope == "ancestor" else workspace
+                    moved_once = False
+
+                    if operation == "read":
+                        real_operation = os.read
+
+                        def move_during_operation(*args, **kwargs):
+                            nonlocal moved_once
+                            result = real_operation(*args, **kwargs)
+                            if not moved_once:
+                                moved_once = True
+                                target.rename(moved)
+                            return result
+
+                        patch_target = "local_agent.platform.rooted_files.os.read"
+                    else:
+                        real_operation = os.listdir
+
+                        def move_during_operation(*args, **kwargs):
+                            nonlocal moved_once
+                            if not moved_once:
+                                moved_once = True
+                                target.rename(moved)
+                            return real_operation(*args, **kwargs)
+
+                        patch_target = "local_agent.platform.rooted_files.os.listdir"
+
+                    with patch(patch_target, side_effect=move_during_operation):
+                        with self.assertRaises(
+                            (ProjectMemoryStoreError, rooted_files.RootedFileError)
+                        ):
+                            if operation == "read":
+                                ProjectMemoryStore(workspace).read("project")
+                            else:
+                                rooted_files.list_rooted_directory(workspace, memory)
+
+                    self.assertTrue(moved_once)
+                    self.assertTrue(moved.exists())
+
+    def test_ancestor_and_workspace_root_moves_after_open_report_residual_append(self) -> None:
+        for moved_scope in ("ancestor", "workspace"):
+            with self.subTest(scope=moved_scope), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp).resolve()
+                workspace = root / "workspace"
+                memory = workspace / ".local-agent/memory"
+                memory.mkdir(parents=True)
+                source = memory / "project.md"
+                source.write_text("ORIGINAL\n", encoding="utf-8")
+                moved = root / f"moved-{moved_scope}"
+                target = memory if moved_scope == "ancestor" else workspace
+                real_write = os.write
+                moved_once = False
+
+                def move_during_write(*args, **kwargs):
+                    nonlocal moved_once
+                    if not moved_once:
+                        moved_once = True
+                        target.rename(moved)
+                    return real_write(*args, **kwargs)
+
+                with patch(
+                    "local_agent.platform.rooted_files.os.write",
+                    side_effect=move_during_write,
+                ):
+                    with self.assertRaises(ProjectMemoryStoreError) as raised:
+                        ProjectMemoryStore(workspace).append("project", "APPENDED\n")
+
+                moved_source = (
+                    moved / "project.md"
+                    if moved_scope == "ancestor"
+                    else moved / ".local-agent/memory/project.md"
+                )
+                self.assertTrue(moved_once)
+                self.assertTrue(raised.exception.workspace_changed)
+                self.assertEqual(
+                    moved_source.read_text(encoding="utf-8"),
+                    "ORIGINAL\nAPPENDED\n",
+                )
+
+    def test_zero_startup_budget_performs_no_project_or_state_enumeration(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            with (
+                patch("local_agent.workspace.startup.ProjectMemoryStore") as store,
+                patch("local_agent.workspace.startup.startup_memory_dirs") as state_dirs,
+            ):
+                rendered = load_startup_memory(
+                    workspace,
+                    state_dir=workspace / "state",
+                    max_chars=0,
+                )
+
+        self.assertEqual(rendered, "")
+        store.assert_not_called()
+        state_dirs.assert_not_called()
+
+    def test_startup_budget_stops_before_reading_later_project_documents(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            memory = workspace / ".local-agent/memory"
+            memory.mkdir(parents=True)
+            (memory / "project.md").write_text("FIRST\n", encoding="utf-8")
+            (memory / "decisions.md").write_text("MUST NOT READ\n", encoding="utf-8")
+            real_read = rooted_files.read_rooted_utf8
+            read_names: list[str] = []
+
+            def observe_read(root: Path, path: Path):
+                read_names.append(path.name)
+                return real_read(root, path)
+
+            limit = len("### .local-agent/memory/project.md\n") + 1
+            with (
+                patch(
+                    "local_agent.memory.storage.read_rooted_utf8",
+                    side_effect=observe_read,
+                ),
+                patch("local_agent.memory.storage.list_rooted_directory") as listing,
+            ):
+                rendered = load_startup_memory(
+                    workspace,
+                    state_dir=None,
+                    max_chars=limit,
+                )
+
+        self.assertLessEqual(len(rendered), limit)
+        self.assertEqual(read_names, ["project.md"])
+        self.assertNotIn("MUST NOT READ", rendered)
+        listing.assert_not_called()
+
     def test_startup_priority_extra_order_and_identity_dedupe_are_stable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp).resolve()
