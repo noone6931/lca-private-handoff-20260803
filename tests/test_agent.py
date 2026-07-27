@@ -26,6 +26,7 @@ from local_agent.requirement_evidence import RequirementEvidence
 from local_agent.run_context import MAX_FORCED_FINAL_ANSWER_CONTINUATIONS
 from local_agent.session.assistant_history import ASSISTANT_SETTLEMENT_EVENT
 from local_agent.session.assistant_history import PHASE_KEY, SETTLED_DELIVERY_PHASE
+from local_agent.session.assistant_history import annotate_provider_message
 from local_agent.steering.final_answer import SourceEvidence
 from local_agent.steering.final_answer import DesignEvidenceSteerer
 from local_agent.steering.final_answer import FinalAnswerContext
@@ -42,7 +43,7 @@ from local_agent.steering.final_answer import source_numeric_issues
 from local_agent.task_contract import generate_requirement_contract
 from local_agent.tool_choice_queue import ToolResultSummary
 from local_agent.tool_choice_queue import ToolChoiceDecision
-from local_agent.tools.base import ToolResult
+from local_agent.tools.base import Tool, ToolResult
 from local_agent.tool_choice_queue import evaluate_tool_choice_state
 from local_agent.verification_plan import VerificationPlan
 
@@ -7151,6 +7152,120 @@ class AgentRuntimeTests(unittest.TestCase):
                 unchanged_records = [json.loads(line) for line in resumed._session.path.read_text(encoding="utf-8").splitlines()]
                 self.assertEqual(sum(record.get("event") == "context_checkpoint" for record in unchanged_records), checkpoints_before_resume + 1)
                 self.assertTrue(any(record.get("event") == "context_compaction_skipped" for record in unchanged_records))
+
+    def test_compaction_checkpoint_uses_session_safe_tool_arguments_without_mutating_runtime(self) -> None:
+        secret = "CHECKPOINT_SECRET_QUERY"
+        plain_arguments = '{"path":"visible.py"}'
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=workspace,
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+                context_char_budget=3000,
+                context_recent_messages=6,
+                summary_mode="local",
+            )
+            redacted_tool = Tool(
+                name="web_search",
+                description="test-only redacted tool",
+                input_schema={"type": "object"},
+                tier="network",
+                handler=lambda _args, _context: ToolResult("unused"),
+                redact_arguments=True,
+            )
+            raw_assistant = annotate_provider_message(
+                {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "search-call",
+                            "type": "function",
+                            "function": {
+                                "name": "web_search",
+                                "arguments": json.dumps({"query": secret}),
+                            },
+                        },
+                        {
+                            "id": "read-call",
+                            "type": "function",
+                            "function": {"name": "read_file", "arguments": plain_arguments},
+                        },
+                    ],
+                },
+                message_id="tool-message",
+                run_id="tool-run",
+            )
+            results = [
+                {"role": "tool", "tool_call_id": "search-call", "content": "safe result"},
+                {"role": "tool", "tool_call_id": "read-call", "content": "visible source"},
+            ]
+            with patch("local_agent.agent.OpenAICompatibleClient", _MessageRecordingClient):
+                runtime = AgentRuntime(config, show_tool_logs=False)
+                runtime._registry = runtime._registry.extended((redacted_tool,))
+                runtime._session.append(
+                    "assistant",
+                    runtime._registry.session_safe_assistant_message(raw_assistant),
+                )
+                for result in results:
+                    runtime._session.append("tool_result", result)
+                runtime._messages.extend(
+                    [
+                        *[
+                            {"role": "user", "content": f"old request {index} " + ("x" * 1000)}
+                            for index in range(8)
+                        ],
+                        raw_assistant,
+                        *results,
+                        {"role": "user", "content": "recent suffix"},
+                    ]
+                )
+
+                runtime._provider_context_phase.messages_for_model()
+                records = [
+                    json.loads(line)
+                    for line in runtime._session.path.read_text(encoding="utf-8").splitlines()
+                ]
+                resumed = AgentRuntime(
+                    config,
+                    show_tool_logs=False,
+                    session_id=runtime._session.session_id,
+                )
+
+        checkpoint = next(record for record in records if record.get("event") == "context_checkpoint")
+        persisted = json.dumps(checkpoint, ensure_ascii=False)
+        self.assertNotIn(secret, persisted)
+        self.assertNotIn(secret, json.dumps(records, ensure_ascii=False))
+        checkpoint_assistant = next(
+            message
+            for message in checkpoint["payload"]["messages"]
+            if message.get("role") == "assistant"
+        )
+        persisted_arguments = {
+            call["function"]["name"]: call["function"]["arguments"]
+            for call in checkpoint_assistant["tool_calls"]
+        }
+        self.assertEqual(persisted_arguments["web_search"], "{}")
+        self.assertEqual(persisted_arguments["read_file"], plain_arguments)
+        runtime_assistant = next(
+            message
+            for message in runtime._messages
+            if message.get("role") == "assistant"
+        )
+        self.assertIn(secret, runtime_assistant["tool_calls"][0]["function"]["arguments"])
+        self.assertTrue(resumed._session.last_load_used_context_checkpoint)
+        resumed_assistant = next(
+            message
+            for message in resumed._messages
+            if message.get("role") == "assistant"
+        )
+        self.assertEqual(resumed_assistant["tool_calls"], checkpoint_assistant["tool_calls"])
 
     def test_compaction_checkpoint_preserves_current_run_messages_for_terminal_memory(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -37,7 +37,9 @@ from ..session.assistant_history import checkpoint_messages as _checkpoint_messa
 from ..session.assistant_history import has_unsettled_candidate as _has_unsettled_candidate
 from ..session.assistant_history import messages_for_active_run as _messages_for_active_run
 from .prompt import _latest_user_content, _messages_with_runtime_context
-from ..tools.base import VisionInspectionUnavailableError, tool_state_dir
+from ..tools.base import VisionInspectionUnavailableError
+from ..tools.base import session_safe_assistant_message as _session_safe_assistant_message
+from ..tools.base import tool_state_dir
 
 
 class ProviderRuntimePort(Protocol):
@@ -49,6 +51,7 @@ class ProviderRuntimePort(Protocol):
     _evidence_phase: Any
     _messages: list[dict[str, Any]]
     _path_rule_index: Any
+    _registry: Any
     _run: Any
     _session: Any
     _state_dir: Any
@@ -154,7 +157,15 @@ class ProviderContextPhase:
                 payload["estimated_tokens"] = payload["estimated_tokens_after"]
                 payload.update(thresholds)
                 unsettled = _has_unsettled_candidate(runtime._messages, run_id=runtime._run.run_id)
-                durable_checkpoint = None if unsettled else _checkpoint_messages(compacted)
+                durable_checkpoint = None
+                if not unsettled:
+                    checkpoint_copy = [
+                        _session_safe_assistant_message(runtime._registry, message)
+                        if message.get("role") == "assistant"
+                        else dict(message)
+                        for message in compacted
+                    ]
+                    durable_checkpoint = _checkpoint_messages(checkpoint_copy)
                 if durable_checkpoint is None:
                     payload["checkpoint_deferred"] = (
                         "unsettled_candidate" if unsettled else "untyped_assistant_history"

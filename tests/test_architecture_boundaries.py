@@ -61,7 +61,7 @@ OWNER_COMPLEXITY_CEILINGS = {
     "src/local_agent/frontends/tui/composer_layout.py": 183,
     "src/local_agent/frontends/tui/pending_prompt.py": 58,
     "src/local_agent/runtime/assistant_message.py": 163,
-    "src/local_agent/runtime/provider_context.py": 445,
+    "src/local_agent/runtime/provider_context.py": 456,
     "src/local_agent/runtime/run_output.py": 138,
     "src/local_agent/providers/protocol.py": 379,
     "src/local_agent/runtime/prompt.py": 490,
@@ -700,6 +700,7 @@ class ArchitectureBoundaryTests(unittest.TestCase):
         self.assertNotIn("from ..agent", history)
         self.assertIn("messages_for_active_run", provider_context)
         self.assertIn("checkpoint_messages", provider_context)
+        self.assertIn("_session_safe_assistant_message(runtime._registry, message)", provider_context)
         self.assertNotIn("AssistantSettlement", runtime)
         self.assertNotIn("AssistantSettlement", commands)
         self.assertNotIn(".output.emit(", runtime)
