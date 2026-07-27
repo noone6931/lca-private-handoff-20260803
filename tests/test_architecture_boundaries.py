@@ -85,6 +85,7 @@ OWNER_COMPLEXITY_CEILINGS = {
     "src/local_agent/session/assistant_history.py": 551,
     "src/local_agent/session/jsonl_store.py": 206,
     "src/local_agent/config.py": 760,
+    "src/local_agent/workspace/startup.py": 439,
 }
 LEGACY_COMPLEXITY_DEBT_CEILINGS = {
     "src/local_agent/agent.py": 1613,
@@ -130,6 +131,29 @@ def _resolved_import_targets(path: Path) -> list[tuple[int, str]]:
 
 
 class ArchitectureBoundaryTests(unittest.TestCase):
+    def test_project_startup_markdown_containment_has_one_typed_owner(self) -> None:
+        startup_path = ROOT / "src/local_agent/workspace/startup.py"
+        startup = startup_path.read_text(encoding="utf-8")
+        prompt = (ROOT / "src/local_agent/runtime/prompt.py").read_text(encoding="utf-8")
+        agent = (ROOT / "src/local_agent/agent.py").read_text(encoding="utf-8")
+        production = list((ROOT / "src/local_agent").rglob("*.py"))
+        containment_owners = [
+            path.relative_to(ROOT).as_posix()
+            for path in production
+            if "def _read_primary_workspace_markdown(" in path.read_text(encoding="utf-8")
+        ]
+        self.assertEqual(containment_owners, ["src/local_agent/workspace/startup.py"])
+        self.assertIn("class _MarkdownSource:", startup)
+        self.assertEqual(startup.count("require_primary_workspace=True"), 2)
+        self.assertEqual(startup.count("def _read_primary_workspace_markdown("), 1)
+        self.assertIn('getattr(os, "O_NOFOLLOW", 0)', startup)
+        self.assertIn('getattr(os, "O_NONBLOCK", 0)', startup)
+        self.assertIn("load_sticky_rules(workspace, user_config_dir", prompt)
+        self.assertNotIn("O_NOFOLLOW", agent)
+        self.assertNotIn("require_primary_workspace", agent)
+        for _line, target in _resolved_import_targets(startup_path):
+            self.assertFalse(target.startswith(("local_agent.agent", "local_agent.runtime")))
+
     def test_workspace_dotenv_authority_stays_scoped_to_the_config_owner(self) -> None:
         config_path = ROOT / "src/local_agent/config.py"
         config = config_path.read_text(encoding="utf-8")

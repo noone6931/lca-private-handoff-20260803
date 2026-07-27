@@ -1,9 +1,20 @@
 from __future__ import annotations
 
+import codecs
+import os
+import stat
+from dataclasses import dataclass
 from pathlib import Path
 
 
 STARTUP_MEMORY_NAMES = ("project", "decisions", "conventions", "learned")
+_MARKDOWN_READ_CHUNK_BYTES = 64 * 1024
+
+
+@dataclass(frozen=True)
+class _MarkdownSource:
+    path: Path
+    require_primary_workspace: bool = False
 
 
 def build_system_prompt(
@@ -104,7 +115,13 @@ def workspace_root_markers(workspace: Path) -> list[str]:
 def load_startup_context_files(workspace: Path, user_config_dir: Path, *, max_chars: int) -> str:
     return load_markdown_blocks(
         workspace,
-        [user_config_dir / "AGENTS.md", workspace / ".local-agent" / "AGENTS.md"],
+        [
+            _MarkdownSource(user_config_dir / "AGENTS.md"),
+            _MarkdownSource(
+                workspace / ".local-agent" / "AGENTS.md",
+                require_primary_workspace=True,
+            ),
+        ],
         max_chars=max_chars,
         truncation_marker="...<earlier context truncated>\n",
     )
@@ -113,7 +130,10 @@ def load_startup_context_files(workspace: Path, user_config_dir: Path, *, max_ch
 def load_startup_memory(workspace: Path, *, state_dir: Path | None, max_chars: int) -> str:
     return load_markdown_blocks(
         workspace,
-        startup_memory_paths(startup_memory_dirs(workspace, state_dir)),
+        [
+            _MarkdownSource(path)
+            for path in startup_memory_paths(startup_memory_dirs(workspace, state_dir))
+        ],
         max_chars=max_chars,
         truncation_marker="...<earlier memory truncated>\n",
     )
@@ -122,7 +142,13 @@ def load_startup_memory(workspace: Path, *, state_dir: Path | None, max_chars: i
 def load_sticky_rules(workspace: Path, user_config_dir: Path, *, max_chars: int) -> str:
     return load_markdown_blocks(
         workspace,
-        [user_config_dir / "RULES.md", workspace / ".local-agent" / "RULES.md"],
+        [
+            _MarkdownSource(user_config_dir / "RULES.md"),
+            _MarkdownSource(
+                workspace / ".local-agent" / "RULES.md",
+                require_primary_workspace=True,
+            ),
+        ],
         max_chars=max_chars,
         truncation_marker="...<earlier rules truncated>\n",
     )
@@ -164,7 +190,7 @@ def startup_memory_dirs(workspace: Path, state_dir: Path | None) -> list[Path]:
 
 def load_markdown_blocks(
     workspace: Path,
-    paths: list[Path],
+    sources: list[_MarkdownSource],
     *,
     max_chars: int,
     truncation_marker: str,
@@ -173,19 +199,16 @@ def load_markdown_blocks(
         return ""
     blocks: list[str] = []
     remaining = max_chars
-    for path in paths:
+    for source in sources:
         if remaining <= 0:
             break
-        if not path.exists() or not path.is_file():
-            continue
-        try:
-            text = path.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
+        text = _read_markdown_source(workspace, source)
+        if text is None:
             continue
         text = text.replace("\x00", "").strip()
         if not text:
             continue
-        header = f"### {display_context_path(workspace, path)}\n"
+        header = f"### {display_context_path(workspace, source.path)}\n"
         available = remaining - len(header)
         if available <= 0:
             break
@@ -194,6 +217,72 @@ def load_markdown_blocks(
         blocks.append(block)
         remaining -= len(block) + 2
     return "\n\n".join(blocks)
+
+
+def _read_markdown_source(workspace: Path, source: _MarkdownSource) -> str | None:
+    if source.require_primary_workspace:
+        return _read_primary_workspace_markdown(workspace, source.path)
+    if not source.path.exists() or not source.path.is_file():
+        return None
+    try:
+        return source.path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+
+
+def _read_primary_workspace_markdown(workspace: Path, lexical_path: Path) -> str | None:
+    descriptor = -1
+    try:
+        canonical_path = lexical_path.resolve(strict=True)
+        canonical_path.relative_to(workspace)
+        inspected = canonical_path.lstat()
+        if not stat.S_ISREG(inspected.st_mode):
+            return None
+        flags = (
+            os.O_RDONLY
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_NONBLOCK", 0)
+        )
+        descriptor = os.open(canonical_path, flags)
+        opened = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or (inspected.st_dev, inspected.st_ino) != (opened.st_dev, opened.st_ino)
+        ):
+            return None
+        initial_snapshot = _markdown_snapshot(opened)
+        remaining = opened.st_size
+        decoder = codecs.getincrementaldecoder("utf-8")(errors="strict")
+        text_parts: list[str] = []
+        while remaining:
+            chunk = os.read(descriptor, min(remaining, _MARKDOWN_READ_CHUNK_BYTES))
+            if not chunk:
+                return None
+            remaining -= len(chunk)
+            text_parts.append(decoder.decode(chunk, final=False))
+        text_parts.append(decoder.decode(b"", final=True))
+        completed = os.fstat(descriptor)
+        if not stat.S_ISREG(completed.st_mode) or _markdown_snapshot(completed) != initial_snapshot:
+            return None
+        return "".join(text_parts).replace("\r\n", "\n").replace("\r", "\n")
+    except Exception:
+        return None
+    finally:
+        if descriptor >= 0:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+
+
+def _markdown_snapshot(file_stat: os.stat_result) -> tuple[int, int, int, int, int]:
+    return (
+        file_stat.st_dev,
+        file_stat.st_ino,
+        file_stat.st_size,
+        file_stat.st_mtime_ns,
+        file_stat.st_ctime_ns,
+    )
 
 
 def display_context_path(workspace: Path, path: Path) -> str:
