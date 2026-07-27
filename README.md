@@ -195,7 +195,7 @@ local-agent "帮我找一下测试失败原因"
 
 `AGENTS.md` 会在新 session 启动时作为 advisory context 注入；`RULES.md` 会在每次发送模型请求前重新附加，用于“不要自动 commit/push”“总结验证结果”这类短规则。可用 `AGENT_CONFIG_DIR` 改用户级配置目录。当前用户指令与最新读取的源码证据具有最高优先级。
 
-长会话默认启用 OMP 风格上下文压缩策略：`--context-char-budget` 近似表示上下文窗口，runtime 会至少预留 15% 给下一轮 prompt/输出；超过阈值后压缩早期历史，保留最近消息和未完成 todo，并截断发送给模型的超大 tool 输出。发送给模型的上下文还会折叠空搜索/LSP 这类 useless 结果，以及被新等价读取/搜索 supersede 的旧工具结果；session 日志仍保留原文。默认 `--summary-mode auto`：小历史不摘要，触发 compaction 时自动调用当前配置的 AI API 生成语义摘要，失败回退本地确定性摘要。可用 `--summary-mode local` 强制只用本地摘要，`--summary-mode llm` 强制在 compaction 时尝试 LLM 摘要，`--context-char-budget 0` 关闭压缩。
+长会话默认启用 OMP 风格上下文压缩策略：`--context-char-budget` 近似表示上下文窗口，runtime 会至少预留 15% 给下一轮 prompt/输出；超过阈值后压缩早期历史，保留最近消息和未完成 todo，并截断发送给模型的超大 tool 输出。发送给模型的上下文还会折叠空搜索/LSP 这类 useless 结果，以及被新等价读取/搜索 supersede 的旧工具结果；session 日志仍保留原文。默认 `--summary-mode auto`：小历史不摘要，触发 compaction 时自动调用当前配置的 AI API 生成语义摘要，失败回退本地确定性摘要。durable checkpoint 只保存已结算的 assistant delivery 和完整关联的 tool-call/result pair；rewrite/rejected/unsettled candidate 不会在恢复后重新出现。敏感工具参数沿用 tool owner 的 session redaction，但当前 runtime/model 内存能力不变。可用 `--summary-mode local` 强制只用本地摘要，`--summary-mode llm` 强制在 compaction 时尝试 LLM 摘要，`--context-char-budget 0` 关闭压缩。
 
 每次 provider 请求都会附带由单一系统时钟 Owner 生成的 UTC/本地时间快照；该快照只存在于 provider-bound context，不写入对话历史或 checkpoint。无参数 read-tier `current_time` 工具可返回同一 typed `current_time_v1` 结构；需要实时外部事实时仍由显式启用的 `web_search` 单独取证，时间上下文本身不触发联网。
 
@@ -359,7 +359,7 @@ python3 scripts/sync_project_excel.py
 - `lsp_references`: 查找这些语言中的标识符引用；外部 LSP 可用时优先使用真实引用结果。
 - `lsp_diagnostics`: 运行诊断；外部 LSP 可用时使用 language server，否则 Python 使用 `compile()`，Java/JS/TS/Vue 使用本地括号/分隔符检查。
 - `lsp_status`: 查看当前外部 language server 是否可用、命令来源和轻量回退状态。
-- context compaction: 按 OMP 风格 reserve 阈值压缩早期历史、保留当前用户请求和未完成 todo，并截断发送给模型的超大 tool 输出；空搜索/LSP 结果会标记 useless，发送给模型的上下文会折叠 useless/superseded 工具结果；默认 `--summary-mode auto` 会在触发压缩时尝试 LLM 摘要并失败回退 local。
+- context compaction: 按 OMP 风格 reserve 阈值压缩早期历史、保留当前用户请求和未完成 todo，并截断发送给模型的超大 tool 输出；空搜索/LSP 结果会标记 useless，发送给模型的上下文会折叠 useless/superseded 工具结果；默认 `--summary-mode auto` 会在触发压缩时尝试 LLM 摘要并失败回退 local。v2 checkpoint 只恢复 typed settled delivery 与完整 exact tool protocol pair，敏感参数使用既有 session-safe projection。
 - startup context injection: 新 session 启动时会读取用户级和项目级 `AGENTS.md`，作为 advisory context 注入 system prompt。
 - sticky rules injection: 每次发送模型请求前会读取用户级和项目级 `RULES.md` 并追加到 provider-bound context。
 - startup memory injection: 新 session 启动时会读取项目 `.local-agent/memory/{project,decisions,conventions,learned}.md` 和 state dir `memory/{project,decisions,conventions,learned}.md`，并作为 advisory context 注入 system prompt；当前用户指令和最新源码证据优先。

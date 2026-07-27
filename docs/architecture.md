@@ -1,6 +1,6 @@
 # Local Coding Agent 架构设计
 
-更新时间：2026-07-17
+更新时间：2026-07-27
 
 本文档描述 `local-coding-agent` 当前架构基线，以及按技术成熟度划分的待加入能力。它是给后续实现者和协作 Agent 读取的架构视图；项目进度事实源仍以 `docs/project-status.md` 和 `docs/project-management.md` 为准。
 
@@ -114,7 +114,7 @@ T-218 是这一规则的反例与纠偏记录：`requested_test_missing` 曾从 
 | Provider 层 | `[CORE-已落地]` | OpenAI-compatible chat completions 与 tool-call-safe streaming，对接百炼和通用 endpoint；百炼可显式启用独立的 sourced web-search adapter。 | `src/local_agent/providers/llm.py` 负责请求适配，`src/local_agent/provider_stream.py` 单独拥有 SSE/JSON 解析；`src/local_agent/providers/web_search.py` 独占百炼原生搜索协议和 source provenance 校验。 |
 | 工具系统 | `[CORE-已落地]` | 工具注册、schema、tier、approval policy、参数校验、错误包装。 | `src/local_agent/tools/base.py`。 |
 | 本地工具层 | `[CORE-已落地]` | 文件、搜索、shell/test、git、patch、rollback、memory、learn、todo、ask_user。 | `src/local_agent/tools/`。 |
-| 上下文治理 | `[MVP-已落地]` | OMP 风格 reserve、auto/local/llm summary、recent 保留、tool 输出截断、单 system message。 | `AgentRuntime._messages_for_model()` 编排，`src/local_agent/compaction.py` 承载纯函数。 |
+| 上下文治理 | `[MVP-已落地]` | OMP 风格 reserve、auto/local/llm summary、recent 保留、tool 输出截断、单 system message。 | `runtime/provider_context.py` 编排，`runtime/compaction.py` 承载纯函数；durable checkpoint 只消费 settled assistant history。 |
 | Context / Rules | `[MVP-已落地]` | Workspace roots、用户级/项目级 `AGENTS.md` 启动注入，`RULES.md` 每轮 sticky 注入；multi-root roots 也会进入关键工具观察。 | `src/local_agent/startup_context.py`、`--cwd`、`--allow-dir`、`~/.config/local-coding-agent/`、`.local-agent/`。 |
 | 代码导航 / LSP | `[MVP-已落地]` | Python、Java、JS、TS、Vue 的 symbols/definition/references/diagnostics；可选外部 LSP server，缺失时回退 lightweight fallback。 | `src/local_agent/tools/lsp.py`、`src/local_agent/lsp/`。 |
 | 本地持久化 | `[CORE-已落地]` | JSONL session、patch log、todo、Markdown memory。 | runtime state 默认在用户级 state dir；显式项目 memory/skills 在 `.local-agent/`，自动 consolidation 默认写 state memory。 |
@@ -174,11 +174,12 @@ flowchart TD
 | Git | `[CORE-已落地]` | `git_status`、`git_diff`。 | 作为最终交付摘要和人工 review 的证据。 |
 | Runtime state | `[CORE-已落地]` | `--state-dir` / `AGENT_STATE_DIR`，默认 `${XDG_STATE_HOME:-~/.local/state}/local-coding-agent/workspaces/<workspace-key>/`。 | 对齐 OMP，把运行转录与目标源码目录分层，避免只读跨项目分析污染目标仓库。 |
 | Session | `[CORE-已落地]` | state dir 下的 `sessions/*.jsonl`，支持坏尾部恢复。 | session 是对话事实，不承担长期 memory 职责。 |
+| Settled assistant history | `[CORE-已落地]` | typed candidate/tool-call/delivery phases、`assistant_settlement_v1` 与 v2 durable checkpoint。 | `runtime/run_output.py` 唯一决定实际 delivery kind；`session/assistant_history.py` 只从 exact settlement 和完整 replay 的 tool-call/result pair 建立恢复 authority。checkpoint 不得 mint/tamper evidence，持久化副本复用 tool-owner redaction。 |
 | Todo | `[MVP-已落地]` | `todo_read/add/update`，状态保存在 state dir 下的 session 维度。 | 用于长任务进度和 compaction 后恢复上下文。 |
 | Startup context | `[MVP-已落地]` | 用户级 `AGENTS.md` 和项目级 `.local-agent/AGENTS.md` 启动注入。 | 常驻上下文是 advisory；项目上下文在用户上下文之后，更贴近当前 workspace。 |
 | Sticky rules | `[MVP-已落地]` | 用户级 `RULES.md` 和项目级 `.local-agent/RULES.md` 在每次 provider request 前注入。 | 用于短规则，避免长会话/compaction 后丢失关键操作约束。 |
 | ask_user | `[MVP-已落地]` | 支持 `timeout_seconds`、`default_answer`、deadline clamp。 | 只在需求歧义影响结果时使用。 |
-| Context compaction | `[MVP-已落地]` | `auto/local/llm` summary，recent 保留，tool 输出只在发给模型副本中截断。 | 已支持字符预算和本地 token 估算预算，均保留 OMP reserve 思路；压缩、evidence 与 run collector 已分别拆到独立模块。 |
+| Context compaction | `[MVP-已落地]` | `auto/local/llm` summary，recent 保留，tool 输出只在发给模型副本中截断。 | 已支持字符预算和本地 token 估算预算；unsettled candidate 期间 checkpoint 延迟，settlement 后才写 v2 typed checkpoint。session-safe copy 与 runtime/model当前内存分离。 |
 | LSP / Light fallback | `[MVP-已落地]` | symbols、definition、references、diagnostics、`lsp_status`。 | 默认 `AGENT_LSP_MODE=auto`：存在 root marker 和 server 命令时启用外部 LSP，否则回退本地静态导航；不自动下载依赖。 |
 | Markdown memory | `[MVP-已落地]` | `memory_read/write` 读写项目 project/decisions/conventions/learned；启动时同时注入项目 memory 和 state memory。 | 当前用户指令和最新源码证据优先。 |
 | Learn | `[MVP-已落地]` | `learn` 将可复用经验写入 `.local-agent/memory/learned.md`。 | tier=`write`，默认需要审批，不自动学习。 |

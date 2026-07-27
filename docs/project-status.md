@@ -1,6 +1,6 @@
 # Local Coding Agent 项目状态
 
-更新时间：2026-07-22
+更新时间：2026-07-27
 
 本文档是开发 `local-coding-agent` 时给参与开发的人和协作 Agent 读取的项目管理基线。`docs/local-coding-agent-project-management.xlsx` 继续作为人工查看的表格视图；本 Markdown 文件作为后续开发时优先读取的项目状态、路线、Todo 和决策来源。它不是 LCA 运行时自己的 memory 或用户项目记忆。
 
@@ -34,7 +34,7 @@ LCA、OMP 与 Codex 的当前源码级对照和路线校正见 `docs/lca-omp-cod
 
 ## 当前进度
 
-当前 stable 为 T-264：release `20260722T101549Z-ef47e1778dc8-05da0eaca2f7`，revision `ef47e1778dc83fb3729e29ed17e2ec8040416bfb`，digest `05da0eaca2f7c0d236eb453e5a0f368cdc9ab018af6fb566f19be8db92088438`；clean detached Python 3.14 publish gate 通过 1449 unittest（1 skip）、compileall 和 diff-check，独立 empty-env verifier 另通过 62/62 benchmark、42/42 architecture checks、59/59 current-time/architecture/web-search focused 与 CLI help/chat。真实百炼北京天气 E2E 只调用一次 `web_search`，0 tool error、0 schema/protocol violation，明确使用本地日期 `2026-07-22` 且未进入 `ask_user`。T-264 未新增网络、writer、evidence tree、finalization gate 或循环依赖。
+当前 stable 为 T-265：release `20260727T074725Z-d02753007354-1a02fb1e9ec5`，revision `d02753007354b3b1db4637b47562e39f9e91368a`，digest `1a02fb1e9ec593d87f89e17dac844e439c5d4b60e4570987781098fede1db3da`。clean detached Python 3.14 publish gate 通过 1466 unittest（1 skip）、compileall 和 diff-check；主线程另通过 62/62 benchmark、43/43 architecture checks、focused 与 CLI help/chat，独立 empty-env deterministic verifier 通过 18/18 immutable assistant-history/checkpoint matrix。小牙确认 candidate/stable/main 身份与 CLI smoke，但其 loopback fake-provider 环境仍为 INCONCLUSIVE；没有用该概率结果替代 deterministic gate。T-265 未新增 writer、approval/evidence/finalization/lifecycle tree 或网络能力。
 
 T-250 已完成 T-249 stable 的 multiline TUI 日用收益门槛。fresh Python fixture 的三行 Alt-Enter prompt 在 composer、session user event 和 `0600` history 中精确保留，只有一个 SubmitPrompt/TurnStarted/RunSummary/TurnFinished；唯一百炼请求因 DNS/provider environment 在首个 LLM request 失败，tool calls 为 0，终态诚实为 `provider_error` / `delivered=false`，fixture 没有源码 diff，stable/main 身份不变。真实 read/patch/test/diff 收益因此为 INCONCLUSIVE；未发现自动提交、输入改写、重复 settled output、权限越权、假交付或 identity 污染，不重跑 provider、不修改 Harness，也不给大猛发开发任务。P17 当前阶段据此收口，后续回到普通 coding 的真实收益与可靠性观察。
 
@@ -65,6 +65,8 @@ T-262 已完成并发布 Runtime Operation Provenance / Approval Scrollback Trut
 T-263 已完成并发布 Opt-in Sourced Web Search Tool Phase 1，并承接用户提出的普通 Coding 端到端收益门禁。既有 T-262 编号已用于 provenance/scrollback stable，因此没有重写历史编号。deterministic 普通 Coding 任务 1/1 PASS；真实百炼任务正确交付 patch、测试与 diff，核心收益 PASS，严格工具协议因 provider 多发一次 malformed `todo_add` 记 9/10，未据此修改 Harness。工具补全只为 `bailian` / `bailian-intl` 注册默认关闭的 `web_search`：查询参数不进入 session/telemetry，百炼原生 SSE 必须给出 request identity 和至少一个结构化 source，最多 20 条且必须完整投影；缺 source、超界、无完成事件、错误 endpoint 或非百炼 provider 全部 fail closed。网络 tier 复用既有 ExecutionPolicy，未新增 approval tree；Browser、任意 URL fetch、自动下载仍不提供。clean detached candidate 与独立 empty-env verifier 均为 1441/62/41/10 全绿，真实 E2E 为 1 次搜索、0 错误、9/9 sources，`residual_subagents=0`。
 
 T-264 已完成并发布 Current Time Truth / Web Search Temporal Grounding。`platform/current_time.py` 是唯一系统时钟 Owner，一次读取同一 instant 后生成 UTC、本地时间、日期、时区和 offset；`tools/current_time.py` 只提供无参数 read-tier typed projection。每次 provider request 注入 fresh time context，但不写 runtime messages、JSONL 或 context checkpoint。首版跨层依赖被 architecture gate 拒绝后，Owner 从 runtime 下沉到 platform，消除了 `tools -> runtime` 反向依赖；`agent.py` 未增长。clean detached publish gate 为 1449 unittest（1 skip），独立 verifier 为 62/62 benchmark、42/42 architecture 与 59/59 focused。真实百炼天气任务仅一次 sourced search、0 错误并正确落到 `2026-07-22`；搜索来源仍偏月度/聚合页，权威来源打开与质量排序继续作为独立后续能力，不引入天气关键词规则，`residual_subagents=0`。
+
+T-265 已完成并发布 Settled Assistant History / Durable Checkpoint Provenance。provider assistant message 先绑定 typed message/run/phase；tool-call message 只作为协议历史，普通 candidate 在唯一 `RunOutputLifecycle` 确定实际交付类型后才形成 `assistant_settlement_v1`。命名 session 恢复只接受与已 replay settlement 精确关联的 final delivery，以及此前完整 replay 的 exact assistant tool-call/result pair；checkpoint 不能自行铸造、篡改、拆分或跨 pair 拼接 final/tool evidence。rewrite/rejected/unsettled candidate 不进入恢复历史。v2 checkpoint 持久化副本复用既有 tool-owner session-safe projector，敏感参数不进入 JSONL/checkpoint，runtime/model 当前内存仍保留原 typed capability。独立 verifier 18/18 PASS，secret occurrence 为 0，fresh continuation 的 `compaction_checkpoint_reused=1`，main/stable/candidate 零污染；小牙 loopback 环境记 INCONCLUSIVE，`residual_subagents=0`。
 
 后续只读 Seatbelt Applied-Truth Protocol Feasibility Phase 0 已独立复核并正式判定长期 NO-GO/unsupported，不分配新 T 编号。Codex 的 macOS adapter 只把 argv 改写为 `/usr/bin/sandbox-exec` 并按所选 `SandboxType` 投影产品状态；真实 wrapper 在自身进程中 `sandbox_compile_*`、`sandbox_apply` 成功后才 `execvp`，父进程没有 kernel applied acknowledgement。公开 `sandbox_init` 已 deprecated、只作用于当前进程且公开 flag 只支持 named profile；公开 `spawn.h`、Python `Popen` / `os.posix_spawn` 均没有 Seatbelt profile attribute，`sandbox_check` 也不能在目标 exec 前证明完整 profile。即使使用本机导出的私有 `posix_spawnattr_setmacpolicyinfo_np`，受控 probe 中有效 `no-write` 与无效 profile 都返回 `spawn_rc=0` 和 PID；前者由 kernel 拒绝写入，后者在 command 未执行前终止，因此 spawn 成功仍不等于 applied，child signal/exit/output 也不能消除歧义。独立 verifier 确认 Codex/OMP/LCA Owner 分账、`src/tests` 相对 `41d215b` 零 diff、用户 dirty 不变并以 `residual_subagents=0` 闭合。除非未来出现受支持的公开 API，能在目标 exec 前向同一个 `Popen` Owner 同步返回 profile apply 失败，否则不重启 macOS Seatbelt；封闭 VM/容器继续是需要真实 OS 隔离时的外部边界。
 
@@ -691,10 +693,10 @@ T-213/T-214 已完成 S5-1 的 Codex 直接隔离交付。T-213 在上述 clean 
 | 项目 | 结论 | 依据 |
 |---|---|---|
 | 主链路 | 通过 | 百炼真实小改复测已跑通 todo、dry_run、apply_patch、session allow、rollback、run_tests、git_diff。 |
-| 测试 | 分层通过 | P5 收口时 90 个 unittest；当前 T-264 stable 为 1449/62/42，另有 59 项 current-time/architecture/web-search focused、真实百炼天气 1-call/0-error/date-grounded E2E，以及既有 typed execution、read-only clause、approval live-region、prior-run/runtime、真实 JDTLS、Git/rg helper、bounded-output/process、child-env/process-lifecycle、non-delivery continuity、AssistantMessage/CLI 与 history/search/multiline/follow-up queue matrix。 |
+| 测试 | 分层通过 | P5 收口时 90 个 unittest；当前 T-265 stable 为 1466/62/43，另有独立 18/18 assistant-history/checkpoint matrix、既有 current-time/web-search、typed execution、read-only clause、approval live-region、prior-run/runtime、真实 JDTLS、Git/rg helper、bounded-output/process、child-env/process-lifecycle、non-delivery continuity、AssistantMessage/CLI 与 history/search/multiline/follow-up queue matrix。 |
 | 日用入口 | 通过 | README 已补只读分析和小改任务命令模板。 |
 | 开放风险 | 可接受 | shell 仍非沙箱、prompt injection 仍需靠审批和封闭 VM；provider/model 专用 tokenizer、输出 reserve、managed skills、完整 reviewer 和完整 OMP ToolChoiceQueue 继续后置评估。 |
-| 下一阶段 | T-264 stable hold / 继续真实任务观察 | T-264 已补齐 per-request current-time truth；权威来源打开/质量排序、Browser、任意 URL 抓取与自动下载仍是独立后置能力。P18 platform sandbox 保持长期 unsupported/NO-GO，现有外部进程能力继续明确 `sandboxed=false`。 |
+| 下一阶段 | T-265 stable hold / P0 普通 Coding 安全边界 | 下一项优先分诊 workspace `.env` authority/project-trust；随后是 startup AGENTS/RULES symlink containment 与 shell/run_tests possible-write mutation barrier。Langfuse、Browser、任意 URL 抓取和自动下载继续后置；P18 platform sandbox 保持长期 unsupported/NO-GO。 |
 
 ## 推荐工作流
 
