@@ -28,6 +28,14 @@ class _EntryKey:
     authoritative: bool
 
 
+@dataclass(frozen=True)
+class _LiveStructure:
+    focus: str
+    interaction: bool
+    palette_rows: int
+    provisional_entries: tuple[tuple[str, str, bool], ...]
+
+
 class NativeScrollbackRenderer:
     """Commit settled transcript rows and repaint only the mutable terminal tail."""
 
@@ -38,6 +46,8 @@ class NativeScrollbackRenderer:
         self._cursor_y = 0
         self._last_frame: TuiFrame | None = None
         self._paint_width = 80
+        self._paint_height = 24
+        self._live_structure: _LiveStructure | None = None
         self._committed: set[_EntryKey] = set()
         self._overlay_active = False
         self._suspended = False
@@ -71,6 +81,7 @@ class NativeScrollbackRenderer:
         self._live_rows = 0
         self._reserved_rows = 0
         self._cursor_y = 0
+        self._live_structure = None
 
     def close(self) -> None:
         if self._overlay_active:
@@ -84,13 +95,25 @@ class NativeScrollbackRenderer:
         self._committed.intersection_update(current)
         pending = tuple(entry for entry in stable if _entry_key(entry) not in self._committed)
         frame = render_inline_frame(state, view, width, height)
+        structure = _live_structure(state, view)
         if not pending and frame == self._last_frame:
+            return
+        repaint = (
+            pending
+            or self._last_frame is None
+            or width != self._paint_width
+            or height != self._paint_height
+            or len(frame.lines) != self._live_rows
+            or structure != self._live_structure
+        )
+        if not repaint:
+            self._paint_changed_rows(frame, width)
             return
         self._erase_live_region(width)
         if pending:
             self._commit_entries(pending, width)
             self._committed.update(_entry_key(entry) for entry in pending)
-        self._paint_live_frame(frame, width)
+        self._paint_live_frame(frame, width, height, structure)
 
     def _render_overlay(self, state: TuiState, view: TuiView, width: int, height: int) -> None:
         if not self._overlay_active:
@@ -98,12 +121,13 @@ class NativeScrollbackRenderer:
             self._write(_ENTER_ALT_SCREEN)
             self._overlay_active = True
             self._last_frame = None
+            self._live_structure = None
         frame = render_frame(state, view, width, height)
         if frame == self._last_frame:
             return
         self._write(b"\x1b[?25l\x1b[H\x1b[2J")
         self._write(_frame_bytes(frame, width))
-        self._position_cursor(frame)
+        self._position_cursor(frame, len(frame.lines) - 1)
         self._last_frame = frame
 
     def _leave_overlay(self) -> None:
@@ -113,6 +137,7 @@ class NativeScrollbackRenderer:
         self._live_rows = 0
         self._reserved_rows = 0
         self._cursor_y = 0
+        self._live_structure = None
 
     def _commit_entries(self, entries: tuple[TranscriptEntry, ...], width: int) -> None:
         rows = transcript_lines(entries, max(width - 1, 1))
@@ -127,13 +152,41 @@ class NativeScrollbackRenderer:
         self._write(bytes(payload))
         self._reserved_rows = 0
 
-    def _paint_live_frame(self, frame: TuiFrame, width: int) -> None:
+    def _paint_live_frame(
+        self,
+        frame: TuiFrame,
+        width: int,
+        height: int,
+        structure: _LiveStructure,
+    ) -> None:
         self._reserve_live_region(len(frame.lines))
         self._write(b"\x1b[?25l" + _frame_bytes(frame, width))
         self._live_rows = len(frame.lines)
-        self._cursor_y = frame.cursor_y
         self._paint_width = width
-        self._position_cursor(frame)
+        self._paint_height = height
+        self._position_cursor(frame, len(frame.lines) - 1)
+        self._last_frame = frame
+        self._live_structure = structure
+
+    def _paint_changed_rows(self, frame: TuiFrame, width: int) -> None:
+        previous = self._last_frame
+        if previous is None:
+            return
+        changed = _changed_row_range(previous, frame)
+        if changed is None:
+            self._position_cursor(frame, self._cursor_y)
+            self._last_frame = frame
+            return
+        first, last = changed
+        payload = bytearray(b"\x1b[?25l")
+        payload.extend(_move_to_row(self._cursor_y, first))
+        for index in range(first, last + 1):
+            if index > first:
+                payload.extend(b"\r\x1b[1B")
+            payload.extend(_row_bytes(frame, index, width))
+        payload.extend(_cursor_bytes(last, frame))
+        self._write(bytes(payload))
+        self._cursor_y = frame.cursor_y
         self._last_frame = frame
 
     def _reserve_live_region(self, rows: int) -> None:
@@ -153,15 +206,9 @@ class NativeScrollbackRenderer:
         self._write(bytes(payload))
         self._reserved_rows = rows
 
-    def _position_cursor(self, frame: TuiFrame) -> None:
-        rows_up = max(len(frame.lines) - 1 - frame.cursor_y, 0)
-        payload = "\r"
-        if rows_up:
-            payload += f"{_CSI}{rows_up}A"
-        if frame.cursor_x:
-            payload += f"{_CSI}{frame.cursor_x}C"
-        payload += "\x1b[?25h"
-        self._write(payload.encode("ascii"))
+    def _position_cursor(self, frame: TuiFrame, from_row: int) -> None:
+        self._write(_cursor_bytes(from_row, frame))
+        self._cursor_y = frame.cursor_y
 
     def _erase_live_region(self, width: int | None = None) -> None:
         if not self._live_rows:
@@ -179,6 +226,7 @@ class NativeScrollbackRenderer:
         self._live_rows = 0
         self._cursor_y = 0
         self._last_frame = None
+        self._live_structure = None
         if resized:
             self._reserved_rows = 0
 
@@ -208,20 +256,72 @@ def _entry_key(entry: TranscriptEntry) -> _EntryKey:
     return _EntryKey(entry.entry_id, entry.role, entry.text, entry.authoritative)
 
 
+def _live_structure(state: TuiState, view: TuiView) -> _LiveStructure:
+    provisional = tuple(
+        (entry.entry_id, entry.role, entry.authoritative)
+        for entry in state.transcript
+        if entry.provisional
+    )
+    return _LiveStructure(
+        focus=view.focus,
+        interaction=bool(view.interaction_prompt),
+        palette_rows=len(view.palette),
+        provisional_entries=provisional,
+    )
+
+
 def _frame_bytes(frame: TuiFrame, width: int) -> bytes:
-    safe_width = max(width - 1, 1)
     payload = bytearray()
-    last = len(frame.lines) - 1
-    for index, line in enumerate(frame.lines):
+    for index in range(len(frame.lines)):
         if index:
             payload.extend(b"\r\n")
-        payload.extend(b"\r\x1b[2K")
-        if index == 0 or index in frame.accent_rows:
-            payload.extend(b"\x1b[1;36m")
-        elif index == last:
-            payload.extend(b"\x1b[7m")
-        payload.extend(clip_cells(line, safe_width).rstrip().encode("utf-8"))
-        payload.extend(b"\x1b[0m")
+        payload.extend(b"\r")
+        payload.extend(_row_bytes(frame, index, width))
+    return bytes(payload)
+
+
+def _row_bytes(frame: TuiFrame, index: int, width: int) -> bytes:
+    payload = bytearray(b"\x1b[2K")
+    if index == 0 or index in frame.accent_rows:
+        payload.extend(b"\x1b[1;36m")
+    elif index == len(frame.lines) - 1:
+        payload.extend(b"\x1b[7m")
+    payload.extend(clip_cells(frame.lines[index], max(width - 1, 1)).rstrip().encode("utf-8"))
+    payload.extend(b"\x1b[0m")
+    return bytes(payload)
+
+
+def _changed_row_range(previous: TuiFrame, current: TuiFrame) -> tuple[int, int] | None:
+    changed = [
+        index
+        for index in range(len(current.lines))
+        if _row_signature(previous, index) != _row_signature(current, index)
+    ]
+    return (changed[0], changed[-1]) if changed else None
+
+
+def _row_signature(frame: TuiFrame, index: int) -> tuple[str, bool, bool]:
+    return (
+        frame.lines[index],
+        index == 0 or index in frame.accent_rows,
+        index == len(frame.lines) - 1,
+    )
+
+
+def _move_to_row(from_row: int, to_row: int) -> bytes:
+    payload = "\r"
+    if to_row < from_row:
+        payload += f"{_CSI}{from_row - to_row}A"
+    elif to_row > from_row:
+        payload += f"{_CSI}{to_row - from_row}B"
+    return payload.encode("ascii")
+
+
+def _cursor_bytes(from_row: int, frame: TuiFrame) -> bytes:
+    payload = bytearray(_move_to_row(from_row, frame.cursor_y))
+    if frame.cursor_x:
+        payload.extend(f"{_CSI}{frame.cursor_x}C".encode("ascii"))
+    payload.extend(b"\x1b[?25h")
     return bytes(payload)
 
 

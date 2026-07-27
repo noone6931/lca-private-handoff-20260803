@@ -1,14 +1,23 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
 import unittest
 from unittest.mock import patch
 
+from local_agent.frontends.tui.model import project_agent_event
 from local_agent.frontends.tui.model import TranscriptEntry
+from local_agent.frontends.tui.model import TuiProjector
 from local_agent.frontends.tui.model import TuiState
 from local_agent.frontends.tui.native_renderer import NativeScrollbackRenderer
 from local_agent.frontends.tui.native_renderer import _cursor_row_after_reflow
+from local_agent.frontends.tui.view import render_inline_frame
 from local_agent.frontends.tui.view import TuiFrame
 from local_agent.frontends.tui.view import TuiView
+from local_agent.protocol.events import AgentEvent
+
+
+FIXTURES = Path(__file__).with_name("fixtures")
 
 
 class _Output:
@@ -76,6 +85,206 @@ class _ScrollbackTerminal:
 
 
 class TuiNativeRendererTests(unittest.TestCase):
+    def test_raw_ask_session_typing_does_not_repeat_header_or_candidate(self) -> None:
+        events = []
+        projector = TuiProjector()
+        fixture = FIXTURES / "t269_ask_user_session.jsonl"
+        for line in fixture.read_text(encoding="utf-8").splitlines():
+            payload = json.loads(line)["payload"]
+            event = AgentEvent(**payload)
+            events.append(event)
+            projected = project_agent_event(event)
+            if projected is not None:
+                projector.apply(projected)
+        self.assertEqual(sum(event.type == "AssistantMessage" for event in events), 1)
+        self.assertEqual(
+            next(event for event in events if event.type == "AssistantMessage").payload["message_id"],
+            "418177913bb7426c8a19e607a1274664",
+        )
+        views = tuple(
+            TuiView(
+                focus="ask",
+                interaction_prompt="请告诉我你想做什么项目？",
+                input_text=text,
+                cursor=len(text),
+            )
+            for text in ("", "项", "项目", "项目网站")
+        )
+        frame = render_inline_frame(projector.state, views[0], 80, 12)
+        header = frame.lines[0].rstrip().encode("utf-8")
+        candidate = "你好！我注意到你的请求".encode("utf-8")
+        chunks: list[bytes] = []
+        updates: list[bytes] = []
+        renderer = NativeScrollbackRenderer(_Output())
+
+        def write(_fd, payload):
+            chunks.append(payload)
+            return len(payload)
+
+        with patch("local_agent.frontends.tui.native_renderer.os.write", side_effect=write):
+            for index, view in enumerate(views):
+                start = len(chunks)
+                renderer.render(projector.state, view, 80, 12)
+                if index:
+                    updates.append(b"".join(chunks[start:]))
+
+        rendered = b"".join(chunks)
+        self.assertEqual(rendered.count(header), 1)
+        self.assertEqual(rendered.count(candidate), 1)
+        self.assertTrue(all(header not in update for update in updates))
+        self.assertTrue(all(candidate not in update for update in updates))
+        self.assertTrue(all(b"\r\n" not in update for update in updates))
+
+    def test_cursor_only_update_moves_cursor_without_repainting_rows(self) -> None:
+        chunks = []
+        renderer = NativeScrollbackRenderer(_Output())
+        state = TuiState(session_id="cursor", busy=True, status="running")
+        with patch(
+            "local_agent.frontends.tui.native_renderer.os.write",
+            side_effect=lambda _fd, payload: chunks.append(payload) or len(payload),
+        ):
+            renderer.render(state, TuiView(input_text="abcdef", cursor=6), 40, 10)
+            chunks.clear()
+            renderer.render(state, TuiView(input_text="abcdef", cursor=2), 40, 10)
+
+        update = b"".join(chunks)
+        self.assertNotIn(b"\x1b[2K", update)
+        self.assertNotIn(b"abcdef", update)
+        self.assertNotIn(b"\r\n", update)
+        expected = render_inline_frame(
+            state,
+            TuiView(input_text="abcdef", cursor=2),
+            40,
+            10,
+        ).cursor_x
+        self.assertIn(f"\x1b[{expected}C".encode("ascii"), update)
+
+    def test_cjk_multiline_same_shape_repaints_only_changed_rows(self) -> None:
+        chunks = []
+        renderer = NativeScrollbackRenderer(_Output())
+        state = TuiState(
+            session_id="cjk",
+            busy=True,
+            status="running",
+            transcript=(
+                TranscriptEntry("a1", "assistant", "候选内容保持唯一", provisional=True),
+            ),
+        )
+        first = TuiView(input_text="第一行\n第二行甲", cursor=9)
+        second = TuiView(input_text="第一行\n第二行乙", cursor=9)
+        with patch(
+            "local_agent.frontends.tui.native_renderer.os.write",
+            side_effect=lambda _fd, payload: chunks.append(payload) or len(payload),
+        ):
+            renderer.render(state, first, 32, 10)
+            chunks.clear()
+            renderer.render(state, second, 32, 10)
+
+        update = b"".join(chunks)
+        self.assertIn("第二行乙".encode(), update)
+        self.assertNotIn("候选内容保持唯一".encode(), update)
+        self.assertNotIn(b"LCA", update)
+        self.assertNotIn(b"\r\n", update)
+
+    def test_interaction_transition_repaints_once_then_typing_is_differential(self) -> None:
+        chunks = []
+        renderer = NativeScrollbackRenderer(_Output())
+        state = TuiState(
+            session_id="ask",
+            busy=True,
+            status="running",
+            transcript=(TranscriptEntry("a1", "assistant", "candidate-once", provisional=True),),
+        )
+        arrived = TuiView(focus="ask", interaction_prompt="Question?")
+        typing = TuiView(
+            focus="ask",
+            interaction_prompt="Question?",
+            input_text="answer",
+            cursor=6,
+        )
+        with patch(
+            "local_agent.frontends.tui.native_renderer.os.write",
+            side_effect=lambda _fd, payload: chunks.append(payload) or len(payload),
+        ):
+            renderer.render(state, TuiView(), 48, 10)
+            chunks.clear()
+            renderer.render(state, arrived, 48, 10)
+            transition = b"".join(chunks)
+            chunks.clear()
+            renderer.render(state, typing, 48, 10)
+            update = b"".join(chunks)
+
+        self.assertIn(b"\x1b[J", transition)
+        self.assertEqual(transition.count(b"candidate-once"), 1)
+        self.assertNotIn(b"candidate-once", update)
+        self.assertNotIn(b"LCA", update)
+        self.assertNotIn(b"\r\n", update)
+
+    def test_differential_typing_preserves_physical_scrollback_and_live_screen(self) -> None:
+        terminal = _ScrollbackTerminal(48, 10)
+        renderer = NativeScrollbackRenderer(_Output())
+        state = TuiState(
+            session_id="physical",
+            busy=True,
+            status="running",
+            transcript=(TranscriptEntry("a1", "assistant", "candidate-live", provisional=True),),
+        )
+        with patch(
+            "local_agent.frontends.tui.native_renderer.os.write",
+            side_effect=terminal.write,
+        ):
+            for text in ("", "a", "answer", "answer updated"):
+                renderer.render(
+                    state,
+                    TuiView(
+                        focus="ask",
+                        interaction_prompt="Question?",
+                        input_text=text,
+                        cursor=len(text),
+                    ),
+                    48,
+                    10,
+                )
+
+        self.assertFalse(any("LCA" in line or "candidate-live" in line for line in terminal.scrollback))
+        screen = "\n".join("".join(row).rstrip() for row in terminal.screen)
+        self.assertEqual(screen.count("LCA"), 1)
+        self.assertEqual(screen.count("candidate-live"), 1)
+        self.assertIn("answer updated", screen)
+
+    def test_candidate_replacement_and_cancel_remain_structural_repaints(self) -> None:
+        chunks = []
+        renderer = NativeScrollbackRenderer(_Output())
+        first = TuiState(
+            session_id="replace",
+            busy=True,
+            status="running",
+            transcript=(TranscriptEntry("a1", "assistant", "first candidate", provisional=True),),
+        )
+        replacement = TuiState(
+            session_id="replace",
+            busy=True,
+            status="running",
+            transcript=(TranscriptEntry("a2", "assistant", "replacement candidate", provisional=True),),
+        )
+        cancelled = TuiState(session_id="replace", busy=True, status="running")
+        with patch(
+            "local_agent.frontends.tui.native_renderer.os.write",
+            side_effect=lambda _fd, payload: chunks.append(payload) or len(payload),
+        ):
+            renderer.render(first, TuiView(), 48, 10)
+            chunks.clear()
+            renderer.render(replacement, TuiView(), 48, 10)
+            replaced = b"".join(chunks)
+            chunks.clear()
+            renderer.render(cancelled, TuiView(), 48, 10)
+            cancelled_bytes = b"".join(chunks)
+
+        self.assertIn(b"\x1b[J", replaced)
+        self.assertEqual(replaced.count(b"replacement candidate"), 1)
+        self.assertIn(b"\x1b[J", cancelled_bytes)
+        self.assertNotIn(b"replacement candidate", cancelled_bytes)
+
     def test_settled_rows_commit_once_without_alt_screen_or_scrollback_clear(self) -> None:
         chunks = []
 

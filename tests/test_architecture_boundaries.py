@@ -60,6 +60,7 @@ OWNER_COMPLEXITY_CEILINGS = {
     "src/local_agent/frontends/tui/history_search.py": 130,
     "src/local_agent/frontends/tui/composer_layout.py": 183,
     "src/local_agent/frontends/tui/pending_prompt.py": 58,
+    "src/local_agent/frontends/tui/native_renderer.py": 336,
     "src/local_agent/runtime/assistant_message.py": 163,
     "src/local_agent/runtime/provider_context.py": 456,
     "src/local_agent/runtime/run_output.py": 138,
@@ -755,6 +756,8 @@ class ArchitectureBoundaryTests(unittest.TestCase):
         self.assertNotIn("curses", "\n".join(production.values()))
         self.assertIn("class NativeScrollbackRenderer:", native_renderer)
         self.assertIn("self._commit_entries(pending, width)", native_renderer)
+        self.assertIn("self._paint_changed_rows(frame, width)", native_renderer)
+        self.assertIn("payload.extend(b\"\\r\\x1b[1B\")", native_renderer)
         self.assertEqual(native_renderer.count("\\x1b[?1049h"), 1)
         self.assertNotIn("\\x1b[3J", native_renderer)
         self.assertIn("from .screen import run_inline_screen", production["app.py"])
