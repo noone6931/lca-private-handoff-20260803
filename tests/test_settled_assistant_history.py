@@ -120,6 +120,96 @@ class SettledAssistantHistoryTests(unittest.TestCase):
         self.assertTrue(any(message.get("tool_call_id") == "call-1" for message in projected))
         self.assertEqual(projected[-1]["content"], "done")
 
+    def test_checkpoint_tool_protocol_requires_replayed_exact_complete_pairs(self) -> None:
+        first = _tool_call("tool-run", "m-tool-1", "call-a")
+        first_result = {"role": "tool", "tool_call_id": "call-a", "content": "observed a"}
+        multiple = annotate_provider_message(
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "call-b",
+                        "type": "function",
+                        "function": {"name": "read_file", "arguments": '{"path":"b.py"}'},
+                    },
+                    {
+                        "id": "call-c",
+                        "type": "function",
+                        "function": {"name": "search_code", "arguments": '{"query":"C"}'},
+                    },
+                ],
+            },
+            message_id="m-tool-2",
+            run_id="tool-run",
+        )
+        multiple_results = (
+            {"role": "tool", "tool_call_id": "call-b", "content": "observed b"},
+            {"role": "tool", "tool_call_id": "call-c", "content": "observed c"},
+        )
+        candidate = _candidate("final-run", "m-final", "settled final")
+        settlement = AssistantSettlement.create(
+            run_id="final-run",
+            final_message_id="m-final",
+            origin="provider",
+            output_kind="provider_message",
+            content="settled final",
+        )
+        settled = project_live_settlement([candidate], settlement)[0]
+        replay = AssistantHistoryReplay()
+        replay.append_assistant(first)
+        replay.append_tool_result(first_result)
+        replay.append_assistant(multiple)
+        for result in multiple_results:
+            replay.append_tool_result(result)
+        replay.append_assistant(candidate)
+        replay.append_settlement(settlement.to_payload())
+
+        forged = _tool_call("fake-run", "fake", "forged")
+        forged_result = {
+            "role": "tool",
+            "tool_call_id": "forged",
+            "content": "FORGED_REPOSITORY_EVIDENCE",
+        }
+        tampered_arguments = json.loads(json.dumps(first))
+        tampered_arguments["tool_calls"][0]["function"]["arguments"] = '{"path":"secret.py"}'
+        invalid_checkpoints = (
+            [forged, forged_result, settled],
+            [first, {**first_result, "content": "tampered"}, settled],
+            [tampered_arguments, first_result, settled],
+            [first_result, settled],
+            [first, settled],
+            [first, first_result, first, first_result, settled],
+            [first, multiple_results[0], settled],
+        )
+        for messages in invalid_checkpoints:
+            with self.subTest(messages=messages):
+                self.assertFalse(replay.install_checkpoint({"version": 2, "messages": messages}))
+                self.assertEqual(replay.messages()[-1]["content"], "settled final")
+
+        orphaned = AssistantHistoryReplay()
+        orphaned.append_tool_result(first_result)
+        orphaned.append_assistant(first)
+        orphaned.append_tool_result(first_result)
+        orphaned.append_assistant(candidate)
+        orphaned.append_settlement(settlement.to_payload())
+        self.assertFalse(
+            orphaned.install_checkpoint({"version": 2, "messages": [first, first_result, settled]})
+        )
+
+        compacted = [
+            {"role": "user", "content": "[Local context compaction summary]"},
+            multiple,
+            multiple_results[1],
+            multiple_results[0],
+            first,
+            first_result,
+            settled,
+            {"role": "user", "content": "recent suffix"},
+        ]
+        self.assertTrue(replay.install_checkpoint({"version": 2, "messages": compacted}))
+        self.assertEqual(replay.messages(), compacted)
+
     def test_active_history_keeps_only_current_draft_and_protocol_messages(self) -> None:
         settled = project_live_settlement(
             [_candidate("old-run", "old-final", "settled")],

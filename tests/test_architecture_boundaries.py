@@ -82,7 +82,7 @@ OWNER_COMPLEXITY_CEILINGS = {
     "src/local_agent/tools/lsp_rename.py": 222,
     "src/local_agent/tools/lsp_code_action.py": 430,
     "src/local_agent/session/continuity.py": 288,
-    "src/local_agent/session/assistant_history.py": 422,
+    "src/local_agent/session/assistant_history.py": 551,
     "src/local_agent/session/jsonl_store.py": 206,
 }
 LEGACY_COMPLEXITY_DEBT_CEILINGS = {

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import dataclass
 from typing import Any, Iterable, Literal, Mapping
 
@@ -23,6 +24,7 @@ AssistantPhase = Literal["tool_call", "unsettled_candidate", "settled_delivery"]
 OutputOrigin = Literal["provider", "runtime"]
 OutputKind = Literal["provider_message", "runtime_augmented", "runtime_replaced", "runtime_only"]
 SettledDeliveryIdentity = tuple[str, str, str, str, str]
+ProtocolPairIdentity = tuple[str, tuple[tuple[str, str], ...]]
 
 _OUTPUT_KINDS = {"provider_message", "runtime_augmented", "runtime_replaced", "runtime_only"}
 _ORIGINS = {"provider", "runtime"}
@@ -40,6 +42,13 @@ _REPLAY_SETTLEMENT_KEY = "_lca_replay_settlement_run_id"
 
 class AssistantHistoryError(RuntimeError):
     """Raised when typed assistant history cannot be correlated safely."""
+
+
+@dataclass
+class _ProtocolCandidate:
+    assistant: dict[str, Any]
+    call_ids: tuple[str, ...]
+    results: dict[str, dict[str, Any]]
 
 
 @dataclass(frozen=True)
@@ -212,12 +221,16 @@ class AssistantHistoryReplay:
         self._settlement_counts: dict[str, int] = {}
         self._invalid_settlement_runs: set[str] = set()
         self._settled_authorities: dict[str, SettledDeliveryIdentity] = {}
+        self._pending_protocol_by_call: dict[str, _ProtocolCandidate] = {}
+        self._seen_protocol_call_ids: set[str] = set()
+        self._invalid_protocol_call_ids: set[str] = set()
+        self._protocol_authorities: set[ProtocolPairIdentity] = set()
 
     def install_checkpoint(self, payload: Mapping[str, Any]) -> bool:
         if payload.get("version") != 2 or not isinstance(payload.get("messages"), list):
             return False
         projected = checkpoint_messages(payload["messages"])
-        if projected is None:
+        if projected is None or not self._checkpoint_protocol_is_authorized(projected):
             return False
         checkpoint_messages_with_identity: list[dict[str, Any]] = []
         checkpoint_runs: set[str] = set()
@@ -249,7 +262,7 @@ class AssistantHistoryReplay:
         message = {**payload, "role": "assistant"}
         phase = message.get(PHASE_KEY)
         if phase == TOOL_CALL_PHASE and _has_tool_calls(message):
-            self._messages.append(message)
+            self._append_protocol_assistant(message)
             return
         if phase == UNSETTLED_CANDIDATE_PHASE:
             run_id, message_id = message.get(RUN_ID_KEY), message.get(MESSAGE_ID_KEY)
@@ -257,16 +270,36 @@ class AssistantHistoryReplay:
                 self._candidates.setdefault((run_id, message_id), []).append(message)
             return
         if phase is None and _has_tool_calls(message):
-            self._messages.append(message)
+            self._append_protocol_assistant(message)
 
     def append_tool_result(self, payload: Mapping[str, Any]) -> None:
-        self._messages.append(
-            {
-                "role": "tool",
-                "tool_call_id": payload.get("tool_call_id"),
-                "content": payload.get("content", ""),
-            }
-        )
+        result = {
+            "role": "tool",
+            "tool_call_id": payload.get("tool_call_id"),
+            "content": payload.get("content", ""),
+        }
+        self._messages.append(result)
+        call_id = result.get("tool_call_id")
+        if not isinstance(call_id, str) or not call_id or not isinstance(result.get("content"), str):
+            return
+        candidate = self._pending_protocol_by_call.get(call_id)
+        if candidate is None:
+            self._invalid_protocol_call_ids.add(call_id)
+            return
+        if call_id in candidate.results:
+            self._invalid_protocol_call_ids.add(call_id)
+            return
+        candidate.results[call_id] = result
+        if set(candidate.results) != set(candidate.call_ids):
+            return
+        for candidate_call_id in candidate.call_ids:
+            self._pending_protocol_by_call.pop(candidate_call_id, None)
+        identity = _protocol_pair_identity(candidate.assistant, candidate.results)
+        if (
+            identity is not None
+            and not set(candidate.call_ids).intersection(self._invalid_protocol_call_ids)
+        ):
+            self._protocol_authorities.add(identity)
 
     def append_settlement(self, payload: Mapping[str, Any]) -> None:
         run_hint = payload.get("run_id")
@@ -307,6 +340,57 @@ class AssistantHistoryReplay:
         if settlement.final_message_id is None:
             return []
         return self._candidates.get((settlement.run_id, settlement.final_message_id), [])
+
+    def _append_protocol_assistant(self, message: dict[str, Any]) -> None:
+        self._messages.append(message)
+        call_ids = _tool_call_ids(message)
+        if call_ids is None:
+            return
+        duplicate_ids = set(call_ids).intersection(self._seen_protocol_call_ids)
+        self._seen_protocol_call_ids.update(call_ids)
+        self._invalid_protocol_call_ids.update(duplicate_ids)
+        if duplicate_ids:
+            return
+        candidate = _ProtocolCandidate(message, call_ids, {})
+        for call_id in call_ids:
+            self._pending_protocol_by_call[call_id] = candidate
+
+    def _checkpoint_protocol_is_authorized(self, messages: list[dict[str, Any]]) -> bool:
+        checkpoint_call_ids: set[str] = set()
+        index = 0
+        while index < len(messages):
+            message = messages[index]
+            if message.get("role") == "tool":
+                return False
+            if message.get("role") != "assistant" or not _has_tool_calls(message):
+                index += 1
+                continue
+            call_ids = _tool_call_ids(message)
+            if (
+                call_ids is None
+                or checkpoint_call_ids.intersection(call_ids)
+                or self._invalid_protocol_call_ids.intersection(call_ids)
+            ):
+                return False
+            checkpoint_call_ids.update(call_ids)
+            results: dict[str, dict[str, Any]] = {}
+            index += 1
+            while index < len(messages) and messages[index].get("role") == "tool":
+                result = messages[index]
+                call_id = result.get("tool_call_id")
+                if (
+                    not isinstance(call_id, str)
+                    or call_id not in call_ids
+                    or call_id in results
+                    or not isinstance(result.get("content"), str)
+                ):
+                    return False
+                results[call_id] = result
+                index += 1
+            identity = _protocol_pair_identity(message, results)
+            if identity is None or identity not in self._protocol_authorities:
+                return False
+        return True
 
 
 def _candidate_messages(
@@ -411,6 +495,51 @@ def _settled_delivery_identity(message: Mapping[str, Any]) -> SettledDeliveryIde
         message[OUTPUT_KIND_KEY],
         message["content"],
     )
+
+
+def _tool_call_ids(message: Mapping[str, Any]) -> tuple[str, ...] | None:
+    tool_calls = message.get("tool_calls")
+    if not isinstance(tool_calls, list) or not tool_calls:
+        return None
+    call_ids: list[str] = []
+    for tool_call in tool_calls:
+        if not isinstance(tool_call, Mapping):
+            return None
+        call_id = tool_call.get("id")
+        if not isinstance(call_id, str) or not call_id or call_id in call_ids:
+            return None
+        call_ids.append(call_id)
+    return tuple(call_ids)
+
+
+def _protocol_pair_identity(
+    assistant: Mapping[str, Any],
+    results: Mapping[str, Mapping[str, Any]],
+) -> ProtocolPairIdentity | None:
+    call_ids = _tool_call_ids(assistant)
+    if call_ids is None or set(results) != set(call_ids):
+        return None
+    assistant_digest = _stable_message_digest(assistant)
+    result_digests = tuple(
+        (call_id, _stable_message_digest(results[call_id]))
+        for call_id in sorted(call_ids)
+    )
+    if assistant_digest is None or any(digest is None for _, digest in result_digests):
+        return None
+    return assistant_digest, result_digests  # type: ignore[return-value]
+
+
+def _stable_message_digest(message: Mapping[str, Any]) -> str | None:
+    try:
+        encoded = json.dumps(
+            dict(message),
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+    except (TypeError, ValueError, UnicodeEncodeError):
+        return None
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def _has_tool_calls(message: Mapping[str, Any]) -> bool:
