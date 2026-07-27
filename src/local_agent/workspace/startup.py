@@ -1,20 +1,27 @@
 from __future__ import annotations
 
-import codecs
-import os
-import stat
 from dataclasses import dataclass
 from pathlib import Path
 
-
-STARTUP_MEMORY_NAMES = ("project", "decisions", "conventions", "learned")
-_MARKDOWN_READ_CHUNK_BYTES = 64 * 1024
+from ..memory.storage import PROJECT_MEMORY_NAMES
+from ..memory.storage import ProjectMemoryStore
+from ..memory.storage import ProjectMemoryStoreError
+from ..platform.rooted_files import RootedFileError
+from ..platform.rooted_files import read_rooted_utf8
 
 
 @dataclass(frozen=True)
 class _MarkdownSource:
     path: Path
     require_primary_workspace: bool = False
+    preloaded_text: str | None = None
+    identity: tuple[int, int] | None = None
+
+
+@dataclass(frozen=True)
+class _MarkdownRead:
+    text: str
+    identity: tuple[int, int] | None = None
 
 
 def build_system_prompt(
@@ -128,14 +135,31 @@ def load_startup_context_files(workspace: Path, user_config_dir: Path, *, max_ch
 
 
 def load_startup_memory(workspace: Path, *, state_dir: Path | None, max_chars: int) -> str:
+    project_sources: list[_MarkdownSource] = []
+    try:
+        documents = ProjectMemoryStore(workspace).startup_documents()
+    except ProjectMemoryStoreError:
+        documents = ()
+    for document in documents:
+        project_sources.append(
+            _MarkdownSource(
+                document.lexical_path,
+                preloaded_text=document.text,
+                identity=document.identity,
+            )
+        )
     return load_markdown_blocks(
         workspace,
         [
-            _MarkdownSource(path)
-            for path in startup_memory_paths(startup_memory_dirs(workspace, state_dir))
+            *project_sources,
+            *[
+                _MarkdownSource(path)
+                for path in startup_memory_paths(startup_memory_dirs(state_dir))
+            ],
         ],
         max_chars=max_chars,
         truncation_marker="...<earlier memory truncated>\n",
+        dedupe_by_identity=True,
     )
 
 
@@ -156,26 +180,18 @@ def load_sticky_rules(workspace: Path, user_config_dir: Path, *, max_chars: int)
 
 def startup_memory_paths(memory_dirs: list[Path]) -> list[Path]:
     paths: list[Path] = []
-    seen: set[Path] = set()
     for memory_dir in memory_dirs:
-        priority_paths = [memory_dir / f"{name}.md" for name in STARTUP_MEMORY_NAMES]
+        priority_paths = [memory_dir / f"{name}.md" for name in PROJECT_MEMORY_NAMES]
         extra_paths = sorted(
-            (path for path in memory_dir.glob("*.md") if path.name not in {f"{name}.md" for name in STARTUP_MEMORY_NAMES}),
+            (path for path in memory_dir.glob("*.md") if path.name not in {f"{name}.md" for name in PROJECT_MEMORY_NAMES}),
             key=lambda path: path.name.lower(),
         )
-        for path in [*priority_paths, *extra_paths]:
-            resolved = path.expanduser().resolve()
-            if resolved in seen:
-                continue
-            seen.add(resolved)
-            paths.append(path)
+        paths.extend([*priority_paths, *extra_paths])
     return paths
 
 
-def startup_memory_dirs(workspace: Path, state_dir: Path | None) -> list[Path]:
-    candidates = [workspace / ".local-agent" / "memory"]
-    if state_dir is not None:
-        candidates.append(state_dir / "memory")
+def startup_memory_dirs(state_dir: Path | None) -> list[Path]:
+    candidates = [state_dir / "memory"] if state_dir is not None else []
     memory_dirs: list[Path] = []
     seen: set[Path] = set()
     for candidate in candidates:
@@ -194,20 +210,30 @@ def load_markdown_blocks(
     *,
     max_chars: int,
     truncation_marker: str,
+    dedupe_by_identity: bool = False,
 ) -> str:
     if max_chars <= 0:
         return ""
     blocks: list[str] = []
     remaining = max_chars
+    seen_identities: set[tuple[int, int]] = set()
     for source in sources:
         if remaining <= 0:
             break
-        text = _read_markdown_source(workspace, source)
-        if text is None:
+        loaded = _read_markdown_source(workspace, source)
+        if loaded is None:
             continue
-        text = text.replace("\x00", "").strip()
+        if (
+            dedupe_by_identity
+            and loaded.identity is not None
+            and loaded.identity in seen_identities
+        ):
+            continue
+        text = loaded.text.replace("\x00", "").strip()
         if not text:
             continue
+        if dedupe_by_identity and loaded.identity is not None:
+            seen_identities.add(loaded.identity)
         header = f"### {display_context_path(workspace, source.path)}\n"
         available = remaining - len(header)
         if available <= 0:
@@ -219,70 +245,27 @@ def load_markdown_blocks(
     return "\n\n".join(blocks)
 
 
-def _read_markdown_source(workspace: Path, source: _MarkdownSource) -> str | None:
+def _read_markdown_source(workspace: Path, source: _MarkdownSource) -> _MarkdownRead | None:
+    if source.preloaded_text is not None:
+        return _MarkdownRead(source.preloaded_text, source.identity)
     if source.require_primary_workspace:
-        return _read_primary_workspace_markdown(workspace, source.path)
+        try:
+            snapshot = read_rooted_utf8(workspace, source.path)
+        except RootedFileError:
+            return None
+        return _MarkdownRead(snapshot.text, snapshot.identity)
     if not source.path.exists() or not source.path.is_file():
         return None
     try:
-        return source.path.read_text(encoding="utf-8")
+        text = source.path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
         return None
-
-
-def _read_primary_workspace_markdown(workspace: Path, lexical_path: Path) -> str | None:
-    descriptor = -1
     try:
-        canonical_path = lexical_path.resolve(strict=True)
-        canonical_path.relative_to(workspace)
-        inspected = canonical_path.lstat()
-        if not stat.S_ISREG(inspected.st_mode):
-            return None
-        flags = (
-            os.O_RDONLY
-            | getattr(os, "O_NOFOLLOW", 0)
-            | getattr(os, "O_NONBLOCK", 0)
-        )
-        descriptor = os.open(canonical_path, flags)
-        opened = os.fstat(descriptor)
-        if (
-            not stat.S_ISREG(opened.st_mode)
-            or (inspected.st_dev, inspected.st_ino) != (opened.st_dev, opened.st_ino)
-        ):
-            return None
-        initial_snapshot = _markdown_snapshot(opened)
-        remaining = opened.st_size
-        decoder = codecs.getincrementaldecoder("utf-8")(errors="strict")
-        text_parts: list[str] = []
-        while remaining:
-            chunk = os.read(descriptor, min(remaining, _MARKDOWN_READ_CHUNK_BYTES))
-            if not chunk:
-                return None
-            remaining -= len(chunk)
-            text_parts.append(decoder.decode(chunk, final=False))
-        text_parts.append(decoder.decode(b"", final=True))
-        completed = os.fstat(descriptor)
-        if not stat.S_ISREG(completed.st_mode) or _markdown_snapshot(completed) != initial_snapshot:
-            return None
-        return "".join(text_parts).replace("\r\n", "\n").replace("\r", "\n")
-    except Exception:
-        return None
-    finally:
-        if descriptor >= 0:
-            try:
-                os.close(descriptor)
-            except OSError:
-                pass
-
-
-def _markdown_snapshot(file_stat: os.stat_result) -> tuple[int, int, int, int, int]:
-    return (
-        file_stat.st_dev,
-        file_stat.st_ino,
-        file_stat.st_size,
-        file_stat.st_mtime_ns,
-        file_stat.st_ctime_ns,
-    )
+        inspected = source.path.stat()
+        identity = (inspected.st_dev, inspected.st_ino)
+    except OSError:
+        identity = None
+    return _MarkdownRead(text, identity)
 
 
 def display_context_path(workspace: Path, path: Path) -> str:

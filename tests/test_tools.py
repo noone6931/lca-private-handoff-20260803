@@ -21,7 +21,7 @@ from local_agent.tools.files import file_tools, inspect_image, patch_file, read_
 from local_agent.tools.git import capture_git_baseline, git_diff, git_status
 from local_agent.tools.interaction import ask_user
 from local_agent.tools.lsp import lsp_definition, lsp_diagnostics, lsp_references, lsp_status, lsp_symbols, lsp_tools
-from local_agent.tools.memory import learn, memory_read
+from local_agent.tools.memory import learn, memory_read, memory_write
 from local_agent.tools.search import glob_files
 from local_agent.tools.search import list_files
 from local_agent.tools.search import search_code
@@ -3193,6 +3193,57 @@ class ToolTests(unittest.TestCase):
 
         self.assertTrue(result.is_error)
         self.assertIn("Invalid memory name", result.content)
+
+    def test_project_memory_tools_reject_external_leaf_without_writing_it(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            workspace = root / "workspace"
+            memory_dir = workspace / ".local-agent" / "memory"
+            memory_dir.mkdir(parents=True)
+            external_project = root / "external-project.md"
+            external_learned = root / "external-learned.md"
+            external_project.write_text("PROJECT SECRET\n", encoding="utf-8")
+            external_learned.write_text("LEARNED SECRET\n", encoding="utf-8")
+            (memory_dir / "project.md").symlink_to(external_project)
+            (memory_dir / "learned.md").symlink_to(external_learned)
+            context = ToolContext(workspace=workspace, approval_mode="yolo")
+
+            read = memory_read({"name": "project"}, context)
+            written = memory_write({"name": "project", "note": "MUST NOT WRITE"}, context)
+            learned = learn({"lesson": "MUST NOT LEARN"}, context)
+            project_after = external_project.read_text(encoding="utf-8")
+            learned_after = external_learned.read_text(encoding="utf-8")
+
+        for result in (read, written, learned):
+            self.assertTrue(result.is_error)
+            self.assertEqual(
+                result.metadata.get("denial_kind"),
+                "project_memory_containment",
+            )
+        self.assertEqual(project_after, "PROJECT SECRET\n")
+        self.assertEqual(learned_after, "LEARNED SECRET\n")
+
+    def test_project_memory_tool_text_limits_remain_bounded(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            context = ToolContext(workspace=workspace, approval_mode="yolo")
+
+            written = memory_write(
+                {"name": "project", "note": "n" * 5000},
+                context,
+            )
+            learned = learn({"lesson": "l" * 3000}, context)
+            project = memory_read({"name": "project"}, context)
+            learned_text = memory_read({"name": "learned"}, context)
+            memory_dir = workspace / ".local-agent" / "memory"
+            (memory_dir / "oversized.md").write_text("x" * 21000, encoding="utf-8")
+            oversized = memory_read({"name": "oversized"}, context)
+
+        self.assertFalse(written.is_error)
+        self.assertFalse(learned.is_error)
+        self.assertIn("...<truncated>", project.content)
+        self.assertIn("...<truncated>", learned_text.content)
+        self.assertEqual(len(oversized.content), 20000)
 
     def test_ask_user_non_interactive_returns_tool_error(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

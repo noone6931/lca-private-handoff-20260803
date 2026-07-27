@@ -7872,6 +7872,53 @@ class AgentRuntimeTests(unittest.TestCase):
             )
         )
 
+    def test_project_memory_consolidation_reports_partial_without_following_external_leaf(self) -> None:
+        _MemoryConsolidationClient.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            workspace = root / "workspace"
+            state_dir = root / "state"
+            memory_dir = workspace / ".local-agent" / "memory"
+            memory_dir.mkdir(parents=True)
+            external = root / "external-conventions.md"
+            external.write_text("EXTERNAL\n", encoding="utf-8")
+            (memory_dir / "conventions.md").symlink_to(external)
+            config = AgentConfig(
+                provider="openai-compatible",
+                api_base_url="https://example.invalid/v1",
+                api_key="token",
+                model="model",
+                workspace=workspace,
+                state_dir=state_dir,
+                max_steps=0,
+                budget_seconds=None,
+                approval_mode="yolo",
+                memory_consolidation="auto",
+                memory_scope="project",
+            )
+            with patch("local_agent.agent.OpenAICompatibleClient", _MemoryConsolidationClient):
+                runtime = AgentRuntime(config, show_tool_logs=False)
+                result = runtime.run("记住这个经验：memory 代码改动后要跑 focused tests")
+
+            records = [
+                json.loads(line)
+                for line in runtime._session.path.read_text(encoding="utf-8").splitlines()
+            ]
+            event = next(
+                record["payload"]
+                for record in records
+                if record.get("event") == "memory_consolidation"
+            )
+            external_after = external.read_text(encoding="utf-8")
+            learned_text = (memory_dir / "learned.md").read_text(encoding="utf-8")
+
+        self.assertEqual(result, "Finished the task and learned a convention.")
+        self.assertEqual(external_after, "EXTERNAL\n")
+        self.assertIn("verify both focused agent tests", learned_text)
+        self.assertEqual(event["status"], "partial")
+        self.assertEqual(event["written"], {"learned": 1})
+        self.assertIn("conventions", event["failed"])
+
     def test_memory_consolidation_default_off_does_not_call_llm_or_write_memory(self) -> None:
         _MemoryConsolidationClient.calls = []
         with tempfile.TemporaryDirectory() as tmp:

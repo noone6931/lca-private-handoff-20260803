@@ -85,7 +85,12 @@ OWNER_COMPLEXITY_CEILINGS = {
     "src/local_agent/session/assistant_history.py": 551,
     "src/local_agent/session/jsonl_store.py": 206,
     "src/local_agent/config.py": 760,
-    "src/local_agent/workspace/startup.py": 439,
+    "src/local_agent/platform/rooted_files.py": 471,
+    "src/local_agent/memory/storage.py": 165,
+    "src/local_agent/workspace/startup.py": 422,
+    "src/local_agent/tools/memory.py": 139,
+    "src/local_agent/memory/consolidation.py": 329,
+    "src/local_agent/runtime/memory.py": 151,
 }
 LEGACY_COMPLEXITY_DEBT_CEILINGS = {
     "src/local_agent/agent.py": 1613,
@@ -131,28 +136,95 @@ def _resolved_import_targets(path: Path) -> list[tuple[int, str]]:
 
 
 class ArchitectureBoundaryTests(unittest.TestCase):
-    def test_project_startup_markdown_containment_has_one_typed_owner(self) -> None:
+    def test_project_startup_and_memory_share_one_rooted_file_primitive(self) -> None:
+        rooted_path = ROOT / "src/local_agent/platform/rooted_files.py"
+        storage_path = ROOT / "src/local_agent/memory/storage.py"
         startup_path = ROOT / "src/local_agent/workspace/startup.py"
-        startup = startup_path.read_text(encoding="utf-8")
-        prompt = (ROOT / "src/local_agent/runtime/prompt.py").read_text(encoding="utf-8")
-        agent = (ROOT / "src/local_agent/agent.py").read_text(encoding="utf-8")
+        tools_path = ROOT / "src/local_agent/tools/memory.py"
+        consolidation_path = ROOT / "src/local_agent/memory/consolidation.py"
+        agent_path = ROOT / "src/local_agent/agent.py"
+
+        for _line, target in _resolved_import_targets(rooted_path):
+            self.assertFalse(target.startswith("local_agent"))
+        storage_imports = {
+            target
+            for _line, target in _resolved_import_targets(storage_path)
+        }
+        self.assertIn("local_agent.platform.rooted_files", storage_imports)
+        self.assertFalse(
+            any(
+                target.startswith(
+                    (
+                        "local_agent.agent",
+                        "local_agent.runtime",
+                        "local_agent.tools",
+                        "local_agent.workspace",
+                    )
+                )
+                for target in storage_imports
+            )
+        )
+
         production = list((ROOT / "src/local_agent").rglob("*.py"))
-        containment_owners = [
-            path.relative_to(ROOT).as_posix()
-            for path in production
-            if "def _read_primary_workspace_markdown(" in path.read_text(encoding="utf-8")
-        ]
-        self.assertEqual(containment_owners, ["src/local_agent/workspace/startup.py"])
-        self.assertIn("class _MarkdownSource:", startup)
-        self.assertEqual(startup.count("require_primary_workspace=True"), 2)
-        self.assertEqual(startup.count("def _read_primary_workspace_markdown("), 1)
-        self.assertIn('getattr(os, "O_NOFOLLOW", 0)', startup)
-        self.assertIn('getattr(os, "O_NONBLOCK", 0)', startup)
-        self.assertIn("load_sticky_rules(workspace, user_config_dir", prompt)
-        self.assertNotIn("O_NOFOLLOW", agent)
-        self.assertNotIn("require_primary_workspace", agent)
-        for _line, target in _resolved_import_targets(startup_path):
-            self.assertFalse(target.startswith(("local_agent.agent", "local_agent.runtime")))
+        append_importers: list[str] = []
+        store_importers: list[str] = []
+        for path in production:
+            module = ".".join(path.relative_to(ROOT / "src").with_suffix("").parts)
+            package = module.rpartition(".")[0]
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.ImportFrom):
+                    continue
+                target = (
+                    resolve_name("." * node.level + (node.module or ""), package)
+                    if node.level
+                    else (node.module or "")
+                )
+                names = {alias.name for alias in node.names}
+                relative = path.relative_to(ROOT).as_posix()
+                if target == "local_agent.platform.rooted_files" and "append_rooted_utf8" in names:
+                    append_importers.append(relative)
+                if target == "local_agent.memory.storage" and "ProjectMemoryStore" in names:
+                    store_importers.append(relative)
+        self.assertEqual(append_importers, ["src/local_agent/memory/storage.py"])
+        self.assertEqual(
+            sorted(store_importers),
+            [
+                "src/local_agent/memory/consolidation.py",
+                "src/local_agent/tools/memory.py",
+                "src/local_agent/workspace/startup.py",
+            ],
+        )
+
+        def function_calls(path: Path, name: str) -> set[str]:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            function = next(
+                node
+                for node in ast.walk(tree)
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and node.name == name
+            )
+            return {
+                node.func.attr
+                for node in ast.walk(function)
+                if isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+            }
+
+        direct_project_io = {"open", "read_text", "write_text", "mkdir", "glob"}
+        self.assertTrue(
+            direct_project_io.isdisjoint(function_calls(startup_path, "load_startup_memory"))
+        )
+        self.assertTrue(
+            direct_project_io.isdisjoint(
+                function_calls(consolidation_path, "_append_project_consolidated_memory")
+            )
+        )
+        for name in ("memory_read", "memory_write", "learn"):
+            self.assertTrue(direct_project_io.isdisjoint(function_calls(tools_path, name)))
+        agent = agent_path.read_text(encoding="utf-8")
+        self.assertNotIn("ProjectMemoryStore", agent)
+        self.assertNotIn("rooted_files", agent)
 
     def test_workspace_dotenv_authority_stays_scoped_to_the_config_owner(self) -> None:
         config_path = ROOT / "src/local_agent/config.py"

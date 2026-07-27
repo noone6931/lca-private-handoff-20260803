@@ -154,14 +154,14 @@ class WorkspaceStartupTests(unittest.TestCase):
             socket_project.mkdir(parents=True)
             socket_path = socket_project / "AGENTS.md"
             socket_path.write_text("SOCKET PLACEHOLDER\n", encoding="utf-8")
-            real_lstat = Path.lstat
+            real_stat = os.stat
 
-            def socket_mode_lstat(path: Path):
-                if path == socket_path:
+            def socket_mode_stat(path: object, *args, **kwargs):
+                if path == "AGENTS.md" and kwargs.get("dir_fd") is not None:
                     return SimpleNamespace(st_mode=stat.S_IFSOCK)
-                return real_lstat(path)
+                return real_stat(path, *args, **kwargs)
 
-            with patch.object(Path, "lstat", socket_mode_lstat):
+            with patch("local_agent.platform.rooted_files.os.stat", side_effect=socket_mode_stat):
                 self.assertEqual(
                     load_startup_context_files(socket_workspace, user_config, max_chars=8000),
                     "",
@@ -181,13 +181,14 @@ class WorkspaceStartupTests(unittest.TestCase):
             real_open = os.open
             observed_flags: list[int] = []
 
-            def swap_to_fifo(path: object, flags: int) -> int:
-                observed_flags.append(flags)
-                source.unlink()
-                os.mkfifo(source)
-                return real_open(path, flags)
+            def swap_to_fifo(path: object, flags: int, *args, **kwargs) -> int:
+                if path == "AGENTS.md" and kwargs.get("dir_fd") is not None:
+                    observed_flags.append(flags)
+                    source.unlink()
+                    os.mkfifo(source)
+                return real_open(path, flags, *args, **kwargs)
 
-            with patch("local_agent.workspace.startup.os.open", side_effect=swap_to_fifo):
+            with patch("local_agent.platform.rooted_files.os.open", side_effect=swap_to_fifo):
                 result = load_startup_context_files(workspace, user_config, max_chars=8000)
 
         self.assertEqual(result, "")
@@ -208,9 +209,15 @@ class WorkspaceStartupTests(unittest.TestCase):
             replacement = inode_workspace / "replacement.md"
             replacement.write_text("REPLACEMENT\n", encoding="utf-8")
             real_open = os.open
+
+            def open_replacement(path: object, flags: int, *args, **kwargs) -> int:
+                if path == "AGENTS.md" and kwargs.get("dir_fd") is not None:
+                    return real_open(replacement, flags)
+                return real_open(path, flags, *args, **kwargs)
+
             with patch(
-                "local_agent.workspace.startup.os.open",
-                side_effect=lambda _path, flags: real_open(replacement, flags),
+                "local_agent.platform.rooted_files.os.open",
+                side_effect=open_replacement,
             ):
                 inode_result = load_startup_context_files(inode_workspace, user_config, max_chars=8000)
 
@@ -222,13 +229,14 @@ class WorkspaceStartupTests(unittest.TestCase):
             external = root / "external.md"
             external.write_text("EXTERNAL\n", encoding="utf-8")
 
-            def replace_with_symlink(path: object, flags: int) -> int:
-                symlink_source.unlink()
-                symlink_source.symlink_to(external)
-                return real_open(path, flags)
+            def replace_with_symlink(path: object, flags: int, *args, **kwargs) -> int:
+                if path == "AGENTS.md" and kwargs.get("dir_fd") is not None:
+                    symlink_source.unlink()
+                    symlink_source.symlink_to(external)
+                return real_open(path, flags, *args, **kwargs)
 
             with patch(
-                "local_agent.workspace.startup.os.open",
+                "local_agent.platform.rooted_files.os.open",
                 side_effect=replace_with_symlink,
             ):
                 symlink_result = load_startup_context_files(
@@ -263,7 +271,7 @@ class WorkspaceStartupTests(unittest.TestCase):
                 return chunk
 
             with patch(
-                "local_agent.workspace.startup.os.read",
+                "local_agent.platform.rooted_files.os.read",
                 side_effect=truncate_after_first_read,
             ):
                 self.assertEqual(
@@ -275,12 +283,13 @@ class WorkspaceStartupTests(unittest.TestCase):
             real_fstat = os.fstat
             for changed_field in ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns"):
                 with self.subTest(changed_field=changed_field):
-                    fstat_count = 0
+                    regular_fstat_count = 0
 
                     def drift_after_read(descriptor: int):
-                        nonlocal fstat_count
+                        nonlocal regular_fstat_count
                         current = real_fstat(descriptor)
-                        fstat_count += 1
+                        if stat.S_ISREG(current.st_mode):
+                            regular_fstat_count += 1
                         values = {
                             "st_mode": current.st_mode,
                             "st_dev": current.st_dev,
@@ -289,12 +298,12 @@ class WorkspaceStartupTests(unittest.TestCase):
                             "st_mtime_ns": current.st_mtime_ns,
                             "st_ctime_ns": current.st_ctime_ns,
                         }
-                        if fstat_count == 2:
+                        if regular_fstat_count == 2:
                             values[changed_field] += 1
                         return SimpleNamespace(**values)
 
                     with patch(
-                        "local_agent.workspace.startup.os.fstat",
+                        "local_agent.platform.rooted_files.os.fstat",
                         side_effect=drift_after_read,
                     ):
                         self.assertEqual(

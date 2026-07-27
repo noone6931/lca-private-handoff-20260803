@@ -4,20 +4,32 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from .storage import ProjectMemoryStore
+from .storage import ProjectMemoryStoreError
+from .storage import PROJECT_MEMORY_NAMES
 
 MEMORY_CONSOLIDATION_INPUT_CHAR_LIMIT = 14000
 MEMORY_CONSOLIDATION_OUTPUT_CHAR_LIMIT = 8000
 MEMORY_CONSOLIDATION_MIN_AUTO_CHARS = 500
 MEMORY_CONSOLIDATION_MAX_ITEMS_PER_BUCKET = 5
 MEMORY_CONSOLIDATION_MAX_ITEM_CHARS = 700
-MEMORY_CONSOLIDATION_BUCKETS = ("project", "decisions", "conventions", "learned")
+MEMORY_CONSOLIDATION_BUCKETS = PROJECT_MEMORY_NAMES
 MEMORY_CONSOLIDATION_WRITE_TOOLS = {"memory_write", "learn"}
 
 from ..runtime.prompt import _one_line
 from ..runtime.prompt import _strip_workflow_nudge
+
+
+@dataclass(frozen=True)
+class ProjectMemoryConsolidationResult:
+    written: dict[str, int]
+    failed: dict[str, dict[str, object]]
+
 
 def _messages_to_memory_transcript(
     messages: list[dict[str, Any]],
@@ -246,6 +258,66 @@ def _append_consolidated_memory(
                 handle.write(f"<!-- lca-memory:{digest} -->\n- {item}\n")
         written[bucket] = len(pending)
     return written
+
+
+def _append_project_consolidated_memory(
+    workspace: Path,
+    session_id: str,
+    items_by_bucket: dict[str, list[str]],
+) -> ProjectMemoryConsolidationResult:
+    written: dict[str, int] = {}
+    failed: dict[str, dict[str, object]] = {}
+    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    try:
+        store = ProjectMemoryStore(workspace)
+    except ProjectMemoryStoreError as exc:
+        return ProjectMemoryConsolidationResult(
+            written={},
+            failed={
+                bucket: {
+                    "reason": exc.kind,
+                    "workspace_changed": exc.workspace_changed,
+                }
+                for bucket in MEMORY_CONSOLIDATION_BUCKETS
+                if items_by_bucket.get(bucket)
+            },
+        )
+    for bucket in MEMORY_CONSOLIDATION_BUCKETS:
+        items = items_by_bucket.get(bucket) or []
+        if not items:
+            continue
+        try:
+            document = store.read(bucket, allow_custom=False)
+        except ProjectMemoryStoreError as exc:
+            failed[bucket] = {
+                "reason": exc.kind,
+                "workspace_changed": exc.workspace_changed,
+            }
+            continue
+        existing = document.text if document is not None else ""
+        pending: list[tuple[str, str]] = []
+        for item in items:
+            digest = _memory_item_digest(bucket, item)
+            if f"lca-memory:{digest}" in existing:
+                continue
+            pending.append((digest, item))
+        if not pending:
+            continue
+        payload = f"\n## {stamp} - consolidated from session {session_id}\n\n"
+        payload += "".join(
+            f"<!-- lca-memory:{digest} -->\n- {item}\n"
+            for digest, item in pending
+        )
+        try:
+            store.append(bucket, payload)
+        except ProjectMemoryStoreError as exc:
+            failed[bucket] = {
+                "reason": exc.kind,
+                "workspace_changed": exc.workspace_changed,
+            }
+            continue
+        written[bucket] = len(pending)
+    return ProjectMemoryConsolidationResult(written=written, failed=failed)
 
 
 def _memory_item_digest(bucket: str, item: str) -> str:

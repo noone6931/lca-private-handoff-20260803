@@ -7,7 +7,7 @@ from typing import Any, Protocol
 from ..providers.deadline import call_chat_with_timeout
 from ..providers.llm import LlmError
 from ..memory.consolidation import MEMORY_CONSOLIDATION_INPUT_CHAR_LIMIT, MEMORY_CONSOLIDATION_OUTPUT_CHAR_LIMIT
-from ..memory.consolidation import _append_consolidated_memory, _memory_consolidation_root, _messages_to_memory_transcript, _parse_memory_consolidation_response, _should_auto_consolidate_memory, _run_used_memory_write_tool
+from ..memory.consolidation import _append_consolidated_memory, _append_project_consolidated_memory, _memory_consolidation_root, _messages_to_memory_transcript, _parse_memory_consolidation_response, _should_auto_consolidate_memory, _run_used_memory_write_tool
 
 MEMORY_CONSOLIDATION_REQUEST_TIMEOUT = 30.0
 
@@ -65,22 +65,39 @@ class MemoryConsolidationLifecycle:
         extracted = self.llm_memory_consolidation(transcript, deadline)
         if not extracted:
             return
-        memory_root = _memory_consolidation_root(
-            runtime._workspace_context.primary,
-            runtime._state_dir,
-            runtime._config.memory_scope,
-        )
-        written = _append_consolidated_memory(memory_root, runtime._session.session_id, extracted)
-        runtime._session.append(
-            "memory_consolidation",
-            {
-                "mode": mode,
-                "scope": runtime._config.memory_scope,
-                "memory_root": str(memory_root),
-                "status": "written" if written else "empty",
-                "written": written,
-            },
-        )
+        if runtime._config.memory_scope == "project":
+            memory_root = runtime._workspace_context.primary / ".local-agent" / "memory"
+            project_result = _append_project_consolidated_memory(
+                runtime._workspace_context.primary,
+                runtime._session.session_id,
+                extracted,
+            )
+            written = project_result.written
+            failed = project_result.failed
+        else:
+            memory_root = _memory_consolidation_root(
+                runtime._workspace_context.primary,
+                runtime._state_dir,
+                runtime._config.memory_scope,
+            )
+            written = _append_consolidated_memory(memory_root, runtime._session.session_id, extracted)
+            failed = {}
+        if failed and written:
+            status = "partial"
+        elif failed:
+            status = "failed"
+        else:
+            status = "written" if written else "empty"
+        payload = {
+            "mode": mode,
+            "scope": runtime._config.memory_scope,
+            "memory_root": str(memory_root),
+            "status": status,
+            "written": written,
+        }
+        if failed:
+            payload["failed"] = failed
+        runtime._session.append("memory_consolidation", payload)
 
     def llm_memory_consolidation(self, transcript: str, deadline: float | None) -> dict[str, list[str]] | None:
         runtime = self._runtime
