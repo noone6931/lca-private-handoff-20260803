@@ -15,6 +15,7 @@ from local_agent.lsp.client import StdioLspClient
 from local_agent.lsp.client import close_all_clients
 from local_agent.lsp.config import LspServerConfig
 from local_agent.patch.anchored import hash_text
+from local_agent.protocol.cancellation import RunCancelled
 from local_agent.tools import create_default_registry
 from local_agent.tools.base import Tool, ToolContext, ToolRegistry, ToolResult, VisionInspectionUnavailableError
 from local_agent.tools.files import file_tools, inspect_image, patch_file, read_file, rollback_patch, write_file
@@ -46,6 +47,26 @@ class _FakeStdin:
 def _record_command(args: dict[str, str], received: list[dict[str, str]]) -> ToolResult:
     received.append(args)
     return ToolResult("command accepted")
+
+
+def _required_string_tool(
+    name: str,
+    tier: str,
+    field: str,
+    handler,
+) -> Tool:
+    return Tool(
+        name=name,
+        description=f"test-only {tier} tool",
+        tier=tier,
+        input_schema={
+            "type": "object",
+            "properties": {field: {"type": "string"}},
+            "required": [field],
+            "additionalProperties": False,
+        },
+        handler=handler,
+    )
 
 
 def _write_fake_lsp_server(path: Path) -> None:
@@ -2476,6 +2497,240 @@ class ToolTests(unittest.TestCase):
         self.assertEqual(events[1][1]["tool"], "sample_exec")
         self.assertEqual(events[2][1]["decision"], "allow_once")
         self.assertTrue(events[2][1]["allowed"])
+
+    def test_interactive_approval_accepts_arguments_before_prompt(self) -> None:
+        registry = ToolRegistry(shell_tools())
+        cases = (
+            ("invalid-json", "shell", "{"),
+            ("non-object", "shell", "[]"),
+            ("schema-invalid", "shell", {}),
+            ("compat-conflict", "run_tests", {"command": "one", "cmd": "two"}),
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            for label, tool_name, arguments in cases:
+                with self.subTest(label=label):
+                    events: list[tuple[str, dict[str, object]]] = []
+                    session_policy: dict[str, str] = {}
+                    context = ToolContext(
+                        workspace=Path(tmp).resolve(),
+                        approval_mode="always-ask",
+                        session_tool_approval=session_policy,
+                        event_callback=lambda event_type, payload: events.append((event_type, payload)),
+                    )
+                    with patch("sys.stdin.isatty", return_value=True), patch(
+                        "builtins.input",
+                        side_effect=AssertionError("invalid arguments must not prompt"),
+                    ):
+                        result = registry.execute(tool_name, arguments, context)
+
+                    self.assertTrue(result.is_error)
+                    self.assertEqual(session_policy, {})
+                    self.assertEqual(
+                        [event_type for event_type, _payload in events],
+                        ["ExecutionPolicyEvaluated"],
+                    )
+
+    def test_registry_scope_rejection_happens_before_interactive_prompt(self) -> None:
+        calls: list[dict[str, object]] = []
+        registry = ToolRegistry(
+            [
+                _required_string_tool(
+                    "read_file",
+                    "read",
+                    "path",
+                    lambda args, _context: calls.append(args) or ToolResult("ok"),
+                )
+            ]
+        )
+        events: list[tuple[str, dict[str, object]]] = []
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            context = ToolContext(
+                workspace=workspace,
+                approval_mode="yolo",
+                tool_approval={"read_file": "prompt"},
+                runtime_read_file_paths=frozenset({str(workspace / "allowed.py")}),
+                event_callback=lambda event_type, payload: events.append((event_type, payload)),
+            )
+            with patch("sys.stdin.isatty", return_value=True), patch(
+                "builtins.input",
+                side_effect=AssertionError("scope-invalid arguments must not prompt"),
+            ):
+                result = registry.execute("read_file", {"path": "outside.py"}, context)
+
+        self.assertTrue(result.is_error)
+        self.assertIn("Runtime candidate read restriction", result.content)
+        self.assertEqual(calls, [])
+        self.assertEqual(
+            [event_type for event_type, _payload in events],
+            ["ExecutionPolicyEvaluated"],
+        )
+
+    def test_hard_approval_denials_keep_precedence_over_invalid_arguments(self) -> None:
+        registry = ToolRegistry(
+            [
+                _required_string_tool(
+                    "sample_write",
+                    "write",
+                    "value",
+                    lambda _args, _context: ToolResult("should not run"),
+                )
+            ]
+        )
+        cases = (
+            ("config", {"sample_write": "deny"}, None, True, "tool_approval"),
+            ("session", None, {"sample_write": "reject_always"}, True, "session approval"),
+            ("noninteractive", None, None, False, "requires approval"),
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            for label, config_policy, session_policy, interactive, expected in cases:
+                with self.subTest(label=label):
+                    events: list[tuple[str, dict[str, object]]] = []
+                    context = ToolContext(
+                        workspace=Path(tmp).resolve(),
+                        approval_mode="always-ask",
+                        tool_approval=config_policy,
+                        session_tool_approval=session_policy,
+                        event_callback=lambda event_type, payload: events.append((event_type, payload)),
+                    )
+                    with patch("sys.stdin.isatty", return_value=interactive):
+                        result = registry.execute("sample_write", "{", context)
+
+                    self.assertTrue(result.is_error)
+                    self.assertIn(expected, result.content)
+                    self.assertEqual(
+                        sum(event_type == "ExecutionPolicyEvaluated" for event_type, _payload in events),
+                        1,
+                    )
+                    self.assertFalse(any(event_type == "ApprovalRequested" for event_type, _payload in events))
+
+    def test_write_session_grant_commits_only_after_successful_handler(self) -> None:
+        calls: list[str] = []
+        registry = ToolRegistry(
+            [
+                _required_string_tool(
+                    "sample_write",
+                    "write",
+                    "outcome",
+                    lambda args, _context: (
+                        calls.append(str(args["outcome"]))
+                        or ToolResult("failed", is_error=True)
+                        if args["outcome"] == "error"
+                        else calls.append(str(args["outcome"])) or ToolResult("ok")
+                    ),
+                )
+            ]
+        )
+        events: list[tuple[str, dict[str, object]]] = []
+        with tempfile.TemporaryDirectory() as tmp:
+            session_policy: dict[str, str] = {}
+            context = ToolContext(
+                workspace=Path(tmp).resolve(),
+                approval_mode="always-ask",
+                session_tool_approval=session_policy,
+                event_callback=lambda event_type, payload: events.append((event_type, payload)),
+            )
+            with patch("sys.stdin.isatty", return_value=True), patch(
+                "builtins.input",
+                side_effect=("s", "s"),
+            ) as ask:
+                failed = registry.execute("sample_write", {"outcome": "error"}, context)
+                succeeded = registry.execute("sample_write", {"outcome": "success"}, context)
+                cached = registry.execute("sample_write", {"outcome": "cached"}, context)
+
+        self.assertTrue(failed.is_error)
+        self.assertFalse(succeeded.is_error)
+        self.assertFalse(cached.is_error)
+        self.assertEqual(calls, ["error", "success", "cached"])
+        self.assertEqual(ask.call_count, 2)
+        self.assertEqual(session_policy, {"sample_write": "allow_always"})
+        grant_results = [
+            payload for event_type, payload in events
+            if event_type == "ApprovalResult" and payload.get("session_grant_status")
+        ]
+        self.assertEqual(
+            [(payload["decision"], payload["session_grant_status"]) for payload in grant_results],
+            [
+                ("allow_session", "discarded"),
+                ("allow_session", "committed"),
+            ],
+        )
+        self.assertTrue(all(payload["session_grant_requested"] for payload in grant_results))
+        self.assertTrue(all(payload["session_grant_was_pending"] for payload in grant_results))
+
+    def test_pending_session_grant_is_discarded_on_exception_and_cancel(self) -> None:
+        class _CancelAfterApproval:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def is_set(self) -> bool:
+                self.calls += 1
+                return self.calls >= 2
+
+        attempts: list[str] = []
+
+        def handler(args: dict[str, object], _context: ToolContext) -> ToolResult:
+            attempts.append(str(args["outcome"]))
+            raise RuntimeError("handler failed")
+
+        registry = ToolRegistry(
+            [
+                _required_string_tool("sample_write", "write", "outcome", handler)
+            ]
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            session_policy: dict[str, str] = {}
+            events: list[tuple[str, dict[str, object]]] = []
+            base_context = {
+                "workspace": Path(tmp).resolve(),
+                "approval_mode": "always-ask",
+                "session_tool_approval": session_policy,
+                "event_callback": lambda event_type, payload: events.append((event_type, payload)),
+            }
+            with patch("sys.stdin.isatty", return_value=True), patch("builtins.input", return_value="s"):
+                failed = registry.execute("sample_write", {"outcome": "exception"}, ToolContext(**base_context))
+            with patch("sys.stdin.isatty", return_value=True), patch("builtins.input", return_value="s"):
+                with self.assertRaises(RunCancelled):
+                    registry.execute(
+                        "sample_write",
+                        {"outcome": "cancel"},
+                        ToolContext(**base_context, cancel_event=_CancelAfterApproval()),
+                    )
+
+        self.assertTrue(failed.is_error)
+        self.assertIn("RuntimeError: handler failed", failed.content)
+        self.assertEqual(attempts, ["exception"])
+        self.assertEqual(session_policy, {})
+        statuses = [
+            payload["session_grant_status"]
+            for event_type, payload in events
+            if event_type == "ApprovalResult" and payload.get("session_grant_status")
+        ]
+        self.assertEqual(statuses, ["discarded", "discarded"])
+
+    def test_valid_compatibility_arguments_are_normalized_before_approval(self) -> None:
+        received: list[dict[str, object]] = []
+        registry = ToolRegistry(
+            [
+                _required_string_tool(
+                    "run_tests",
+                    "write",
+                    "command",
+                    lambda args, _context: received.append(args) or ToolResult("ok"),
+                )
+            ]
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch("sys.stdin.isatty", return_value=True), patch("builtins.input", return_value="y"):
+                result = registry.execute(
+                    "run_tests",
+                    {"cmd": "python3 -m unittest"},
+                    ToolContext(workspace=Path(tmp).resolve(), approval_mode="always-ask"),
+                )
+
+        self.assertFalse(result.is_error)
+        self.assertEqual(received, [{"command": "python3 -m unittest"}])
+        self.assertEqual(result.metadata["compatibility_normalized"], ["cmd -> command"])
 
     def test_write_tool_approval_eof_returns_tool_error(self) -> None:
         registry = ToolRegistry(

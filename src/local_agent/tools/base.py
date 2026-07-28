@@ -170,6 +170,7 @@ class ToolRegistry:
                     "allowed_tools": sorted(context.runtime_tool_allowlist),
                 },
             )
+        pending_session_grant = False
         try:
             policy_decision = _execution_policy_decision(
                 tool,
@@ -177,17 +178,8 @@ class ToolRegistry:
                 interactive_available=_interaction_tool_can_prompt(context),
             )
             _emit_context_event(context, "ExecutionPolicyEvaluated", policy_decision.event_payload())
-            denial_reason = _execution_policy_denial_reason(tool, context, policy_decision)
-            if denial_reason:
-                return ToolResult(
-                    denial_reason,
-                    is_error=True,
-                    metadata={
-                        "execution_status": "denied",
-                        "denial_kind": "approval",
-                        "tool": tool.name,
-                    },
-                )
+            if policy_decision.outcome == "deny":
+                return _approval_denied_result(tool, _execution_policy_denial_reason(tool, context, policy_decision))
             arguments = raw_arguments if isinstance(raw_arguments, dict) else json.loads(raw_arguments or "{}")
             if not isinstance(arguments, dict):
                 return ToolResult("Tool arguments must be a JSON object.", is_error=True)
@@ -196,6 +188,12 @@ class ToolRegistry:
             scope_denial = _runtime_read_file_scope_denial_reason(name, arguments, context)
             if scope_denial:
                 return ToolResult(scope_denial, is_error=True)
+            if policy_decision.outcome == "prompt":
+                denial_reason, pending_session_grant = _interactive_approval_denial_reason(
+                    tool, context, allow_session_cache=policy_decision.session_cache_allowed
+                )
+                if denial_reason:
+                    return _approval_denied_result(tool, denial_reason)
             raise_if_cancelled(context.cancel_event)
             result = tool.handler(arguments, context)
             if compatibility_notes:
@@ -214,15 +212,25 @@ class ToolRegistry:
                         f"{content}\n\n[compatibility normalized] {'; '.join(compatibility_notes)}. "
                         "Use canonical tool arguments on the next call."
                     )
-                return ToolResult(
+                result = ToolResult(
                     content,
                     is_error=result.is_error,
                     useless=result.useless,
                     metadata=metadata,
                 )
+            if pending_session_grant:
+                pending_session_grant = False
+                _settle_pending_session_grant(tool, context, commit=not result.is_error)
             return result
         except Exception as exc:  # noqa: BLE001 - tool errors must be returned to the model.
+            if pending_session_grant:
+                pending_session_grant = False
+                _settle_pending_session_grant(tool, context, commit=False)
             return ToolResult(f"{type(exc).__name__}: {exc}", is_error=True)
+        except BaseException:
+            if pending_session_grant:
+                _settle_pending_session_grant(tool, context, commit=False)
+            raise
 
     def _exposed_tool_names(self, context: ToolContext) -> list[str]:
         """Return only tools this runtime could expose to the current model turn."""
@@ -323,33 +331,14 @@ def _execution_policy_decision(
     )
 
 
-def _execution_policy_denial_reason(
-    tool: Tool,
-    context: ToolContext,
-    decision: ExecutionPolicyDecision,
-) -> str | None:
-    if decision.outcome == "allow":
-        return None
-    if decision.outcome == "prompt":
-        return _interactive_approval_denial_reason(
-            tool,
-            context,
-            allow_session_cache=decision.session_cache_allowed,
-        )
+def _execution_policy_denial_reason(tool: Tool, context: ToolContext, decision: ExecutionPolicyDecision) -> str:
     if decision.source == "config_per_tool":
         return f"Tool '{tool.name}' is denied by tool_approval policy."
     if decision.source == "session_per_tool":
         return f"Tool '{tool.name}' is denied by session approval policy."
-    _emit_context_event(
-        context,
-        "ApprovalResult",
-        {
-            "tool": tool.name,
-            "tier": tool.tier,
-            "decision": "non_interactive",
-            "allowed": False,
-        },
-    )
+    _emit_context_event(context, "ApprovalResult", {
+        "tool": tool.name, "tier": tool.tier, "decision": "non_interactive", "allowed": False,
+    })
     return (
         f"Tool '{tool.name}' requires approval, but stdin is not interactive. "
         "Run with an interactive terminal, use --approval-mode write for write-safe tasks, "
@@ -357,55 +346,37 @@ def _execution_policy_denial_reason(
     )
 
 
+def _approval_denied_result(tool: Tool, reason: str) -> ToolResult:
+    return ToolResult(
+        reason,
+        is_error=True,
+        metadata={"execution_status": "denied", "denial_kind": "approval", "tool": tool.name},
+    )
+
+
 def _interactive_approval_denial_reason(
-    tool: Tool,
-    context: ToolContext,
-    *,
-    allow_session_cache: bool = True,
-) -> str | None:
+    tool: Tool, context: ToolContext, *, allow_session_cache: bool = True
+) -> tuple[str | None, bool]:
     if context.interaction_handler is not None:
         return _interactive_approval_with_handler(tool, context, allow_session_cache=allow_session_cache)
     prompt = _approval_prompt(tool, allow_session_cache=allow_session_cache)
-    _emit_context_event(
-        context,
-        "ApprovalRequested",
-        {
-            "tool": tool.name,
-            "tier": tool.tier,
-            "allow_session_cache": allow_session_cache,
-        },
-    )
+    _emit_context_event(context, "ApprovalRequested", {
+        "tool": tool.name, "tier": tool.tier, "allow_session_cache": allow_session_cache,
+    })
     try:
         answer = _read_approval_answer(prompt, context)
     except EOFError:
         _emit_approval_result(tool, context, "eof", allowed=False)
-        return f"Tool '{tool.name}' requires approval, but stdin closed before a decision."
+        return f"Tool '{tool.name}' requires approval, but stdin closed before a decision.", False
     if answer is None:
         _emit_approval_result(tool, context, "cancelled", allowed=False)
-        return f"Tool '{tool.name}' approval cancelled because budget_seconds is exhausted."
-    if answer in {"y", "yes"}:
-        _emit_approval_result(tool, context, "allow_once", allowed=True)
-        return None
-    if allow_session_cache and answer in {"s", "session", "always"}:
-        if context.session_tool_approval is not None:
-            context.session_tool_approval[tool.name] = "allow_always"
-        _emit_approval_result(tool, context, "allow_session", allowed=True)
-        return None
-    if allow_session_cache and answer in {"d", "deny", "reject_always"}:
-        if context.session_tool_approval is not None:
-            context.session_tool_approval[tool.name] = "reject_always"
-        _emit_approval_result(tool, context, "reject_session", allowed=False)
-        return f"User denied tool execution for this session: {tool.name}"
-    _emit_approval_result(tool, context, "reject_once", allowed=False)
-    return f"User denied tool execution: {tool.name}"
+        return f"Tool '{tool.name}' approval cancelled because budget_seconds is exhausted.", False
+    return _approval_answer_denial_reason(tool, context, answer, allow_session_cache=allow_session_cache)
 
 
 def _interactive_approval_with_handler(
-    tool: Tool,
-    context: ToolContext,
-    *,
-    allow_session_cache: bool,
-) -> str | None:
+    tool: Tool, context: ToolContext, *, allow_session_cache: bool
+) -> tuple[str | None, bool]:
     prompt = _approval_prompt(tool, allow_session_cache=allow_session_cache)
     _emit_context_event(
         context,
@@ -431,7 +402,7 @@ def _interactive_approval_with_handler(
     if result.status == "cancelled":
         _emit_context_event(context, "InteractionCancelled", {"kind": "approval", "tool": tool.name})
         _emit_approval_result(tool, context, "cancelled", allowed=False)
-        return f"Tool '{tool.name}' approval cancelled by user."
+        return f"Tool '{tool.name}' approval cancelled by user.", False
     if result.status != "answered":
         _emit_context_event(
             context,
@@ -440,29 +411,46 @@ def _interactive_approval_with_handler(
         )
         _emit_approval_result(tool, context, "cancelled", allowed=False)
         if result.status == "eof":
-            return f"Tool '{tool.name}' requires approval, but stdin closed before a decision."
-        return f"Tool '{tool.name}' approval cancelled because budget_seconds is exhausted."
+            return f"Tool '{tool.name}' requires approval, but stdin closed before a decision.", False
+        return f"Tool '{tool.name}' approval cancelled because budget_seconds is exhausted.", False
     answer = (result.value or "").strip().lower()
     _emit_context_event(
         context,
         "InteractionResolved",
         {"kind": "approval", "tool": tool.name, "answer": answer},
     )
+    return _approval_answer_denial_reason(tool, context, answer, allow_session_cache=allow_session_cache)
+
+
+def _approval_answer_denial_reason(
+    tool: Tool, context: ToolContext, answer: str, *, allow_session_cache: bool
+) -> tuple[str | None, bool]:
     if answer in {"y", "yes"}:
         _emit_approval_result(tool, context, "allow_once", allowed=True)
-        return None
+        return None, False
     if allow_session_cache and answer in {"s", "session", "always"}:
-        if context.session_tool_approval is not None:
-            context.session_tool_approval[tool.name] = "allow_always"
-        _emit_approval_result(tool, context, "allow_session", allowed=True)
-        return None
+        return None, True
     if allow_session_cache and answer in {"d", "deny", "reject_always"}:
         if context.session_tool_approval is not None:
             context.session_tool_approval[tool.name] = "reject_always"
         _emit_approval_result(tool, context, "reject_session", allowed=False)
-        return f"User denied tool execution for this session: {tool.name}"
+        return f"User denied tool execution for this session: {tool.name}", False
     _emit_approval_result(tool, context, "reject_once", allowed=False)
-    return f"User denied tool execution: {tool.name}"
+    return f"User denied tool execution: {tool.name}", False
+
+
+def _settle_pending_session_grant(tool: Tool, context: ToolContext, *, commit: bool) -> None:
+    committed = commit and context.session_tool_approval is not None
+    if committed:
+        context.session_tool_approval[tool.name] = "allow_always"
+    status = "committed" if committed else "discarded"
+    _emit_approval_result(
+        tool,
+        context,
+        "allow_session",
+        allowed=True,
+        session_grant_status=status,
+    )
 
 
 def _approval_prompt(tool: Tool, *, allow_session_cache: bool) -> str:
@@ -501,16 +489,25 @@ def _interaction_timeout_seconds(context: ToolContext) -> float | None:
     return max(0.0, remaining)
 
 
-def _emit_approval_result(tool: Tool, context: ToolContext, decision: str, *, allowed: bool) -> None:
+def _emit_approval_result(
+    tool: Tool, context: ToolContext, decision: str, *, allowed: bool, session_grant_status: str | None = None
+) -> None:
+    payload: dict[str, Any] = {
+        "tool": tool.name,
+        "tier": tool.tier,
+        "decision": decision,
+        "allowed": allowed,
+    }
+    if session_grant_status is not None:
+        payload.update(
+            session_grant_requested=True,
+            session_grant_was_pending=True,
+            session_grant_status=session_grant_status,
+        )
     _emit_context_event(
         context,
         "ApprovalResult",
-        {
-            "tool": tool.name,
-            "tier": tool.tier,
-            "decision": decision,
-            "allowed": allowed,
-        },
+        payload,
     )
 
 

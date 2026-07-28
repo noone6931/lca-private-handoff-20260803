@@ -130,6 +130,47 @@ class TerminalInteractionTests(unittest.TestCase):
         self.assertEqual(event_types.count("InteractionRequested"), 2)
         self.assertEqual(event_types.count("InteractionResolved"), 2)
 
+    def test_write_session_grant_settles_after_terminal_handler_result(self) -> None:
+        decisions: dict[str, str] = {}
+        events: list[tuple[str, dict]] = []
+        controller = TerminalInteractionController(
+            input_stream=io.StringIO("s\ns\n"),
+            output_stream=io.StringIO(),
+        )
+        outcomes = iter((ToolResult("authority rejected", is_error=True), ToolResult("ok")))
+        registry = ToolRegistry(
+            [
+                Tool(
+                    name="sample_write",
+                    description="sample write",
+                    tier="write",
+                    input_schema={"type": "object", "properties": {}, "additionalProperties": False},
+                    handler=lambda _args, _context: next(outcomes),
+                )
+            ]
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            context = ToolContext(
+                workspace=Path(tmp),
+                approval_mode="always-ask",
+                session_tool_approval=decisions,
+                interaction_handler=controller,
+                event_callback=lambda event_type, payload: events.append((event_type, payload)),
+            )
+            failed = registry.execute("sample_write", {}, context)
+            self.assertEqual(decisions, {})
+            succeeded = registry.execute("sample_write", {}, context)
+
+        self.assertTrue(failed.is_error)
+        self.assertFalse(succeeded.is_error)
+        self.assertEqual(decisions, {"sample_write": "allow_always"})
+        settlements = [
+            payload["session_grant_status"]
+            for event_type, payload in events
+            if event_type == "ApprovalResult" and payload.get("session_grant_status")
+        ]
+        self.assertEqual(settlements, ["discarded", "committed"])
+
     def test_cancelled_approval_returns_a_cancelled_tool_result(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             controller = TerminalInteractionController(
