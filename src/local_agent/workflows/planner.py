@@ -6,8 +6,7 @@ from .contracts import RequirementContract
 from .tool_choice.queue import CODE_EVIDENCE_TOOL_NAMES
 from .tool_choice.queue import autonomous_small_change_candidate_paths
 from ..tools.observation import ToolResultSummary
-from .tool_choice.queue import WRITE_TOOL_NAMES
-from ..evidence.timeline import result_changed_workspace
+from ..evidence.timeline import result_is_workspace_write
 
 
 PlannerPhase = Literal["not_applicable", "explore", "candidate_committed", "ready_to_implement", "verify"]
@@ -91,11 +90,7 @@ def _has_successful_code_evidence(tool_results: list[ToolResultSummary]) -> bool
 
 
 def _workspace_write_happened(tool_results: list[ToolResultSummary]) -> bool:
-    return any(result.name in WRITE_TOOL_NAMES and _changed_workspace(result) for result in tool_results)
-
-
-def _changed_workspace(result: ToolResultSummary) -> bool:
-    return result_changed_workspace(result)
+    return any(result_is_workspace_write(result) for result in tool_results)
 
 
 __all__ = [

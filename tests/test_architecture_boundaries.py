@@ -76,8 +76,9 @@ OWNER_COMPLEXITY_CEILINGS = {
     "src/local_agent/lsp/workspace_edit.py": 472,
     "src/local_agent/lsp/workspace_edit_store.py": 225,
     "src/local_agent/patch/anchored.py": 322,
-    "src/local_agent/patch/journal.py": 54,
-    "src/local_agent/patch/transaction.py": 176,
+    "src/local_agent/patch/journal.py": 61,
+    "src/local_agent/patch/transaction.py": 339,
+    "src/local_agent/patch/transaction_contracts.py": 172,
     "src/local_agent/tools/files.py": 891,
     "src/local_agent/tools/workspace_edit.py": 230,
     "src/local_agent/tools/lsp_rename.py": 222,
@@ -86,7 +87,14 @@ OWNER_COMPLEXITY_CEILINGS = {
     "src/local_agent/session/assistant_history.py": 551,
     "src/local_agent/session/jsonl_store.py": 206,
     "src/local_agent/config.py": 760,
-    "src/local_agent/platform/rooted_files.py": 601,
+    "src/local_agent/platform/rooted_files.py": 708,
+    "src/local_agent/platform/rooted_contracts.py": 65,
+    "src/local_agent/platform/rooted_paths.py": 99,
+    "src/local_agent/platform/rooted_validation.py": 93,
+    "src/local_agent/tools/workspace_mutation.py": 384,
+    "src/local_agent/tools/workspace_mutation_contracts.py": 69,
+    "src/local_agent/tools/workspace_mutation_journal.py": 100,
+    "src/local_agent/tools/workspace_mutation_record.py": 121,
     "src/local_agent/memory/storage.py": 187,
     "src/local_agent/workspace/startup.py": 441,
     "src/local_agent/tools/memory.py": 148,
@@ -139,14 +147,46 @@ def _resolved_import_targets(path: Path) -> list[tuple[int, str]]:
 class ArchitectureBoundaryTests(unittest.TestCase):
     def test_project_startup_and_memory_share_one_rooted_file_primitive(self) -> None:
         rooted_path = ROOT / "src/local_agent/platform/rooted_files.py"
+        exchange_path = ROOT / "src/local_agent/platform/rooted_exchange.py"
+        mutation_path = ROOT / "src/local_agent/platform/rooted_mutation.py"
         storage_path = ROOT / "src/local_agent/memory/storage.py"
         startup_path = ROOT / "src/local_agent/workspace/startup.py"
         tools_path = ROOT / "src/local_agent/tools/memory.py"
         consolidation_path = ROOT / "src/local_agent/memory/consolidation.py"
         agent_path = ROOT / "src/local_agent/agent.py"
 
-        for _line, target in _resolved_import_targets(rooted_path):
-            self.assertFalse(target.startswith("local_agent"))
+        rooted_dependencies = {
+            target
+            for _line, target in _resolved_import_targets(rooted_path)
+            if target.startswith("local_agent")
+        }
+        self.assertEqual(
+            rooted_dependencies,
+            {
+                "local_agent.platform.rooted_contracts",
+                "local_agent.platform.rooted_mutation",
+                "local_agent.platform.rooted_mutation_validation",
+                "local_agent.platform.rooted_paths",
+                "local_agent.platform.rooted_validation",
+            },
+        )
+        exchange_importers = {
+            path.relative_to(ROOT).as_posix()
+            for path in (ROOT / "src/local_agent").rglob("*.py")
+            for _line, target in _resolved_import_targets(path)
+            if target == "local_agent.platform.rooted_exchange"
+        }
+        self.assertEqual(
+            exchange_importers,
+            {mutation_path.relative_to(ROOT).as_posix()},
+        )
+        self.assertNotIn(
+            "local_agent.platform.rooted_files",
+            {
+                target
+                for _line, target in _resolved_import_targets(exchange_path)
+            },
+        )
         storage_imports = {
             target
             for _line, target in _resolved_import_targets(storage_path)
@@ -226,6 +266,121 @@ class ArchitectureBoundaryTests(unittest.TestCase):
         agent = agent_path.read_text(encoding="utf-8")
         self.assertNotIn("ProjectMemoryStore", agent)
         self.assertNotIn("rooted_files", agent)
+
+    def test_workspace_text_mutation_keeps_one_rooted_io_and_transaction_owner(self) -> None:
+        production = list((ROOT / "src/local_agent").rglob("*.py"))
+        rooted_importers: dict[str, list[str]] = {
+            "mutate_rooted_regular": [],
+            "read_rooted_regular": [],
+        }
+        for path in production:
+            module = ".".join(
+                path.relative_to(ROOT / "src").with_suffix("").parts
+            )
+            package = module.rpartition(".")[0]
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.ImportFrom):
+                    continue
+                target = (
+                    resolve_name(
+                        "." * node.level + (node.module or ""),
+                        package,
+                    )
+                    if node.level
+                    else (node.module or "")
+                )
+                if target != "local_agent.platform.rooted_files":
+                    continue
+                for alias in node.names:
+                    if alias.name in rooted_importers:
+                        rooted_importers[alias.name].append(
+                            path.relative_to(ROOT).as_posix()
+                        )
+        expected = ["src/local_agent/patch/transaction.py"]
+        self.assertEqual(rooted_importers["mutate_rooted_regular"], expected)
+        self.assertEqual(rooted_importers["read_rooted_regular"], expected)
+
+        transaction = (
+            ROOT / "src/local_agent/patch/transaction.py"
+        ).read_text(encoding="utf-8")
+        coordinator = (
+            ROOT / "src/local_agent/tools/workspace_mutation.py"
+        ).read_text(encoding="utf-8")
+        routing = (
+            ROOT / "src/local_agent/tools/isolation_routing.py"
+        ).read_text(encoding="utf-8")
+        runtime = (
+            ROOT / "src/local_agent/tools/container_runtime.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn("def apply_rooted_text_transaction(", transaction)
+        self.assertIn("def restore_rooted_text_transaction(", transaction)
+        self.assertIn("commit_container_workspace_output", routing)
+        self.assertNotIn("workspace_mutation", runtime)
+        self.assertNotIn("process_runtime", coordinator)
+        self.assertNotIn("container_runtime", coordinator)
+        self.assertEqual(transaction.count("def _write_bytes("), 1)
+        for forbidden in (".unlink(", "os.replace(", "os.remove("):
+            self.assertNotIn(forbidden, transaction)
+        for forbidden in (
+            ".write_bytes(",
+            ".write_text(",
+            ".unlink(",
+            "os.replace(",
+            "os.remove(",
+        ):
+            self.assertNotIn(forbidden, coordinator)
+
+        for name in (
+            "rooted_contracts.py",
+            "rooted_paths.py",
+            "rooted_validation.py",
+        ):
+            helper = (
+                ROOT / "src/local_agent/platform" / name
+            ).read_text(encoding="utf-8")
+            for forbidden in (
+                "os.open(",
+                "os.write(",
+                "os.unlink(",
+                "os.mkdir(",
+                "os.ftruncate(",
+            ):
+                self.assertNotIn(forbidden, helper)
+
+        for name in (
+            "workspace_mutation_contracts.py",
+            "workspace_mutation_journal.py",
+            "workspace_mutation_record.py",
+        ):
+            helper_path = ROOT / "src/local_agent/tools" / name
+            helper = helper_path.read_text(encoding="utf-8")
+            imports = {
+                target
+                for _line, target in _resolved_import_targets(helper_path)
+            }
+            self.assertFalse(
+                any(
+                    target.endswith(
+                        (
+                            ".container_runtime",
+                            ".process_runtime",
+                            ".workspace_mutation",
+                        )
+                    )
+                    for target in imports
+                )
+            )
+            for forbidden in (
+                "apply_rooted_text_transaction(",
+                "restore_rooted_text_transaction(",
+                "append_patch_record(",
+                "os.open(",
+                "os.write(",
+                "os.unlink(",
+                "os.ftruncate(",
+            ):
+                self.assertNotIn(forbidden, helper)
 
     def test_project_memory_production_paths_require_workspace_identity_snapshot(self) -> None:
         paths = (
@@ -966,6 +1121,9 @@ class ArchitectureBoundaryTests(unittest.TestCase):
         store = (ROOT / "src/local_agent/lsp/workspace_edit_store.py").read_text(encoding="utf-8")
         config = (ROOT / "src/local_agent/lsp/config.py").read_text(encoding="utf-8")
         writer = (ROOT / "src/local_agent/patch/transaction.py").read_text(encoding="utf-8")
+        transaction_contracts = (
+            ROOT / "src/local_agent/patch/transaction_contracts.py"
+        ).read_text(encoding="utf-8")
         apply_tool = (ROOT / "src/local_agent/tools/workspace_edit.py").read_text(encoding="utf-8")
         anchored = (ROOT / "src/local_agent/patch/anchored.py").read_text(encoding="utf-8")
         code_action = (ROOT / "src/local_agent/tools/lsp_code_action.py").read_text(encoding="utf-8")
@@ -983,7 +1141,13 @@ class ArchitectureBoundaryTests(unittest.TestCase):
         self.assertIn("class WorkspaceEditPlanStore:", store)
         self.assertIn("class WorkspaceEditPlanProvenance:", store)
         self.assertIn("def server_identity(", config)
-        self.assertIn("class ExistingTextFileChange:", writer)
+        self.assertIn("class ExistingTextFileChange:", transaction_contracts)
+        self.assertEqual(
+            (writer + transaction_contracts).count(
+                "class ExistingTextFileChange:"
+            ),
+            1,
+        )
         self.assertIn("def restore_existing_text_transaction(", writer)
         self.assertEqual(writer.count("def _write_bytes("), 1)
         self.assertNotIn("write_bytes", apply_tool)
@@ -1000,6 +1164,8 @@ class ArchitectureBoundaryTests(unittest.TestCase):
 
     def test_patch_journal_has_one_atomic_persistence_owner(self) -> None:
         journal = (ROOT / "src/local_agent/patch/journal.py").read_text(encoding="utf-8")
+        journal_io = (ROOT / "src/local_agent/patch/journal_io.py").read_text(encoding="utf-8")
+        journal_recovery = (ROOT / "src/local_agent/patch/journal_recovery.py").read_text(encoding="utf-8")
         files = (ROOT / "src/local_agent/tools/files.py").read_text(encoding="utf-8")
         transaction = (ROOT / "src/local_agent/patch/transaction.py").read_text(encoding="utf-8")
         production = "\n".join(
@@ -1010,15 +1176,18 @@ class ArchitectureBoundaryTests(unittest.TestCase):
         self.assertIn("append_patch_record as _append_patch_record", files)
         self.assertNotIn('open("a"', files)
         self.assertIn("os.replace(temporary, path)", journal)
-        append_body = journal.split("def append_patch_record", 1)[1].split("def _write_temporary_file", 1)[0]
+        append_body = journal.split("def append_patch_record", 1)[1]
         self.assertLess(
-            append_body.index("_write_temporary_file"),
+            append_body.index("write_journal_temporary"),
             append_body.index("        os.replace(temporary, path)"),
         )
-        self.assertIn("handle.flush()", journal)
-        self.assertIn("os.fsync(handle.fileno())", journal)
-        self.assertNotIn("local_agent.tools", journal)
-        self.assertNotIn("transaction", journal)
+        self.assertIn("handle.flush()", journal_io)
+        self.assertIn("os.fsync(handle.fileno())", journal_io)
+        self.assertNotIn("os.replace", journal_io)
+        self.assertNotIn("os.replace", journal_recovery)
+        journal_owner = journal + journal_io + journal_recovery
+        self.assertNotIn("local_agent.tools", journal_owner)
+        self.assertNotIn("transaction", journal_owner)
         self.assertNotIn("os.replace", transaction)
 
     def test_lsp_code_action_preview_has_one_owner_and_cannot_execute_or_write(self) -> None:
@@ -1090,6 +1259,241 @@ class ArchitectureBoundaryTests(unittest.TestCase):
         self.assertNotIn("LspServerConfig", runtime)
         self.assertNotIn("StdioLspClient", runtime)
         self.assertNotIn("local_agent.lsp", process_environment)
+
+    def test_container_isolation_keeps_one_process_owner_and_acyclic_layers(self) -> None:
+        execution_root = ROOT / "src/local_agent/execution"
+        container_files = tuple(sorted(execution_root.glob("container_*.py")))
+        contents = {
+            path.name: path.read_text(encoding="utf-8")
+            for path in container_files
+        }
+        joined = "\n".join(contents.values())
+
+        self.assertEqual(
+            set(contents),
+            {
+                "container_backend.py",
+                "container_cleanup.py",
+                "container_durable_recovery.py",
+                "container_inspect_schema.py",
+                "container_instance.py",
+                "container_plan.py",
+                "container_probe.py",
+                "container_recovery.py",
+                "container_staging.py",
+                "container_staging_contracts.py",
+                "container_staging_files.py",
+                "container_staging_journal.py",
+                "container_staging_lifecycle.py",
+                "container_staging_recovery.py",
+                "container_termination.py",
+                "container_types.py",
+                "container_verification.py",
+                "container_volume.py",
+                "container_volume_recovery.py",
+            },
+        )
+        self.assertNotIn("subprocess", joined)
+        self.assertNotIn("Popen(", joined)
+        self.assertNotIn("local_agent.tools", joined)
+        self.assertNotIn("local_agent.agent", joined)
+        self.assertNotIn("process_runtime", joined)
+        self.assertNotIn("container_instance import", contents["container_types.py"])
+        self.assertNotIn("container_plan import", contents["container_types.py"])
+        self.assertNotIn("container_instance import", contents["container_inspect_schema.py"])
+        self.assertNotIn("container_plan import", contents["container_inspect_schema.py"])
+        self.assertNotIn("container_instance import", contents["container_probe.py"])
+        self.assertNotIn("container_plan import", contents["container_probe.py"])
+        self.assertNotIn("container_instance import", contents["container_cleanup.py"])
+        self.assertNotIn("container_instance import", contents["container_plan.py"])
+        self.assertNotIn("container_instance import", contents["container_recovery.py"])
+        self.assertNotIn("container_instance import", contents["container_verification.py"])
+        self.assertNotIn("container_recovery import", contents["container_verification.py"])
+        journal_importers = {
+            path.name
+            for path in container_files
+            for _line, target in _resolved_import_targets(path)
+            if target == "local_agent.execution.container_staging_journal"
+        }
+        self.assertEqual(
+            journal_importers,
+            {"container_staging_lifecycle.py"},
+        )
+        journal_dependencies = {
+            target
+            for _line, target in _resolved_import_targets(
+                execution_root / "container_staging_journal.py"
+            )
+            if target.startswith("local_agent")
+        }
+        self.assertEqual(
+            journal_dependencies,
+            {
+                "local_agent.execution.container_staging_contracts",
+                "local_agent.execution.container_types",
+            },
+        )
+        self.assertNotIn(
+            "container_staging import",
+            contents["container_staging_lifecycle.py"],
+        )
+        self.assertNotIn(
+            "container_staging_lifecycle import",
+            contents["container_staging_contracts.py"],
+        )
+        self.assertLessEqual(
+            len(contents["container_staging_lifecycle.py"].splitlines()),
+            850,
+        )
+        self.assertLessEqual(max(len(content.splitlines()) for content in contents.values()), 900)
+
+    def test_container_runtime_helpers_do_not_split_process_or_cleanup_ownership(self) -> None:
+        tools_root = ROOT / "src/local_agent/tools"
+        contents = {
+            name: (tools_root / name).read_text(encoding="utf-8")
+            for name in (
+                "container_outcome.py",
+                "container_instance_runtime.py",
+                "container_process.py",
+                "container_projection.py",
+                "container_recovery_runtime.py",
+                "container_resource_recovery_runtime.py",
+                "container_runtime.py",
+                "container_unwind.py",
+                "container_volume_recovery_runtime.py",
+                "container_volume_runtime.py",
+            )
+        }
+        joined = "\n".join(contents.values())
+        injected_helpers = (
+            "container_instance_runtime.py",
+            "container_outcome.py",
+            "container_projection.py",
+            "container_recovery_runtime.py",
+            "container_resource_recovery_runtime.py",
+            "container_unwind.py",
+            "container_volume_recovery_runtime.py",
+            "container_volume_runtime.py",
+        )
+
+        self.assertNotIn("Popen(", joined)
+        self.assertNotIn("local_agent.agent", joined)
+        for name in injected_helpers:
+            self.assertNotIn("process_runtime", contents[name])
+            self.assertNotIn("container_runtime import", contents[name])
+            self.assertNotIn("def _cleanup(", contents[name])
+        self.assertIn("cleanup=self._cleanup", contents["container_runtime.py"])
+        self.assertIn(
+            "return cleanup(runner, inspected.cleanup)",
+            contents["container_recovery_runtime.py"],
+        )
+        self.assertIn(
+            "return cleanup(runner, inspected.cleanup)",
+            contents["container_resource_recovery_runtime.py"],
+        )
+        self.assertLessEqual(
+            len(contents["container_runtime.py"].splitlines()),
+            800,
+        )
+        self.assertLessEqual(
+            len(contents["container_recovery_runtime.py"].splitlines()),
+            300,
+        )
+        self.assertLessEqual(
+            len(contents["container_instance_runtime.py"].splitlines()),
+            600,
+        )
+        self.assertLessEqual(
+            len(
+                contents[
+                    "container_resource_recovery_runtime.py"
+                ].splitlines()
+            ),
+            200,
+        )
+        self.assertLessEqual(
+            len(
+                contents[
+                    "container_volume_recovery_runtime.py"
+                ].splitlines()
+            ),
+            300,
+        )
+        self.assertLessEqual(
+            len(contents["container_volume_runtime.py"].splitlines()),
+            500,
+        )
+        self.assertLessEqual(
+            len(contents["container_outcome.py"].splitlines()),
+            200,
+        )
+        self.assertLessEqual(
+            len(contents["container_unwind.py"].splitlines()),
+            300,
+        )
+
+    def test_container_gate_artifact_matches_typed_protocol_and_pinned_base(self) -> None:
+        from local_agent.execution.container_plan import GATE_ENTRYPOINT
+        from local_agent.execution.container_plan import GATE_MOUNT_PROOF
+        from local_agent.execution.container_plan import GATE_PROTOCOL
+        from local_agent.execution.container_plan import GATE_PROTOCOL_LABEL
+        from local_agent.execution.container_plan import GATE_READY_CHECK
+        from local_agent.execution.container_plan import GATE_RELEASE_SIGNAL
+        from local_agent.execution.container_plan import GATE_STAGE_PROOF
+
+        gate_root = ROOT / "packaging/container-gate"
+        dockerfile = (gate_root / "Dockerfile").read_text(encoding="utf-8")
+        lines = tuple(line.strip() for line in dockerfile.splitlines() if line.strip())
+        from_lines = tuple(line for line in lines if line.startswith("FROM "))
+
+        self.assertEqual(len(from_lines), 1)
+        self.assertRegex(
+            from_lines[0],
+            r"\AFROM [^\s@]+@sha256:[0-9a-f]{64}\Z",
+        )
+        self.assertIn(f'LABEL {GATE_PROTOCOL_LABEL}="{GATE_PROTOCOL}"', lines)
+        self.assertIn(f'ENTRYPOINT ["{GATE_ENTRYPOINT}"]', lines)
+        self.assertIn(
+            f"COPY isolation-gate {GATE_ENTRYPOINT}",
+            lines,
+        )
+        self.assertIn(
+            f"COPY isolation-gate-ready {GATE_READY_CHECK}",
+            lines,
+        )
+        self.assertIn(
+            f"COPY isolation-gate-mount-proof {GATE_MOUNT_PROOF}",
+            lines,
+        )
+        self.assertIn(
+            f"COPY isolation-gate-stage-proof {GATE_STAGE_PROOF}",
+            lines,
+        )
+        chmod_lines = " ".join(lines)
+        for path in (
+            GATE_ENTRYPOINT,
+            GATE_READY_CHECK,
+            GATE_MOUNT_PROOF,
+            GATE_STAGE_PROOF,
+        ):
+            self.assertIn(path, chmod_lines)
+        self.assertIn("RUN chmod 0555", chmod_lines)
+
+        gate = (gate_root / "isolation-gate").read_text(encoding="utf-8")
+        self.assertIn(f'[ "$protocol" = "{GATE_PROTOCOL}" ]', gate)
+        self.assertIn(f'[ "$release_signal" = "{GATE_RELEASE_SIGNAL}" ]', gate)
+        mount_proof = (gate_root / "isolation-gate-mount-proof").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("/bin/stat -c '%d:%i'", mount_proof)
+        self.assertNotIn("/usr/bin/stat", mount_proof)
+        stage_proof = (gate_root / "isolation-gate-stage-proof").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("lca-workspace-snapshot-v1", stage_proof)
+        self.assertIn("/usr/bin/cmp -s", stage_proof)
+        self.assertIn("/usr/bin/sha256sum", stage_proof)
+        self.assertIn("--attempt-id)", gate)
 
     def test_runtime_strategy_owners_do_not_reintroduce_business_keyword_guards(self) -> None:
         strategy_files = (

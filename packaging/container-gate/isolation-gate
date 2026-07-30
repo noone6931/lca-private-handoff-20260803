@@ -1,0 +1,80 @@
+#!/bin/sh
+set -eu
+
+protocol=
+release_signal=
+attempt_id=
+
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --protocol)
+            [ "$#" -ge 2 ] || exit 64
+            protocol=$2
+            shift 2
+            ;;
+        --release-signal)
+            [ "$#" -ge 2 ] || exit 64
+            release_signal=$2
+            shift 2
+            ;;
+        --attempt-id)
+            [ "$#" -ge 2 ] || exit 64
+            attempt_id=$2
+            shift 2
+            ;;
+        --)
+            shift
+            break
+            ;;
+        *)
+            exit 64
+            ;;
+    esac
+done
+
+[ "$protocol" = "signal-v1" ] || exit 64
+[ "$release_signal" = "SIGUSR1" ] || exit 64
+[ "${#attempt_id}" -eq 32 ] || exit 64
+case "$attempt_id" in
+    *[!0-9a-f]*) exit 64 ;;
+esac
+[ "$#" -gt 0 ] || exit 64
+
+released=0
+waiter=
+
+release_gate() {
+    released=1
+    if [ -n "$waiter" ]; then
+        /bin/kill "$waiter" 2>/dev/null || true
+    fi
+}
+
+terminate_gate() {
+    if [ -n "$waiter" ]; then
+        /bin/kill "$waiter" 2>/dev/null || true
+    fi
+    exit 143
+}
+
+trap release_gate USR1
+trap terminate_gate HUP INT TERM
+
+state_directory=/tmp/local-agent-gate
+ready_path=$state_directory/$attempt_id.ready
+/bin/mkdir -p "$state_directory"
+: > "$ready_path"
+
+while [ "$released" -eq 0 ]; do
+    /bin/sleep 2147483647 &
+    waiter=$!
+    if [ "$released" -ne 0 ]; then
+        /bin/kill "$waiter" 2>/dev/null || true
+    fi
+    wait "$waiter" 2>/dev/null || true
+    waiter=
+done
+
+/bin/rm -f "$ready_path"
+trap - HUP INT TERM USR1
+exec "$@"

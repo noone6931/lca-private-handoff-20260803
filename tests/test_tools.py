@@ -18,6 +18,7 @@ from local_agent.patch.anchored import hash_text
 from local_agent.protocol.cancellation import RunCancelled
 from local_agent.tools import create_default_registry
 from local_agent.tools.base import Tool, ToolContext, ToolRegistry, ToolResult, VisionInspectionUnavailableError
+from local_agent.tools.execution_metadata import execution_command_digest
 from local_agent.tools.files import file_tools, inspect_image, patch_file, read_file, rollback_patch, write_file
 from local_agent.tools.git import capture_git_baseline, git_diff, git_status
 from local_agent.tools.interaction import ask_user
@@ -2409,7 +2410,11 @@ class ToolTests(unittest.TestCase):
 
         self.assertTrue(result.is_error)
         self.assertIn("python3 -m unittest tests.test_math", result.content)
-        self.assertEqual(result.metadata["executed_command"], "tests.test_math")
+        self.assertEqual(result.metadata["executed_command"], "[redacted test command]")
+        self.assertEqual(
+            result.metadata["command_digest"],
+            execution_command_digest("tests.test_math"),
+        )
         self.assertEqual(result.metadata["execution_status"], "not_run")
 
     def test_shell_timeout_is_clamped_to_remaining_budget(self) -> None:

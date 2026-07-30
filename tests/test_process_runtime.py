@@ -13,6 +13,7 @@ from unittest.mock import patch
 from local_agent.cancellation import RunCancelled
 from local_agent.tools.process_output import PROCESS_PIPE_READ_CHUNK_BYTES
 from local_agent.tools.process_output import PROCESS_STREAM_CAPTURE_LIMIT_BYTES
+from local_agent.tools.process_output import process_output_capture
 from local_agent.tools.process_runtime import _PIPE_CHUNKS_PER_SWEEP
 from local_agent.tools.process_runtime import _ProcessPipes
 from local_agent.tools.process_runtime import _wait_for_process_and_pipes
@@ -252,13 +253,14 @@ class ProcessRuntimeTests(unittest.TestCase):
             child_code = "import pathlib,sys,time; time.sleep(0.8); pathlib.Path(sys.argv[1]).write_text('late')"
             parent_code = (
                 "import subprocess,sys,time; "
-                "subprocess.Popen([sys.executable, '-c', sys.argv[1], sys.argv[2]]); time.sleep(10)"
+                "subprocess.Popen([sys.executable, '-c', sys.argv[1], sys.argv[2]]); "
+                "print('cancel-ready', flush=True); time.sleep(10)"
             )
             cancel = threading.Event()
             timer = threading.Timer(0.15, cancel.set)
             timer.start()
             try:
-                with self.assertRaises(RunCancelled):
+                with self.assertRaises(RunCancelled) as raised:
                     run_process(
                         [sys.executable, "-c", parent_code, child_code, str(marker)],
                         cwd=workspace,
@@ -270,8 +272,14 @@ class ProcessRuntimeTests(unittest.TestCase):
                 timer.cancel()
             time.sleep(0.9)
             marker_exists = marker.exists()
+            capture = process_output_capture(raised.exception)
 
         self.assertFalse(marker_exists)
+        self.assertIn("cancel-ready", capture.stdout.text)
+        self.assertGreater(capture.stdout.summary.observed_bytes, 0)
+        self.assertTrue(raised.exception.execution_started)
+        self.assertEqual(raised.exception.execution_outcome, "cancelled")
+        self.assertIsNone(raised.exception.returncode)
 
 
 if __name__ == "__main__":

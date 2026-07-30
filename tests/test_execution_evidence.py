@@ -25,6 +25,7 @@ from local_agent.steering.final_answer import ToolUsageEvidenceSteerer
 from local_agent.steering.final_answer import phantom_tool_evidence_claims
 from local_agent.task_contract import generate_requirement_contract
 from local_agent.tools.base import ToolContext
+from local_agent.tools.execution_metadata import execution_command_digest
 from local_agent.tools.shell import run_shell, run_tests
 
 
@@ -125,7 +126,15 @@ class ExecutionMetadataTests(unittest.TestCase):
             failed = run_shell({"command": "exit 9"}, ToolContext(workspace, "yolo"))
 
         execution = success.metadata["execution_v1"]
-        self.assertEqual(execution["command"], {"text": "printf exact-command", "argv": None, "shell": True})
+        self.assertEqual(
+            execution["command"],
+            {
+                "text": "[redacted shell command]",
+                "digest": execution_command_digest("printf exact-command"),
+                "argv": None,
+                "shell": True,
+            },
+        )
         self.assertEqual(execution["cwd"], str(workspace))
         self.assertEqual(execution["outcome"], {"kind": "exited", "exit_code": 0})
         self.assertEqual(execution["output"]["provenance"], "bounded_process_capture_v1")
@@ -160,6 +169,48 @@ class ExecutionMetadataTests(unittest.TestCase):
         self.assertEqual(result.metadata["execution_v1"]["outcome"], {"kind": "exited", "exit_code": 0})
         self.assertFalse(result.metadata["execution_v1"]["command"]["shell"])
         self.assertIsInstance(result.metadata["execution_v1"]["command"]["argv"], list)
+
+    def test_shell_and_run_tests_attach_bounded_interrupted_results(self) -> None:
+        cases = (
+            ("shell", run_shell, {"command": "PRIVATE_TOKEN=secret true"}),
+            (
+                "run_tests",
+                run_tests,
+                {"command": "python3 -m unittest tests.test_sample"},
+            ),
+        )
+        for name, handler, arguments in cases:
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as tmp:
+                interruption = KeyboardInterrupt()
+                interruption.execution_started = True
+                interruption.execution_outcome = "cancelled"
+                interruption.returncode = None
+                interruption.stdout = "bounded-output\n"
+                interruption.stderr = ""
+                with (
+                    patch(
+                        "local_agent.tools.test_runner_policy.shutil.which",
+                        return_value="/usr/bin/true",
+                    ),
+                    patch(
+                        "local_agent.tools.shell._run_process",
+                        side_effect=interruption,
+                    ),
+                    self.assertRaises(KeyboardInterrupt) as raised,
+                ):
+                    handler(
+                        arguments,
+                        ToolContext(Path(tmp).resolve(), "yolo"),
+                    )
+
+            result = raised.exception.interrupted_tool_result
+            self.assertTrue(result.is_error)
+            self.assertIn("bounded-output", result.content)
+            self.assertEqual(
+                result.metadata["execution_v1"]["outcome"],
+                {"kind": "cancelled", "exit_code": None},
+            )
+            self.assertNotIn("secret", json.dumps(result.metadata))
 
 
 class ProspectiveExecutionEvidenceTests(unittest.TestCase):
@@ -218,6 +269,7 @@ class ProspectiveExecutionEvidenceTests(unittest.TestCase):
             reopened_observed = list(reopened._run.tool_choice_results)
             reopened_names = list(reopened._run.tool_choice_tool_names)
             reopened_verification = reopened._run.verification_plan.snapshot()
+            session_text = runtime._session.path.read_text(encoding="utf-8")
 
         self.assertTrue(first.startswith("first run complete\n\n[Runtime operation provenance]"))
         self.assertIn("patch_transaction_writes: none recorded", first)
@@ -227,7 +279,12 @@ class ProspectiveExecutionEvidenceTests(unittest.TestCase):
         self.assertEqual(fact["tool"], "shell")
         self.assertEqual(fact["tool_call_id"], "shell-call-1")
         self.assertEqual(fact["outcome"], {"status": "exited", "exit_code": 0})
-        self.assertEqual(fact["command"]["text"], _ProspectiveReplayClient.command)
+        self.assertEqual(fact["command"]["text"], "[redacted shell command]")
+        self.assertEqual(
+            fact["command"]["digest"],
+            execution_command_digest(_ProspectiveReplayClient.command),
+        )
+        self.assertNotIn("credential-value", session_text)
         self.assertGreater(fact["event_seq"], 0)
         self.assertGreater(fact["event_time"], 0)
         self.assertEqual(fact["output"]["provenance"], "bounded_process_capture_v1")
@@ -720,7 +777,7 @@ def _synthetic_fact(template: dict[str, object], session_id: str) -> dict[str, o
     fact["origin_run_id"] = "synthetic-run"
     fact["origin_command_id"] = "synthetic-command"
     fact["tool_call_id"] = "synthetic-tool-call"
-    command = str(fact["command"]["text"])
+    command_digest = str(fact["command"]["digest"])
     fact["execution_ref"] = _execution_ref(
         session_id,
         str(fact["origin_run_id"]),
@@ -728,7 +785,7 @@ def _synthetic_fact(template: dict[str, object], session_id: str) -> dict[str, o
         str(fact["tool_call_id"]),
         str(fact["tool"]),
         str(fact["cwd"]),
-        command,
+        command_digest,
     )
     return fact
 

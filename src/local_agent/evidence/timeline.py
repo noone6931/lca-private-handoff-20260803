@@ -6,6 +6,7 @@ from typing import Any, Mapping, Protocol
 
 
 WRITE_TOOL_NAMES = frozenset({"apply_patch", "apply_workspace_edit", "rollback_patch", "write_file"})
+TRANSACTIONAL_EXEC_TOOL_NAMES = frozenset({"shell", "run_tests"})
 NO_WRITE_RESULT_MARKERS = frozenset(
     {
         "dry run",
@@ -43,10 +44,21 @@ def result_changed_workspace(result: TimelineToolResult) -> bool:
     return not any(marker in content for marker in NO_WRITE_RESULT_MARKERS)
 
 
+def result_is_workspace_write(
+    result: TimelineToolResult,
+    *,
+    name: str | None = None,
+) -> bool:
+    tool_name = name if name is not None else result.name
+    if tool_name in WRITE_TOOL_NAMES:
+        return result_changed_workspace(result)
+    return _has_committed_exec_transaction(result, tool_name)
+
+
 def last_workspace_write_index(results: Sequence[TimelineToolResult]) -> int:
     for index in range(len(results) - 1, -1, -1):
         result = results[index]
-        if result.name in WRITE_TOOL_NAMES and result_changed_workspace(result):
+        if result_is_workspace_write(result):
             return index
     return -1
 
@@ -101,7 +113,7 @@ def effective_workspace_write_paths(results: Sequence[TimelineToolResult]) -> tu
 
     paths: dict[str, str] = {}
     for result in results:
-        if result.name not in WRITE_TOOL_NAMES or not result_changed_workspace(result):
+        if not result_is_workspace_write(result):
             continue
         if result.name == "rollback_patch":
             transaction_paths = _metadata_paths(result, "transaction_paths") or result_workspace_write_paths(result)
@@ -189,6 +201,33 @@ def _metadata_paths(result: TimelineToolResult, key: str) -> tuple[str, ...]:
     if not isinstance(values, (list, tuple)):
         return ()
     return tuple(dict.fromkeys(value for value in values if isinstance(value, str) and value.strip()))
+
+
+def _has_committed_exec_transaction(
+    result: TimelineToolResult,
+    tool_name: str,
+) -> bool:
+    metadata = result.metadata
+    transaction_id = metadata.get("workspace_transaction_id")
+    isolation = metadata.get("isolation")
+    if (
+        tool_name not in TRANSACTIONAL_EXEC_TOOL_NAMES
+        or not isinstance(transaction_id, str)
+        or not transaction_id.strip()
+        or metadata.get("workspace_mutation_source") != "container_staged_copy"
+        or metadata.get("workspace_changed") is not True
+        or metadata.get("transaction_status") != "committed"
+        or not isinstance(isolation, Mapping)
+        or isolation.get("workspace_transport") != "staged-copy"
+    ):
+        return False
+    commit = isolation.get("workspace_output_commit")
+    return (
+        isinstance(commit, Mapping)
+        and commit.get("state") == "committed"
+        and commit.get("transaction_id") == transaction_id
+        and bool(result_workspace_write_paths(result))
+    )
 
 
 def _diff_mentions_any_path(result: TimelineToolResult, paths: tuple[str, ...]) -> bool:

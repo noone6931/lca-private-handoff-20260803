@@ -242,6 +242,10 @@ def _write_config_loading_mini_agent(root: Path) -> None:
     repository = Path(__file__).resolve().parents[1]
     shutil.copy2(repository / "src" / "local_agent" / "config.py", package / "config.py")
     for relative_path in (
+        "execution/__init__.py",
+        "execution/container_types.py",
+        "execution/contracts.py",
+        "execution/isolation_config.py",
         "session/__init__.py",
         "session/state.py",
         "workflows/__init__.py",

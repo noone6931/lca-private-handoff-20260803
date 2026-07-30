@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Protocol
@@ -10,12 +11,69 @@ IsolationProfile = Literal["read-only", "workspace-write", "danger-full-access"]
 IsolationBackendName = Literal["auto", "container", "linux-native", "local"]
 IsolationAvailability = Literal["available", "unavailable", "unsupported"]
 NetworkPolicy = Literal["deny", "allow"]
+ContainerWorkspaceTransport = Literal["direct-bind", "staged-copy"]
 
 ISOLATION_MODES = frozenset({"off", "preferred", "required"})
 ISOLATION_PROFILES = frozenset({"read-only", "workspace-write", "danger-full-access"})
 ISOLATION_BACKENDS = frozenset({"auto", "container", "linux-native", "local"})
 ISOLATION_AVAILABILITIES = frozenset({"available", "unavailable", "unsupported"})
 NETWORK_POLICIES = frozenset({"deny", "allow"})
+CONTAINER_WORKSPACE_TRANSPORTS = frozenset({"direct-bind", "staged-copy"})
+_SHA256 = re.compile(r"[0-9a-f]{64}")
+
+
+@dataclass(frozen=True)
+class ContainerBackendAuthority:
+    executable: Path
+    executable_sha256: str
+    socket_path: Path
+    client_config_directory: Path
+    gate_image: str
+    workspace_transport: ContainerWorkspaceTransport = "direct-bind"
+    staging_root: Path | None = None
+
+    def __post_init__(self) -> None:
+        for name, path in (
+            ("executable", self.executable),
+            ("socket_path", self.socket_path),
+            ("client_config_directory", self.client_config_directory),
+        ):
+            _require_absolute(name, path)
+        if not _SHA256.fullmatch(self.executable_sha256):
+            raise ValueError("container executable_sha256 must contain 64 lowercase hex characters")
+        if not self.gate_image.strip():
+            raise ValueError("container gate_image must not be empty")
+        _require_member(
+            "workspace_transport",
+            self.workspace_transport,
+            CONTAINER_WORKSPACE_TRANSPORTS,
+        )
+        if self.workspace_transport == "direct-bind":
+            if self.staging_root is not None:
+                raise ValueError("direct-bind authority cannot declare a staging_root")
+        elif self.staging_root is None:
+            raise ValueError("staged-copy authority requires a staging_root")
+        else:
+            _require_absolute("staging_root", self.staging_root)
+
+
+@dataclass(frozen=True)
+class IsolationConfiguration:
+    mode: IsolationMode = "off"
+    profile: IsolationProfile = "workspace-write"
+    backend: IsolationBackendName = "auto"
+    network_policy: NetworkPolicy = "deny"
+    container: ContainerBackendAuthority | None = None
+
+    def __post_init__(self) -> None:
+        _require_member("mode", self.mode, ISOLATION_MODES)
+        _require_member("profile", self.profile, ISOLATION_PROFILES)
+        _require_member("backend", self.backend, ISOLATION_BACKENDS)
+        _require_member("network_policy", self.network_policy, NETWORK_POLICIES)
+        if self.mode == "required" and self.profile == "danger-full-access":
+            raise ValueError("danger-full-access cannot satisfy required isolation")
+        if self.mode == "required" and self.backend == "local":
+            raise ValueError("local backend cannot satisfy required isolation")
 
 
 @dataclass(frozen=True)

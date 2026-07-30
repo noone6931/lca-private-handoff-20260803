@@ -5,6 +5,8 @@ is added later, after the tool result has joined the originating call.
 """
 from __future__ import annotations
 
+import hashlib
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -14,13 +16,18 @@ from .base import ToolResult
 
 
 EXECUTION_METADATA_KEY = "execution_v1"
-ExecutionOutcome = Literal["exited", "timed_out", "cancelled", "not_run", "spawn_failed"]
-EXECUTION_OUTCOMES = frozenset({"exited", "timed_out", "cancelled", "not_run", "spawn_failed"})
+ExecutionOutcome = Literal["exited", "timed_out", "cancelled", "not_run", "spawn_failed", "indeterminate"]
+EXECUTION_OUTCOMES = frozenset({"exited", "timed_out", "cancelled", "not_run", "spawn_failed", "indeterminate"})
+_COMMAND_DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
+_ENVIRONMENT_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+_REDACTED_SHELL_COMMAND = "[redacted shell command]"
+_REDACTED_TEST_COMMAND = "[redacted test command]"
 
 
 @dataclass(frozen=True)
 class ParsedExecutionMetadata:
     command: str
+    command_digest: str
     argv: tuple[str, ...] | None
     shell: bool
     cwd: str
@@ -43,10 +50,12 @@ def legacy_test_metadata(
 
     import shlex
 
+    safe_argv = _safe_execution_argv(argv)
     return {
-        "executed_command": command,
-        "display_command": shlex.join(argv) if argv else command,
-        "argv": list(argv),
+        "executed_command": _REDACTED_TEST_COMMAND,
+        "display_command": shlex.join(safe_argv) if safe_argv else _REDACTED_TEST_COMMAND,
+        "command_digest": execution_command_digest(command),
+        "argv": list(safe_argv),
         "environment_keys": sorted(environment),
         "working_directory": str(working_directory.resolve()),
         "exit_code": exit_code,
@@ -68,8 +77,9 @@ def legacy_shell_metadata(
     """Expose the shell launch identity without pretending it has an argv."""
 
     return {
-        "executed_command": command,
-        "display_command": command,
+        "executed_command": _REDACTED_SHELL_COMMAND,
+        "display_command": _REDACTED_SHELL_COMMAND,
+        "command_digest": execution_command_digest(command),
         "argv": None,
         "working_directory": str(working_directory.resolve()),
         "exit_code": exit_code,
@@ -98,11 +108,13 @@ def with_execution_metadata(
     elif exit_code is not None:
         raise ValueError(f"Execution outcome {outcome!r} cannot carry an exit code.")
     metadata = dict(result.metadata)
+    safe_argv = _safe_execution_argv(argv)
     metadata[EXECUTION_METADATA_KEY] = {
         "version": 1,
         "command": {
-            "text": command,
-            "argv": list(argv) if argv is not None else None,
+            "text": _REDACTED_SHELL_COMMAND if shell else _REDACTED_TEST_COMMAND,
+            "digest": execution_command_digest(command),
+            "argv": list(safe_argv) if safe_argv is not None else None,
             "shell": shell,
         },
         "cwd": str(working_directory.resolve()),
@@ -115,6 +127,22 @@ def with_execution_metadata(
         useless=result.useless,
         metadata=metadata,
     )
+
+
+def execution_argv_from_observation(
+    observed: object,
+    fallback: Sequence[str],
+) -> tuple[str, ...]:
+    """Prefer the argv attached to the process observation over a routing argv."""
+
+    raw = getattr(observed, "args", None)
+    if (
+        isinstance(raw, (list, tuple))
+        and raw
+        and all(isinstance(item, str) and bool(item) for item in raw)
+    ):
+        return _safe_execution_argv(raw) or ()
+    return _safe_execution_argv(fallback) or ()
 
 
 def execution_error_result(
@@ -154,8 +182,13 @@ def parse_execution_metadata(
     if not isinstance(command, Mapping) or not isinstance(outcome, Mapping) or not isinstance(output, Mapping):
         return None
     text, raw_argv, shell = command.get("text"), command.get("argv"), command.get("shell")
+    digest = command.get("digest")
     cwd, status, exit_code = metadata.get("cwd"), outcome.get("kind"), outcome.get("exit_code")
     if not _metadata_identity(text, max_chars=65_536) or not isinstance(shell, bool):
+        return None
+    if digest is None:
+        digest = execution_command_digest(str(text))
+    if not isinstance(digest, str) or _COMMAND_DIGEST.fullmatch(digest) is None:
         return None
     if status not in EXECUTION_OUTCOMES or (tool_name == "shell") != shell:
         return None
@@ -180,6 +213,7 @@ def parse_execution_metadata(
         return None
     return ParsedExecutionMetadata(
         command=str(text),
+        command_digest=digest,
         argv=argv,
         shell=shell,
         cwd=canonical_cwd,
@@ -270,9 +304,33 @@ def _metadata_identity(value: Any, *, max_chars: int) -> bool:
     return isinstance(value, str) and bool(value.strip()) and len(value) <= max_chars and "\x00" not in value
 
 
+def _safe_execution_argv(argv: Sequence[str] | None) -> tuple[str, ...] | None:
+    if argv is None:
+        return None
+    values = tuple(str(item) for item in argv)
+    if not values or values[0] != "/usr/bin/env":
+        return values
+    safe = [values[0]]
+    index = 1
+    while index < len(values):
+        item = values[index]
+        name, separator, _value = item.partition("=")
+        if not separator or _ENVIRONMENT_NAME.fullmatch(name) is None:
+            break
+        safe.append(f"{name}=[redacted]")
+        index += 1
+    return (*safe, *values[index:])
+
+
+def execution_command_digest(command: str) -> str:
+    return "sha256:" + hashlib.sha256(command.encode("utf-8")).hexdigest()
+
+
 __all__ = [
     "EXECUTION_METADATA_KEY",
     "ParsedExecutionMetadata",
+    "execution_argv_from_observation",
+    "execution_command_digest",
     "execution_error_result",
     "legacy_shell_metadata",
     "legacy_test_metadata",

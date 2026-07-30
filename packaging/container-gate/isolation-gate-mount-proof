@@ -1,0 +1,9 @@
+#!/bin/sh
+set -eu
+
+[ "$#" -gt 0 ] || exit 64
+
+for path in "$@"; do
+    [ -d "$path" ] || exit 75
+    /bin/stat -c '%d:%i' -- "$path"
+done

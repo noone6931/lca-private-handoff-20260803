@@ -13,19 +13,18 @@ from local_agent.patch.anchored import hash_text
 from local_agent.patch.anchored import PatchError
 from local_agent.patch.anchored import PatchResult
 from local_agent.patch.anchored import resolve_workspace_path
-from local_agent.patch.journal import append_patch_record as _append_patch_record
+from local_agent.patch.journal import append_patch_record as _append_patch_record, patch_journal_path
 from local_agent.patch.transaction import ExistingTextFileChange
 from local_agent.patch.transaction import TextTransactionResult
 from local_agent.patch.transaction import apply_existing_text_transaction
 from local_agent.patch.transaction import restore_existing_text_transaction
-
 from .base import Tool, ToolContext, ToolResult, VisionInspectionUnavailableError, tool_state_dir
+from .workspace_mutation import rollback_container_workspace_record
 
 MAX_READ_BYTES = 256 * 1024
 MAX_READ_LINES = 400
 MAX_READ_LINE_COLUMNS = 768
 MAX_INSPECT_IMAGE_BYTES = 8 * 1024 * 1024
-
 
 def file_tools() -> list[Tool]:
     return [
@@ -560,6 +559,8 @@ def rollback_patch(args: dict[str, Any], context: ToolContext) -> ToolResult:
 
 
 def _rollback_text_transaction(record: dict[str, Any], context: ToolContext) -> ToolResult:
+    if record.get("source") == "container_staged_copy":
+        return rollback_container_workspace_record(record, context)
     raw_files = record.get("files")
     assert isinstance(raw_files, list)
     changes: list[ExistingTextFileChange] = []
@@ -887,5 +888,4 @@ def _is_rollback_candidate(record: dict[str, Any], rolled_back: set[str]) -> boo
 
 
 def _patch_log_path(context: ToolContext) -> Path:
-    session_id = context.session_id or "default"
-    return tool_state_dir(context) / "patches" / f"{session_id}.jsonl"
+    return patch_journal_path(tool_state_dir(context), context.session_id)

@@ -4,12 +4,13 @@ import json
 import os
 import stat
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
-from .session.state import default_config_root
-from .session.state import resolve_state_root
-from .session.state import workspace_state_dir
+from .execution.contracts import IsolationConfiguration
+from .execution.isolation_config import IsolationConfigOverrides
+from .execution.isolation_config import resolve_isolation_configuration
+from .session.state import default_config_root, resolve_state_root, workspace_state_dir
 from .workflows.profile import normalize_workflow_profile_selector
 
 
@@ -31,11 +32,7 @@ APPROVAL_MODES = {"always-ask", "write", "yolo"}
 SUMMARY_MODES = {"auto", "local", "llm"}
 MEMORY_CONSOLIDATION_MODES = {"off", "auto", "llm"}
 MEMORY_SCOPES = {"state", "project"}
-WORKSPACE_DOTENV_CREDENTIAL_KEYS = frozenset({
-    "AI_API_KEY",
-    "BAILIAN_API_KEY",
-    "DASHSCOPE_API_KEY",
-})
+WORKSPACE_DOTENV_CREDENTIAL_KEYS = frozenset({"AI_API_KEY", "BAILIAN_API_KEY", "DASHSCOPE_API_KEY"})
 
 
 @dataclass(frozen=True)
@@ -67,6 +64,7 @@ class AgentConfig:
     subagent_budget_seconds: int = DEFAULT_SUBAGENT_BUDGET_SECONDS
     enable_web_search: bool = False
     web_search_model: str = DEFAULT_WEB_SEARCH_MODEL
+    isolation: IsolationConfiguration = field(default_factory=IsolationConfiguration)
 
 
 def load_config(
@@ -97,6 +95,7 @@ def load_config(
     subagent_budget_seconds: int | None = None,
     enable_web_search: bool | None = None,
     web_search_model: str | None = None,
+    isolation_overrides: IsolationConfigOverrides | None = None,
 ) -> AgentConfig:
     file_config = _load_json_config(config_path)
     workspace = Path(cwd or file_config.get("workspace") or os.getcwd()).expanduser().resolve()
@@ -153,18 +152,13 @@ def load_config(
         or provider_defaults.get("model")
         or ""
     )
-    resolved_vision_model = str(
-        file_config.get("vision_model") or os.environ.get("AI_VISION_MODEL") or ""
-    ).strip()
+    resolved_vision_model = str(file_config.get("vision_model") or os.environ.get("AI_VISION_MODEL") or "").strip()
     model_roles = file_config.get("models") or {}
     if not isinstance(model_roles, dict):
         raise ConfigError("models must be an object.")
     resolved_reviewer_model = str(
-        reviewer_model
-        or model_roles.get("reviewer")
-        or file_config.get("reviewer_model")
-        or os.environ.get("AI_REVIEWER_MODEL")
-        or ""
+        reviewer_model or model_roles.get("reviewer") or file_config.get("reviewer_model")
+        or os.environ.get("AI_REVIEWER_MODEL") or ""
     ).strip()
     tools_config = _tools_config(file_config)
     web_search_config = _web_search_config(tools_config)
@@ -315,6 +309,10 @@ def load_config(
         else file_config.get("allowed_dirs", file_config.get("allow_dirs", os.environ.get("AGENT_ALLOWED_DIRS")))
     )
     resolved_allowed_dirs = _path_tuple("allowed_dirs", raw_allowed_dirs, workspace)
+    try:
+        resolved_isolation = resolve_isolation_configuration(file_config.get("isolation"), isolation_overrides)
+    except ValueError as exc:
+        raise ConfigError(str(exc)) from exc
 
     if not resolved_api_base_url:
         raise ConfigError("Missing AI_API_BASE_URL.")
@@ -350,6 +348,7 @@ def load_config(
         subagent_budget_seconds=resolved_subagent_budget,
         enable_web_search=resolved_enable_web_search,
         web_search_model=resolved_web_search_model,
+        isolation=resolved_isolation,
     )
 
 

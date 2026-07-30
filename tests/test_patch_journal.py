@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from local_agent.patch import journal as patch_journal
+from local_agent.patch import journal_io as patch_journal_io
 from local_agent.patch.anchored import hash_text
 from local_agent.patch.journal import append_patch_record
 from local_agent.tools.base import ToolContext
@@ -23,7 +24,10 @@ class PatchJournalPersistenceTests(unittest.TestCase):
             journal.write_bytes(b'{"event":"existing"}\nmalformed')
             before = journal.read_bytes()
 
-            with patch("local_agent.patch.journal._write_payload", side_effect=OSError("flush failed")):
+            with patch(
+                "local_agent.patch.journal_io.write_journal_payload",
+                side_effect=OSError("flush failed"),
+            ):
                 with self.assertRaises(OSError):
                     append_patch_record(journal, {"event": "apply", "id": "new"})
 
@@ -44,6 +48,34 @@ class PatchJournalPersistenceTests(unittest.TestCase):
             self.assertEqual(journal.read_bytes(), before)
             self.assertEqual(list(journal.parent.glob(".session.jsonl.*.tmp")), [])
 
+    def test_replace_commits_then_interrupts_and_restores_old_journal(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            journal = Path(tmp) / "patches" / "session.jsonl"
+            journal.parent.mkdir()
+            journal.write_bytes(b'{"event":"existing"}\n')
+            before = journal.read_bytes()
+            real_replace = os.replace
+
+            def replace_then_interrupt(source: Path, destination: Path) -> None:
+                real_replace(source, destination)
+                raise KeyboardInterrupt()
+
+            with (
+                patch(
+                    "local_agent.patch.journal.os.replace",
+                    side_effect=replace_then_interrupt,
+                ),
+                self.assertRaises(KeyboardInterrupt) as raised,
+            ):
+                append_patch_record(journal, {"event": "apply", "id": "new"})
+
+            result = raised.exception.patch_journal_result
+            self.assertEqual(result.state, "restored")
+            self.assertFalse(result.journal_changed)
+            self.assertFalse(result.record_persisted)
+            self.assertEqual(journal.read_bytes(), before)
+            self.assertEqual(list(journal.parent.glob(".session.jsonl.*.tmp")), [])
+
     def test_success_preserves_existing_bytes_mode_and_uses_replace_as_final_boundary(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             journal = Path(tmp) / "patches" / "session.jsonl"
@@ -51,7 +83,7 @@ class PatchJournalPersistenceTests(unittest.TestCase):
             journal.write_bytes(b"malformed\n")
             journal.chmod(0o640)
             real_replace = os.replace
-            real_write_payload = patch_journal._write_payload
+            real_write_payload = patch_journal_io.write_journal_payload
             events: list[str] = []
 
             def tracked_payload(handle, payload: bytes) -> None:
@@ -63,7 +95,10 @@ class PatchJournalPersistenceTests(unittest.TestCase):
                 real_replace(source, destination)
 
             with (
-                patch("local_agent.patch.journal._write_payload", side_effect=tracked_payload),
+                patch(
+                    "local_agent.patch.journal_io.write_journal_payload",
+                    side_effect=tracked_payload,
+                ),
                 patch("local_agent.patch.journal.os.replace", side_effect=tracked_replace),
             ):
                 append_patch_record(journal, {"event": "apply", "id": "new"})

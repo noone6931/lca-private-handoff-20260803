@@ -6,6 +6,7 @@ from typing import TextIO
 
 from .agent import AgentRuntime
 from .config import ConfigError, load_config
+from .execution.isolation_config import IsolationConfigOverrides
 from .frontends.terminal.app import run_terminal_chat
 from .frontends.composer_history import ComposerHistory
 from .frontends.composer_history import composer_history_path
@@ -94,6 +95,52 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--web-search-model",
         help="Bailian model used only by enabled web_search (default: qwen-plus).",
+    )
+    parser.add_argument(
+        "--isolation-mode",
+        choices=["off", "preferred", "required"],
+        help="Execution isolation mode. Defaults to off.",
+    )
+    parser.add_argument(
+        "--isolation-profile",
+        choices=["read-only", "workspace-write", "danger-full-access"],
+        help="Filesystem profile for isolated shell and test execution.",
+    )
+    parser.add_argument(
+        "--isolation-backend",
+        choices=["auto", "container", "linux-native", "local"],
+        help="Explicit execution backend selector.",
+    )
+    parser.add_argument(
+        "--network-policy",
+        choices=["deny", "allow"],
+        help="Network policy for isolated shell and test execution.",
+    )
+    parser.add_argument("--container-executable", help="Absolute trusted Docker CLI path.")
+    parser.add_argument(
+        "--container-executable-sha256",
+        help="Expected SHA-256 of the trusted Docker CLI.",
+    )
+    parser.add_argument(
+        "--container-socket-path",
+        help="Absolute local Docker Unix socket path.",
+    )
+    parser.add_argument(
+        "--container-client-config-dir",
+        help="Absolute empty Docker client configuration directory.",
+    )
+    parser.add_argument(
+        "--container-gate-image",
+        help="Exact local image id or repository digest for the fixed isolation gate.",
+    )
+    parser.add_argument(
+        "--container-workspace-transport",
+        choices=["direct-bind", "staged-copy"],
+        help="Explicit container workspace transport; never selected from provider output.",
+    )
+    parser.add_argument(
+        "--container-staging-root",
+        help="Absolute private staging authority root required by staged-copy.",
     )
     parser.add_argument(
         "--max-steps",
@@ -192,6 +239,7 @@ def main(argv: list[str] | None = None) -> int:
             subagent_budget_seconds=args.subagent_budget_seconds,
             enable_web_search=args.web_search,
             web_search_model=args.web_search_model,
+            isolation_overrides=_isolation_overrides(args),
         )
         chat_requested = args.chat or _is_chat_prompt(args.prompt)
         tui_requested = bool(args.tui or (not args.prompt and not chat_requested))
@@ -254,6 +302,22 @@ def main(argv: list[str] | None = None) -> int:
 
 def _is_chat_prompt(prompt: list[str]) -> bool:
     return len(prompt) == 1 and prompt[0] == "chat"
+
+
+def _isolation_overrides(args: argparse.Namespace) -> IsolationConfigOverrides:
+    return IsolationConfigOverrides(
+        mode=args.isolation_mode,
+        profile=args.isolation_profile,
+        backend=args.isolation_backend,
+        network_policy=args.network_policy,
+        container_executable=args.container_executable,
+        container_executable_sha256=args.container_executable_sha256,
+        container_socket_path=args.container_socket_path,
+        container_client_config_directory=args.container_client_config_dir,
+        container_gate_image=args.container_gate_image,
+        container_workspace_transport=args.container_workspace_transport,
+        container_staging_root=args.container_staging_root,
+    )
 
 
 def _handle_repl_command(

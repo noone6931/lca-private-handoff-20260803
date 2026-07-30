@@ -22,7 +22,7 @@
     "answer_contains": [
       "未完成",
       "src/math.py",
-      "PYTHONPATH=. python3 -m unittest tests.test_math"
+      "[redacted test command]"
     ],
     "termination_reason": "incomplete_delivery",
     "delivery_checks": {

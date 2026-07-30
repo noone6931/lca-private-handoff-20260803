@@ -23,8 +23,7 @@ from ..tools.observation import ToolResultSummary
 from ..tools.base import ToolResult
 from ..tools.relevance import is_code_implementation_request, request_mentions_config_or_path
 from ..evidence.verification import VerificationPlan
-from ..evidence.timeline import WRITE_TOOL_NAMES
-from ..evidence.timeline import result_changed_workspace
+from ..evidence.timeline import result_is_workspace_write
 from ..evidence.timeline import result_workspace_write_paths
 from ..steering.final_answer import SteeringDecision
 from ..tools.gateway import _display_read_file_range_subject, _request_requires_patch_preview, _source_evidence_matches_path, _tool_call_uses_dry_run, _tool_choice_result_path, is_session_evidence_reread
@@ -268,7 +267,7 @@ class EvidenceVerificationLifecycle:
             workspace=runtime._workspace_context.primary,
             allowed_dirs=runtime._workspace_context.additional_roots,
         )
-        if name not in WRITE_TOOL_NAMES or not result_changed_workspace(result):
+        if not result_is_workspace_write(result, name=name):
             return
         if name == "apply_patch" and _tool_call_uses_dry_run(arguments):
             return

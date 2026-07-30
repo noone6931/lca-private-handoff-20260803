@@ -1,186 +1,118 @@
-from __future__ import annotations
+"""Public container-isolation planning and proof surface."""
 
-import json
-import shutil
-from dataclasses import dataclass
-from pathlib import Path
-from typing import Callable, Literal
-
-from .contracts import IsolationBackendCapability
-
-
-ContainerEngine = Literal["docker", "podman"]
-CONTAINER_ENGINES = ("docker", "podman")
-_CONTAINER_PROFILES = frozenset({"read-only", "workspace-write"})
-_CONTAINER_NETWORK_POLICIES = frozenset({"deny", "allow"})
-
-
-@dataclass(frozen=True)
-class ContainerProbePlan:
-    engine: ContainerEngine
-    executable: Path
-    argv: tuple[str, ...]
-    timeout_seconds: int = 5
-
-    def __post_init__(self) -> None:
-        if self.engine not in CONTAINER_ENGINES:
-            raise ValueError(f"unsupported container engine: {self.engine}")
-        if not self.executable.is_absolute():
-            raise ValueError("container engine executable must be absolute")
-        if not self.argv or self.argv[0] != str(self.executable):
-            raise ValueError("probe argv must begin with the resolved executable")
-        if not 1 <= self.timeout_seconds <= 30:
-            raise ValueError("probe timeout must be between 1 and 30 seconds")
-
-
-@dataclass(frozen=True)
-class ContainerEngineIdentity:
-    engine: ContainerEngine
-    executable: Path
-    server_version: str
-    server_os: str
-    server_arch: str
-
-    def __post_init__(self) -> None:
-        if self.engine not in CONTAINER_ENGINES:
-            raise ValueError(f"unsupported container engine: {self.engine}")
-        if not self.executable.is_absolute():
-            raise ValueError("container engine executable must be absolute")
-        if not self.server_version.strip():
-            raise ValueError("container server version must not be empty")
-        if self.server_os.strip().lower() != "linux":
-            raise ValueError("container isolation requires a Linux server")
-        if not self.server_arch.strip():
-            raise ValueError("container server architecture must not be empty")
-
-    def event_payload(self) -> dict[str, object]:
-        return {
-            "engine": self.engine,
-            "executable": str(self.executable),
-            "server_version": self.server_version,
-            "server_os": self.server_os,
-            "server_arch": self.server_arch,
-        }
+from .container_cleanup import ContainerCleanupHandle
+from .container_cleanup import ContainerRemovalCheckResult
+from .container_cleanup import ContainerRemoveResult
+from .container_cleanup import parse_container_removal_check_result
+from .container_cleanup import parse_container_remove_result
+from .container_instance import ContainerCapturedExecution
+from .container_instance import ContainerCreateResult
+from .container_instance import ContainerCreatedInstance
+from .container_instance import ContainerExitedExecution
+from .container_instance import ContainerFinalInspectResult
+from .container_instance import ContainerGateReadyResult
+from .container_instance import ContainerInspectResult
+from .container_instance import ContainerLogsResult
+from .container_instance import ContainerMountProofResult
+from .container_instance import ContainerMountVerifiedGate
+from .container_instance import ContainerReadyGate
+from .container_instance import ContainerReleaseResult
+from .container_instance import ContainerReleasedExecution
+from .container_instance import ContainerStartResult
+from .container_instance import ContainerStartedGate
+from .container_instance import ContainerWaitResult
+from .container_instance import ContainerWaitedExecution
+from .container_instance import VerifiedContainerExecution
+from .container_instance import parse_container_create_result
+from .container_instance import parse_container_final_inspect_result
+from .container_instance import parse_container_gate_ready_result
+from .container_instance import parse_container_inspect_result
+from .container_instance import parse_container_logs_result
+from .container_instance import parse_container_mount_proof_result
+from .container_instance import parse_container_stage_proof_result
+from .container_instance import parse_container_release_result
+from .container_instance import parse_container_start_result
+from .container_instance import parse_container_wait_result
+from .container_plan import ContainerExecutionDraft
+from .container_plan import ContainerExecutionPlan
+from .container_plan import ContainerImageResult
+from .container_plan import ContainerMount
+from .container_plan import build_container_execution_draft
+from .container_plan import parse_container_image_result
+from .container_inspect_schema import build_container_inspect_argv
+from .container_recovery import ContainerRecoveryCandidate
+from .container_recovery import ContainerRecoveryInspectResult
+from .container_recovery import ContainerRecoveryObligation
+from .container_recovery import ContainerRecoveryQueryResult
+from .container_recovery import build_container_recovery_obligation
+from .container_recovery import parse_container_recovery_inspect_result
+from .container_recovery import parse_container_recovery_query_result
+from .container_termination import ContainerTerminationLogsResult
+from .container_termination import ContainerTerminationPlan
+from .container_termination import ContainerTerminationStepResult
+from .container_termination import ContainerTerminationWaitResult
+from .container_termination import ContainerUserOutput
+from .container_termination import build_container_termination_plan
+from .container_termination import parse_container_termination_logs_result
+from .container_termination import parse_container_termination_signal_result
+from .container_termination import parse_container_termination_wait_result
 
 
-@dataclass(frozen=True)
-class ContainerProbeResult:
-    capability: IsolationBackendCapability
-    identity: ContainerEngineIdentity | None = None
-
-    def __post_init__(self) -> None:
-        if self.capability.availability == "available" and self.identity is None:
-            raise ValueError("available container backend requires engine identity")
-        if self.capability.availability != "available" and self.identity is not None:
-            raise ValueError("unavailable container backend cannot expose engine identity")
-
-
-def discover_container_probe(
-    *,
-    preferred: str = "auto",
-    which: Callable[[str], str | None] = shutil.which,
-) -> ContainerProbePlan | None:
-    engines = CONTAINER_ENGINES if preferred == "auto" else (preferred,)
-    for engine in engines:
-        if engine not in CONTAINER_ENGINES:
-            raise ValueError(f"container engine must be one of: auto, {', '.join(CONTAINER_ENGINES)}")
-        resolved = which(engine)
-        if not resolved:
-            continue
-        executable = Path(resolved)
-        if not executable.is_absolute():
-            raise ValueError("resolved container engine executable must be absolute")
-        return _probe_plan(engine, executable)
-    return None
-
-
-def missing_container_probe_result() -> ContainerProbeResult:
-    return ContainerProbeResult(_unavailable("engine_missing"))
-
-
-def parse_container_probe_result(
-    plan: ContainerProbePlan,
-    *,
-    exit_code: int | None,
-    stdout: str,
-    timed_out: bool = False,
-    spawn_failed: bool = False,
-) -> ContainerProbeResult:
-    if spawn_failed:
-        return ContainerProbeResult(_unavailable("probe_spawn_failed"))
-    if timed_out:
-        return ContainerProbeResult(_unavailable("probe_timed_out"))
-    if exit_code is None or exit_code != 0:
-        return ContainerProbeResult(_unavailable("daemon_unavailable"))
-    try:
-        payload = json.loads(stdout)
-    except json.JSONDecodeError:
-        return ContainerProbeResult(_unavailable("probe_invalid_json"))
-    try:
-        version, server_os, arch = _engine_identity_fields(plan.engine, payload)
-        identity = ContainerEngineIdentity(
-            engine=plan.engine,
-            executable=plan.executable,
-            server_version=version,
-            server_os=server_os,
-            server_arch=arch,
-        )
-    except (TypeError, ValueError):
-        return ContainerProbeResult(_unavailable("probe_invalid_identity"))
-    return ContainerProbeResult(
-        capability=IsolationBackendCapability(
-            backend="container",
-            availability="available",
-            reason_code="engine_ready",
-            supported_profiles=_CONTAINER_PROFILES,
-            supported_network_policies=_CONTAINER_NETWORK_POLICIES,
-            enforces_isolation=True,
-        ),
-        identity=identity,
-    )
-
-
-def _probe_plan(engine: str, executable: Path) -> ContainerProbePlan:
-    if engine == "docker":
-        argv = (str(executable), "version", "--format", "{{json .Server}}")
-    else:
-        argv = (str(executable), "info", "--format", "json")
-    return ContainerProbePlan(engine=engine, executable=executable, argv=argv)
-
-
-def _engine_identity_fields(engine: str, payload: object) -> tuple[str, str, str]:
-    if not isinstance(payload, dict):
-        raise TypeError("container probe payload must be an object")
-    if engine == "docker":
-        return (
-            _required_string(payload, "Version"),
-            _required_string(payload, "Os"),
-            _required_string(payload, "Arch"),
-        )
-    host = payload.get("host")
-    version = payload.get("version")
-    if not isinstance(host, dict) or not isinstance(version, dict):
-        raise TypeError("podman probe payload is missing host/version")
-    return (
-        _required_string(version, "Version"),
-        _required_string(host, "os"),
-        _required_string(host, "arch"),
-    )
-
-
-def _required_string(payload: dict[object, object], key: str) -> str:
-    value = payload.get(key)
-    if not isinstance(value, str) or not value.strip():
-        raise ValueError(f"container probe field {key} must be a non-empty string")
-    return value.strip()
-
-
-def _unavailable(reason_code: str) -> IsolationBackendCapability:
-    return IsolationBackendCapability(
-        backend="container",
-        availability="unavailable",
-        reason_code=reason_code,
-        supported_profiles=frozenset(),
-        supported_network_policies=frozenset(),
-        enforces_isolation=False,
-    )
+__all__ = [
+    "ContainerCleanupHandle",
+    "ContainerCapturedExecution",
+    "ContainerCreateResult",
+    "ContainerCreatedInstance",
+    "ContainerExecutionDraft",
+    "ContainerExecutionPlan",
+    "ContainerExitedExecution",
+    "ContainerFinalInspectResult",
+    "ContainerGateReadyResult",
+    "ContainerImageResult",
+    "ContainerInspectResult",
+    "ContainerLogsResult",
+    "ContainerMountProofResult",
+    "ContainerMountVerifiedGate",
+    "ContainerMount",
+    "ContainerReleaseResult",
+    "ContainerReleasedExecution",
+    "ContainerRemovalCheckResult",
+    "ContainerRemoveResult",
+    "ContainerRecoveryCandidate",
+    "ContainerRecoveryInspectResult",
+    "ContainerRecoveryObligation",
+    "ContainerRecoveryQueryResult",
+    "ContainerReadyGate",
+    "ContainerStartResult",
+    "ContainerStartedGate",
+    "ContainerTerminationLogsResult",
+    "ContainerTerminationPlan",
+    "ContainerTerminationStepResult",
+    "ContainerTerminationWaitResult",
+    "ContainerUserOutput",
+    "ContainerWaitResult",
+    "ContainerWaitedExecution",
+    "VerifiedContainerExecution",
+    "build_container_execution_draft",
+    "build_container_inspect_argv",
+    "build_container_recovery_obligation",
+    "build_container_termination_plan",
+    "parse_container_create_result",
+    "parse_container_final_inspect_result",
+    "parse_container_gate_ready_result",
+    "parse_container_image_result",
+    "parse_container_inspect_result",
+    "parse_container_logs_result",
+    "parse_container_mount_proof_result",
+    "parse_container_stage_proof_result",
+    "parse_container_release_result",
+    "parse_container_removal_check_result",
+    "parse_container_remove_result",
+    "parse_container_recovery_inspect_result",
+    "parse_container_recovery_query_result",
+    "parse_container_termination_logs_result",
+    "parse_container_termination_signal_result",
+    "parse_container_termination_wait_result",
+    "parse_container_start_result",
+    "parse_container_wait_result",
+]

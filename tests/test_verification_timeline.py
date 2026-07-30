@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 
 from local_agent.tool_choice_queue import ToolResultSummary
+from local_agent.verification_timeline import effective_workspace_write_paths
 from local_agent.verification_timeline import last_workspace_write_index
 from local_agent.verification_timeline import successful_tool_after_last_write
 from local_agent.verification_timeline import successful_nonempty_git_diff_after_last_write
@@ -56,3 +57,78 @@ class VerificationTimelineTests(unittest.TestCase):
         ]
 
         self.assertFalse(successful_tool_after_last_write(results, "run_tests"))
+
+    def test_typed_staged_exec_transaction_is_a_real_write_even_on_nonzero_exit(
+        self,
+    ) -> None:
+        transaction_id = "20260729T010203000000Z"
+        result = ToolResultSummary(
+            "shell",
+            "[exit_code] 7",
+            is_error=True,
+            metadata={
+                "workspace_transaction_id": transaction_id,
+                "workspace_mutation_source": "container_staged_copy",
+                "workspace_changed": True,
+                "transaction_status": "committed",
+                "changed_paths": ["src/main.py"],
+                "effective_changed_paths": ["src/main.py"],
+                "isolation": {
+                    "workspace_transport": "staged-copy",
+                    "workspace_output_commit": {
+                        "state": "committed",
+                        "transaction_id": transaction_id,
+                    },
+                },
+            },
+        )
+
+        self.assertTrue(workspace_write_happened([result]))
+        self.assertEqual(last_workspace_write_index([result]), 0)
+        self.assertEqual(
+            effective_workspace_write_paths([result]),
+            ("src/main.py",),
+        )
+
+    def test_exec_metadata_cannot_forge_write_without_exact_commit_correlation(
+        self,
+    ) -> None:
+        base = {
+            "workspace_transaction_id": "tx",
+            "workspace_mutation_source": "container_staged_copy",
+            "workspace_changed": True,
+            "transaction_status": "committed",
+            "changed_paths": ["src/main.py"],
+            "isolation": {
+                "workspace_transport": "staged-copy",
+                "workspace_output_commit": {
+                    "state": "restored",
+                    "transaction_id": "tx",
+                },
+            },
+        }
+        results = [
+            ToolResultSummary("shell", "claimed write", metadata=base),
+            ToolResultSummary(
+                "run_tests",
+                "claimed write",
+                metadata={**base, "workspace_transaction_id": "other"},
+            ),
+            ToolResultSummary(
+                "current_time",
+                "claimed write",
+                metadata={
+                    **base,
+                    "isolation": {
+                        "workspace_transport": "staged-copy",
+                        "workspace_output_commit": {
+                            "state": "committed",
+                            "transaction_id": "tx",
+                        },
+                    },
+                },
+            ),
+        ]
+
+        self.assertFalse(workspace_write_happened(results))
+        self.assertEqual(effective_workspace_write_paths(results), ())

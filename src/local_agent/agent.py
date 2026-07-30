@@ -83,7 +83,6 @@ from .steering.pre_review import should_aggregate_pre_review_audits
 from .steering.tool_loop import ToolLoopSignals
 from .steering.tool_loop import ToolLoopSteeringDecision
 from .steering.tool_loop import ToolLoopSteeringRegistry
-from .steering.tool_loop import is_filename_search_misuse
 from .steering.termination import synthetic_tool_stop_message
 from .steering.termination import termination_message
 from .workflows.contracts import generate_requirement_contract, render_contract_context, requires_no_edit_final_hygiene
@@ -106,6 +105,8 @@ from .runtime.tool_choice_queue import RuntimeToolChoiceQueuePhase
 from .runtime.workflow_profile import WorkflowReadOnlyReviewPhase
 from .runtime.explore import RuntimeReadOnlyExplorePhase
 from .runtime.provider_terminal import ProviderTerminalPhase
+from .runtime.tool_context import build_runtime_tool_context
+from .runtime.tool_result_join import interrupted_tool_result, join_tool_result
 from .runtime.workspace import WorkspaceLifecycle
 from .runtime.prompt import _event_preview, _tool_call_event_payload
 from .runtime.prompt import _tool_output_event_preview
@@ -257,15 +258,12 @@ class AgentRuntime:
             {"role": "system", "content": system_prompt},
             *self._session.load_messages(),
         ]
-        self._tool_context = ToolContext(
-            workspace=config.workspace,
-            approval_mode=config.approval_mode,
+        self._tool_context = build_runtime_tool_context(
+            config,
             state_dir=self._state_dir,
             allowed_dirs=self._workspace_context.additional_roots,
             session_id=self._session.session_id,
             workspace_identity=self._workspace_context.primary_identity,
-            auto_approve_tools=config.auto_approve_tools,
-            tool_approval=config.tool_approval,
             session_tool_approval=self._session_tool_approval,
             event_callback=self._emit_event,
             interaction_handler=interaction_handler,
@@ -658,32 +656,34 @@ class AgentRuntime:
                 try:
                     call_context = replace(tool_context, tool_call_id=str(tool_call.get("id") or ""))
                     result = self._execute_tool_with_repeat_guard(name, arguments, call_context)
-                except KeyboardInterrupt:
+                except KeyboardInterrupt as exc:
+                    interrupted = interrupted_tool_result(exc)
+                    if interrupted is None:
+                        self._append_synthetic_tool_results(
+                            [tool_call],
+                            "the user interrupted execution before the tool call completed.",
+                        )
+                    else:
+                        join_tool_result(
+                            self,
+                            tool_call=tool_call,
+                            name=name,
+                            arguments=arguments,
+                            result=interrupted,
+                        )
                     self._append_synthetic_tool_results(
-                        tool_calls[index:],
+                        tool_calls[index + 1 :],
                         "the user interrupted execution before the tool call completed.",
                     )
                     self._stop_for_interrupt()
                     raise
-                self._log_tool_end(name, result.is_error, len(result.content))
-                self._append_tool_result(
-                    tool_call,
-                    name,
-                    result.content,
-                    is_error=result.is_error,
-                    useless=result.useless,
-                    metadata={
-                        **dict(result.metadata),
-                        "filename_search_misuse": is_filename_search_misuse(name, arguments),
-                    },
+                join_tool_result(
+                    self,
+                    tool_call=tool_call,
+                    name=name,
+                    arguments=arguments,
+                    result=result,
                 )
-                self._run.reset_forced_final_answer_continuations()
-                self._evidence_phase.record_tool_choice_result(name, arguments, result, tool_call_id=str(tool_call.get("id") or ""))
-                self._evidence_phase.record_successful_patch_preview(name, arguments, result)
-                self._evidence_phase.record_read_file_evidence(name, arguments, result)
-                self._evidence_phase.record_tool_evidence(name, arguments, result)
-                self._evidence_phase.invalidate_stale_source_evidence_after_write(name, arguments, result)
-                self._observe_soft_tool_requirement(name, arguments, result)
                 if self._tool_directive_phase.after_tool_attempt(
                     directive_transition,
                     tool_name=name,

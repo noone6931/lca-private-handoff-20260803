@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import BinaryIO
 
 from ..protocol.cancellation import CancellationSignal
-from ..protocol.cancellation import RunCancelled
+from .execution_interrupt import CapturedRunCancelled, attach_active_process_interruption
 from .process_output import BoundedByteCapture
 from .process_output import CapturedCompletedProcess
 from .process_output import CapturedTimeoutExpired
@@ -108,8 +108,7 @@ def run_process(
     try:
         while True:
             if cancel_event is not None and cancel_event.is_set():
-                _terminate_process(process, pipes)
-                raise RunCancelled("Run cancelled while a local process was active.")
+                raise CapturedRunCancelled("Run cancelled while a local process was active.", _terminate_process(process, pipes))
             progress = pipes.drain()
             if process.poll() is not None and pipes.eof:
                 capture = pipes.finish()
@@ -119,10 +118,10 @@ def run_process(
                 raise CapturedTimeoutExpired(command, timeout, capture)
             if progress == 0:
                 time.sleep(_PROCESS_POLL_SECONDS)
-    except (RunCancelled, subprocess.TimeoutExpired):
+    except (CapturedRunCancelled, subprocess.TimeoutExpired):
         raise
-    except BaseException:
-        _terminate_process(process, pipes)
+    except BaseException as error:
+        attach_active_process_interruption(error, _terminate_process(process, pipes))
         raise
 
 

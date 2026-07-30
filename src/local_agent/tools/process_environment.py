@@ -2,41 +2,17 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
 from types import MappingProxyType
 from typing import Mapping
 
-
-PROVIDER_CREDENTIAL_ENVIRONMENT_KEYS = frozenset(
-    {
-        "AI_API_KEY",
-        "BAILIAN_API_KEY",
-        "DASHSCOPE_API_KEY",
-    }
-)
-_PROVIDER_CREDENTIAL_ENVIRONMENT_KEY_FOLDS = frozenset(
-    key.casefold() for key in PROVIDER_CREDENTIAL_ENVIRONMENT_KEYS
-)
-NONINTERACTIVE_ENVIRONMENT_DEFAULTS = MappingProxyType(
-    {
-        "PAGER": "cat",
-        "GIT_PAGER": "cat",
-        "MANPAGER": "cat",
-        "GIT_TERMINAL_PROMPT": "0",
-        "PYTHONUNBUFFERED": "1",
-        "NO_COLOR": "1",
-    }
-)
-
+from ..execution.environment import is_provider_credential_environment_key
+from .process_environment_defaults import NONINTERACTIVE_ENVIRONMENT_DEFAULTS
 
 @dataclass(frozen=True)
 class ChildProcessEnvironment:
     values: Mapping[str, str]
     explicit_keys: tuple[str, ...]
-
-
-def is_provider_credential_environment_key(key: str) -> bool:
-    return key.casefold() in _PROVIDER_CREDENTIAL_ENVIRONMENT_KEY_FOLDS
-
 
 def build_child_process_environment(
     *,
@@ -45,20 +21,38 @@ def build_child_process_environment(
 ) -> ChildProcessEnvironment:
     """Project a child-only environment without LCA provider credentials."""
 
-    values = dict(os.environ if parent is None else parent)
-    for key in tuple(values):
-        if is_provider_credential_environment_key(key):
-            values.pop(key)
+    values = {
+        key: value
+        for key, value in (os.environ if parent is None else parent).items()
+        if not is_provider_credential_environment_key(key)
+    }
     for key, value in NONINTERACTIVE_ENVIRONMENT_DEFAULTS.items():
         values.setdefault(key, value)
     explicit = dict(overrides or {})
-    for key, value in explicit.items():
-        if not is_provider_credential_environment_key(key):
-            values[key] = value
-    for key in tuple(values):
-        if is_provider_credential_environment_key(key):
-            values.pop(key)
+    values.update(
+        (key, value)
+        for key, value in explicit.items()
+        if not is_provider_credential_environment_key(key)
+    )
     return ChildProcessEnvironment(
         values=MappingProxyType(values),
         explicit_keys=tuple(sorted(explicit)),
     )
+def build_container_control_environment(
+    *, client_config_directory: Path
+) -> ChildProcessEnvironment:
+    """Build a fixed Docker control environment without inheriting parent state."""
+
+    if not client_config_directory.is_absolute():
+        raise ValueError("container client config directory must be absolute")
+    directory = str(client_config_directory)
+    values = {
+        **NONINTERACTIVE_ENVIRONMENT_DEFAULTS,
+        "DOCKER_CONFIG": directory,
+        "HOME": directory,
+        "LANG": "C",
+        "LC_ALL": "C",
+        "PATH": os.defpath,
+        "TMPDIR": "/tmp",
+    }
+    return ChildProcessEnvironment(MappingProxyType(values), ())

@@ -55,6 +55,7 @@ class ToolContext:
     runtime_read_file_remaining: int | None = None
     vision_inspector: Callable[[Path, str, bytes, str], str] | None = None
     cancel_event: CancellationSignal | None = None
+    process_runner: Callable[..., Any] | None = None
 
 
 def tool_state_dir(context: ToolContext) -> Path:

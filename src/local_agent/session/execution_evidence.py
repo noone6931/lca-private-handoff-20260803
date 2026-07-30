@@ -44,15 +44,12 @@ class ExecutionFact:
     workspace_roots: tuple[str, ...]
     cwd: str
     command: str
+    command_digest: str
     argv: tuple[str, ...] | None
     shell: bool
     status: str
     exit_code: int | None
     output: Mapping[str, Any]
-
-    @property
-    def command_digest(self) -> str:
-        return "sha256:" + hashlib.sha256(self.command.encode("utf-8")).hexdigest()
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -70,7 +67,12 @@ class ExecutionFact:
             "workspace_primary": self.workspace_primary,
             "workspace_roots": list(self.workspace_roots),
             "cwd": self.cwd,
-            "command": {"text": self.command, "argv": list(self.argv) if self.argv is not None else None, "shell": self.shell},
+            "command": {
+                "text": self.command,
+                "digest": self.command_digest,
+                "argv": list(self.argv) if self.argv is not None else None,
+                "shell": self.shell,
+            },
             "command_digest": self.command_digest,
             "outcome": {"status": self.status, "exit_code": self.exit_code},
             "output": dict(self.output),
@@ -151,9 +153,10 @@ class SessionExecutionEvidenceOwner:
         parsed = parse_execution_metadata(metadata, tool_name=name, authorized_roots=roots)
         if parsed is None:
             return
-        command, argv, shell, cwd = parsed.command, parsed.argv, parsed.shell, parsed.cwd
+        command, command_digest = parsed.command, parsed.command_digest
+        argv, shell, cwd = parsed.argv, parsed.shell, parsed.cwd
         status, exit_code, output = parsed.outcome, parsed.exit_code, parsed.output
-        execution_ref = _execution_ref(*origin, name, cwd, command)
+        execution_ref = _execution_ref(*origin, name, cwd, command_digest)
         if any(fact.execution_ref == execution_ref for fact in self._facts):
             return
         event = runtime._events.emit(
@@ -175,6 +178,7 @@ class SessionExecutionEvidenceOwner:
             workspace_roots=roots,
             cwd=cwd,
             command=command,
+            command_digest=command_digest,
             argv=argv,
             shell=shell,
             status=status,
@@ -439,7 +443,8 @@ def _fact_from_payload(payload: Mapping[str, Any]) -> ExecutionFact | None:
         parsed = parse_execution_metadata(metadata, tool_name=str(payload["tool"]), authorized_roots=roots)
         if parsed is None:
             return None
-        text, argv, shell, cwd = parsed.command, parsed.argv, parsed.shell, parsed.cwd
+        text, command_digest = parsed.command, parsed.command_digest
+        argv, shell, cwd = parsed.argv, parsed.shell, parsed.cwd
         status, exit_code, output = parsed.outcome, parsed.exit_code, parsed.output
         primary = str(Path(payload["workspace_primary"]).resolve())
         revision = payload["workspace_revision"]
@@ -453,7 +458,10 @@ def _fact_from_payload(payload: Mapping[str, Any]) -> ExecutionFact | None:
         )
         if not all(_identity(value) for value in identities):
             return None
-        if payload["workspace_identity"] != expected_workspace or payload.get("command_digest") != _command_digest(text):
+        if (
+            payload["workspace_identity"] != expected_workspace
+            or payload.get("command_digest") != command_digest
+        ):
             return None
         if isinstance(revision, bool) or not isinstance(revision, int) or revision < 0:
             return None
@@ -462,13 +470,18 @@ def _fact_from_payload(payload: Mapping[str, Any]) -> ExecutionFact | None:
             return None
         if isinstance(event_time, bool) or not isinstance(event_time, (int, float)) or event_time <= 0:
             return None
-        expected_ref = _execution_ref(*identities[1:], str(payload["tool"]), cwd, text)
+        expected_ref = _execution_ref(
+            *identities[1:],
+            str(payload["tool"]),
+            cwd,
+            command_digest,
+        )
         if payload["execution_ref"] != expected_ref:
             return None
         return ExecutionFact(
             str(identities[0]), str(identities[1]), str(identities[2]), str(identities[3]), str(identities[4]),
             str(payload["tool"]), event_seq, float(event_time), expected_workspace, revision, primary, roots,
-            cwd, text, argv, shell, status, exit_code, output,
+            cwd, text, command_digest, argv, shell, status, exit_code, output,
         )
     except (KeyError, OSError, TypeError, ValueError):
         return None
@@ -485,16 +498,18 @@ def _workspace_identity(primary: str, roots: Sequence[str], revision: int) -> st
 
 
 def _execution_ref(
-    session_id: str, run_id: str, command_id: str, tool_call_id: str, tool: str, cwd: str, command: str
+    session_id: str,
+    run_id: str,
+    command_id: str,
+    tool_call_id: str,
+    tool: str,
+    cwd: str,
+    command_digest: str,
 ) -> str:
-    payload = "\0".join((session_id, run_id, command_id, tool_call_id, tool, cwd, _command_digest(command)))
+    payload = "\0".join(
+        (session_id, run_id, command_id, tool_call_id, tool, cwd, command_digest)
+    )
     return "execv1_" + hashlib.sha256(payload.encode("utf-8")).hexdigest()[:32]
-
-
-def _command_digest(command: str) -> str:
-    return "sha256:" + hashlib.sha256(command.encode("utf-8")).hexdigest()
-
-
 def _identity(value: Any, *, max_chars: int = 256) -> bool:
     return isinstance(value, str) and bool(value.strip()) and len(value) <= max_chars and "\x00" not in value
 

@@ -213,7 +213,7 @@ def process_tool_result(
     return ToolResult(
         projection.content,
         is_error=is_error,
-        metadata={**(metadata or {}), **projection.metadata(capture), "sandboxed": False},
+        metadata={**(metadata or {}), **projection.metadata(capture), "sandboxed": bool((metadata or {}).get("sandboxed", False))},
     )
 
 

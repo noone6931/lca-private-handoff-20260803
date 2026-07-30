@@ -1,0 +1,51 @@
+#!/bin/sh
+set -eu
+
+attempt_id=
+attempts=
+delay_seconds=
+
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --attempt-id)
+            [ "$#" -ge 2 ] || exit 64
+            attempt_id=$2
+            shift 2
+            ;;
+        --attempts)
+            [ "$#" -ge 2 ] || exit 64
+            attempts=$2
+            shift 2
+            ;;
+        --delay-seconds)
+            [ "$#" -ge 2 ] || exit 64
+            delay_seconds=$2
+            shift 2
+            ;;
+        *)
+            exit 64
+            ;;
+    esac
+done
+
+[ "${#attempt_id}" -eq 32 ] || exit 64
+case "$attempt_id" in
+    *[!0-9a-f]*) exit 64 ;;
+esac
+case "$attempts" in
+    ""|*[!0-9]*) exit 64 ;;
+esac
+[ "$attempts" -gt 0 ] || exit 64
+case "$delay_seconds" in
+    0.[0-9]*|[1-9][0-9]*|[1-9][0-9]*.[0-9]*) ;;
+    *) exit 64 ;;
+esac
+
+ready_path=/tmp/local-agent-gate/$attempt_id.ready
+remaining=$attempts
+while [ "$remaining" -gt 0 ]; do
+    [ -f "$ready_path" ] && exit 0
+    remaining=$((remaining - 1))
+    [ "$remaining" -eq 0 ] || /bin/sleep "$delay_seconds"
+done
+exit 75

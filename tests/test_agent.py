@@ -22,6 +22,7 @@ from local_agent.provider_stream import ProviderTextDelta
 from local_agent.protocol.commands import new_command
 from local_agent.protocol.interactions import InteractionResult
 from local_agent.protocol.events import ListEventSink
+from local_agent.patch.journal import PatchJournalMutationResult
 from local_agent.requirement_evidence import RequirementEvidence
 from local_agent.run_context import MAX_FORCED_FINAL_ANSWER_CONTINUATIONS
 from local_agent.session.assistant_history import ASSISTANT_SETTLEMENT_EVENT
@@ -44,6 +45,7 @@ from local_agent.task_contract import generate_requirement_contract
 from local_agent.tool_choice_queue import ToolResultSummary
 from local_agent.tool_choice_queue import ToolChoiceDecision
 from local_agent.tools.base import Tool, ToolResult
+from local_agent.tools.workspace_mutation_contracts import WorkspaceMutationCommitResult
 from local_agent.tool_choice_queue import evaluate_tool_choice_state
 from local_agent.verification_plan import VerificationPlan
 
@@ -2161,6 +2163,41 @@ class _TwoToolClient:
                             "id": "call_2",
                             "type": "function",
                             "function": {"name": "unknown_two", "arguments": "{}"},
+                        },
+                    ],
+                }
+            },
+        )()
+
+
+class _InterruptedShellClient:
+    command = "PRIVATE_TOKEN=supersecret true"
+
+    def __init__(self, config: AgentConfig):
+        self.config = config
+
+    def chat(self, messages, tools, *, timeout=None):
+        return type(
+            "Response",
+            (),
+            {
+                "message": {
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "shell_current",
+                            "type": "function",
+                            "function": {
+                                "name": "shell",
+                                "arguments": json.dumps(
+                                    {"command": type(self).command}
+                                ),
+                            },
+                        },
+                        {
+                            "id": "remaining_call",
+                            "type": "function",
+                            "function": {"name": "read_file", "arguments": "{}"},
                         },
                     ],
                 }
@@ -7079,6 +7116,111 @@ class AgentRuntimeTests(unittest.TestCase):
                 for record in records
             )
         )
+
+    def test_interrupted_execution_records_current_fact_and_only_synthesizes_remaining(self) -> None:
+        cases = (
+            ("after_release", "indeterminate", None, None),
+            (
+                "after_workspace_mutation",
+                "exited",
+                0,
+                WorkspaceMutationCommitResult(
+                    "restored",
+                    False,
+                    ("main.py",),
+                    (),
+                    error_kind="parent_interrupted",
+                ),
+            ),
+        )
+        for name, outcome, exit_code, mutation in cases:
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as tmp:
+                workspace = Path(tmp).resolve()
+                interruption = KeyboardInterrupt()
+                interruption.execution_started = True
+                interruption.execution_outcome = outcome
+                interruption.returncode = exit_code
+                interruption.stdout = "ready\n"
+                interruption.stderr = ""
+                interruption.isolation_metadata = {
+                    "sandboxed": True,
+                    "isolation": {
+                        "backend": "container",
+                        "command_release_state": "verified",
+                        "execution_outcome": outcome,
+                        "cleanup": "removed",
+                        "cleanup_verified": True,
+                        "workspace_transport": "staged-copy",
+                    },
+                }
+                if mutation is not None:
+                    interruption.workspace_mutation_result = mutation
+                    interruption.patch_journal_result = PatchJournalMutationResult(
+                        "restored",
+                        False,
+                        False,
+                        "replace_failed_after_commit",
+                    )
+                config = AgentConfig(
+                    provider="openai-compatible",
+                    api_base_url="https://example.invalid/v1",
+                    api_key="token",
+                    model="model",
+                    workspace=workspace,
+                    state_dir=workspace / "state",
+                    max_steps=0,
+                    budget_seconds=None,
+                    approval_mode="yolo",
+                )
+                with (
+                    patch(
+                        "local_agent.agent.OpenAICompatibleClient",
+                        _InterruptedShellClient,
+                    ),
+                    patch(
+                        "local_agent.tools.shell._run_process",
+                        side_effect=interruption,
+                    ),
+                ):
+                    runtime = AgentRuntime(config, show_tool_logs=False)
+                    with self.assertRaises(KeyboardInterrupt):
+                        runtime.run("Run the command and preserve interruption truth.")
+
+                tool_messages = [
+                    message
+                    for message in runtime._messages
+                    if message.get("role") == "tool"
+                ]
+                self.assertEqual(
+                    [message["tool_call_id"] for message in tool_messages],
+                    ["shell_current", "remaining_call"],
+                )
+                self.assertNotIn("was not executed", tool_messages[0]["content"])
+                self.assertIn("[interrupted]", tool_messages[0]["content"])
+                self.assertIn("was not executed", tool_messages[1]["content"])
+                facts = runtime._session.load_event_payloads("execution_completed_v1")
+                self.assertEqual(len(facts), 1)
+                self.assertEqual(facts[0]["outcome"], {"status": outcome, "exit_code": exit_code})
+                evidence = runtime._session.load_event_payloads("evidence")
+                shell_evidence = next(item for item in evidence if item["tool"] == "shell")
+                self.assertTrue(shell_evidence["details"]["isolation"]["cleanup_verified"])
+                if mutation is not None:
+                    self.assertEqual(
+                        shell_evidence["details"]["workspace_state"],
+                        "restored",
+                    )
+                    self.assertEqual(
+                        shell_evidence["details"]["patch_journal"]["state"],
+                        "restored",
+                    )
+                self.assertEqual(
+                    [result.name for result in runtime._run.tool_choice_results],
+                    ["shell"],
+                )
+                self.assertNotIn(
+                    "supersecret",
+                    runtime._session.path.read_text(encoding="utf-8"),
+                )
 
     def test_context_compaction_injects_summary_and_open_todos(self) -> None:
         _MessageRecordingClient.messages = []

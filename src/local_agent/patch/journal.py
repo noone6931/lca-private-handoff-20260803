@@ -3,9 +3,20 @@ from __future__ import annotations
 import json
 import os
 import stat
-import tempfile
 from pathlib import Path
-from typing import Any, BinaryIO
+from typing import Any
+
+from .journal_contracts import PatchJournalMutationResult
+from .journal_io import discard_journal_temporary
+from .journal_io import write_journal_temporary
+from .journal_recovery import restore_after_replace_error
+
+
+def patch_journal_path(
+    state_directory: Path,
+    session_id: str | None,
+) -> Path:
+    return state_directory / "patches" / f"{session_id or 'default'}.jsonl"
 
 
 def append_patch_record(path: Path, record: dict[str, Any]) -> None:
@@ -16,39 +27,35 @@ def append_patch_record(path: Path, record: dict[str, Any]) -> None:
     try:
         current = path.read_bytes()
         mode = stat.S_IMODE(path.stat().st_mode)
+        existed = True
     except FileNotFoundError:
         current = b""
         mode = 0o600
+        existed = False
 
-    temporary = _write_temporary_file(path, current + encoded, mode)
+    payload = current + encoded
+    temporary = write_journal_temporary(path, payload, mode)
     try:
         os.replace(temporary, path)
-    except BaseException:
-        _discard_temporary(temporary)
+    except BaseException as exc:
+        discard_journal_temporary(temporary)
+        setattr(
+            exc,
+            "patch_journal_result",
+            restore_after_replace_error(
+                path,
+                before=current,
+                after=payload,
+                mode=mode,
+                existed=existed,
+                replace_file=os.replace,
+            ),
+        )
         raise
 
 
-def _write_temporary_file(path: Path, payload: bytes, mode: int) -> Path:
-    descriptor, raw_path = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
-    temporary = Path(raw_path)
-    try:
-        with os.fdopen(descriptor, "wb") as handle:
-            os.fchmod(handle.fileno(), mode)
-            _write_payload(handle, payload)
-    except BaseException:
-        _discard_temporary(temporary)
-        raise
-    return temporary
-
-
-def _write_payload(handle: BinaryIO, payload: bytes) -> None:
-    handle.write(payload)
-    handle.flush()
-    os.fsync(handle.fileno())
-
-
-def _discard_temporary(path: Path) -> None:
-    try:
-        path.unlink()
-    except OSError:
-        pass
+__all__ = [
+    "PatchJournalMutationResult",
+    "append_patch_record",
+    "patch_journal_path",
+]

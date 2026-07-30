@@ -16,8 +16,7 @@ from ..tools.argument_normalization import normalize_compatibility_arguments
 from ..tools.base import ToolResult
 from ..tools.relevance import is_low_relevance_patch_path
 from ..tools.relevance import path_matches_any
-from .timeline import WRITE_TOOL_NAMES
-from .timeline import result_changed_workspace
+from .timeline import result_is_workspace_write
 from .timeline import result_workspace_write_paths
 
 
@@ -153,7 +152,7 @@ class EvidenceLedger:
         workspace: Path,
         allowed_dirs: tuple[Path, ...],
     ) -> None:
-        if name not in WRITE_TOOL_NAMES or not result_changed_workspace(result):
+        if not result_is_workspace_write(result, name=name):
             return
         parsed = parse_tool_arguments(arguments)
         if name == "apply_patch" and parsed.get("dry_run"):
@@ -516,12 +515,21 @@ def build_tool_evidence_record(
             summary = "Changed files: " + ", ".join(changed_files) if changed_files else one_line(result.content, max_chars=260)
         return EvidenceRecord(name, "workspace", summary, status=status)
     if name in {"run_tests", "shell"}:
-        command = str(parsed.get("command") or ("default test command" if name == "run_tests" else "command"))
+        execution = result.metadata.get("execution_v1")
+        command = execution.get("command") if isinstance(execution, Mapping) else None
+        digest = command.get("digest") if isinstance(command, Mapping) else None
+        subject = digest if isinstance(digest, str) else "command identity unavailable"
         parts = [one_line(first_nonempty_line(result.content), max_chars=180)] if first_nonempty_line(result.content) else []
         exit_code = last_exit_code_line(result.content)
         if exit_code:
             parts.append(exit_code)
-        return EvidenceRecord(name, one_line(command, max_chars=140), "; ".join(parts) or "Command executed.", status="error" if result.is_error else "ok")
+        return EvidenceRecord(
+            name,
+            subject,
+            "; ".join(parts) or "Command executed.",
+            status="error" if result.is_error else "ok",
+            details=metadata,
+        )
     return None
 
 
