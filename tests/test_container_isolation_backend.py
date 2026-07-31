@@ -2081,6 +2081,7 @@ class ContainerIsolationBackendTests(unittest.TestCase):
         self,
     ) -> None:
         trusted = self.executable.parent
+        os.chown(trusted, -1, os.getegid())
         self.assertIn(
             trusted.stat().st_gid,
             set(os.getgroups()) | {os.getegid()},
