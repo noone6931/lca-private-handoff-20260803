@@ -66,7 +66,9 @@ ready_path=$state_directory/$attempt_id.ready
 : > "$ready_path"
 
 while [ "$released" -eq 0 ]; do
-    /bin/sleep 2147483647 &
+    # Some POSIX shells defer trapped signals until the child they are waiting
+    # for exits, so keep the internal wait bounded.
+    /bin/sleep 1 &
     waiter=$!
     if [ "$released" -ne 0 ]; then
         /bin/kill "$waiter" 2>/dev/null || true
