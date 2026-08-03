@@ -2073,6 +2073,7 @@ class ContainerIsolationBackendTests(unittest.TestCase):
             self._draft(readable_roots=(comma_root,))
 
     def test_private_config_directory_mode_is_required(self) -> None:
+        os.chown(self.config_dir, -1, os.getegid())
         self.config_dir.chmod(0o775)
         with self.assertRaisesRegex(ValueError, "group-writable"):
             self._probe_plan()
